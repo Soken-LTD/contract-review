@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import socket
 import time
 from pathlib import Path
@@ -36,28 +37,88 @@ from ..adapters.evm import analyze as _analyze_mod
 from ..adapters.evm import build as _build_mod
 from ..adapters.evm import fetch as _fetch_mod
 from ..adapters.evm import files as _files_mod
-from ..adapters.evm.rpc import RpcClient
+from ..adapters.evm.repo_candidate import repo_candidate_from_manifest, safe_read_repo_tree
+from ..adapters.evm.rpc import RpcAllEndpointsFailed, RpcClientPool
 from ..db.job_repo import JobRepo
 from ..engine.injection import server_draft_flags
 from ..engine.provenance import DepResult, evm_deployment_check, resolve_provenance
+from ..errors import ReviewError
 from ..mapping import facts as _facts_mod
 from ..mapping import step as _map_step
 from ..pinning.store import PinnedSource
 from ..report import render as _render_mod
 from ..sandbox.output import UnsafeOutput, read_output_files
+from ..tools.git_probe import _SHA1_RE as _COMMIT_SHA1_RE
+from ..tools.git_probe import resolve_ref as _resolve_ref
 from . import ton_pipeline
 
 logger = logging.getLogger(__name__)
 
-def _rpc_url(chain_id: int) -> str | None:
-    """`SOKEN_RPC_<chain_id>` (09 provider row, keyed endpoint) overrides the registry's first RPC (05 4.1)."""
+# ---------------------------------------------------------------------------
+# npm package name validation (security: prevent prompt injection via import paths)
+# ---------------------------------------------------------------------------
+# Strict subset of valid npm package names (npmjs.com/package/validate-npm-package-name).
+# Scoped: @scope/name; unscoped: name.
+# Chars: lowercase a-z, 0-9, hyphen, tilde, dot, underscore; max 214 chars total.
+_NPM_PKG_RE = re.compile(
+    r"^(?:@[a-z0-9~\-][a-z0-9._~\-]*/)?[a-z0-9~\-][a-z0-9._~\-]*$"
+)
+_NPM_PKG_MAX_LEN = 214
+_MISSING_IMPORT_MAX_PKGS = 10
+
+# Dependency-path first-segment validator: alphanumeric + safe punctuation, max 128 chars.
+# Covers Foundry dir names (lib, test, src, forge-std, ...) and @scope-prefix segments.
+# x-text-class: same invariant as npm names — user data from repo import strings.
+_DEP_SEG_RE = re.compile(r"^[A-Za-z0-9._@~\-]{1,128}$")
+
+
+def _validate_npm_pkg(name: str) -> bool:
+    """Return True if *name* is a valid npm package name (strict subset)."""
+    return len(name) <= _NPM_PKG_MAX_LEN and bool(_NPM_PKG_RE.match(name))
+
+
+def _validate_dep_seg(seg: str) -> bool:
+    """Return True if *seg* is a safe path-first-segment (x-text-class: user data)."""
+    return bool(_DEP_SEG_RE.fullmatch(seg))
+
+
+# ---------------------------------------------------------------------------
+# Retry policy (plan 09 section 3.6)
+# ---------------------------------------------------------------------------
+# Backoff delays (seconds) before attempt N+1.  Index 0 = before attempt 2,
+# index 1 = before attempt 3, etc.  Matches "3 (10 s, 40 s)" from the plan.
+_TRANSIENT_BACKOFF: tuple[float, ...] = (10.0, 40.0)
+
+
+def _transient_backoff(attempt: int) -> float:
+    """Return the delay (s) to wait before the next attempt (09 3.6: 10 s, 40 s)."""
+    idx = max(0, attempt - 1)
+    if idx < len(_TRANSIENT_BACKOFF):
+        return _TRANSIENT_BACKOFF[idx]
+    return _TRANSIENT_BACKOFF[-1]
+
+
+def _rpc_urls(chain_id: int) -> list[str]:
+    """Return the ordered list of usable RPC URLs for *chain_id* (05 4.1, failover).
+
+    A single ``SOKEN_RPC_<chain_id>`` env override always wins and is returned alone.
+    Otherwise all non-disabled endpoints from chains.json are returned in registry order.
+    """
     override = os.environ.get(f"SOKEN_RPC_{chain_id}")
     if override:
-        return override
+        return [override]
     from ..adapters.evm.registry import get_chain
 
     chain = get_chain(chain_id)
-    return chain.rpc[0].url if chain and chain.rpc else None
+    if not chain or not chain.rpc:
+        return []
+    return [r.url for r in chain.rpc if not r.disabled]
+
+
+def _rpc_url(chain_id: int) -> str | None:
+    """Legacy single-URL helper; returns the first usable URL or None."""
+    urls = _rpc_urls(chain_id)
+    return urls[0] if urls else None
 
 
 class Supervisor:
@@ -227,6 +288,28 @@ class Supervisor:
             else:
                 logger.warning("no handler for step %s; marking done", step_name)
                 await self._mark_step(step_id, "done")
+        except RpcAllEndpointsFailed:
+            # All RPC endpoints failed — transient; retry up to max_attempts (09 3.6).
+            attempt = step.get("attempt", 1)
+            max_attempts = step.get("max_attempts", 1)
+            if attempt < max_attempts:
+                backoff = _transient_backoff(attempt)
+                logger.warning(
+                    "step %s/%s job %s: all RPC endpoints failed (attempt %d/%d); retry in %.0fs",
+                    step_name, step["seq"], job_id[-8:], attempt, max_attempts, backoff,
+                )
+                async with self._pool.connection() as conn:
+                    await JobRepo(conn).retry_step(step_id, backoff)
+            else:
+                logger.error(
+                    "step %s/%s job %s: all RPC endpoints failed, attempt %d/%d exhausted → terminal",
+                    step_name, step["seq"], job_id[-8:], attempt, max_attempts,
+                )
+                async with self._pool.connection() as conn:
+                    repo = JobRepo(conn)
+                    async with conn.transaction():
+                        await repo.complete_step(step_id, "done", error_code="E_INTERNAL")
+                        await repo.transition(job_id, "failed", error_code="E_INTERNAL")
         except Exception:
             logger.exception("step %s/%s failed for job %s", step_name, step["seq"], job_id[-8:])
             await self._mark_step(step_id, "failed", error_code="E_INTERNAL")
@@ -269,29 +352,31 @@ class Supervisor:
             await self._after_chain_state(step, job)
             return
 
-        rpc_url = _rpc_url(chain_id)
-        if not rpc_url:
+        rpc_urls = _rpc_urls(chain_id)
+        if not rpc_urls:
             # Fail closed: an address job without a pinned chain read would review unpinned code
             # with no deployment check (03 3.1: provider fault = failed, internal step error).
             logger.error("no RPC for chain_id %s; job %s failed", chain_id, job_id[-8:])
             async with self._pool.connection() as conn:
                 repo = JobRepo(conn)
                 async with conn.transaction():
-                    await repo.complete_step(step_id, "failed", error_code="E_INTERNAL")
+                    await repo.complete_step(step_id, "done", error_code="E_INTERNAL")
                     await repo.transition(job_id, "failed", error_code="E_INTERNAL")
             return
 
-        client = RpcClient(rpc_url)
-        block_num = await client.block_number()
+        # RpcClientPool tries endpoints in order; raises RpcAllEndpointsFailed if all fail.
+        # That exception is caught by _run_step and retried up to max_attempts (09 3.6).
+        pool = RpcClientPool(rpc_urls)
+        block_num = await pool.block_number()
         # Use block_num - 1 for stability (avoid tip-race)
         pin_block = block_num - 1
-        client_pinned = RpcClient(rpc_url, block=pin_block)
+        pool_pinned = pool.with_block(pin_block)
 
         addr_lower = address.lower()
         if not addr_lower.startswith("0x"):
             addr_lower = "0x" + addr_lower
 
-        bytecode = await client_pinned.get_code(addr_lower)
+        bytecode = await pool_pinned.get_code(addr_lower)
         is_eoa = not bytecode or bytecode in ("0x", "0x0", "")
 
         cs_path.write_text(
@@ -315,7 +400,8 @@ class Supervisor:
 
         # Code present: proceed to fetch
         await self._mark_step(step_id, "done",
-                              provenance={"block": pin_block, "chain_id": chain_id})
+                              provenance={"block": pin_block, "chain_id": chain_id,
+                                          "rpc": pool_pinned.answered_by or pool.answered_by})
         await self._after_chain_state(step, job)
 
     async def _after_chain_state(self, step: dict[str, Any], job: dict[str, Any]) -> None:
@@ -383,6 +469,14 @@ class Supervisor:
                 None, lambda: _files_mod.files_candidate(source_args.get("files") or [])
             )
             candidates = [cand] if cand is not None else []
+        elif job.get("source_kind") == "repo":
+            # Repo source (05 4.2 step 6, 09 5.2): materialize via soken-fetch sandbox,
+            # then build a repo Candidate from the manifest + files.
+            candidates = await self._fetch_repo(step, job, out_dir, source_args,
+                                                 chain_id, address, bytecode)
+            if candidates is None:
+                # Already handled terminal/transient outcome; return immediately.
+                return
         elif not chain_id or not address:
             # Not a deployed job; no candidates possible this way
             candidates_path.write_text("[]", encoding="utf-8")
@@ -460,6 +554,190 @@ class Supervisor:
         await self._mark_step(step_id, "done",
                               provenance={"provider": best.provider, "sha256": best.sha256})
         await self._after_fetch(step, job)
+
+    async def _fetch_repo(
+        self,
+        step: dict[str, Any],
+        job: dict[str, Any],
+        out_dir: Path,
+        source_args: dict[str, Any],
+        chain_id: int | None,
+        address: str | None,
+        bytecode: str | None,
+    ) -> list[Candidate] | None:
+        """Materialise a repo source and return candidates (05 4.2 step 6, 09 5.2).
+
+        Returns a list of candidates (possibly empty → insufficient_source), or None
+        when this method has already written the terminal/error outcome to the DB and
+        the caller should return immediately.
+        """
+        from ..sandbox.repo_fetch import materialize_repo
+
+        job_id = job["job_id"]
+        step_id = step["id"]
+        repo_url: str = source_args.get("repo_url") or ""
+        commit: str | None = source_args.get("commit")
+        ref: str | None = source_args.get("ref")
+        if not repo_url:
+            logger.error("repo job %s has no repo_url", job_id[-8:])
+            await self._mark_step(step_id, "failed", error_code="E_INTERNAL")
+            return None
+
+        # family for egress network: only known chains allowed (fail closed, not silent downgrade).
+        # None/empty chain → "evm" default for plain repo-only reviews without an address.
+        chain_name: str | None = job.get("chain")
+        _KNOWN_REPO_FAMILIES = frozenset({"evm", "hyperevm", "tron"})
+        if chain_name and chain_name not in _KNOWN_REPO_FAMILIES:
+            await self._mark_step(step_id, "failed", error_code="E_CHAIN_DISABLED")
+            logger.info("job %s: unknown chain %r → E_CHAIN_DISABLED", job_id[-8:], chain_name)
+            return None
+        family: str = chain_name or "evm"
+
+        # Supervisor-side ref resolution (03 §4.1): the supervisor sets `expected_sha` BEFORE
+        # calling the sandbox.  The sandbox must return exactly that sha; if it returns anything
+        # else (or the manifest is missing/malformed), the job fails with a named error and
+        # nothing is written to the DB.
+        expected_sha: str | None = None
+        if commit:
+            if not _COMMIT_SHA1_RE.fullmatch(commit.lower()):
+                await self._mark_step(step_id, "failed", error_code="E_COMMIT_NOT_FOUND")
+                logger.info("job %s: commit %r is not a valid 40-hex sha", job_id[-8:], commit[:12])
+                return None
+            expected_sha = commit.lower()
+        elif ref:
+            try:
+                expected_sha = await _resolve_ref(repo_url, ref)
+            except ReviewError as exc:
+                ec = exc.code if hasattr(exc, "code") else "E_COMMIT_NOT_FOUND"
+                await self._mark_step(step_id, "failed", error_code=ec)
+                logger.info("job %s: ref resolution failed for %r: %s", job_id[-8:], ref, exc)
+                return None
+        # If neither commit nor ref, expected_sha remains None (plain HEAD fetch).
+
+        # Run soken-fetch in the sandbox (09 5.2).  This is a blocking operation;
+        # offload to a thread so the event loop stays responsive.
+        fetch_result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: materialize_repo(repo_url, out_dir / "repo_fetch", family,
+                                     commit=expected_sha, ref=None if expected_sha else ref),
+        )
+
+        # Validate the manifest's resolved_commit against the supervisor-resolved sha.
+        # Only write the SUPERVISOR's sha to the DB — never the sandbox's value directly.
+        if fetch_result.ok:
+            raw_resolved = fetch_result.manifest.get("resolved_commit") or ""
+            manifest_sha = raw_resolved.lower() if isinstance(raw_resolved, str) else ""
+            if expected_sha is not None:
+                # Strict: manifest must echo back the exact sha we requested.
+                if not _COMMIT_SHA1_RE.fullmatch(manifest_sha) or manifest_sha != expected_sha:
+                    async with self._pool.connection() as conn:
+                        repo = JobRepo(conn)
+                        async with conn.transaction():
+                            await repo.complete_step(step_id, "done",
+                                                     error_code="E_COMMIT_NOT_FOUND")
+                            await repo.transition(job_id, "failed",
+                                                  error_code="E_COMMIT_NOT_FOUND")
+                    logger.warning("job %s: manifest resolved_commit %r != expected %r",
+                                   job_id[-8:], manifest_sha[:12], expected_sha[:12])
+                    return None
+                # Write only the validated supervisor-side sha.
+                async with self._pool.connection() as conn:
+                    await JobRepo(conn).update_job_fields(job_id, resolved_commit=expected_sha)
+            elif _COMMIT_SHA1_RE.fullmatch(manifest_sha):
+                # HEAD fetch: use the manifest sha only if it is a valid 40-hex.
+                async with self._pool.connection() as conn:
+                    await JobRepo(conn).update_job_fields(job_id, resolved_commit=manifest_sha)
+                expected_sha = manifest_sha
+            else:
+                # Malformed manifest — refuse.
+                async with self._pool.connection() as conn:
+                    repo = JobRepo(conn)
+                    async with conn.transaction():
+                        await repo.complete_step(step_id, "done",
+                                                 error_code="E_COMMIT_NOT_FOUND")
+                        await repo.transition(job_id, "failed",
+                                              error_code="E_COMMIT_NOT_FOUND")
+                logger.warning("job %s: manifest missing valid resolved_commit", job_id[-8:])
+                return None
+            # Validate file-count (int) and sub-list before using.
+            _manifest_files = fetch_result.manifest.get("files")
+            _file_count = len(_manifest_files) if isinstance(_manifest_files, list) else 0
+            logger.info("job %s: repo fetched, commit=%s, files=%d",
+                        job_id[-8:], expected_sha[:12], _file_count)
+
+        if not fetch_result.ok:
+            # Map exit codes to job outcomes (09 3.6).
+            # Transient (exit 20): retry up to max_attempts with backoff (10 s, 40 s).
+            # Non-retryable (exit 21/22/23/24/25/26): terminal at once.
+            attempt = step.get("attempt", 1)
+            max_attempts = step.get("max_attempts", 3)
+            if fetch_result.retryable and attempt < max_attempts:
+                backoff = _transient_backoff(attempt)
+                logger.warning(
+                    "job %s: repo fetch transient (%s), attempt %d/%d; retry in %.0fs",
+                    job_id[-8:], fetch_result.error_code, attempt, max_attempts, backoff,
+                )
+                async with self._pool.connection() as conn:
+                    await JobRepo(conn).retry_step(step_id, backoff)
+            else:
+                # Non-retryable or exhausted retries: terminal failed
+                async with self._pool.connection() as conn:
+                    repo = JobRepo(conn)
+                    async with conn.transaction():
+                        await repo.complete_step(step_id, "done",
+                                                 error_code=fetch_result.error_code)
+                        await repo.transition(job_id, "failed",
+                                              error_code=fetch_result.error_code)
+                logger.info("job %s: repo fetch failed (%s), terminal",
+                            job_id[-8:], fetch_result.error_code)
+            return None
+
+        # Get the explorer candidate for this address (if any) for compiler/settings (13.3)
+        explorer_candidate: Candidate | None = None
+        if chain_id and address and bytecode:
+            try:
+                cands = await _fetch_mod.fetch_source(chain_id=chain_id, address=address,
+                                                      runtime_bytecode=bytecode)
+                if cands and cands[0] is not None:
+                    explorer_candidate = cands[0]
+                    logger.debug("job %s: explorer candidate provider=%s", job_id[-8:],
+                                 explorer_candidate.provider)
+            except Exception:
+                logger.debug("job %s: explorer lookup failed (non-fatal)", job_id[-8:],
+                             exc_info=True)
+
+        # Build the repo Candidate from the manifest + files.
+        # Pass repo_url@sha as source_url so provenance carries a real reference (not None).
+        _source_url = f"{repo_url}@{expected_sha}" if expected_sha else repo_url
+        cand, reason = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: repo_candidate_from_manifest(
+                fetch_result.src_dir,
+                fetch_result.manifest,
+                explorer_candidate=explorer_candidate,
+                source_url=_source_url,
+            ),
+        )
+
+        if cand is None:
+            # npm-only, no sources, etc. → insufficient_source (09 3.6)
+            async with self._pool.connection() as conn:
+                repo = JobRepo(conn)
+                async with conn.transaction():
+                    await repo.complete_step(step_id, "done",
+                                             error_code="E_SOURCE_NOT_FOUND")
+                    await repo.transition(job_id, "insufficient_source",
+                                          error_code="E_SOURCE_NOT_FOUND")
+            logger.info("job %s: repo insufficient_source reason=%s", job_id[-8:], reason)
+            return None
+
+        candidates = [cand]
+
+        # When an explorer candidate also exists, append it (R1/B4: reviewed=repo, settings=explorer)
+        if explorer_candidate is not None and explorer_candidate.sha256 != cand.sha256:
+            candidates.append(explorer_candidate)
+
+        return candidates
 
     async def _after_fetch(self, step: dict[str, Any], job: dict[str, Any]) -> None:
         """Transition job to building and insert build step after fetch done."""
@@ -545,7 +823,28 @@ class Supervisor:
             explorer_verified=cand_raw.get("explorer_verified", False),
             sourcify_match=cand_raw.get("sourcify_match"),
             untrusted_inputs=cand_raw.get("untrusted_inputs", False),
+            # B4 hint: path to the materialised source tree so build() can attempt
+            # forge build --offline --build-info before falling back to B3.
+            # Repo source is materialized to out_dir/repo_fetch/src by materialize_repo
+            # (sandbox/repo_fetch.py: job_dir=out_dir/repo_fetch → src=job_dir/src).
+            src_tree_dir=str(out_dir / "repo_fetch" / "src") if cand_raw.get("provider") == "repo" else None,
         )
+
+        # B4 integrity: populate the full O_NOFOLLOW tree map from the materialised source so
+        # _forge_sources_match_pin can verify EVERY forge source against the pinned tree, not
+        # only scope files (candidate.files).  This re-read is done here in the supervisor,
+        # never in build.py, to keep build() pure and the tree-read in one trusted location.
+        # On failure to read (empty dir, permissions), _full_tree stays None and
+        # _forge_sources_match_pin fails closed (returns "sources_differ").
+        if candidate.src_tree_dir:
+            try:
+                full_tree, _refused = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: safe_read_repo_tree(candidate.src_tree_dir)
+                )
+                candidate._full_tree = full_tree  # type: ignore[attr-defined]
+            except Exception:
+                logger.warning("job %s: failed to read full tree for B4 integrity check",
+                               job_id[-8:], exc_info=True)
 
         # Run build (synchronous; offload to thread to avoid blocking the loop)
         work_dir = out_dir / "work"
@@ -566,12 +865,66 @@ class Supervisor:
             # build, before any later container runs, the solc output is copied into the job dir
             # (never mounted) with its hash; the restart path and the map step read only the copy.
             "output_sha256": _snapshot_solc_output(out_dir, build_result.work_dir),
+            # B4 decision provenance: b4_source, b4_rejected, libraries_unverified,
+            # had_unknown_settings — included only when present so the dict stays sparse.
+            **{k: v for k, v in build_result.build_notes.items()
+               if k in ("b4_source", "b4_rejected", "libraries_unverified", "had_unknown_settings")},
         }
         build_path.write_text(json.dumps(result), encoding="utf-8")
 
         # Store build_result.work_dir so analyze can find it
         if build_result.work_dir:
             (out_dir / "work_dir.txt").write_text(build_result.work_dir, encoding="utf-8")
+
+        # Missing-import / missing-dependency-path detection (plan 09 §5.2, 05 B4):
+        # When solc reports "Source … not found" the repo cannot be built without the dep.
+        # Both missing_import: (npm/bare-name) and missing_dependency_path: (lib/ paths)
+        # transition to insufficient_source; never silently continue to analyze with 0 leads.
+        #
+        # Security (04/08 x-text-class): package names / dep-path first-segments come from
+        # repo import strings — untrusted user data.  error_code is a server-side enum; it
+        # MUST NOT carry repo text.  Validated names go into error_detail only (x-text-class).
+        build_reason = result.get("reason") or ""
+        if build_reason.startswith(("missing_import:", "missing_dependency_path:")):
+            reason_kind, _, rest = build_reason.partition(":")
+            if reason_kind == "missing_import":
+                raw_names = (rest or "").split(",")
+                valid_pkgs = [n for n in raw_names if n and _validate_npm_pkg(n)]
+                invalid_count = len(raw_names) - len(valid_pkgs)
+                valid_pkgs = valid_pkgs[:_MISSING_IMPORT_MAX_PKGS]
+                detail: dict[str, Any] = {
+                    "reason": "missing_import",
+                    # x-text-class: user data from repo import strings; never use in
+                    # tool descriptions, system prompts, or log lines
+                    "packages": valid_pkgs,
+                    "dropped_invalid": invalid_count,
+                }
+                logger.info("job %s: build insufficient_source missing_import pkgs=%d dropped=%d",
+                            job_id[-8:], len(valid_pkgs), invalid_count)
+            else:
+                # missing_dependency_path: lib/ or src/ paths not in Standard JSON sources.
+                # Validate each segment before storing (x-text-class: user data from repo).
+                raw_segs = (rest or "").split(",")
+                valid_segs = [s for s in raw_segs if s and _validate_dep_seg(s)]
+                invalid_seg_count = len([s for s in raw_segs if s]) - len(valid_segs)
+                valid_segs = valid_segs[:_MISSING_IMPORT_MAX_PKGS]
+                detail = {
+                    "reason": "missing_dependency_path",
+                    # x-text-class: path first-segments from repo; user data
+                    "path_prefixes": valid_segs,
+                    "dropped_invalid": invalid_seg_count,
+                }
+                logger.info("job %s: build insufficient_source missing_dependency_path valid=%d dropped=%d",
+                            job_id[-8:], len(valid_segs), invalid_seg_count)
+            async with self._pool.connection() as conn:
+                repo = JobRepo(conn)
+                async with conn.transaction():
+                    await repo.complete_step(step_id, "done",
+                                             provenance={"reason": reason_kind})
+                    await repo.transition(job_id, "insufficient_source",
+                                          error_code="E_SOURCE_NOT_FOUND",
+                                          error_detail=detail)
+            return
 
         # The candidate is the one this supervisor reconstructed and built, never one a step returned
         prov = await self._resolve_provenance(job_id, out_dir, dataclasses.replace(build_result, candidate=candidate))
@@ -744,7 +1097,7 @@ class Supervisor:
                 if degraded:
                     await repo.update_job_fields(job_id, analyzer_degraded=True)
                 await repo.insert_step(
-                    job_id=job_id, step="map", container=False, units=0, ram_mb=0, max_attempts=1,
+                    job_id=job_id, step="map", container=False, units=0, ram_mb=0, max_attempts=2,
                     affinity=step.get("lease_owner"),
                 )
 
@@ -778,7 +1131,8 @@ class Supervisor:
             family="evm", chain=(job or {}).get("chain"),
             solc_output_path=_solc_output_copy(out_dir, build),
             build_ok=build_ok, job=job, chain_state=chain_state,
-            candidate=cands[0] if cands else None, nsloc=build.get("nsloc"),
+            candidate=cands[0] if cands else None,
+            nsloc=int(build["nsloc"]) if build.get("nsloc") is not None else None,
             analyzers=analyzers, build_detail=detail,
         ))
         async with self._pool.connection() as conn:
@@ -788,7 +1142,7 @@ class Supervisor:
                 await repo.complete_step(step_id, "done", provenance=summary)
                 await repo.insert_step(
                     job_id=job_id, step="chain_state", seq=1, container=False, units=0, ram_mb=0,
-                    max_attempts=3, affinity=step.get("lease_owner"),
+                    max_attempts=2, affinity=step.get("lease_owner"),
                 )
         logger.info("job %s map %s", job_id[-8:], summary)
 
@@ -806,8 +1160,8 @@ class Supervisor:
         added = 0
         if cs_path.exists() and job and job.get("chain_id") and not any(f["key"].startswith("onchain.") for f in facts):
             cs = json.loads(cs_path.read_text())
-            rpc_url = _rpc_url(int(job["chain_id"]))
-            if rpc_url and cs.get("block") is not None:
+            rpc_urls = _rpc_urls(int(job["chain_id"]))
+            if rpc_urls and cs.get("block") is not None:
                 from ..mapping.build import load_map
 
                 doc, _ = load_map(self._pin_root, job_id)
@@ -815,7 +1169,9 @@ class Supervisor:
                 cands = json.loads(cands_path.read_text()) if cands_path.exists() else []
                 units = ((doc or {}).get("semantic") or {}).get("units") or []
                 unit_id = _facts_mod.entry_unit_id((cands[0] if cands else {}).get("entry_contract"), units)
-                onchain = await _facts_mod.onchain_facts(RpcClient(rpc_url), cs["address"], int(cs["block"]),
+                # Use RpcClientPool with failover; pin to the recorded block.
+                rpc_pool_pinned = RpcClientPool(rpc_urls, block=int(cs["block"]))
+                onchain = await _facts_mod.onchain_facts(rpc_pool_pinned, cs["address"], int(cs["block"]),
                                                          doc, unit_id)
                 facts.extend(onchain)
                 added = len(onchain)

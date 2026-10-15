@@ -114,15 +114,24 @@ def _user_inputs(job: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+_CANDIDATE_RUNTIME_ONLY_FIELDS = frozenset({"src_tree_dir", "_full_tree"})
+
+
 def _cand_to_json(c: Candidate) -> dict[str, Any]:
     d = asdict(c)
     d["compiler"] = asdict(c.compiler) if c.compiler else None
+    # Drop runtime-only fields that must never appear in persisted/public payloads.
+    for f in _CANDIDATE_RUNTIME_ONLY_FIELDS:
+        d.pop(f, None)
     return d
 
 
 def _cand_from_json(d: dict[str, Any]) -> Candidate:
     comp = d.get("compiler")
-    d = {**d, "compiler": Compiler(**comp) if comp else None}
+    # Strip unknown / runtime-only keys so old serialised dicts work forward.
+    known = set(Candidate.__dataclass_fields__)  # type: ignore[attr-defined]
+    d = {k: v for k, v in d.items() if k in known}
+    d["compiler"] = Compiler(**comp) if comp else None
     return Candidate(**d)
 
 

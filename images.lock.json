@@ -7,12 +7,13 @@
       "digest": "sha256:94b677e1b17dd0cfe0805bc4d79284b67480af3d4935b43110d17c60986abb73",
       "tools": {
         "slither": "0.11.6",
-        "aderyn": "0.6.8"
+        "aderyn": "0.6.8",
+        "forge": "1.8.5"
       },
       "platforms": [
         "linux/amd64"
       ],
-      "note": "Digest placeholder; replace with real digest after first CI build and benchmark gate pass (09 4.4).",
+      "note": "Pre-CI digest (no forge). LOCAL arm64 build verified 2026-10-14: forge sha256 gate passes (foundry_v1.8.5_linux_arm64.tar.gz: OK, forge Version 1.8.5). Replace digest after CI push with: docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/soken-ltd/evm-analyze:<tag>. B4 enabled when CI digest is recorded.",
       "built": {
         "commit": "3db309b9251ee1a59d5d7f19adbc6b52f48d0aec",
         "run_id": "38271083644",
