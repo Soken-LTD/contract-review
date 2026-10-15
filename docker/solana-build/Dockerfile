@@ -22,7 +22,9 @@
 ARG BASE_IMAGE=solanafoundation/solana-verifiable-build:4.3.0@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd
 
 FROM ${BASE_IMAGE} AS build
-ARG ACTIVE_TOOLCHAIN
+# Default matches the default BASE_IMAGE (4.3.0). Overridden per version via --build-arg
+# (solana-e2e / the per-version publish flow); the assertion below still pins active==declared.
+ARG ACTIVE_TOOLCHAIN=1.97.1-x86_64-unknown-linux-gnu
 USER root
 # The toolchain the map records is the one solana-verify will read with `rustup show active-toolchain`.
 RUN set -eux; \
