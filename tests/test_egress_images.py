@@ -80,6 +80,17 @@ def test_build_argv_pins_dependency_by_digest(tmp_path):
     assert ["--platform", "linux/amd64"] == argv[:2]
 
 
+def test_build_argv_selects_a_stage_only_when_the_entry_names_one():
+    images = load_images()
+    entry = next(i for i in images.plan({"git-fetch"})["level0"] if i["name"] == "git-fetch")
+    assert "--target" not in images.build_argv(entry, None)
+    argv = images.build_argv({**entry, "target": "build"}, None)
+    assert argv[argv.index("--target") + 1] == "build"
+    for bad in ("Build", "build stage", "../x", ""):
+        with pytest.raises(SystemExit):
+            images.build_argv({**entry, "target": bad}, None)
+
+
 def test_actions_pin_check(tmp_path):
     spec = importlib.util.spec_from_file_location("pins", ROOT / "scripts" / "check_actions_pinned.py")
     pins = importlib.util.module_from_spec(spec)

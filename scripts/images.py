@@ -8,8 +8,10 @@
 
 Every `docker/<dir>/Dockerfile` is an image: name `<dir>`, repository `ghcr.io/soken-ltd/<dir>`,
 built with the repo root as context. A `docker/<dir>/variants.json` list
-(`[{"name", "tag", "build_args"}]`) turns one Dockerfile into several images (one per toolchain
-line). The tag comes from the lock entry with that repository, else `0.1.0-dev`.
+(`[{"name", "tag", "build_args", "target"}]`) turns one Dockerfile into several images (one per
+toolchain line); `target` names a Dockerfile stage (default: the last one). The tag comes from the
+lock entry with that repository, else `0.1.0-dev`. The per-version Solana build images are planned
+by `soken_review.adapters.solana.images plan` in this same entry shape (solana-images.yml).
 
 A Dockerfile `FROM ghcr.io/soken-ltd/<other>:<tag>` makes `<other>` a dependency: it is built in
 an earlier level and the dependant is built against its pushed digest (build context override),
@@ -37,6 +39,7 @@ _TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _FROM_RE = re.compile(r"^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)", re.IGNORECASE | re.MULTILINE)
 _ARG_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_TARGET_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
 def _load_lock() -> dict:
@@ -65,8 +68,11 @@ def discover(lock: dict) -> list[dict]:
             repository = f"{REGISTRY}/{name}"
             tag = v.get("tag") or _tag_for(repository, lock)
             args = v.get("build_args") or {}
+            target = v.get("target")
             if not _NAME_RE.match(name) or not _TAG_RE.match(tag):
                 raise SystemExit(f"bad image name or tag: {name}:{tag}")
+            if target is not None and not _TARGET_RE.match(str(target)):
+                raise SystemExit(f"bad build target in {name}: {target!r}")
             for key, value in args.items():
                 if not _ARG_RE.match(key) or not re.match(r"^[A-Za-z0-9_.:/@+-]{0,200}$", str(value)):
                     raise SystemExit(f"bad build arg in {name}: {key}")
@@ -74,6 +80,7 @@ def discover(lock: dict) -> list[dict]:
                 "name": name, "dir": d.relative_to(ROOT).as_posix(),
                 "dockerfile": dockerfile.relative_to(ROOT).as_posix(),
                 "repository": repository, "tag": tag, "build_args": args, "deps": deps,
+                **({"target": target} if target else {}),
                 # the FROM refs a dependant names, overridden at build time by the dep's digest
                 "dep_refs": sorted({f for f in froms if f.startswith(REGISTRY + "/")}),
             })
@@ -146,6 +153,10 @@ def build_argv(image: dict, deps_dir: Path | None) -> list[str]:
     Each in-repo FROM is replaced by the dependency's pushed digest through a named build
     context, so a dependant never builds on a floating tag."""
     argv = ["--platform", PLATFORM, "--provenance=false", "--sbom=false", "-f", image["dockerfile"]]
+    if "target" in image:
+        if not _TARGET_RE.match(str(image["target"])):
+            raise SystemExit(f"{image['name']}: bad build target {image['target']!r}")
+        argv += ["--target", image["target"]]
     for key, value in sorted(image["build_args"].items()):
         argv += ["--build-arg", f"{key}={value}"]
     for ref in image["dep_refs"]:
