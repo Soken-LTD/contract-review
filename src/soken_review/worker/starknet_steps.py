@@ -20,6 +20,7 @@ from typing import Any
 
 from ..adapters.base import BuildResult, Candidate, Compiler
 from ..db.job_repo import JobRepo
+from ..mapping import step as _map_step
 from ..pinning.store import PinnedSource
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,8 @@ async def run_step(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
         await _build(sup, step, job)
     elif name == "analyze":
         await _analyze(sup, step, job)
+    elif name == "map":
+        await _map(sup, step, job)
     else:
         await sup._mark_step(step["id"], "done")
 
@@ -336,5 +339,36 @@ async def _analyze(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
     fields: dict[str, Any] = {"map_status": "full" if br.status == "ok" and extras["facts"] == "complete" else "partial"}
     if degraded:
         fields["analyzer_degraded"] = True
-    await _finish(sup, step, step_status="done", to_state="ready", fields=fields,
-                  provenance={"leads": len(leads), "status": static_map.get("status")})
+    # The map step (lexical map.v1, J1 to J5 flags, static facts) follows and moves the job to ready.
+    await _finish(sup, step, step_status="done", to_state=None, fields=fields,
+                  provenance={"leads": len(leads), "status": static_map.get("status")},
+                  next_step={"step": "map", "container": False, "units": 0, "ram_mb": 0, "max_attempts": 2})
+
+
+# --------------------------------------------------------------------------------------------- map
+
+async def _map(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
+    """Lexical map.v1, J1 to J5 flags and static facts from the pin (04 2.1, 12), family `cairo`.
+
+    `map_status` stays as the analyze step set it from the Sierra and chain facts (07): the lexical
+    layer never has a solc semantic layer and would only downgrade it. The step's provenance carries
+    the lexical summary (files, spans, flags per rule, facts).
+    """
+    job_id = job["job_id"]
+    out = sup._job_dir(job_id)
+    br_path = out / "build_result.json"
+    build = json.loads(br_path.read_text()) if br_path.exists() else {"status": "failed"}
+    build_ok = build.get("status") == "ok"
+    cs_path = out / "chain_state.json"
+    chain_state = json.loads(cs_path.read_text()) if cs_path.exists() else None
+    cands_path = out / "candidates.json"
+    cands = json.loads(cands_path.read_text()) if cands_path.exists() else []
+    detail = None if build_ok else (build.get("stderr_head") or build.get("reason"))
+    summary = await asyncio.get_running_loop().run_in_executor(None, lambda: _map_step.run_map_step(
+        sup._pin_root, job_id,
+        family="cairo", chain="starknet",
+        solc_output_path=None, build_ok=build_ok, job=job,
+        chain_state=chain_state, candidate=cands[0] if cands else None,
+        nsloc=build.get("nsloc"), analyzers={}, build_detail=detail,
+    ))
+    await _finish(sup, step, step_status="done", to_state="ready", provenance=summary)
