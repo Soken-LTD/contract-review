@@ -991,10 +991,10 @@ class Supervisor:
             # build, before any later container runs, the solc output is copied into the job dir
             # (never mounted) with its hash; the restart path and the map step read only the copy.
             "output_sha256": _snapshot_solc_output(out_dir, build_result.work_dir),
-            # B4 decision provenance: b4_source, b4_rejected, libraries_unverified,
-            # had_unknown_settings — included only when present so the dict stays sparse.
-            **{k: v for k, v in build_result.build_notes.items()
-               if k in ("b4_source", "b4_rejected", "libraries_unverified", "had_unknown_settings")},
+            # B4 decision provenance and its diagnostics — included only when present so the dict
+            # stays sparse (forge_stderr_head is capped, printable, repo-influenced text; never fed
+            # to detection).
+            **{k: v for k, v in build_result.build_notes.items() if k in _BUILD_NOTE_KEYS},
         }
         build_path.write_text(json.dumps(result), encoding="utf-8")
 
@@ -1346,6 +1346,11 @@ def _load_build_result(path: Path) -> dict[str, Any]:
 
 
 _SOLC_OUTPUT_COPY = "solc_output.json"
+# build_notes keys copied into build_result.json (B4 decision + why it fell back, 05 4.2).
+_BUILD_NOTE_KEYS = frozenset({
+    "b4_source", "b4_rejected", "b4_detail", "libraries_unverified", "had_unknown_settings",
+    "forge_version_mismatch", "forge_rc", "forge_stderr_head",
+})
 _MAX_SOLC_OUTPUT_BYTES = 512 * 1024 * 1024
 
 
