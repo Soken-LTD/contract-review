@@ -9,6 +9,13 @@ From the plan (F23):
   et.ElementaryTypeName.append("trcToken")
   sv.SOLIDITY_VARIABLES_COMPOSED.update({"msg.tokenid": "uint256", "msg.tokenvalue": "uint256"})
 
+Where the two symbols live (slither-analyzer 0.11.6, the pinned version):
+  slither.core.solidity_types.elementary_type.ElementaryTypeName      (list)
+  slither.core.declarations.solidity_variables.SOLIDITY_VARIABLES_COMPOSED (dict)
+The dict is defined once and imported BY NAME into
+slither.solc_parsing.expressions.expression_parsing, so it must be mutated in
+place (never rebound) for the parser to see the patch.
+
 This module is AGPL-3.0. Slither itself is AGPL-3.0. No Slither files are
 modified; only in-memory lists are extended. The 05 8.2 statement
 "GPL and AGPL tools run unmodified" holds.
@@ -19,20 +26,46 @@ is invoked on a TRON candidate. misfires -> tron_noise.json (UV5-11).
 
 from __future__ import annotations
 
+import importlib
 import logging
 
 logger = logging.getLogger(__name__)
 
 _APPLIED = False
 
+# Candidate modules for SOLIDITY_VARIABLES_COMPOSED, most specific first.
+# 0.11.x defines it in core.declarations.solidity_variables; the other entry
+# is kept for older layouts so a downgrade does not silently drop the patch.
+_COMPOSED_MODULES = (
+    "slither.core.declarations.solidity_variables",
+    "slither.core.variables.state_variable",
+)
+
+_COMPOSED_UPDATES = {"msg.tokenid": "uint256", "msg.tokenvalue": "uint256"}
+
+
+def _find_composed() -> dict | None:
+    """Return the live SOLIDITY_VARIABLES_COMPOSED dict, or None if no known module exposes it."""
+    for mod_name in _COMPOSED_MODULES:
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            continue
+        composed = getattr(mod, "SOLIDITY_VARIABLES_COMPOSED", None)
+        if isinstance(composed, dict):
+            logger.debug("tron_shim: SOLIDITY_VARIABLES_COMPOSED found in %s", mod_name)
+            return composed
+    return None
+
 
 def apply_tron_shim() -> bool:
     """Patch Slither type lists for TRON support.
 
-    Returns True on success, False if Slither is not installed or the
-    expected attributes are missing (shim is not hard-required: the analyze
-    step records 'shim_unavailable' in static_map and falls through to
-    semgrep-only analysis).
+    Returns True only when BOTH patches are in place. Returns False if Slither is
+    not installed or SOLIDITY_VARIABLES_COMPOSED is not where any known Slither
+    layout puts it; the analyze step then records 'shim_unavailable' in
+    static_map and falls through to semgrep-only analysis. A False result does
+    not latch, so a later call can succeed.
     """
     global _APPLIED
     if _APPLIED:
@@ -44,43 +77,28 @@ def apply_tron_shim() -> bool:
         logger.debug("tron_shim: slither not installed; skipping")
         return False
 
-    try:
-        import slither.core.variables.state_variable as sv
-    except ImportError:
-        # Older Slither layout
-        sv = None
-
     # Patch 1: ElementaryTypeName list (F23)
     # Slither uses et.ElementaryTypeName (a list) to validate type strings.
-    if hasattr(et, "ElementaryTypeName"):
-        type_list = et.ElementaryTypeName
-        if "trcToken" not in type_list:
-            type_list.append("trcToken")
-            logger.debug("tron_shim: appended 'trcToken' to ElementaryTypeName")
-    else:
-        logger.debug("tron_shim: ElementaryTypeName not found in slither.core.solidity_types.elementary_type")
+    type_list = getattr(et, "ElementaryTypeName", None)
+    if not isinstance(type_list, list):
+        logger.warning("tron_shim: ElementaryTypeName not found in %s", et.__name__)
+        return False
+    if "trcToken" not in type_list:
+        type_list.append("trcToken")
+        logger.debug("tron_shim: appended 'trcToken' to ElementaryTypeName")
 
     # Patch 2: SOLIDITY_VARIABLES_COMPOSED dict (F23)
     # Slither uses this dict to resolve msg.* virtual variables.
-    if sv is not None and hasattr(sv, "SOLIDITY_VARIABLES_COMPOSED"):
-        composed = sv.SOLIDITY_VARIABLES_COMPOSED
-        updates = {"msg.tokenid": "uint256", "msg.tokenvalue": "uint256"}
-        for key, val in updates.items():
-            if key not in composed:
-                composed[key] = val
-        logger.debug("tron_shim: updated SOLIDITY_VARIABLES_COMPOSED with msg.tokenid, msg.tokenvalue")
-    else:
-        # Try alternative location in older Slither versions
-        try:
-            import slither.slithir.variables.state_variable as sv2
-            if hasattr(sv2, "SOLIDITY_VARIABLES_COMPOSED"):
-                composed2 = sv2.SOLIDITY_VARIABLES_COMPOSED
-                for key, val in {"msg.tokenid": "uint256", "msg.tokenvalue": "uint256"}.items():
-                    if key not in composed2:
-                        composed2[key] = val
-                logger.debug("tron_shim: updated SOLIDITY_VARIABLES_COMPOSED (alt location)")
-        except (ImportError, AttributeError):
-            logger.debug("tron_shim: SOLIDITY_VARIABLES_COMPOSED not found; msg.tokenid/tokenvalue may crash Slither")
+    composed = _find_composed()
+    if composed is None:
+        logger.warning(
+            "tron_shim: SOLIDITY_VARIABLES_COMPOSED not found in %s; msg.tokenid/tokenvalue would crash Slither",
+            ", ".join(_COMPOSED_MODULES),
+        )
+        return False
+    for key, val in _COMPOSED_UPDATES.items():
+        composed.setdefault(key, val)
+    logger.debug("tron_shim: updated SOLIDITY_VARIABLES_COMPOSED with msg.tokenid, msg.tokenvalue")
 
     _APPLIED = True
     return True

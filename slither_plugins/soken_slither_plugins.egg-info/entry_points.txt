@@ -1,0 +1,2 @@
+[slither_analyzer.plugin]
+soken-hl = slither_plugins:make_plugin
