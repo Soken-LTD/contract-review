@@ -96,7 +96,7 @@ async def onchain_facts(rpc: Any, address: str, block: int, map_doc: dict[str, A
     out: list[dict[str, Any]] = []
     names = _unit_function_names(map_doc, unit_id)
     try:
-        bal = await rpc._call("eth_getBalance", [address, hex(block)])
+        bal = await rpc.get_balance(address, block)
         out.append(fact("onchain.balance", int(bal, 16), unit="wei", unit_id=unit_id,
                         source=f"eth_getBalance at block {block}"))
     except Exception as exc:  # noqa: BLE001  # a failed read is no fact (04 1.3)

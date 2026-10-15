@@ -96,14 +96,17 @@ TARGETS: list[dict] = [
         },
         "why": "no .gitmodules; all contracts/ committed in-tree; @openzeppelin/test-helpers devDep is JS-only",
     },
-    # (c) canonical-weth + WETH9 deployment: 13.1 comparison
+    # (c) canonical-weth + WETH9 deployment: 13.1 comparison, tier A live.
+    #     The commit is the one whose contracts/WETH9.sol is the deployed source (the Sourcify
+    #     full match for 0xC02a..., solc 0.4.19; later commits add `emit`/`address(this)` and
+    #     cannot even parse under the deployment's compiler, which gives not_checkable / tier B).
     {
         "name": "weth9-deployed",
-        "expect": {"state": "ready"},
+        "expect": {"state": "ready", "tier": "A"},
         "source": {
             "kind": "repo",
             "repo_url": "https://github.com/gnosis/canonical-weth",
-            "commit": "0dd1ea3e295eef916d0c6223ec63141137d22d67",
+            "commit": "3c3b0292fb007d41d5d718bb3195f824a0222b80",
             "deployment": {
                 "chain": "evm",
                 "chain_id": 1,
@@ -311,6 +314,11 @@ async def run(names: list[str]) -> int:
                     ok &= state_ok
                     if not state_ok:
                         print(f"    FAIL state: got {row['state']!r}, want one of {expected_states!r}")
+                if "tier" in t["expect"]:
+                    tier_ok = row.get("tier") == t["expect"]["tier"]
+                    ok &= tier_ok
+                    if not tier_ok:
+                        print(f"    FAIL tier: got {row.get('tier')!r}, want {t['expect']['tier']!r}")
                 if "error_code" in t["expect"]:
                     ec_ok = row.get("error_code") == t["expect"]["error_code"]
                     ok &= ec_ok
