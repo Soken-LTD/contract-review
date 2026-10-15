@@ -8,7 +8,12 @@
       "soken_image": {
         "repository": "ghcr.io/soken-ltd/solana-build",
         "tag": "1.18.26",
-        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        "digest": "sha256:56b74b55bf74aef9eaa7fae850ff3ec0e511ef03c8f43ba8f63521b31e5bde5c",
+        "built": {
+          "commit": "08105e930fceff7f5af9139ce790e7744cc20a8b",
+          "run_id": "38738741483",
+          "trivy_critical": 25
+        }
       },
       "working_dir": "/build",
       "cargo_home": "/usr/local/cargo",
@@ -29,7 +34,12 @@
       "soken_image": {
         "repository": "ghcr.io/soken-ltd/solana-build",
         "tag": "3.1.8",
-        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        "digest": "sha256:efab4bf444fd3ec2405f2acd90f786e468655de166f94f43ef5af28408b7c1b5",
+        "built": {
+          "commit": "08105e930fceff7f5af9139ce790e7744cc20a8b",
+          "run_id": "38738741483",
+          "trivy_critical": 25
+        }
       },
       "working_dir": "/build",
       "cargo_home": "/usr/local/cargo",
@@ -50,7 +60,12 @@
       "soken_image": {
         "repository": "ghcr.io/soken-ltd/solana-build",
         "tag": "3.1.10",
-        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        "digest": "sha256:0ecea163e47fd0d333cf4a9491795f25dfdc12d5b668294c52d85d63604c8b64",
+        "built": {
+          "commit": "08105e930fceff7f5af9139ce790e7744cc20a8b",
+          "run_id": "38738741483",
+          "trivy_critical": 25
+        }
       },
       "working_dir": "/build",
       "cargo_home": "/usr/local/cargo",
@@ -71,7 +86,12 @@
       "soken_image": {
         "repository": "ghcr.io/soken-ltd/solana-build",
         "tag": "4.3.0",
-        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        "digest": "sha256:200fd84edb02b4a1a59556bc17ff272427f1ed86492171e1ce32d32edff57460",
+        "built": {
+          "commit": "08105e930fceff7f5af9139ce790e7744cc20a8b",
+          "run_id": "38738741483",
+          "trivy_critical": 16
+        }
       },
       "working_dir": "/build",
       "cargo_home": "/usr/local/cargo",
