@@ -396,8 +396,8 @@ def test_coverage_section_starts_on_a_new_page(tmp_path):
     coverage section began near the bottom of a page and paged.js spilled its areas table into
     overflow columns (layout_overflow, section 3.6 pages wide). A page break before it is the
     deterministic fix (verified in a browser: no overflow, no near-empty page)."""
-    from soken_review.report.kit.build import build  # noqa: PLC0415
-    from tests.report.fixtures import report as fixture_report  # noqa: PLC0415
+    from soken_review.report.kit.build import build
+    from tests.report.fixtures import report as fixture_report
 
     r = fixture_report(tier="A", label_key="tier_a")
     r["meta"]["provenance"]["upgrade_authority"] = "NotChecked"
