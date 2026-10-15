@@ -183,6 +183,10 @@ class RpcClient:
         """eth_getStorageAt at the pinned block. slot is 0x-prefixed 32-byte hex."""
         return await self._call("eth_getStorageAt", [address, slot, self._block_tag(block)])
 
+    async def get_balance(self, address: str, block: int | str | None = None) -> str:
+        """eth_getBalance at the pinned block. Returns 0x-prefixed hex wei."""
+        return await self._call("eth_getBalance", [address, self._block_tag(block)])
+
     async def eth_call(
         self,
         to: str,
@@ -271,6 +275,9 @@ class RpcClientPool:
 
     async def get_storage_at(self, address: str, slot: str, block: int | str | None = None) -> str:
         return await self._try_call("eth_getStorageAt", "get_storage_at", address, slot, block)
+
+    async def get_balance(self, address: str, block: int | str | None = None) -> str:
+        return await self._try_call("eth_getBalance", "get_balance", address, block)
 
     async def eth_call(
         self,
