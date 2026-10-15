@@ -600,9 +600,9 @@ async def test_full_pipeline_happy_path(tmp_path: Path) -> None:
     mock_pool3_pinned.answered_by = "https://rpc.test"
     mock_pool3.with_block = MagicMock(return_value=mock_pool3_pinned)
     # chain_state 1 also uses RpcClientPool (instantiated with block kwarg).
-    # onchain_facts calls rpc._call("eth_getBalance", ...) — must return a hex string.
+    # onchain_facts calls rpc.get_balance(address, block) — must return a hex string.
     mock_rpc_cs1 = AsyncMock()
-    mock_rpc_cs1._call = AsyncMock(return_value="0x3e8")   # eth_getBalance → 1000 wei
+    mock_rpc_cs1.get_balance = AsyncMock(return_value="0x3e8")   # eth_getBalance → 1000 wei
     mock_rpc_cs1.eth_call = AsyncMock(return_value="0x" + "0" * 64)
     mock_rpc_cs1.get_storage_at = AsyncMock(return_value="0x" + "0" * 64)
     mock_rpc_cs1.answered_by = "https://rpc.test"

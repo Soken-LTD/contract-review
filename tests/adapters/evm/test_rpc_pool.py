@@ -15,6 +15,7 @@ import pytest
 from soken_review.adapters.evm.rpc import (
     _TRANSIENT_HTTP,
     RpcAllEndpointsFailed,
+    RpcClient,
     RpcClientPool,
     RpcError,
     _redact,
@@ -336,3 +337,36 @@ class TestUrlRedactionSecurity:
                 f"Key found in exception chain node {type(node).__name__}: {exc_text!r}"
             )
             node = node.__cause__ or node.__context__
+
+
+class TestGetBalance:
+    """eth_getBalance is a public client and pool method (chain_state 1 reads onchain.balance
+    through it; the pool has no `_call`, which the first live run showed)."""
+
+    @pytest.mark.asyncio
+    async def test_client_get_balance_uses_the_pinned_block(self):
+        client = RpcClient("https://rpc.test/", block=123)
+        client._call = AsyncMock(return_value="0x3e8")
+        assert await client.get_balance("0xabc") == "0x3e8"
+        client._call.assert_awaited_once_with("eth_getBalance", ["0xabc", hex(123)])
+
+    @pytest.mark.asyncio
+    async def test_client_get_balance_explicit_block(self):
+        client = RpcClient("https://rpc.test/")
+        client._call = AsyncMock(return_value="0x0")
+        await client.get_balance("0xabc", block=7)
+        client._call.assert_awaited_once_with("eth_getBalance", ["0xabc", "0x7"])
+
+    @pytest.mark.asyncio
+    async def test_pool_get_balance_fails_over(self):
+        dead = AsyncMock()
+        dead._url = "https://dead.rpc/KEY"
+        dead.get_balance = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        live = AsyncMock()
+        live._url = "https://live.rpc/"
+        live.get_balance = AsyncMock(return_value="0x3e8")
+        pool = RpcClientPool(["https://dead.rpc/KEY", "https://live.rpc/"], block=99)
+        pool._clients = MagicMock(return_value=[dead, live])
+        assert await pool.get_balance("0xabc", 99) == "0x3e8"
+        live.get_balance.assert_awaited_once_with("0xabc", 99)
+        assert pool.answered_by == "https://live.rpc"      # redacted host form

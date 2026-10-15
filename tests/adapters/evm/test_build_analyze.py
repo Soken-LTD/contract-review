@@ -1582,3 +1582,88 @@ async def test_supervisor_persists_b4_rejected_in_build_result_json(tmp_path: Pa
     saved = json.loads(build_path.read_text())
     assert saved.get("b4_rejected") == "forge_unavailable"
     assert "b4_source" not in saved
+
+
+class TestForgeB4LiveFailures:
+    """Two defects seen in the first live evm-repo-e2e run (2026-10-15): forge failed on every
+    repo and the reason was invisible, so a B3 fallback hid both."""
+
+    def _cand_with_tree(self, tmp_path):
+        from soken_review.adapters.base import Candidate, Compiler
+        (tmp_path / "src_tree").mkdir()
+        return Candidate(
+            provider="repo",  # type: ignore[arg-type]
+            files={"src/C.sol": "pragma solidity ^0.8.0;\ncontract C {}\n"},
+            sha256="abc", language="solidity",
+            compiler=Compiler(version="0.8.20+commit.a1b79de6", version_pinned_by="pragma"),
+            settings={}, std_json_input=None, entry_contract=None,
+            src_tree_dir=str(tmp_path / "src_tree"),
+        )
+
+    def test_forge_out_is_made_writable_for_the_sandbox_user(self, monkeypatch, tmp_path):
+        """forge runs as uid 10001; a 0755 dir made by the supervisor user is not writable for it,
+        so forge cannot emit build-info and exits non-zero. The out dir goes through
+        sandbox_writable_dir like every other sandbox output dir."""
+        import subprocess
+
+        import soken_review.adapters.evm.build as build_mod
+        monkeypatch.setattr(build_mod, "_BUILD_IMAGE", "soken/evm-analyze:test")
+        monkeypatch.setattr(build_mod, "docker_argv", lambda **kw: ["true"])
+        made: list = []
+
+        def fake_writable(path):
+            path.mkdir(parents=True, exist_ok=True)
+            made.append(path)
+            return path
+        monkeypatch.setattr(build_mod, "sandbox_writable_dir", fake_writable)
+        proc_mock = type("P", (), {"communicate": lambda self, timeout=None: (b"", b""), "returncode": 1})()
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc_mock)
+
+        class _FakeCache:
+            _root = tmp_path / "cache"
+        build_mod.forge_build_repo(str(self._cand_with_tree(tmp_path).src_tree_dir), tmp_path / "out",
+                                   tmp_path / "linux-amd64" / "solc-0.8.20", _FakeCache())  # type: ignore[arg-type]
+        assert made == [tmp_path / "out" / "forge_out"]
+
+    def test_forge_failure_detail_reaches_build_notes(self, monkeypatch, tmp_path):
+        """rc and a capped, printable stderr head are recorded next to b4_rejected so a live run
+        shows why B4 fell back to B3."""
+        import subprocess
+
+        import soken_review.adapters.evm.build as build_mod
+        from soken_review.adapters.base import BuildResult
+        monkeypatch.setattr(build_mod, "_BUILD_IMAGE", "soken/evm-analyze:test")
+        monkeypatch.setattr(build_mod, "_DIRECT_SOLC", False)
+        monkeypatch.setattr(build_mod, "docker_argv", lambda **kw: ["true"])
+        monkeypatch.setattr(build_mod, "sandbox_writable_dir", lambda p: (p.mkdir(parents=True, exist_ok=True), p)[1])
+        noise = "Error: \x1b[31mfailed\x1b[0m to write /work/out\x00\n" + "x" * 5000
+        proc_mock = type("P", (), {
+            "communicate": lambda self, timeout=None: (b"", noise.encode()),
+            "returncode": 1,
+        })()
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc_mock)
+        cand = self._cand_with_tree(tmp_path)
+        fake_br = BuildResult(candidate=cand, status="ok", nsloc=1)
+        monkeypatch.setattr(build_mod, "_run_build", lambda *a, **kw: fake_br)
+        monkeypatch.setattr(build_mod, "SolcCache", lambda *a, **kw: type("C", (), {"_root": tmp_path, "binary": lambda self, v: tmp_path / "linux-amd64" / "solc"})())
+
+        br = build_mod.build(cand, work_dir=tmp_path / "work")
+
+        notes = br.build_notes
+        assert notes["b4_rejected"] == "forge_failed"
+        assert notes["forge_rc"] == 1
+        head = notes["forge_stderr_head"]
+        assert head.startswith("Error: failed to write /work/out")      # ANSI and NUL stripped
+        assert len(head) <= build_mod._FORGE_STDERR_HEAD_CHARS
+        assert "\x1b" not in head and "\x00" not in head
+
+    def test_forge_success_records_no_failure_detail(self, monkeypatch, tmp_path):
+        import soken_review.adapters.evm.build as build_mod
+        monkeypatch.setattr(build_mod, "_BUILD_IMAGE", None)
+        from soken_review.adapters.base import BuildResult
+        cand = self._cand_with_tree(tmp_path)
+        monkeypatch.setattr(build_mod, "_DIRECT_SOLC", True)
+        monkeypatch.setattr(build_mod, "_run_build", lambda *a, **kw: BuildResult(candidate=cand, status="ok", nsloc=1))
+        br = build_mod.build(cand, work_dir=tmp_path / "work")
+        assert br.build_notes.get("b4_rejected") == "forge_unavailable"
+        assert "forge_rc" not in br.build_notes and "forge_stderr_head" not in br.build_notes

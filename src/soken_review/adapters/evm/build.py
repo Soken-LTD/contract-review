@@ -41,7 +41,7 @@ from typing import Any, NamedTuple
 from soken_review.adapters.base import Artifact, BuildResult, Candidate
 from soken_review.adapters.evm.compiler import CompilerCacheError, SolcCache, get_cache
 from soken_review.sandbox.output import UnsafeOutput, read_output_files
-from soken_review.sandbox.profile import StepLimits, docker_argv, locked_image
+from soken_review.sandbox.profile import StepLimits, docker_argv, locked_image, sandbox_writable_dir
 
 # Repo-relative .sbx dir (colima only shares $HOME)
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -80,6 +80,17 @@ _OPT_RUNS_MAX: int = 2**32 - 1
 
 # forge build-info max size (single file)
 _FORGE_BUILD_INFO_MAX_BYTES: int = 50 * 1024 * 1024   # 50 MiB
+
+
+_FORGE_STDERR_HEAD_CHARS = 1500   # forge stderr kept in build_notes when B4 fails (diagnostic only)
+
+
+def _printable_head(data: bytes, limit: int = _FORGE_STDERR_HEAD_CHARS) -> str:
+    """Capped, printable text from a sandbox tool's stderr: ANSI escapes and control bytes dropped.
+    The text is repo-influenced and diagnostic only; it is never fed to detection."""
+    text = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", data.decode("utf-8", errors="replace"))
+    text = "".join(ch for ch in text if ch == "\n" or ch.isprintable())
+    return text.strip()[:limit]
 
 
 def _forge_build_timeout() -> int:
@@ -400,7 +411,9 @@ def build(candidate: Candidate, cache_dir: Path | None = None, work_dir: Path | 
     b4_notes: dict = {}
     if candidate.src_tree_dir:
         _wdir = Path(work_dir) if work_dir is not None else Path(tempfile.mkdtemp(dir=_SBX_ROOT))
-        forge_result, forge_fail_reason = forge_build_repo(candidate.src_tree_dir, _wdir, solc_bin, cache)
+        forge_diag: dict = {}
+        forge_result, forge_fail_reason = forge_build_repo(candidate.src_tree_dir, _wdir, solc_bin, cache,
+                                                           diag=forge_diag)
         if forge_result is not None:
             match_ok, reject_reason = _forge_sources_match_pin(
                 forge_result.std_input, candidate.files,
@@ -430,8 +443,10 @@ def build(candidate: Candidate, cache_dir: Path | None = None, work_dir: Path | 
                 # sources differ → mark untrusted (finding 3)
                 candidate.untrusted_inputs = True
         elif forge_fail_reason:
-            # forge_build_repo returned None: record why so the fallback is visible
+            # forge_build_repo returned None: record why (and forge's rc / stderr head when it ran)
+            # so the fallback to B3 is visible in build_result.json.
             b4_notes["b4_rejected"] = forge_fail_reason
+            b4_notes.update(forge_diag)
 
     # Build and sanitize std-json input (B2/B3 path)
     try:
@@ -741,6 +756,7 @@ def forge_build_repo(
     out_dir: Path,
     solc_bin: Path,
     cache: SolcCache,
+    diag: dict | None = None,
 ) -> tuple[ForgeStdInput | None, str]:
     """B4: run forge to resolve sources+remappings into a Standard JSON input only.
 
@@ -779,8 +795,9 @@ def forge_build_repo(
     if not src.is_dir() or src.is_symlink():
         return None, "forge_failed"
 
-    forge_out = out_dir / "forge_out"
-    forge_out.mkdir(parents=True, exist_ok=True)
+    # forge runs as the sandbox user: the out dir must be writable for it (a 0755 dir owned by the
+    # supervisor user makes forge fail on build-info with no other symptom).
+    forge_out = sandbox_writable_dir(out_dir / "forge_out")
 
     # Solc inside container: /cache/<platform>/<filename>
     solc_container_path = f"/cache/{solc_bin.parent.name}/{solc_bin.name}"
@@ -843,6 +860,11 @@ def forge_build_repo(
     except OSError:
         return None, "forge_failed"
 
+    if diag is not None:
+        diag["forge_rc"] = proc.returncode
+        head = _printable_head(_stderr or b"")
+        if head:
+            diag["forge_stderr_head"] = head
     if proc.returncode != 0:
         return None, "forge_failed"
 
