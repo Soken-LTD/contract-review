@@ -1,0 +1,17 @@
+# Aptos stock lint -> category and raw value (plan v4 07 7.3; source
+# third_party/move/tools/move-linter/src at aptos-cli-v9.6.0). The plan leaves raw values of the
+# first four rows to U-03; until then they carry the conservative values below (UNVERIFIED).
+# Every other lint is move.best_practice / info (07 7.3 "all others").
+lints:
+  unsafe_friend_package_entry: {category: move.visibility, raw: low}
+  needless_visibility: {category: move.visibility, raw: info}
+  mutable_view_function: {category: move.view_mutation, raw: medium}
+  known_to_abort: {category: move.abort_dos, raw: medium}
+  aborting_overflow_checks: {category: move.abort_dos, raw: low}
+  almost_swapped: {category: move.comparison, raw: medium}
+  self_assignment: {category: move.comparison, raw: low}
+  equal_operands_in_bin_op: {category: move.comparison, raw: low}
+  unreachable_code: {category: move.best_practice, raw: info}
+  unused_function: {category: move.best_practice, raw: info}
+  unused_constant: {category: move.best_practice, raw: info}
+  unused_struct: {category: move.best_practice, raw: info}
