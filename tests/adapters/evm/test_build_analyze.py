@@ -1701,7 +1701,11 @@ class TestForgeDynamicTestLinking:
         cmd = self._run_forge_argv(monkeypatch, tmp_path)
         assert cmd[:2] == ["forge", "build"]
         assert "--no-dynamic-test-linking" in cmd
-        assert "--offline" in cmd and "--no-cache" in cmd and "--no-auto-detect" in cmd    # unchanged
+        # forge 1.8.5: "the argument '--no-cache' cannot be used with '--no-dynamic-test-linking'";
+        # isolation from the repo's cache/ is the fresh tmpfs cache path instead.
+        assert "--no-cache" not in cmd
+        assert cmd[cmd.index("--cache-path") + 1] == "/tmp/forge-cache"
+        assert "--offline" in cmd and "--no-auto-detect" in cmd                            # unchanged
 
     def test_gate_reports_which_source_failed_and_why(self):
         content = "pragma solidity ^0.8.26;\n"

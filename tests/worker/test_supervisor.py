@@ -1111,3 +1111,49 @@ async def test_build_missing_import_injection_text_dropped(tmp_path: Path) -> No
     for line in log_records:
         assert injection not in line, f"Injection text leaked to log: {line!r}"
         assert injection_pkg not in line, f"Injection pkg leaked to log: {line!r}"
+
+
+@pytest.mark.asyncio
+async def test_build_result_json_carries_b4_diagnostics(tmp_path: Path) -> None:
+    """build_result.json keeps the B4 decision AND why it fell back (forge rc, stderr head, gate
+    detail): the first live runs showed only `b4_rejected: forge_failed` because the allowlist
+    dropped everything else, which made the failure undiagnosable from CI artifacts."""
+    store = FakeStore()
+    job = store.add_job("job_TESTB4DIAG", chain_id=1, address="0xabcd")
+    step = store.add_step("job_TESTB4DIAG", "build", container=True, units=2, ram_mb=4096, max_attempts=1)
+    sup = _make_supervisor(store, tmp_path)
+    out_dir = tmp_path.parent / "work" / "job_TESTB4DIAG"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    from soken_review.pinning.store import PinnedSource
+    PinnedSource.from_files({"src/C.sol": b"contract C {}"}).persist(tmp_path, "job_TESTB4DIAG")
+    (out_dir / "candidates.json").write_text(json.dumps([_fake_candidate()]))
+
+    result = BuildResult(candidate=MagicMock(std_json_input=None), status="ok", nsloc=1, work_dir=None)
+    result.build_notes.update({
+        "b4_rejected": "sources_differ", "b4_detail": "missing_in_tree:foundry-pp/DeployHelper74.sol",
+        "forge_rc": 0, "forge_stderr_head": "warning[unsafe-typecast]: ...",
+        "forge_version_mismatch": True, "scratch": "never serialized",
+    })
+    conn_ctx = AsyncMock()
+    conn_ctx.__aenter__ = AsyncMock(return_value=conn_ctx)
+    conn_ctx.__aexit__ = AsyncMock(return_value=False)
+    txn_ctx = AsyncMock()
+    txn_ctx.__aenter__ = AsyncMock(return_value=txn_ctx)
+    txn_ctx.__aexit__ = AsyncMock(return_value=False)
+    conn_ctx.transaction = MagicMock(return_value=txn_ctx)
+    repo_mock = AsyncMock()
+
+    with patch("soken_review.worker.supervisor.JobRepo", return_value=repo_mock), \
+         patch("soken_review.worker.supervisor._build_mod.build", return_value=result), \
+         patch.object(sup, "_get_job", new=AsyncMock(return_value=job.as_dict())), \
+         patch.object(sup, "_mark_step", new=AsyncMock()), \
+         patch.object(sup, "_after_build", new=AsyncMock()):
+        sup._pool.connection = MagicMock(return_value=conn_ctx)
+        await sup._run_build(step.as_dict())
+
+    br = json.loads((out_dir / "build_result.json").read_text())
+    assert br["b4_rejected"] == "sources_differ"
+    assert br["b4_detail"] == "missing_in_tree:foundry-pp/DeployHelper74.sol"
+    assert br["forge_rc"] == 0 and br["forge_stderr_head"].startswith("warning[unsafe-typecast]")
+    assert br["forge_version_mismatch"] is True
+    assert "scratch" not in br                                     # the allowlist still applies

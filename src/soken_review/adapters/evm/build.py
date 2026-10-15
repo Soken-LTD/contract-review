@@ -822,9 +822,11 @@ def forge_build_repo(
         "--build-info",       # emit out/build-info/<hash>.json with Standard JSON input
         "--skip", "test", "script",
         "--out", "/work/out",
+        # The cache lives on the container's fresh tmpfs, never in the repo's cache/ (read-only
+        # /work/src), so no cached state from the repo can enter. forge rejects --no-cache together
+        # with --no-dynamic-test-linking, so the empty cache path is the isolation.
         "--cache-path", "/tmp/forge-cache",
         "--use", solc_container_path,  # our exact pinned solc; never repo-specified
-        "--no-cache",         # do not use any cached state from the repo's cache/
         "--no-auto-detect",   # do not try to resolve solc from PATH; we supply --use
         # forge >= 1.x preprocesses test helpers (dynamic test linking: rewritten test/*.sol plus
         # synthetic foundry-pp/*.sol) into build-info; those are not repo files, so the source gate
