@@ -389,3 +389,19 @@ def test_verification_cells_keep_source_text_out_of_server_class():
     assert {"src": "Totally<b>Safe</b>"} in cells and {"src": "Lib<script>"} in cells
     assert "Totally<b>Safe</b>" not in cells and "Lib<script>" not in cells
     assert not [b for b in blocks if "p" in b]                      # free-text reason never a paragraph
+
+
+def test_coverage_section_starts_on_a_new_page(tmp_path):
+    """Found on the 2026-10-15 x86 render of 13 tier A reports: with the verification tables the
+    coverage section began near the bottom of a page and paged.js spilled its areas table into
+    overflow columns (layout_overflow, section 3.6 pages wide). A page break before it is the
+    deterministic fix (verified in a browser: no overflow, no near-empty page)."""
+    from soken_review.report.kit.build import build  # noqa: PLC0415
+    from tests.report.fixtures import report as fixture_report  # noqa: PLC0415
+
+    r = fixture_report(tier="A", label_key="tier_a")
+    r["meta"]["provenance"]["upgrade_authority"] = "NotChecked"
+    r["meta"]["provenance"].pop("upgradeable", None)
+    html = build(r, tmp_path / "print", mode="print").html_path.read_text(encoding="utf-8")
+    i = html.find("Review coverage")
+    assert i > 0 and html.rfind("<section", 0, i) == html.rfind('<section class="brk">', 0, i)
