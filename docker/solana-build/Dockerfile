@@ -49,6 +49,12 @@ RUN set -eux; \
     for f in config config.toml credentials credentials.toml; do test ! -e "$CARGO_HOME/$f"; done; \
     chmod -R a+rX /opt/soken "$RUSTUP_HOME" /root; \
     chmod a+rx /root
+# Security updates of the Debian base (Trivy gate, 09 4.4: a CRITICAL with a fix blocks the push;
+# every upstream line ships fixable base CVEs). Only Debian packages move; the rustup toolchains,
+# platform-tools and the cargo registry are untouched, so the sbf program hash (U-S1) is unchanged.
+RUN apt-get update -qq \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq \
+    && rm -rf /var/lib/apt/lists/*
 ENV PATH="/opt/soken/bin:/opt/soken/cargo-bin:${PATH}"
 USER 10001:10001
 WORKDIR /build
