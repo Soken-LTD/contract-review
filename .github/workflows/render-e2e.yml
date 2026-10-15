@@ -1,0 +1,59 @@
+name: render-e2e
+# P0-RENDER (09 UV9-13, 08 3.2): soken-render image on x86_64 with pinned chrome-headless-shell,
+# under gVisor when it installs, rendering the GBLIN and WETH9 report.json from the local worker run.
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/report-render]
+    paths: ["docker/soken-render/**", "src/soken_review/report/**", "tests/report/**", ".github/workflows/render-e2e.yml"]
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv sync --locked
+      - name: poppler on the host (check script reads the PDF text)
+        run: sudo apt-get update -q && sudo apt-get install -y -q poppler-utils
+      - name: gVisor runtime runsc-none (09 4.2)
+        id: gvisor
+        continue-on-error: true
+        run: |
+          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list
+          sudo apt-get update -q && sudo apt-get install -y -q runsc
+          sudo runsc install --runtime runsc-none
+          sudo systemctl reload docker || sudo systemctl restart docker
+          docker run --rm --runtime=runsc-none --network=none alpine:3.20 true
+          echo "runtime=runsc-none" >> "$GITHUB_OUTPUT"
+      - name: Build soken-render
+        run: docker build -f docker/soken-render/Dockerfile -t soken/soken-render:ci .
+      - name: Image facts
+        run: |
+          docker image inspect soken/soken-render:ci --format '{{.Id}} {{.Size}}'
+          docker run --rm soken/soken-render:ci chrome --version || true
+      - name: Kit tests with the CI Chrome
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+        run: uv run pytest -q -rs tests/report
+      - name: Render GBLIN (5 runs, UV9-13) and WETH9 in the sandbox
+        env:
+          SOKEN_SANDBOX_RUNTIME: ${{ steps.gvisor.outputs.runtime || 'runc' }}
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+          SOKEN_RENDER_ROOT: ${{ github.workspace }}/.sbx/render-tmp
+        run: |
+          echo "runtime=$SOKEN_SANDBOX_RUNTIME"
+          uv run python scripts/render_sandbox_check.py --image soken/soken-render:ci --runs 5 \
+            --forbid HIGHSECRET --forbid "drift clock write" --keep out tests/report/live/gblin.report.json
+          uv run python scripts/render_sandbox_check.py --image soken/soken-render:ci --keep out \
+            tests/report/live/weth9.report.json
+          for f in out/*.pdf; do pdffonts "$f" | tail -n +3; done | sort -u
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: render-pdfs
+          path: out/

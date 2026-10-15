@@ -1,0 +1,114 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "urn:soken:rubric:schemas:lead.v1",
+ "$comment": "Owner part 04 (plan v4, sections 2 and 10). One lead per (category, file, overlapping range) after the adapter's cross-tool merge. Noise detectors (rubric/noise.yaml) never become leads.",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "id",
+  "rule_id",
+  "tools",
+  "category",
+  "analyzer_severity_raw",
+  "severity_norm",
+  "file",
+  "start",
+  "end",
+  "state"
+ ],
+ "properties": {
+  "id": {
+   "type": "string",
+   "pattern": "^LEAD-[0-9]{4}$"
+  },
+  "rule_id": {
+   "type": "string",
+   "maxLength": 120
+  },
+  "tools": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "string",
+    "pattern": "^[a-z0-9_-]+@[0-9A-Za-z.+-]+$"
+   }
+  },
+  "category": {
+   "type": "string",
+   "pattern": "^(evm|solana|ton|move|cairo)\\.[a-z0-9_]+(\\.[a-z0-9_]+)?$",
+   "maxLength": 60
+  },
+  "analyzer_severity_raw": {
+   "type": "string",
+   "maxLength": 40
+  },
+  "severity_norm": {
+   "enum": [
+    "High",
+    "Medium",
+    "Low",
+    "Info"
+   ]
+  },
+  "file": {
+   "type": "string",
+   "maxLength": 200
+  },
+  "start": {
+   "type": "integer",
+   "minimum": 1
+  },
+  "end": {
+   "type": "integer",
+   "minimum": 1
+  },
+  "unit": {
+   "type": "string",
+   "maxLength": 200,
+   "description": "unit id <path>:<UnitName> (04 2.1); optional"
+  },
+  "origin": {
+   "enum": [
+    "analyzer",
+    "previous_report"
+   ],
+   "default": "analyzer"
+  },
+  "state": {
+   "enum": [
+    "open",
+    "promoted",
+    "merged",
+    "dismissed",
+    "not_reviewed"
+   ]
+  },
+  "state_ref": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "description": "draft key (promoted), duplicate target (dismissed duplicate_of), surviving lead (merged)"
+  },
+  "state_item": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "description": "killing checklist item id when dismissed by challenge"
+  },
+  "state_reason": {
+   "enum": [
+    null,
+    "fp_guarded",
+    "fp_unreachable",
+    "duplicate_of",
+    "fixed",
+    "out_of_scope",
+    "disproved_by_challenge",
+    "not_reviewed"
+   ],
+   "description": "out_of_scope applies to analyzer leads only; a previous_report lead in an out-of-scope file stays open and closes not_reviewed at finalize (04 section 10)"
+  }
+ }
+}

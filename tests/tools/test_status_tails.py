@@ -1,0 +1,259 @@
+"""03 tool tails: server drafts and ETA in review_status, LISTEN/NOTIFY long-poll, ls-remote probe (03 3.1, 4.1, 4.2)."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from datetime import UTC, datetime, timedelta
+
+import pytest
+import pytest_asyncio
+from jsonschema import Draft202012Validator
+from mcp import Client
+
+import soken_review.tools  # noqa: F401
+from soken_review.contract import bundle_tools
+from soken_review.db.job_repo import JobRepo
+from soken_review.errors import ReviewError
+from soken_review.server import SokenServer
+from soken_review.tools import start_status
+from soken_review.tools.git_probe import GitLsRemoteProbe, pick_ref, resolve_ref, safe_ref, safe_repo_url
+from soken_review.tools.listen import listener_for
+from soken_review.tools.start_status import _compute_eta, set_pool, set_repo_probe
+
+pytestmark = pytest.mark.anyio
+STATUS_SCHEMA = Draft202012Validator({t["name"]: t for t in bundle_tools()}["review_status"]["outputSchema"])
+A = "a" * 40
+B = "b" * 40
+C = "c" * 40
+
+
+# ── ref resolution (pure) ────────────────────────────────────────────────────
+
+
+def test_pick_ref_annotated_tag_uses_peeled_line():
+    out = f"{A}\trefs/tags/v1.0.0\n{B}\trefs/tags/v1.0.0^{{}}\n"
+    assert pick_ref(out, "v1.0.0") == B      # tag object id never reaches provenance
+
+
+def test_pick_ref_lightweight_tag_and_branch():
+    assert pick_ref(f"{A}\trefs/tags/v2\n", "v2") == A
+    assert pick_ref(f"{C}\trefs/heads/main\n", "main") == C
+
+
+def test_pick_ref_branch_and_tag_is_ambiguous():
+    with pytest.raises(ReviewError) as e:
+        pick_ref(f"{A}\trefs/heads/release\n{B}\trefs/tags/release\n", "release")
+    assert e.value.code == "E_COMMIT_AMBIGUOUS"
+
+
+@pytest.mark.parametrize("out", ["", f"{A}\trefs/heads/other\n", "ab" * 32 + "\trefs/heads/main\n"])
+def test_pick_ref_missing_or_sha256_is_unpinned(out):
+    with pytest.raises(ReviewError) as e:
+        pick_ref(out, "main")
+    assert e.value.code == "E_UNPINNED_REF"
+
+
+@pytest.mark.parametrize(("url", "ok"), [
+    ("https://github.com/OpenZeppelin/openzeppelin-contracts", True),
+    ("https://gitlab.com/group/sub/repo.git", True),
+    ("https://github.com/a/b/../../c", False),
+    ("https://github.com/-upload-pack=x", False),
+    ("https://github.com/a/b?x=1", False),
+    ("https://user@github.com/a/b", False),
+    ("http://github.com/a/b", False),
+    ("https://evil.com/a/b", False),
+])
+def test_safe_repo_url(url, ok):
+    assert safe_repo_url(url) is ok
+
+
+@pytest.mark.parametrize(("ref", "ok"), [("v1.2.3", True), ("feature/x", True), ("-x", False), ("a..b", False),
+                                         ("x.lock", False), ("a b", False)])
+def test_safe_ref(ref, ok):
+    assert safe_ref(ref) is ok
+
+
+async def test_unsafe_url_never_runs_git():
+    assert await GitLsRemoteProbe().is_reachable("https://github.com/a/b?upload-pack=touch") is False
+
+
+@pytest.mark.live
+async def test_live_ls_remote_probe_and_peeled_tag():
+    url = "https://github.com/OpenZeppelin/openzeppelin-contracts"
+    assert await GitLsRemoteProbe().is_reachable(url) is True
+    assert await GitLsRemoteProbe().is_reachable("https://github.com/soken-ltd/no-such-repo-0b3c9") is False
+    # v5.0.0 is an annotated tag: the peeled commit, not the tag object
+    assert await resolve_ref(url, "v5.0.0") == "932fddf69a699a9a80fd2396fd1a2ab91cdda123"
+
+
+async def test_review_start_repo_unreachable_is_rejection():
+    class Down:
+        async def is_reachable(self, repo_url: str) -> bool:
+            return False
+
+    set_repo_probe(Down())
+    try:
+        async with Client(SokenServer()) as c:
+            r = await c.call_tool("review_start", {"source": {"kind": "repo", "repo_url": "https://github.com/a/b",
+                                                              "commit": "abcdef1"}})
+    finally:
+        set_repo_probe(GitLsRemoteProbe())
+    body = json.loads(r.content[0].text)
+    assert not r.is_error and body["accepted"] is False
+    assert body["errors"][0]["code"] == "E_REPO_UNREACHABLE"
+
+
+def test_default_probe_is_ls_remote():
+    assert isinstance(start_status._repo_probe, GitLsRemoteProbe)
+
+
+# ── ETA (pure) ───────────────────────────────────────────────────────────────
+
+
+def test_eta_defaults_and_medians():
+    assert _compute_eta("queued", [], {}) == 5 + 20 + 60 + 180 + 10 + 5
+    steps = [{"step": "chain_state", "seq": 0, "status": "done"}, {"step": "fetch", "seq": 0, "status": "done"},
+             {"step": "build", "seq": 0, "status": "running",
+              "started_at": datetime.now(UTC) - timedelta(seconds=40)}]
+    eta = _compute_eta("building", steps, {"build": 100.0, "analyze": 50.0, "map": 2.0, "chain_state": 1.0})
+    assert 111 <= eta <= 115                   # (100 - 40) + 50 + 2 + 1
+    assert _compute_eta("ready", steps, {}) is None
+
+
+# ── DB: drafts, ETA, long-poll ───────────────────────────────────────────────
+
+
+@pytest_asyncio.fixture()
+async def client(db_pool):
+    set_pool(db_pool)
+    try:
+        async with Client(SokenServer()) as c:
+            yield c
+    finally:
+        set_pool(None)  # type: ignore[arg-type]
+
+
+async def _new_job(client) -> str:
+    r = await client.call_tool("review_start", {"source": {"kind": "deployed", "chain": "evm", "chain_id": 1,
+                                                           "address": "0x" + "e" * 40}})
+    return json.loads(r.content[0].text)["job_id"]
+
+
+async def _status(client, job_id: str, **kw) -> dict:
+    r = await client.call_tool("review_status", {"job_id": job_id, **kw})
+    body = json.loads(r.content[0].text)
+    assert list(STATUS_SCHEMA.iter_errors(body)) == []
+    return body
+
+
+async def test_server_drafts_in_status(client, db_pool):
+    job_id = await _new_job(client)
+    flags = [{"file": "src/A.sol", "line": 3, "rule": "J2", "detail": "U+202E"},
+             {"file": "src/A.sol", "line": 9, "rule": "J4", "detail": "mixed_script"}]
+    async with db_pool.connection() as conn, conn.transaction():
+        assert await JobRepo(conn).create_server_drafts(job_id, "evm", flags) == 2
+    async with db_pool.connection() as conn, conn.transaction():
+        assert await JobRepo(conn).create_server_drafts(job_id, "evm", flags) == 0   # idempotent
+    body = await _status(client, job_id)
+    assert body["drafts"] == [
+        {"draft_key": "srv-j2-0001", "finding_no": "F-01", "status": "needs_text", "severity": "Informational",
+         "title": None, "carried_from": None, "flag": "J2", "location": "src/A.sol:3"},
+        {"draft_key": "srv-j4-0001", "finding_no": "F-02", "status": "needs_text", "severity": "Informational",
+         "title": None, "carried_from": None, "flag": "J4", "location": "src/A.sol:9"},
+    ]
+    async with db_pool.connection() as conn:
+        row = await (await conn.execute("select next_finding_no from jobs where job_id = %s", (job_id,))).fetchone()
+        rev = await (await conn.execute(
+            "select category, computed_severity, content->'server_flag'->>'rule' from finding_revisions "
+            "where job_id = %s and draft_key = 'srv-j2-0001'", (job_id,))).fetchone()
+    assert row[0] == 3
+    assert rev == ("evm.source_text_integrity", "Informational", "J2")
+
+
+async def test_eta_in_status(client):
+    job_id = await _new_job(client)
+    body = await _status(client, job_id)
+    assert isinstance(body["eta_s"], int) and body["eta_s"] > 0
+
+
+async def test_long_poll_wakes_on_notify(client, db_pool):
+    job_id = await _new_job(client)
+
+    async def advance():
+        await asyncio.sleep(1.0)
+        async with db_pool.connection() as conn, conn.transaction():
+            await JobRepo(conn).transition(job_id, "fetching")
+
+    lst = listener_for(db_pool.conninfo)
+    before = lst.notifications
+    t0 = time.monotonic()
+    task = asyncio.create_task(advance())
+    body = await _status(client, job_id, wait_seconds=20)
+    elapsed = time.monotonic() - t0
+    await task
+    assert body["state"] == "fetching"
+    assert elapsed < 4.0          # woken by NOTIFY, not by the 20 s wait (re-check is every 5 s)
+    assert lst.notifications > before
+
+
+async def test_long_poll_times_out_without_change(client):
+    job_id = await _new_job(client)
+    t0 = time.monotonic()
+    body = await _status(client, job_id, wait_seconds=2)
+    assert body["state"] == "queued"
+    assert 1.8 <= time.monotonic() - t0 < 4.0
+
+
+async def test_long_poll_returns_at_once_when_ready(client, db_pool):
+    job_id = await _new_job(client)
+    async with db_pool.connection() as conn, conn.transaction():
+        repo = JobRepo(conn)
+        for s in ("fetching", "building", "analyzing", "ready"):
+            await repo.transition(job_id, s)
+    t0 = time.monotonic()
+    body = await _status(client, job_id, wait_seconds=30)
+    assert body["state"] == "ready" and time.monotonic() - t0 < 1.0
+    assert body["eta_s"] is None
+
+
+# ── provenance.source (pure): fetch provider -> tools.v1.json enum ────────────
+
+
+def _tiered_job(source_kind: str, tier: str = "B") -> dict:
+    return {"job_id": "job_" + "1" * 26, "state": "ready", "tier": tier, "source_kind": source_kind,
+            "requester_role": "third_party_public_code", "ownership_proven": False}
+
+
+def _fetch_step(provider: str) -> dict:
+    return {"step": "fetch", "seq": 0, "status": "done", "provenance": {"provider": provider, "sha256": A}}
+
+
+@pytest.mark.parametrize(("source_kind", "provider", "want"), [
+    ("files", "user", "user_files"),
+    ("upload", "user", "upload"),
+    ("repo", "repo", "repo_commit"),
+    ("deployed", "sourcify", "sourcify"),
+    ("deployed", "etherscan", "verified_explorer"),
+    ("deployed", "tronscan", "verified_explorer"),
+    ("deployed", "eth_bytecode_db", "verifier_api"),
+    ("deployed", "ipfs", None),           # no enum value says "metadata hash -> IPFS"; null, never a guess
+])
+def test_status_provenance_source_from_fetch_provider(source_kind, provider, want):
+    body = start_status._build_status_response(_tiered_job(source_kind), "json", steps=[_fetch_step(provider)])
+    assert body["provenance"]["source"] == want
+    assert list(STATUS_SCHEMA.iter_errors(body)) == []
+
+
+def test_status_provenance_source_tier_d_without_fetch_is_bytecode_only():
+    body = start_status._build_status_response(_tiered_job("deployed", tier="D"), "json", steps=[])
+    assert body["provenance"]["source"] == "bytecode_only"
+    assert list(STATUS_SCHEMA.iter_errors(body)) == []
+
+
+@pytest.mark.parametrize("source_kind", ["deployed", "repo", "files", "upload"])
+def test_status_provenance_source_never_echoes_input_kind(source_kind):
+    body = start_status._build_status_response(_tiered_job(source_kind), "json", steps=[])
+    assert body["provenance"]["source"] is None
+    assert list(STATUS_SCHEMA.iter_errors(body)) == []

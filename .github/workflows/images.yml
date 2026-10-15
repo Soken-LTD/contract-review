@@ -1,0 +1,169 @@
+name: images
+# Sandbox images (09 4.4): every docker/<dir>/Dockerfile is built for linux/amd64 and scanned with
+# Trivy (a Critical with a fix available blocks it) in a job with no write token; a separate
+# push job (packages:write, first-party actions pinned by SHA, no build) pushes the scanned
+# image to the private ghcr.io/soken-ltd/<dir>, and the lock job writes the digest into
+# images.lock.json. Runtime pulls repository@digest only. Docker Hub bases come through
+# mirror.gcr.io (anonymous Docker Hub pulls are rate limited on shared runners).
+# Never triggered by pull_request: no PR code runs next to a write token.
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "comma-separated image names (empty = all; dependencies are added)"
+        default: ""
+      commit_lock:
+        description: "commit images.lock.json back to this branch (never main)"
+        type: boolean
+        default: true
+  push:
+    branches-ignore: [main]
+    paths: ["docker/**", ".dockerignore", "src/soken_review/sandbox/git_materializer.py",
+            "src/soken_review/adapters/ton/node_scripts/**", "slither_plugins/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TRIVY_VERSION: "0.74.0"
+  TRIVY_SHA256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      level0: ${{ steps.plan.outputs.level0 }}
+      level1: ${{ steps.plan.outputs.level1 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - id: plan
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          python3 scripts/images.py plan --only "$ONLY" > plan.json
+          echo "level0=$(python3 -c 'import json;print(json.dumps(json.load(open("plan.json"))["level0"]))')" >> "$GITHUB_OUTPUT"
+          echo "level1=$(python3 -c 'import json;print(json.dumps(json.load(open("plan.json"))["level1"]))')" >> "$GITHUB_OUTPUT"
+          python3 -m json.tool plan.json
+
+  build0:
+    name: build ${{ matrix.image.name }}
+    needs: plan
+    if: needs.plan.outputs.level0 != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.level0) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/image-build
+        with:
+          image: ${{ toJSON(matrix.image) }}
+
+  push0:
+    name: push ${{ matrix.image.name }}
+    needs: [plan, build0]
+    if: always() && needs.plan.outputs.level0 != '[]'
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: write, actions: read}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.level0) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: {sparse-checkout: .github/actions/image-push}
+      - id: has
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ matrix.image.name }}
+        run: |
+          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq "[.artifacts[] | select(.name == \"image-$NAME\")] | length")
+          echo "built=$([ "$n" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.has.outputs.built == 'true'
+        uses: ./.github/actions/image-push
+        with:
+          name: ${{ matrix.image.name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build1:
+    name: build ${{ matrix.image.name }}
+    needs: [plan, push0]
+    if: always() && needs.plan.outputs.level1 != '[]' && needs.push0.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions: {contents: read, packages: read}   # pulls its base from private GHCR by digest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.level1) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: {pattern: "digest-*", path: deps, merge-multiple: true}
+      - name: Log in to GHCR (read)
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - uses: ./.github/actions/image-build
+        with:
+          image: ${{ toJSON(matrix.image) }}
+          deps_dir: deps
+
+  push1:
+    name: push ${{ matrix.image.name }}
+    needs: [plan, build1]
+    if: always() && needs.plan.outputs.level1 != '[]'
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: write, actions: read}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.level1) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: {sparse-checkout: .github/actions/image-push}
+      - id: has
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ matrix.image.name }}
+        run: |
+          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq "[.artifacts[] | select(.name == \"image-$NAME\")] | length")
+          echo "built=$([ "$n" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.has.outputs.built == 'true'
+        uses: ./.github/actions/image-push
+        with:
+          name: ${{ matrix.image.name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  lock:
+    needs: [push0, push1]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    permissions: {contents: write}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: {pattern: "digest-*", path: results, merge-multiple: true}
+      - name: Write digests into images.lock.json
+        run: |
+          ls results
+          python3 scripts/images.py lock results | tee -a "$GITHUB_STEP_SUMMARY"
+          git diff --stat
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: {name: images-lock, path: images.lock.json}
+      - name: Commit the lock to this branch
+        if: (github.event_name == 'push' || inputs.commit_lock) && github.ref != 'refs/heads/main'
+        run: |
+          git config user.name "soken-ci"
+          git config user.email "soken-ci@users.noreply.github.com"
+          git add images.lock.json
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(images): lock digests from images run ${{ github.run_id }}"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

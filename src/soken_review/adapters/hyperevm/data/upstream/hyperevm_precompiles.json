@@ -1,0 +1,34 @@
+{
+  "source_url": "https://raw.githubusercontent.com/hyperliquid-dex/hyper-evm-lib/main/src/HLConstants.sol",
+  "fetched_at": "2026-10-09",
+  "source_sha256": "UNVERIFIED",
+  "_note": "05 section 11: HyperEVM precompile table (F16). 0x800..0x813. While stale, HL-PC rules are off.",
+  "values": {
+    "precompiles": {
+      "0x0000000000000000000000000000000000000800": {"name": "coreMarkPrice",      "market_type": "perp"},
+      "0x0000000000000000000000000000000000000801": {"name": "coreIndexPrice",     "market_type": "perp"},
+      "0x0000000000000000000000000000000000000802": {"name": "coreOraclePrice",    "market_type": "perp"},
+      "0x0000000000000000000000000000000000000803": {"name": "coreSpotPrice",      "market_type": "spot"},
+      "0x0000000000000000000000000000000000000804": {"name": "coreUserVaultEquity","market_type": null},
+      "0x0000000000000000000000000000000000000805": {"name": "coreUserVaultEquityWithdrawable","market_type": null},
+      "0x0000000000000000000000000000000000000806": {"name": "corePerpPositionValue","market_type": "perp"},
+      "0x0000000000000000000000000000000000000807": {"name": "corePerpPositionFunding","market_type": "perp"},
+      "0x0000000000000000000000000000000000000808": {"name": "corePerpOpenInterest","market_type": "perp"},
+      "0x0000000000000000000000000000000000000809": {"name": "coreSpotBalance",    "market_type": "spot"},
+      "0x000000000000000000000000000000000000080a": {"name": "coreSpotBalanceReserved","market_type": "spot"},
+      "0x000000000000000000000000000000000000080b": {"name": "coreSpotAllowance",  "market_type": "spot"},
+      "0x000000000000000000000000000000000000080c": {"name": "coreTokenInfo",      "market_type": "spot"},
+      "0x000000000000000000000000000000000000080d": {"name": "coreSystemState",    "market_type": null},
+      "0x000000000000000000000000000000000000080e": {"name": "corePerpPosition",   "market_type": "perp"},
+      "0x000000000000000000000000000000000000080f": {"name": "coreVaultState",     "market_type": null},
+      "0x0000000000000000000000000000000000000810": {"name": "coreUserExists",     "market_type": null},
+      "0x0000000000000000000000000000000000000811": {"name": "coreSpotMeta",       "market_type": null},
+      "0x0000000000000000000000000000000000000812": {"name": "coreL2Book",         "market_type": null},
+      "0x0000000000000000000000000000000000000813": {"name": "corePerpMeta",       "market_type": null}
+    },
+    "price_precompiles": ["0x0000000000000000000000000000000000000800","0x0000000000000000000000000000000000000801","0x0000000000000000000000000000000000000802","0x0000000000000000000000000000000000000803","0x0000000000000000000000000000000000000806","0x0000000000000000000000000000000000000807","0x0000000000000000000000000000000000000808","0x000000000000000000000000000000000000080e"],
+    "invalid_input_cost": "all gas passed",
+    "price_decode_rule": "uint256 in wei (18 decimals) for perp mark price; spot price in token decimals per HyperCore weiDecimals+evmExtraWeiDecimals",
+    "cost_formula": "static per plan 05 UV5-20"
+  }
+}

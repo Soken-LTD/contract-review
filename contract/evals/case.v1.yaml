@@ -1,0 +1,52 @@
+# evals/corpus/<chain>/<case_id>/case.yaml (plan v4, owner part 10). The only case format.
+# 05 `case.json`, 06 and 07 bench files are converted by `soken-eval corpus import`.
+# Whole corpus is internal evaluation data (encrypted bundle, never in a public repo).
+case_id: sol-seed-0007            # <chain>-<origin>-<4 digits>
+chain: solana                     # report meta.chain value: evm | hyperevm | tron | solana | ton | sui | aptos | starknet
+chain_id: null                    # EVM family only: numeric id from the frozen EVM release list
+split: gate                       # dev | gate | neg | canary   (gate and neg-in-gate: held-out ACL, part 10 2.1)
+origin: seeded                    # seeded | contest | incident | pattern | own_audit | reference
+source:
+  provider: repo                  # providers.yaml id (02); a row with benchmark_use: false is refused
+  repo: https://github.com/...    # public origin; seeded and own_audit cases are delivered by upload
+  commit: 4240445ed3b5145be1032cf1becc9c6866046bf7
+  subdir: programs/vault
+  license: Apache-2.0             # recorded; internal use only
+  dataset: null                   # optional: upstream benchmark entry, <lock id>@<commit>:<path> (evals/corpus/sources.lock.yaml)
+  dataset_license: null           # optional: licence of the benchmark data (findings text, configs), recorded
+  pinned_by: null                 # optional: how `commit` was chosen (upstream base_commit, recorded head and date)
+input_mode: upload                # address | repo | files | upload
+run_as_chain: null                # inherited runs only: hyperevm | tron
+provenance_tier_expected: B       # A | B | C | D (04 E1)
+expected_outcome: report          # report | refuse_tier_d | refuse_source_not_found | refuse_too_large | refuse_unsupported; under the cell surface cap (part 10 2.4)
+j_class: null                     # injection set only: J1 to J5 (04 section 12; M12)
+ground_truth:
+  - gt_id: GT-1
+    title_ref: "S1 signer to UncheckedAccount"   # internal, never shown to the model
+    severity: High                # Critical | High | Medium | Low | Informational
+    category: solana.missing_signer               # rubric/enums.yaml id
+    root_cause_lines: [{file: src/lib.rs, start: 120, end: 123}]   # post-rename for seeded cases
+    related_lines: [{file: src/lib.rs, start: 40, end: 44}]
+    source_url: null              # judged finding URL for contest and audit origins
+    min_match: location_and_category              # or location_only (part 10 3.3)
+    exclude_chains: []            # inherited runs where this GT does not apply
+    located_by: null              # optional, imported GT: evidence that placed the lines (link | marker | patch)
+judged: false                     # true for contest, own_audit and published-audit GT (judged minimum)
+seeded: {operator: S1, renamed: true, renamer_hash: "sha256:...", reachability: proven}  # null if not seeded
+rereview_of: null                 # re-review pairs: case_id of the first review (M28)
+negatives_note: null              # neg cases: audit report URL showing 0 High and 0 Medium
+consent: not_needed               # not_needed | on_file  (own_audit requires on_file)
+created: 2026-10-14
+created_by: eval-agent            # eval-agent | gate-seeder | person role
+---
+# Job export (GET /internal/eval/jobs/<job_id>/export, staging only, eval token required). One document per job.
+job:        {job_id, chain, chain_id, state_history, eval: true, case_id, cell, seed, digest, source_hash}
+artifacts:  {pin_manifest, map_v1, facts, leads}          # inputs that `revalidate` (T1) feeds to the validators
+calls:      [{index, tool, arguments, result_code}]        # every tool call in order, arguments as received
+findings:   [{draft_key, revisions: [{title, body, quotes: [{file, start, end, text, role}], category,
+              claimed_severity, matrix, computed_severity, status, placeholders: [{span, key, source}], gate_codes}]}]
+challenges: [{draft_key, items, answers, verdict}]
+injection_flags: [{file, line, rule}]
+sections:   {model_written_sections}
+render:     {state, codes, pdf_sha256}
+counters:   {tool_calls, rejections_by_code, wall_s_by_state, tokens}

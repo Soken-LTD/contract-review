@@ -1,0 +1,123 @@
+# soken-cairo-rules (07 8.3). Detection logic is reference data; the engine is rules.py.
+# facts: all must hold on the class facts (decoded from the hashed sierra_program); when the class
+#   facts are unknown (no class, decode failed) the source layer alone decides.
+#   libfunc:<id>              generic libfunc declared in the program
+#   reachable:<TYPE>:<id>     libfunc reachable from an entry point of TYPE (EXTERNAL, L1_HANDLER, CONSTRUCTOR)
+#   entry:<TYPE>              the class has at least one entry point of TYPE
+#   selector:<a>|<b>          a felt constant equals sn_keccak of one of the names
+# fn_kinds: functions the source rule looks at (external, view, l1_handler, constructor, internal, any)
+# match: line regex inside the function body (blanked comments/strings); the lead is that line
+# fn_match: regex on the function name (the lead is the fn line) when there is no `match`
+# require: body regexes that must all match; negative: any body match suppresses (07 5.2)
+# custom: name of a Python check in rules.py for rules that need more than one function
+version: "0.1.0"
+rules:
+  - id: CAI-01
+    category: cairo.felt_arithmetic
+    raw: medium
+    basis: "Cairo book data types: felt252 wraps modulo P"
+    facts: ["libfunc:storage_write_syscall"]
+    fn_kinds: [external, l1_handler, constructor]
+    custom: felt_arithmetic
+  - id: CAI-02
+    category: cairo.l1_handler_auth
+    raw: high
+    basis: "Cairo book general recommendations; ToB unchecked_from_address_in_l1_handler"
+    facts: ["entry:L1_HANDLER"]
+    fn_kinds: [l1_handler]
+    fn_match: "."
+    require: ['\.write\(|_syscall\(']
+    negative: ['from_address\s*(==|!=)|(==|!=)\s*from_address|assert[^;]*from_address']
+  - id: CAI-03
+    category: cairo.l1_address_conversion
+    raw: medium
+    basis: "ToB L1_to_L2_address_conversion"
+    facts: []
+    fn_kinds: [any]
+    match: 'EthAddress\s*\{\s*address\s*:'
+  - id: CAI-04
+    category: cairo.storage_collision
+    raw: medium
+    basis: "07 U-11 (same-name substorage members)"
+    facts: []
+    custom: storage_collision
+  - id: CAI-05
+    category: cairo.raw_storage_access
+    raw: medium
+    basis: "facts: storage syscalls with computed keys"
+    facts: ["libfunc:storage_write_syscall"]
+    fn_kinds: [external, l1_handler, constructor, internal]
+    match: '\b(storage_write_syscall|storage_address_from_base(_and_offset)?|storage_base_address_from_felt252)\s*\('
+  - id: CAI-06
+    category: cairo.upgrade
+    raw: high
+    basis: "facts: replace_class_syscall reachable from an external entry point"
+    facts: ["reachable:EXTERNAL:replace_class_syscall"]
+    fn_kinds: [external]
+    match: '\breplace_class_syscall\s*\(|\.upgrade\s*\(|\.upgrade_and_call\s*\('
+    negative: ['assert_only_\w+|only_owner|only_role|get_caller_address\s*\(\s*\)\s*(==|!=)|(==|!=)\s*get_caller_address|assert[^;]*(caller|owner|admin|governor)']
+  - id: CAI-07
+    category: cairo.reinitialization
+    raw: high
+    basis: "Cairo book general recommendations: initializer callable once"
+    facts: []
+    fn_kinds: [external]
+    fn_match: '^(initialize|initializer|init|initialise|setup)$'
+    negative: ['initiali[sz]ed|is_init|assert_only_owner|assert_only_role']
+  - id: CAI-08
+    category: cairo.caller_zero_auth
+    raw: high
+    basis: "Cairo book: caller zero is not an authorization signal"
+    facts: ["libfunc:get_execution_info_v2_syscall"]
+    fn_kinds: [any]
+    match: '(caller\w*|get_caller_address\s*\(\s*\))\s*(\.\s*is_zero\s*\(\s*\)|==\s*(0|Zero::zero\s*\(\s*\)|contract_address_const::<0>\s*\(\s*\)|0\s*\.\s*try_into\s*\(\s*\)))'
+  - id: CAI-09
+    category: cairo.deploy_address_collision
+    raw: low
+    basis: "Cairo book: deploy_from_zero makes addresses independent of the deployer"
+    facts: ["libfunc:deploy_syscall"]
+    fn_kinds: [any]
+    custom: deploy_from_zero_literal
+  - id: CAI-10
+    category: cairo.panic_dos
+    raw: medium
+    basis: "Cairo book: unsigned counters panic on underflow"
+    facts: []
+    fn_kinds: [any]
+    match: '\bwhile\b[^{]*(>=\s*0\b|-\s*1\b)'
+  - id: CAI-11
+    category: cairo.packing_overflow
+    raw: medium
+    basis: "Cairo book: packed fields need per-field bounds"
+    facts: []
+    fn_kinds: [any]
+    match: '\*\s*(0x[0-9a-fA-F]{6,}|[0-9_]{8,}|pow\s*\(\s*2)\s*[^;]*\+|\+\s*[^;]*\*\s*(0x[0-9a-fA-F]{6,}|[0-9_]{8,})'
+    negative: ['assert[^;]*<|<\s*(0x[0-9a-fA-F]{6,}|[0-9_]{8,})']
+  - id: CAI-12
+    category: cairo.unchecked_return
+    raw: medium
+    basis: "Cairo book: token transfer return values must be checked"
+    facts: ["selector:transfer|transfer_from|transferFrom"]
+    fn_kinds: [any]
+    match: '^\s*[A-Za-z_][\w.:{}\s]*\.(transfer|transfer_from|transferFrom)\s*\([^;]*\)\s*;'
+  - id: CAI-13
+    category: cairo.token_interface
+    raw: low
+    basis: "Cairo book: camelCase and snake_case token selectors coexist"
+    facts: []
+    custom: camel_only_token_calls
+  - id: CAI-14
+    category: cairo.unbounded_iteration
+    raw: medium
+    basis: "Cairo book: loops over storage grown by external calls"
+    facts: []
+    fn_kinds: [external, view, l1_handler]
+    match: '\b(while|for)\b[^{]*(\.len\s*\(\s*\)|\.read\s*\(\s*\))'
+  - id: CAI-15
+    category: cairo.signature_replay
+    raw: high
+    basis: "ToB replay_protection"
+    facts: []
+    fn_kinds: [any]
+    match: '\b(check_ecdsa_signature|is_valid_signature)\s*\('
+    negative: ['nonce|chain_id|get_tx_info|get_execution_info|get_contract_address|__validate__']

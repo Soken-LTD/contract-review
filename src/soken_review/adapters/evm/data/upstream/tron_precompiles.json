@@ -1,0 +1,48 @@
+{
+  "_schema": "upstream.v1",
+  "_note": "TRON precompile table (05 section 11, F28). Source: developers.tron.network/docs/tvm-vs-evm. Re-fetched weekly; stale after 14 days -> rules that read this table are disabled.",
+  "source_url": "https://developers.tron.network/docs/tvm-vs-evm",
+  "fetched_at": "2026-10-08T00:00:00+00:00",
+  "source_sha256": null,
+  "values": {
+    "precompiles": [
+      {"address": "0x01", "name": "ecrecover",          "evm_compat": true,  "note": "same as EVM"},
+      {"address": "0x02", "name": "sha256",              "evm_compat": true,  "note": "same as EVM"},
+      {"address": "0x03", "name": "ripemd160_sha256",    "evm_compat": false, "note": "TVM: sha256(sha256(x))[0:20]; EVM: ripemd160(x). F28: target 0x03 flags every use (TRON-10)"},
+      {"address": "0x04", "name": "identity",            "evm_compat": true,  "note": "same as EVM"},
+      {"address": "0x05", "name": "modexp",              "evm_compat": true,  "note": "same as EVM (added later)"},
+      {"address": "0x06", "name": "bn128_add",           "evm_compat": true,  "note": "same as EVM"},
+      {"address": "0x07", "name": "bn128_mul",           "evm_compat": true,  "note": "same as EVM"},
+      {"address": "0x08", "name": "bn128_pairing",       "evm_compat": true,  "note": "same as EVM"},
+      {"address": "0x09", "name": "batchValidateSign",   "evm_compat": false, "note": "TVM only: batch multi-sig validation; used in TRON-11"},
+      {"address": "0x0a", "name": "validatemultisign",   "evm_compat": false, "note": "TVM only: multi-sig validation; used in TRON-11"},
+      {"address": "0x1000005", "name": "freeze_v1",      "evm_compat": false, "note": "TVM only: stake V1"},
+      {"address": "0x1000006", "name": "unfreeze_v1",    "evm_compat": false, "note": "TVM only: unstake V1"},
+      {"address": "0x1000007", "name": "withdrawreward", "evm_compat": false, "note": "TVM only: withdraw staking rewards"},
+      {"address": "0x100000b", "name": "GetChainParameter", "evm_compat": false, "note": "TIP-467: only codes 1-5 valid; other codes return 0 success (F28). Not used in this adapter; getchainparameters API preferred."},
+      {"address": "0x100000c", "name": "getapprovedlist",  "evm_compat": false, "note": "TVM only"},
+      {"address": "0x100000d", "name": "getpromotionlist", "evm_compat": false, "note": "TVM only"},
+      {"address": "0x100000e", "name": "freeze_v2",       "evm_compat": false, "note": "TVM only: stake V2 (TRON-09 range)"},
+      {"address": "0x100000f", "name": "unfreeze_v2",     "evm_compat": false, "note": "TVM only: unstake V2"},
+      {"address": "0x1000010", "name": "cancelunfreeze_v2","evm_compat": false, "note": "TVM only"},
+      {"address": "0x1000011", "name": "delegateresource", "evm_compat": false, "note": "TVM only"},
+      {"address": "0x1000012", "name": "undelegateresource","evm_compat": false, "note": "TVM only"},
+      {"address": "0x1000013", "name": "withdrawexpireunfreeze","evm_compat": false, "note": "TVM only"},
+      {"address": "0x1000014", "name": "vote",            "evm_compat": false, "note": "TVM only: vote for super representatives (TRON-09)"},
+      {"address": "0x1000015", "name": "withdrawbalancev2","evm_compat": false, "note": "TVM only"},
+      {"address": "0x00020003", "name": "EthRipemd160",   "evm_compat": false, "note": "Only active when parameter #60 (getAllowTvmCompatibleEvm) != 0 (F28, F41). Currently #60 = 0, so disabled. TRON-10 flags target 0x00020003 while #60 = 0."}
+    ],
+    "chain_parameters_of_interest": [
+      {"key": "getMaxCpuTimeOfOneTx",      "index": 13, "default": 80,   "unit": "ms",   "note": "CPU cap per tx (TRON-08); read from getchainparameters"},
+      {"key": "getAllowTvmCompatibleEvm",   "index": 60, "default": 0,    "unit": "bool", "note": "0 = disabled; no value key in response = 0 (F41)"}
+    ],
+    "tvm_differences": {
+      "create2_prefix": "0x41",
+      "chainid": "tron_specific",
+      "selfdestruct": "tron_restricted",
+      "trx_transfer": "bypasses_fallback",
+      "trc10_token": "msg.tokenid_msg.tokenvalue",
+      "ripemd160_note": "0x03 returns sha256(sha256(x))[0:20] on TRON (F28)"
+    }
+  }
+}

@@ -1,0 +1,171 @@
+{
+  "$comment": "Sandbox images pinned by digest (09 4.4). Written by .github/workflows/images.yml through scripts/images.py lock: every docker/<dir>/Dockerfile is built for linux/amd64, scanned (Trivy Critical blocks), pushed to private ghcr.io/soken-ltd/<dir>; entries match by repository, so aliases get the same digest. Runtime pulls repository@digest only (sandbox.profile.locked_image). A zero digest = not built yet: callers fail closed.",
+  "images": {
+    "evm-analyze": {
+      "repository": "ghcr.io/soken-ltd/evm-analyze",
+      "tag": "0.1.0-dev",
+      "digest": "sha256:94b677e1b17dd0cfe0805bc4d79284b67480af3d4935b43110d17c60986abb73",
+      "tools": {
+        "slither": "0.11.6",
+        "aderyn": "0.6.8"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "Digest placeholder; replace with real digest after first CI build and benchmark gate pass (09 4.4).",
+      "built": {
+        "commit": "3db309b9251ee1a59d5d7f19adbc6b52f48d0aec",
+        "run_id": "38271083644",
+        "trivy_critical": 2
+      }
+    },
+    "git-fetch": {
+      "repository": "ghcr.io/soken-ltd/git-fetch",
+      "tag": "0.1.0-dev",
+      "digest": "sha256:74d5b71c28d161c82d0f8bba4e3fad68c5959d6480bae19c7e3c73a1914b8b12",
+      "tools": {
+        "git": "2.47.3",
+        "python3": "3.13"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "soken-fetch: git materializer (09 5.2, sandbox/git_materializer.py) on Debian trixie (git 2.47, GIT_NO_LAZY_FETCH).",
+      "built": {
+        "commit": "3db309b9251ee1a59d5d7f19adbc6b52f48d0aec",
+        "run_id": "38271083644",
+        "trivy_critical": 0
+      }
+    },
+    "hyperevm-analyze": {
+      "repository": "ghcr.io/soken-ltd/hyperevm-analyze",
+      "tag": "0.1.0-dev",
+      "digest": "sha256:f167cbb9918e310be084fcb8b48adc50067e8ca17c03b127a241742788a4d15f",
+      "tools": {
+        "slither": "0.11.6",
+        "aderyn": "0.6.8",
+        "soken-slither-plugins": "0.1.0"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "Extends evm-analyze with HL-* Slither detectors (slither_plugins, plan-v4 05 8.2). Digest placeholder; replace after CI build.",
+      "built": {
+        "commit": "3db309b9251ee1a59d5d7f19adbc6b52f48d0aec",
+        "run_id": "38271083644",
+        "trivy_critical": 2
+      }
+    },
+    "smokescreen": {
+      "repository": "ghcr.io/soken-ltd/smokescreen",
+      "tag": "0.1.0",
+      "digest": "sha256:bc61c43d1266c2c380753b55484a7d946def12368d42e8cdad5b61fbf1f53ddb",
+      "tools": {
+        "smokescreen": "v0.1.0 (609eb8931420453daf5893509be0b25b21bd9edb)"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "Family egress proxy (09 4.3), runs under runc as infra, not a sandbox step. Config and ACL from soken_review.sandbox.egress (limits.yaml egress).",
+      "built": {
+        "commit": "3db309b9251ee1a59d5d7f19adbc6b52f48d0aec",
+        "run_id": "38271083644",
+        "trivy_critical": 0
+      }
+    },
+    "soken-render": {
+      "repository": "ghcr.io/soken-ltd/soken-render",
+      "tag": "0.1.0-dev",
+      "digest": "sha256:9b5908321a4803421ec4819d32661cfd39561d3ab8827d9cc7a4cd161f5e75af",
+      "tools": {
+        "python": "3.12",
+        "node": "22",
+        "chrome-headless-shell": "155.0.8059.39 (amd64)",
+        "chromium": "Debian bookworm (arm64 dev only)",
+        "poppler-utils": "Debian bookworm",
+        "jsonschema": "4.26.0",
+        "pyyaml": "6.0.3"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "08 3.2 render sandbox (docker/soken-render/Dockerfile, root context). Digest placeholder until the CI push; render_image() fails closed while unpinned (SOKEN_IMAGE_SOKEN_RENDER for local images). chrome-headless-shell zip sha256 39dcb8c4... pinned in the Dockerfile.",
+      "built": {
+        "commit": "3db309b9251ee1a59d5d7f19adbc6b52f48d0aec",
+        "run_id": "38271083644",
+        "trivy_critical": 3
+      }
+    },
+    "solana-analyze": {
+      "repository": "ghcr.io/soken-ltd/solana-build",
+      "tag": "4.3.0",
+      "digest": "sha256:5e9a08de54c52c061aaf22dfda93d6a73a733638af83f0936638ed86dab03e08",
+      "tools": {
+        "cargo-build-sbf": "4.3.0",
+        "platform-tools": "v1.57",
+        "rustc-sbf": "1.95.0-dev",
+        "rustc-host": "1.97.1",
+        "cargo-audit": "0.22.2",
+        "clippy": "1.97.1"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "Extended solana-build image (docker/solana-build/Dockerfile) with clippy + cargo-audit for analyze step. Digest placeholder; replace with real digest after CI build via: docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/soken-ltd/solana-build:4.3.0",
+      "built": {
+        "commit": "598d9ed2814ad3573fa2b8a171d87d4613d921d6",
+        "run_id": "38052444791",
+        "trivy_critical": 16
+      }
+    },
+    "solana-build": {
+      "repository": "solanafoundation/solana-verifiable-build",
+      "tag": "4.3.0",
+      "digest": "sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd",
+      "tools": {
+        "cargo-build-sbf": "4.3.0",
+        "platform-tools": "v1.57",
+        "rustc-sbf": "1.95.0-dev",
+        "rustc-host": "1.97.1"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "arm64 host: runs under QEMU via colima. SOKEN_SOLANA_DIRECT=1 for dev only. 4.3.0 ships platform-tools v1.57 (rustc 1.95.0-sbpf). Digest verified 2026-10-09. cargo-audit and clippy are added via docker/solana-build/Dockerfile (ghcr.io/soken-ltd/solana-build)."
+    },
+    "ton-build": {
+      "repository": "ghcr.io/soken-ltd/ton-build",
+      "tag": "0.1.0-dev",
+      "digest": "sha256:e3f7948c2a6e8fa69af472172d1a8eeadb9b35f45e03d33cdddcdc16e8e057a0",
+      "tools": {
+        "node": "22",
+        "func-js": "0.10.0",
+        "func-js-bin": "0.2.0, 0.3.0, 0.4.0-0.4.6, 0.4.4-newops, 0.4.4-newops.1, 0.4.6-wasmfix.0 (npm aliases func-<version>)",
+        "tact-compiler": "1.6.13",
+        "tolk-js": "0.12.0",
+        "ton-core": "0.61.0",
+        "ton-sandbox": "0.45.0",
+        "misti": "0.9.0"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "Pushed by the ton-e2e workflow (branch feat/ton-tier-a, commit 4b0d5af, run 38029714298) after the x86 adapter and supervisor e2e passed; build is not reproducible, so pin this digest, not the tag. Base node:22-bookworm-slim pinned by its amd64 digest in docker/ton-build/Dockerfile. Plan v4 06 section 4.2."
+    },
+    "tron-analyze": {
+      "repository": "ghcr.io/soken-ltd/tron-analyze",
+      "tag": "0.1.0-dev",
+      "digest": "sha256:709de5821199a9f2ccfbf6b68afc12ef3de43c38e2cc05c8f50a38e3def88bdb",
+      "tools": {
+        "slither": "0.11.6",
+        "aderyn": "0.6.8",
+        "soken-slither-plugins": "0.1.0"
+      },
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "note": "Extends evm-analyze with TRON Slither shim (apply_tron_shim via make_plugin entry point, plan-v4 05 8.2 F23). Digest placeholder; replace after CI build. Build: docker build --build-context plugins=slither_plugins -f docker/tron-analyze/Dockerfile -t ghcr.io/soken-ltd/tron-analyze:0.1.0-dev ."
+    }
+  }
+}

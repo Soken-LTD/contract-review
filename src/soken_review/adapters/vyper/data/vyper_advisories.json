@@ -1,0 +1,721 @@
+{
+  "_note": "Published vyperlang/vyper security advisories (05 6.2, F30). Reference data. Refresh: scripts/pin_vyper.py",
+  "source_url": "https://api.github.com/repos/vyperlang/vyper/security-advisories",
+  "checked_at": "2026-10-10",
+  "advisories": [
+    {
+      "ghsa_id": "GHSA-22wc-c9wj-6q2v",
+      "severity": "medium",
+      "published_at": "2021-04-16",
+      "summary": "Memory corruption using function calls within arrays",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-22wc-c9wj-6q2v",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.1.0b4, < 0.3.0",
+          "patched": "0.3.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-2489-32vh-8rrc",
+      "severity": "medium",
+      "published_at": "2026-10-07",
+      "summary": "Function variables can replace imported constant values and default arguments",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-2489-32vh-8rrc",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.4.0b1",
+          "patched": ""
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-2p94-8669-xg86",
+      "severity": "low",
+      "published_at": "2025-02-21",
+      "summary": "sqrt doesn't define rounding behavior",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-2p94-8669-xg86",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.1",
+          "patched": "0.4.1"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-2q8v-3gqq-4f8p",
+      "severity": "high",
+      "published_at": "2024-01-18",
+      "summary": "concat built-in can corrupt memory",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-2q8v-3gqq-4f8p",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-2r3x-4mrv-mcxf",
+      "severity": "medium",
+      "published_at": "2020-10-10",
+      "summary": "Memory corruption using function calls within tuples / nested calls",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-2r3x-4mrv-mcxf",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.1.0b4, < 0.3.0",
+          "patched": "0.3.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-375m-5fvv-xq23",
+      "severity": "low",
+      "published_at": "2021-04-16",
+      "summary": "VVE-2021-0002: Incorrect `returndatasize` when using simple forwarder proxies deployed prior to EIP-1167 adoption",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-375m-5fvv-xq23",
+      "ranges": [
+        {
+          "vulnerable": "< 0.2.9",
+          "patched": "0.2.9"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-3hg2-r75x-g69m",
+      "severity": "medium",
+      "published_at": "2023-09-15",
+      "summary": "incorrect re-entrancy lock when key is empty string",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-3hg2-r75x-g69m",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.2.9, < 0.3.10",
+          "patched": "0.3.10"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-3p37-3636-q8wv",
+      "severity": "high",
+      "published_at": "2023-05-11",
+      "summary": "OOB DynArray access when array is on both LHS and RHS of an assignment",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-3p37-3636-q8wv",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.8",
+          "patched": "0.3.8"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-3vcg-j39x-cwfm",
+      "severity": "low",
+      "published_at": "2025-05-15",
+      "summary": "`slice()` may elide side-effects when output length is 0",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-3vcg-j39x-cwfm",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.2",
+          "patched": "0.4.2"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-3whq-64q2-qfj6",
+      "severity": "low",
+      "published_at": "2024-04-25",
+      "summary": "double eval of raw_args in create_from_blueprint",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-3whq-64q2-qfj6",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-42j8-8cjv-j5r9",
+      "severity": "low",
+      "published_at": "2022-05-05",
+      "summary": "safemath for decimals do not check for 256-bit overflow",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-42j8-8cjv-j5r9",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.3.2, < 0.3.4",
+          "patched": "0.3.4"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-4hg4-9mf5-wxxq",
+      "severity": "low",
+      "published_at": "2023-09-02",
+      "summary": "incorrect order of evaluation of side effects for some builtins",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-4hg4-9mf5-wxxq",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.10",
+          "patched": "0.3.10"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-4hwq-4cpm-8vmx",
+      "severity": "low",
+      "published_at": "2024-02-26",
+      "summary": "extract32 can read dirty memory",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-4hwq-4cpm-8vmx",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-4mrx-6fxm-8jpg",
+      "severity": "medium",
+      "published_at": "2022-04-13",
+      "summary": "No bytes clamps for interfaces imported via JSON",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-4mrx-6fxm-8jpg",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.2",
+          "patched": "0.3.2"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-4v7v-gqf9-ww2g",
+      "severity": "medium",
+      "published_at": "2020-10-10",
+      "summary": "VVE-2020-0003: Call stack corruption when passing complex type containing non-base type members as argument",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-4v7v-gqf9-ww2g",
+      "ranges": [
+        {
+          "vulnerable": "< 0.2.6",
+          "patched": "0.2.6"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-4v9q-cgpw-cf38",
+      "severity": "medium",
+      "published_at": "2022-06-06",
+      "summary": "multiple evaluation of contract address in call",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-4v9q-cgpw-cf38",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.4",
+          "patched": "0.3.4"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-4w26-8p97-f4jp",
+      "severity": "medium",
+      "published_at": "2025-02-21",
+      "summary": "AugAssign evaluation order causing OOB write within the object",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-4w26-8p97-f4jp",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.1",
+          "patched": "0.4.1"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-52xq-j7v9-v4v2",
+      "severity": "medium",
+      "published_at": "2024-02-07",
+      "summary": "negative array index bounds checks",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-52xq-j7v9-v4v2",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-5824-cm3x-3c38",
+      "severity": "critical",
+      "published_at": "2023-08-05",
+      "summary": "Incorrectly allocated named re-entrancy locks",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-5824-cm3x-3c38",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.2.15, < 0.3.1",
+          "patched": "0.3.1"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-5jrj-52x8-m64h",
+      "severity": "low",
+      "published_at": "2024-04-25",
+      "summary": "multiple eval of `sqrt()` argument built in",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-5jrj-52x8-m64h",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-6845-xw22-ffxv",
+      "severity": "low",
+      "published_at": "2024-02-05",
+      "summary": "sha3 codegen bug",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-6845-xw22-ffxv",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-6j9c-gvcw-74fj",
+      "severity": "medium",
+      "published_at": "2026-10-02",
+      "summary": "Optimizer replaces `msg.value | K` and `len(msg.data) | K`with `1` in ternary branches",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-6j9c-gvcw-74fj",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.3.8",
+          "patched": ""
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-6m97-7527-mh74",
+      "severity": "high",
+      "published_at": "2023-12-12",
+      "summary": "incorrect storage layout for contracts containing large arrays",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-6m97-7527-mh74",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.8",
+          "patched": "0.3.8"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-6r8q-pfpv-7cgj",
+      "severity": "medium",
+      "published_at": "2023-05-11",
+      "summary": "Integer overflow for loops of form `for i in range(x, x+N)`",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-6r8q-pfpv-7cgj",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.8",
+          "patched": "0.3.8"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-7f92-rr6w-cq64",
+      "severity": "high",
+      "published_at": "2021-07-27",
+      "summary": "VVE-2021-0003: Storage variables overwritten by re-entrancy locks",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-7f92-rr6w-cq64",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.2.13, < 0.2.15",
+          "patched": "0.2.15"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-7vrm-3jc8-5wwm",
+      "severity": "medium",
+      "published_at": "2022-04-02",
+      "summary": "bytestring equality incorrect for Bytes[N<=32]",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-7vrm-3jc8-5wwm",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.2",
+          "patched": "0.3.2"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-9p8r-4xp4-gw5w",
+      "severity": "low",
+      "published_at": "2024-02-26",
+      "summary": "_abi_decode Memory Overflow",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-9p8r-4xp4-gw5w",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-9x7f-gwxq-6f2c",
+      "severity": "high",
+      "published_at": "2024-01-31",
+      "summary": "Bounds check on built-in `slice()` function can be overflowed",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-9x7f-gwxq-6f2c",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-c647-pxm2-c52w",
+      "severity": "low",
+      "published_at": "2023-09-18",
+      "summary": "memory corruption in certain builtins utilizing `msize`",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-c647-pxm2-c52w",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.3.4, < 0.3.10",
+          "patched": "0.3.10"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-c7pr-343r-5c46",
+      "severity": "medium",
+      "published_at": "2021-10-05",
+      "summary": "missing clamps for decimal args in external functions",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-c7pr-343r-5c46",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.0",
+          "patched": "0.3.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-cw3h-xwxq-8cx2",
+      "severity": "medium",
+      "published_at": "2026-10-05",
+      "summary": "Ternary expressions misread nested arrays with different inner bounds",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-cw3h-xwxq-8cx2",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.3.8, <= 0.5.0b1",
+          "patched": ""
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-cx2q-hfxr-rj97",
+      "severity": "medium",
+      "published_at": "2023-09-26",
+      "summary": "_abi_decode input not validated in certain complex expressions",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-cx2q-hfxr-rj97",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.3.4, < 0.3.10",
+          "patched": "0.3.10"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-f5x6-7qgp-jhf3",
+      "severity": "medium",
+      "published_at": "2023-07-25",
+      "summary": "ecrecover can return undefined data for invalid signatures",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-f5x6-7qgp-jhf3",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.10",
+          "patched": "0.3.10"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-fxg7-4wqg-c8gh",
+      "severity": "low",
+      "published_at": "2026-10-06",
+      "summary": "`create_from_blueprint` offset validation bypass through unsigned wraparound",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-fxg7-4wqg-c8gh",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.3.4",
+          "patched": ""
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-g2xh-c426-v8mf",
+      "severity": "medium",
+      "published_at": "2023-09-02",
+      "summary": "reversed order of side effects for some operations",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-g2xh-c426-v8mf",
+      "ranges": [
+        {
+          "vulnerable": ">= 0",
+          "patched": ""
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-gp3w-2v2m-p686",
+      "severity": "low",
+      "published_at": "2024-02-02",
+      "summary": "External calls can overflow return data to return input buffer",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-gp3w-2v2m-p686",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-h33q-mhmp-8p67",
+      "severity": "low",
+      "published_at": "2025-02-21",
+      "summary": "multiple eval in For List Iter",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-h33q-mhmp-8p67",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.1",
+          "patched": "0.4.1"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-j2x6-9323-fp7h",
+      "severity": "high",
+      "published_at": "2022-04-13",
+      "summary": "external calls are not clamped in certain complex expressions",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-j2x6-9323-fp7h",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.2",
+          "patched": "0.3.2"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-m2v9-w374-5hj9",
+      "severity": "low",
+      "published_at": "2024-04-25",
+      "summary": "default functions don't respect nonreentrancy keys",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-m2v9-w374-5hj9",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.0",
+          "patched": "0.3.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-mgv8-gggw-mrg6",
+      "severity": "medium",
+      "published_at": "2023-05-05",
+      "summary": "Storage allocator overflow",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-mgv8-gggw-mrg6",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.8",
+          "patched": "0.3.8"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-mr6r-mvw4-736g",
+      "severity": "low",
+      "published_at": "2020-03-09",
+      "summary": "VVE-2020-0001: Interfaces returning integer types less than 256 bits can be manipulated if uint256 is used",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-mr6r-mvw4-736g",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.1",
+          "patched": "0.3.1"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-ph9x-4vc9-m39g",
+      "severity": "high",
+      "published_at": "2023-05-11",
+      "summary": "incorrect ordering of default arguments passed to internal calls",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-ph9x-4vc9-m39g",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.8",
+          "patched": "0.3.8"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-ppx5-q359-pvwj",
+      "severity": "low",
+      "published_at": "2024-04-25",
+      "summary": "range(start, start + N) reverts for negative numbers",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-ppx5-q359-pvwj",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.3.8, < 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-qhr6-mgqr-mchm",
+      "severity": "low",
+      "published_at": "2025-05-15",
+      "summary": "`concat()` builtin may elide side-effects for zero-length arguments",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-qhr6-mgqr-mchm",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.2",
+          "patched": "0.4.2"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-r3c7-7xwm-6vfw",
+      "severity": "low",
+      "published_at": "2026-10-06",
+      "summary": "Multi-byte identifier characters can silently change literal values",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-r3c7-7xwm-6vfw",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.1.0b1, < 0.1.0b12",
+          "patched": "0.1.0b12"
+        },
+        {
+          "vulnerable": "= 0.1.0b14",
+          "patched": "0.1.0b15"
+        },
+        {
+          "vulnerable": ">= 0.4.1",
+          "patched": ""
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-r56x-j438-vw5m",
+      "severity": "low",
+      "published_at": "2024-04-25",
+      "summary": "double eval of the slice start/length args in certain cases",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-r56x-j438-vw5m",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-vg88-3v92-rjx2",
+      "severity": "low",
+      "published_at": "2020-07-16",
+      "summary": " VVE-2020-0002: Return inside for loop more than 1 level deep",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-vg88-3v92-rjx2",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.1.0b10, < 0.2.3",
+          "patched": "0.2.3"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-vgf2-gvx8-xwc3",
+      "severity": "medium",
+      "published_at": "2025-01-14",
+      "summary": "Success of Certain Precompile Calls not Checked",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-vgf2-gvx8-xwc3",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.1",
+          "patched": "0.4.1"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-vxmm-cwh2-q762",
+      "severity": "low",
+      "published_at": "2023-05-19",
+      "summary": "nonpayable default functions can sometimes be sent ether with calldatasize<4",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-vxmm-cwh2-q762",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.8",
+          "patched": "0.3.8"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-w9g2-3w7p-72g9",
+      "severity": "medium",
+      "published_at": "2023-04-24",
+      "summary": "raw_call with outsize=0 and revert_on_failure=False returns incorrect success value",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-w9g2-3w7p-72g9",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.3.1, < 0.3.8",
+          "patched": "0.3.8"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-wvx7-39qj-2g9v",
+      "severity": "low",
+      "published_at": "2026-10-06",
+      "summary": "Line-separator characters can silently change literal values and types",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-wvx7-39qj-2g9v",
+      "ranges": [
+        {
+          "vulnerable": ">= 0.1.0b1, < 0.1.0b17",
+          "patched": "0.1.0b17"
+        },
+        {
+          "vulnerable": ">= 0.4.1",
+          "patched": ""
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-x2c2-q32w-4w6m",
+      "severity": "medium",
+      "published_at": "2024-01-30",
+      "summary": "raw_call `value=` kwargs not disabled for static and delegate calls",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-x2c2-q32w-4w6m",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-xchq-w5r3-4wg3",
+      "severity": "low",
+      "published_at": "2024-04-25",
+      "summary": "incorrect topic logging in raw_log",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-xchq-w5r3-4wg3",
+      "ranges": [
+        {
+          "vulnerable": "< 0.4.0",
+          "patched": "0.4.0"
+        }
+      ]
+    },
+    {
+      "ghsa_id": "GHSA-xv8x-pr4h-73jv",
+      "severity": "high",
+      "published_at": "2021-10-06",
+      "summary": "Memory corruption when returning a literal struct with a private call inside of it",
+      "url": "https://github.com/vyperlang/vyper/security/advisories/GHSA-xv8x-pr4h-73jv",
+      "ranges": [
+        {
+          "vulnerable": "< 0.3.0",
+          "patched": "0.3.0"
+        }
+      ]
+    }
+  ]
+}

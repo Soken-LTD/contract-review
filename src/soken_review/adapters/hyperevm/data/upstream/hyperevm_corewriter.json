@@ -1,0 +1,37 @@
+{
+  "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm/interacting-with-hypercore",
+  "fetched_at": "2026-10-09",
+  "source_sha256": "UNVERIFIED",
+  "_note": "05 section 11: CoreWriter upstream snapshot. Refreshed weekly by diff job. While stale, every HL-CW rule is off.",
+  "values": {
+    "corewriter_address": "0x3333333333333333333333333333333333333333",
+    "selector_send_raw_action": "0x17938e13",
+    "version_byte": 1,
+    "action_ids": {
+      "place_order": 3,
+      "cancel_order": 4,
+      "cancel_by_cloid": 5,
+      "modify_order": 6,
+      "batch_modify": 7,
+      "update_leverage": 8,
+      "update_isolated_margin": 9,
+      "vault_transfer": 12
+    },
+    "delay_note": "order actions and vault transfers are delayed onchain for a few seconds after sendRawAction returns",
+    "tif_values": {
+      "Gtc": 0,
+      "Ioc": 1,
+      "Alo": 2,
+      "FrontendMarket": 3,
+      "RetailPrice": 4,
+      "TpSl": 5
+    },
+    "price_scaling": "floatToWire: multiply by 1e8, round",
+    "size_scaling": "szToWire: multiply by 10^asset_decimals, round",
+    "field_types": {
+      "version": "uint8",
+      "action_id": "uint24",
+      "place_order_fields": ["asset_index:uint32", "is_buy:bool", "limit_price:uint64", "size:uint64", "reduce_only:bool", "order_type_tif:uint8", "cloid_optional_bool:bool", "cloid_optional_value:uint128"]
+    }
+  }
+}

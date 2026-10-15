@@ -1,0 +1,59 @@
+# adapters/starknet/lint_map.yaml (07 5.3, 8.3). Lint -> category and raw value only.
+# `scarb lint` prints no lint name, only the diagnostic message: `message` is the start of the
+# message in cairo-lint v2.13.0 src/lints/*.rs (diagnostic_message) and is the parse key.
+# An unmapped message goes to cairo.best_practice with raw info (07 5.3).
+# Raw values for stock lints stay UNVERIFIED until 07 U-03 records real lint output per image.
+source: https://github.com/software-mansion/cairo-lint/tree/v2.13.0/src/lints
+default: {category: cairo.best_practice, raw: info}
+lints:
+  bitwise_for_parity_check: {category: cairo.best_practice, raw: info, message: "You seem to be trying to use `&` for parity check. Consider using `Div"}
+  bool_comparison: {category: cairo.best_practice, raw: info, message: "Unnecessary comparison with a boolean value. Use the variable directly"}
+  break_unit: {category: cairo.best_practice, raw: info, message: "unnecessary double parentheses found after break. Consider removing th"}
+  clone_on_copy: {category: cairo.best_practice, raw: info, message: "using `clone` on type which implements `Copy` trait"}
+  collapsible_if: {category: cairo.best_practice, raw: info, message: "Each `if`-statement adds one level of nesting, which makes code look m"}
+  collapsible_if_else: {category: cairo.best_practice, raw: info, message: "Consider using else if instead of else { if ... }"}
+  contradictory_comparison: {category: cairo.best_practice, raw: info, message: "This double comparison is contradictory and always false."}
+  destruct_match: {category: cairo.best_practice, raw: info, message: "you seem to be trying to use `match` for destructuring a single patter"}
+  div_eq_op: {category: cairo.best_practice, raw: info, message: "Division with identical operands, this operation always results in one"}
+  double_parens: {category: cairo.best_practice, raw: info, message: "unnecessary double parentheses found. Consider removing them."}
+  duplicate_underscore_args: {category: cairo.best_practice, raw: info, message: "duplicate arguments, having another argument having almost the same na"}
+  empty_enum_brackets_variant: {category: cairo.best_practice, raw: info, message: "redundant parentheses in enum variant definition"}
+  enum_variant_names: {category: cairo.best_practice, raw: info, message: "All enum variants are prefixed or suffixed by the same characters."}
+  eq_bitwise_op: {category: cairo.best_practice, raw: info, message: "Bitwise operation with identical operands, this operation always resul"}
+  eq_comp_op: {category: cairo.best_practice, raw: info, message: "Comparison with identical operands, this operation always results in t"}
+  eq_diff_op: {category: cairo.best_practice, raw: info, message: "Subtraction with identical operands, this operation always results in"}
+  eq_logical_op: {category: cairo.best_practice, raw: info, message: "Logical operation with identical operands, this operation always resul"}
+  equality_match: {category: cairo.best_practice, raw: info, message: "you seem to be trying to use `match` for an equality check. Consider u"}
+  equatable_if_let: {category: cairo.best_practice, raw: info, message: "`if let` pattern used for equatable value. Consider using a simple com"}
+  erasing_op: {category: cairo.best_practice, raw: info, message: "This operation results in the value being erased (e.g., multiplication"}
+  ifs_same_cond: {category: cairo.best_practice, raw: info, message: "Consecutive `if` with the same condition found."}
+  impossible_comparison: {category: cairo.best_practice, raw: info, message: "Impossible condition, always false"}
+  inefficient_while_comp: {category: cairo.best_practice, raw: info, message: "using [`<`, `<=`, `>=`, `>`] exit conditions is inefficient. Consider"}
+  int_ge_min_one: {category: cairo.best_practice, raw: info, message: "Unnecessary sub operation in integer >= comparison. Use simplified com"}
+  int_ge_plus_one: {category: cairo.best_practice, raw: info, message: "Unnecessary add operation in integer >= comparison. Use simplified com"}
+  int_le_min_one: {category: cairo.best_practice, raw: info, message: "Unnecessary sub operation in integer <= comparison. Use simplified com"}
+  int_le_plus_one: {category: cairo.best_practice, raw: info, message: "Unnecessary add operation in integer <= comparison. Use simplified com"}
+  loop_for_while: {category: cairo.best_practice, raw: info, message: "you seem to be trying to use `loop`. Consider replacing this `loop` wi"}
+  loop_match_pop_front: {category: cairo.best_practice, raw: info, message: "you seem to be trying to use `loop` for iterating over a span. Conside"}
+  manual_assert: {category: cairo.best_practice, raw: info, message: "Manual assert detected. Consider using assert!() macro instead."}
+  manual_err: {category: cairo.best_practice, raw: info, message: "Manual match for `err` detected. Consider using `err()` instead"}
+  manual_expect: {category: cairo.best_practice, raw: info, message: "Manual match for expect detected. Consider using `expect()` instead"}
+  manual_expect_err: {category: cairo.best_practice, raw: info, message: "Manual match for `expect_err` detected. Consider using `expect_err()`"}
+  manual_is_empty: {category: cairo.best_practice, raw: info, message: "Manual check for `is_empty` detected. Consider using `is_empty()` inst"}
+  manual_is_err: {category: cairo.best_practice, raw: info, message: "Manual match for `is_err` detected. Consider using `is_err()` instead"}
+  manual_is_none: {category: cairo.best_practice, raw: info, message: "Manual match for `is_none` detected. Consider using `is_none()` instea"}
+  manual_is_ok: {category: cairo.best_practice, raw: info, message: "Manual match for `is_ok` detected. Consider using `is_ok()` instead"}
+  manual_is_some: {category: cairo.best_practice, raw: info, message: "Manual match for `is_some` detected. Consider using `is_some()` instea"}
+  manual_ok: {category: cairo.best_practice, raw: info, message: "Manual match for `ok` detected. Consider using `ok()` instead"}
+  manual_ok_or: {category: cairo.best_practice, raw: info, message: "Manual match for Option<T> detected. Consider using ok_or instead"}
+  manual_unwrap_or: {category: cairo.best_practice, raw: info, message: "Manual `unwrap_or` detected. Consider using `unwrap_or()` instead."}
+  manual_unwrap_or_default: {category: cairo.best_practice, raw: info, message: "This can be done in one call with `.unwrap_or_default()`"}
+  neq_comp_op: {category: cairo.best_practice, raw: info, message: "Comparison with identical operands, this operation always results in f"}
+  panic: {category: cairo.error_handling, raw: low, message: "Leaving `panic` in the code is discouraged."}
+  redundant_brackets_in_enum_call: {category: cairo.best_practice, raw: info, message: "redundant parentheses in enum call"}
+  redundant_comparison: {category: cairo.best_practice, raw: info, message: "Redundant double comparison found. Consider simplifying to a single co"}
+  redundant_into: {category: cairo.best_practice, raw: info, message: "Redundant conversion: input and output types are the same."}
+  redundant_op: {category: cairo.best_practice, raw: info, message: "This operation doesn't change the value and can be simplified."}
+  simplifiable_comparison: {category: cairo.best_practice, raw: info, message: "This double comparison can be simplified."}
+  unit_return_type: {category: cairo.best_practice, raw: info, message: "unnecessary declared unit return type `()`"}
+  unwrap_syscall: {category: cairo.error_handling, raw: low, message: "consider using `unwrap_syscall` instead of `unwrap`"}

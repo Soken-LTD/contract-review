@@ -1,0 +1,43 @@
+[project]
+name = "soken-review"
+version = "0.1.0"
+description = "Soken Contract Review MCP server (mcp.soken.dev)"
+requires-python = ">=3.12"
+dependencies = [
+    "google-re2>=1.1.20251105",
+    "anyio>=4.15.1",
+    "jsonschema>=4.26.0",
+    "mcp==2.3.0",
+    "psycopg[binary,pool]>=3.2.0",
+    "pyyaml>=6.0.3",
+    "starlette>=1.7.0",
+    "uvicorn>=0.54.0",
+    "tree-sitter==0.25.2",
+    "tree-sitter-solidity==1.2.13",
+    "tree-sitter-rust==0.24.2",
+]
+
+[project.scripts]
+soken-eval = "soken_review.evals.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "anyio>=4.15.1",
+    "asgi-lifespan>=2.1.0",
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=0.24.0",
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.16.10",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "src"]

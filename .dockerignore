@@ -1,0 +1,13 @@
+# Root build context: only what images copy from the repo.
+*
+!slither_plugins
+!docker/ton-build/package.json
+!docker/ton-build/package-lock.json
+!src/soken_review/adapters/ton/node_scripts
+!src/soken_review/sandbox/git_materializer.py
+slither_plugins/**/__pycache__
+src/soken_review/adapters/ton/node_scripts/node_modules
+# soken-render (08 3.2): kit, text gate and contracts
+!src/soken_review
+!contract
+src/soken_review/**/__pycache__

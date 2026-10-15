@@ -1,0 +1,185 @@
+# rubric/enums.yaml categories (plan v4, owner part 04). Generated files and lints read this list only.
+# id grammar: ^(evm|solana|ton|move|cairo)\.[a-z0-9_]+(\.[a-z0-9_]+)?$ , max 60 chars
+# fields: family, match_group (part 10 scorer group), chains (omitted = every chain of the family),
+#         generic (K11 set), max_severity, server_only (created by the server, section 13), legacy (read only by corpus import)
+match_groups: [access_control, reentrancy_ordering, arithmetic, oracle_price, input_validation, account_validation, upgrade_init, message_handling, denial_of_service, token_accounting, signature_replay, logic, centralization, code_quality]
+categories:
+  - {id: evm.access_control, family: evm, match_group: access_control, legacy: "access-control"}
+  - {id: evm.selfdestruct, family: evm, match_group: access_control, legacy: "selfdestruct"}
+  - {id: evm.centralization, family: evm, match_group: centralization, generic: true, legacy: "privileged-role"}
+  - {id: evm.upgradeability.initialization, family: evm, match_group: upgrade_init, generic: true, legacy: "initialization; 04 v3r3 `evm.upgradeability` (part)"}
+  - {id: evm.upgradeability.storage_authority, family: evm, match_group: upgrade_init, generic: true, legacy: "upgradeability; 04 v3r3 `evm.upgradeability` (part)"}
+  - {id: evm.delegatecall_proxy, family: evm, match_group: upgrade_init, legacy: "delegatecall"}
+  - {id: evm.storage, family: evm, match_group: upgrade_init, legacy: "storage"}
+  - {id: evm.reentrancy, family: evm, match_group: reentrancy_ordering, legacy: "reentrancy"}
+  - {id: evm.ordering_mev, family: evm, match_group: reentrancy_ordering, legacy: "frontrunning"}
+  - {id: evm.unchecked_call, family: evm, match_group: message_handling, legacy: "external-call"}
+  - {id: evm.arithmetic_precision, family: evm, match_group: arithmetic, legacy: "arithmetic"}
+  - {id: evm.accounting_logic, family: evm, match_group: token_accounting, generic: true, legacy: "accounting, logic"}
+  - {id: evm.token_integration, family: evm, match_group: token_accounting, legacy: "token-integration"}
+  - {id: evm.oracle_manipulation, family: evm, match_group: oracle_price, legacy: "oracle, price-manipulation"}
+  - {id: evm.randomness, family: evm, match_group: oracle_price, legacy: "randomness"}
+  - {id: evm.timestamp, family: evm, match_group: oracle_price, legacy: "timestamp"}
+  - {id: evm.signature_replay, family: evm, match_group: signature_replay, legacy: "signature"}
+  - {id: evm.dos, family: evm, match_group: denial_of_service, legacy: "denial-of-service"}
+  - {id: evm.input_validation, family: evm, match_group: input_validation, generic: true, legacy: "input-validation"}
+  - {id: evm.compiler_bug, family: evm, match_group: logic, legacy: "compiler-bug, vyper-compiler"}
+  - {id: evm.other, family: evm, match_group: logic, generic: true, legacy: "other"}
+  - {id: evm.events, family: evm, match_group: code_quality, legacy: "events"}
+  - {id: evm.best_practice, family: evm, match_group: code_quality, generic: true, max_severity: Informational, legacy: "code-quality"}
+  - {id: evm.source_text_integrity, family: evm, match_group: code_quality, max_severity: Informational, server_only: true, legacy: "prompt-injection; 05 v3r2 `evm.prompt_injection`"}
+  - {id: evm.hyperevm.corewriter, family: evm, match_group: message_handling, chains: [hyperevm], legacy: "hl-corewriter; 04 v3r3 `evm.hyperevm_corewriter_async`"}
+  - {id: evm.hyperevm.precompile, family: evm, match_group: oracle_price, chains: [hyperevm], legacy: "hl-precompile; 04 v3r3 `evm.hyperevm_precompile_oracle`, `evm.hyperevm_precompile_all_gas_revert`"}
+  - {id: evm.hyperevm.bridge_decimals, family: evm, match_group: arithmetic, chains: [hyperevm], legacy: "hl-bridge-decimals; 04 v3r3 `evm.hyperevm_core_evm_decimals`"}
+  - {id: evm.hyperevm.linking, family: evm, match_group: token_accounting, chains: [hyperevm], legacy: "hl-linking"}
+  - {id: evm.tron.token, family: evm, match_group: token_accounting, chains: [tron], legacy: "tron-token"}
+  - {id: evm.tron.resource, family: evm, match_group: denial_of_service, chains: [tron], legacy: "tron-resource"}
+  - {id: evm.tron.evm_diff, family: evm, match_group: logic, chains: [tron], legacy: "tron-evm-diff"}
+  - {id: solana.missing_signer, family: solana, match_group: access_control, legacy: "signer"}
+  - {id: solana.missing_owner_check, family: solana, match_group: account_validation, legacy: "owner"}
+  - {id: solana.type_confusion, family: solana, match_group: account_validation, legacy: "type_cosplay"}
+  - {id: solana.pda_seeds, family: solana, match_group: account_validation, legacy: "bump"}
+  - {id: solana.pda_sharing, family: solana, match_group: account_validation, legacy: "pda_sharing"}
+  - {id: solana.signed_cpi_accounts, family: solana, match_group: message_handling, legacy: "none"}
+  - {id: solana.ata_validation, family: solana, match_group: token_accounting, legacy: "none"}
+  - {id: solana.seed_collision, family: solana, match_group: account_validation, legacy: "seed_collision"}
+  - {id: solana.account_relationship, family: solana, match_group: account_validation, legacy: "relationship"}
+  - {id: solana.sysvar_address, family: solana, match_group: account_validation, legacy: "sysvar"}
+  - {id: solana.introspection, family: solana, match_group: account_validation, legacy: "introspection"}
+  - {id: solana.duplicate_mutable, family: solana, match_group: account_validation, legacy: "duplicate_mut"}
+  - {id: solana.remaining_accounts, family: solana, match_group: account_validation, legacy: "remaining_accounts"}
+  - {id: solana.arbitrary_cpi, family: solana, match_group: message_handling, legacy: "arbitrary_cpi, signer_forward"}
+  - {id: solana.stale_after_cpi, family: solana, match_group: reentrancy_ordering, legacy: "stale_after_cpi"}
+  - {id: solana.cpi_recursion, family: solana, match_group: reentrancy_ordering, legacy: "cpi_recursion"}
+  - {id: solana.reinitialization, family: solana, match_group: upgrade_init, legacy: "reinit, native_init"}
+  - {id: solana.close_revival, family: solana, match_group: upgrade_init, legacy: "close, revival"}
+  - {id: solana.upgrade_authority, family: solana, match_group: upgrade_init, legacy: "upgrade_authority"}
+  - {id: solana.ata_owner_reassign, family: solana, match_group: token_accounting, legacy: "ata_owner_reassign, ata_address_only"}
+  - {id: solana.token2022_extensions, family: solana, match_group: token_accounting, legacy: "token_program"}
+  - {id: solana.arithmetic, family: solana, match_group: arithmetic, legacy: "arithmetic"}
+  - {id: solana.precreation, family: solana, match_group: denial_of_service, legacy: "precreation"}
+  - {id: solana.dependency_advisory, family: solana, match_group: logic, legacy: "dependency_advisory"}
+  - {id: solana.business_logic, family: solana, match_group: logic, generic: true, legacy: "business_logic"}
+  - {id: solana.economic, family: solana, match_group: logic, generic: true, legacy: "economic"}
+  - {id: solana.best_practice, family: solana, match_group: code_quality, generic: true, max_severity: Informational, legacy: "none"}
+  - {id: solana.source_text_integrity, family: solana, match_group: code_quality, max_severity: Informational, server_only: true, legacy: "none"}
+  - {id: ton.sender_auth, family: ton, match_group: access_control, legacy: "access_control"}
+  - {id: ton.external_accept_early, family: ton, match_group: message_handling, legacy: "none"}
+  - {id: ton.bounce_handling, family: ton, match_group: message_handling, legacy: "bounce"}
+  - {id: ton.send_mode_drain, family: ton, match_group: message_handling, legacy: "message_mode (TON-MODE-01)"}
+  - {id: ton.send_mode_reserve, family: ton, match_group: message_handling, legacy: "message_mode (TON-GAS-03)"}
+  - {id: ton.account_destroy, family: ton, match_group: message_handling, legacy: "message_mode (TON-MODE-04)"}
+  - {id: ton.bounce_body, family: ton, match_group: message_handling, legacy: "none"}
+  - {id: ton.unrecoverable_send, family: ton, match_group: message_handling, legacy: "none"}
+  - {id: ton.excess_return, family: ton, match_group: message_handling, legacy: "none"}
+  - {id: ton.send_order, family: ton, match_group: message_handling, legacy: "none"}
+  - {id: ton.unbounded_loop, family: ton, match_group: denial_of_service, legacy: "gas (G2)"}
+  - {id: ton.signature_binding, family: ton, match_group: signature_replay, legacy: "none"}
+  - {id: ton.upgrade_migration, family: ton, match_group: upgrade_init, legacy: "none"}
+  - {id: ton.signed_integer, family: ton, match_group: arithmetic, legacy: "none"}
+  - {id: ton.replay, family: ton, match_group: signature_replay, legacy: "replay"}
+  - {id: ton.async_race, family: ton, match_group: reentrancy_ordering, legacy: "async"}
+  - {id: ton.code_update, family: ton, match_group: upgrade_init, legacy: "set_code"}
+  - {id: ton.arithmetic, family: ton, match_group: arithmetic, legacy: "integer"}
+  - {id: ton.gas_storage, family: ton, match_group: denial_of_service, legacy: "gas"}
+  - {id: ton.randomness, family: ton, match_group: oracle_price, legacy: "randomness"}
+  - {id: ton.address_parsing, family: ton, match_group: input_validation, legacy: "none"}
+  - {id: ton.jetton_standard, family: ton, match_group: token_accounting, legacy: "standard"}
+  - {id: ton.business_logic, family: ton, match_group: logic, generic: true, legacy: "business_logic"}
+  - {id: ton.economic, family: ton, match_group: logic, generic: true, legacy: "economic"}
+  - {id: ton.best_practice, family: ton, match_group: code_quality, generic: true, max_severity: Informational, legacy: "none"}
+  - {id: ton.source_text_integrity, family: ton, match_group: code_quality, max_severity: Informational, server_only: true, legacy: "none"}
+  - {id: move.capability_leak, family: move, match_group: access_control, legacy: "access-control.capability-leak"}
+  - {id: move.missing_auth, family: move, match_group: access_control, legacy: "access-control.shared-object-unguarded-write"}
+  - {id: move.witness, family: move, match_group: access_control, chains: [sui], legacy: "access-control.witness"}
+  - {id: move.object_receive, family: move, match_group: access_control, chains: [sui], legacy: "access-control.object-receive"}
+  - {id: move.visibility, family: move, match_group: access_control, legacy: "access-control.visibility"}
+  - {id: move.friend_package_exposure, family: move, match_group: access_control, legacy: "none"}
+  - {id: move.global_storage_access, family: move, match_group: access_control, chains: [aptos], legacy: "access-control.global-storage"}
+  - {id: move.object_ref_leak, family: move, match_group: access_control, chains: [aptos], legacy: "access-control.object-ref-leak"}
+  - {id: move.signer_capability_leak, family: move, match_group: access_control, chains: [aptos], legacy: "access-control.signer-capability"}
+  - {id: move.object_owner_check, family: move, match_group: account_validation, chains: [aptos], legacy: "access-control.object-ownership"}
+  - {id: move.object_ownership_model, family: move, match_group: account_validation, chains: [sui], legacy: "objects.shared-ownership"}
+  - {id: move.object_transfer, family: move, match_group: account_validation, chains: [sui], legacy: "objects.transfer-pattern"}
+  - {id: move.abilities, family: move, match_group: account_validation, legacy: "objects.abilities"}
+  - {id: move.generic_type_confusion, family: move, match_group: account_validation, legacy: "assets.type-confusion"}
+  - {id: move.shared_object_ordering, family: move, match_group: reentrancy_ordering, chains: [sui], legacy: "none"}
+  - {id: move.ordering, family: move, match_group: reentrancy_ordering, legacy: "ordering.front-running"}
+  - {id: move.reentrancy_dispatch, family: move, match_group: reentrancy_ordering, chains: [aptos], legacy: "reentrancy.cross-module"}
+  - {id: move.upgrade_policy, family: move, match_group: upgrade_init, legacy: "upgrades.authority"}
+  - {id: move.version_gating, family: move, match_group: upgrade_init, chains: [sui], legacy: "upgrades.version-gating"}
+  - {id: move.dynamic_fields, family: move, match_group: upgrade_init, chains: [sui], legacy: "storage.dynamic-fields"}
+  - {id: move.coin_handling, family: move, match_group: token_accounting, legacy: "assets.coin-handling"}
+  - {id: move.hot_potato_misuse, family: move, match_group: token_accounting, legacy: "defi.flash-loan-receipt"}
+  - {id: move.shift_overflow, family: move, match_group: arithmetic, legacy: "arithmetic.shift-overflow"}
+  - {id: move.arithmetic_precision, family: move, match_group: arithmetic, legacy: "arithmetic.precision (Move)"}
+  - {id: move.abort_dos, family: move, match_group: denial_of_service, legacy: "arithmetic.overflow"}
+  - {id: move.unbounded_iteration, family: move, match_group: denial_of_service, legacy: "dos.unbounded-loop (Move)"}
+  - {id: move.randomness_exposure, family: move, match_group: oracle_price, legacy: "randomness.public-exposure"}
+  - {id: move.randomness_undergasing, family: move, match_group: oracle_price, chains: [aptos], legacy: "randomness.undergasing"}
+  - {id: move.time_logic, family: move, match_group: oracle_price, legacy: "logic.time"}
+  - {id: move.oracle_manipulation, family: move, match_group: oracle_price, legacy: "oracle.manipulation (Move)"}
+  - {id: move.untrusted_mut_ref, family: move, match_group: logic, chains: [aptos], legacy: "logic.untrusted-mut-ref"}
+  - {id: move.view_mutation, family: move, match_group: logic, chains: [aptos], legacy: "logic.view-mutation"}
+  - {id: move.comparison, family: move, match_group: logic, generic: true, legacy: "logic.comparison"}
+  - {id: move.business_logic, family: move, match_group: logic, generic: true, legacy: "logic.business (Move)"}
+  - {id: move.centralization, family: move, match_group: centralization, generic: true, legacy: "ops.pause"}
+  - {id: move.best_practice, family: move, match_group: code_quality, generic: true, max_severity: Informational, legacy: "code-quality (Move)"}
+  - {id: move.source_text_integrity, family: move, match_group: code_quality, max_severity: Informational, server_only: true, legacy: "meta.prompt-injection (Move)"}
+  - {id: cairo.access_control, family: cairo, match_group: access_control, legacy: "access-control.roles"}
+  - {id: cairo.caller_zero_auth, family: cairo, match_group: access_control, legacy: "access-control.caller-zero"}
+  - {id: cairo.l1_handler_auth, family: cairo, match_group: access_control, legacy: "cross-domain.l1-handler-auth"}
+  - {id: cairo.l1_address_conversion, family: cairo, match_group: input_validation, legacy: "cross-domain.address-conversion"}
+  - {id: cairo.l1_l2_message_lifecycle, family: cairo, match_group: message_handling, legacy: "cross-domain.message-lifecycle"}
+  - {id: cairo.unchecked_return, family: cairo, match_group: message_handling, legacy: "assets.unchecked-return"}
+  - {id: cairo.reentrancy, family: cairo, match_group: reentrancy_ordering, legacy: "reentrancy.external-call"}
+  - {id: cairo.felt_arithmetic, family: cairo, match_group: arithmetic, legacy: "arithmetic.felt-overflow"}
+  - {id: cairo.packing_overflow, family: cairo, match_group: arithmetic, legacy: "arithmetic.packing"}
+  - {id: cairo.arithmetic_precision, family: cairo, match_group: arithmetic, legacy: "arithmetic.precision (Cairo)"}
+  - {id: cairo.storage_collision, family: cairo, match_group: upgrade_init, legacy: "storage.collision"}
+  - {id: cairo.raw_storage_access, family: cairo, match_group: upgrade_init, legacy: "storage.raw-access"}
+  - {id: cairo.upgrade, family: cairo, match_group: upgrade_init, legacy: "upgrades.authority (Cairo)"}
+  - {id: cairo.reinitialization, family: cairo, match_group: upgrade_init, legacy: "access-control.initializer"}
+  - {id: cairo.deploy_address_collision, family: cairo, match_group: upgrade_init, legacy: "deployment.address-collision"}
+  - {id: cairo.account_validate, family: cairo, match_group: signature_replay, legacy: "account.validation"}
+  - {id: cairo.signature_replay, family: cairo, match_group: signature_replay, legacy: "crypto.replay"}
+  - {id: cairo.token_interface, family: cairo, match_group: token_accounting, legacy: "assets.interface"}
+  - {id: cairo.panic_dos, family: cairo, match_group: denial_of_service, legacy: "dos.panic-loop"}
+  - {id: cairo.unbounded_iteration, family: cairo, match_group: denial_of_service, legacy: "dos.unbounded-loop (Cairo)"}
+  - {id: cairo.oracle_manipulation, family: cairo, match_group: oracle_price, legacy: "oracle.manipulation (Cairo)"}
+  - {id: cairo.error_handling, family: cairo, match_group: logic, legacy: "logic.error-handling"}
+  - {id: cairo.business_logic, family: cairo, match_group: logic, generic: true, legacy: "logic.business (Cairo)"}
+  - {id: cairo.best_practice, family: cairo, match_group: code_quality, generic: true, max_severity: Informational, legacy: "code-quality (Cairo)"}
+  - {id: cairo.source_text_integrity, family: cairo, match_group: code_quality, max_severity: Informational, server_only: true, legacy: "meta.prompt-injection (Cairo)"}
+
+# Other closed enums (owner part 04). Labels for the report live in the report kit (part 08).
+matrix:
+  impact_class: [theft_of_funds, permanent_freeze, temporary_freeze, insolvency_or_bad_debt, control_takeover,
+                 yield_or_fee_loss, unauthorized_state_change, griefing_with_victim_loss, dos_core_function,
+                 dos_noncore_function, incorrect_accounting_no_fund_effect, spec_deviation_bounded,
+                 centralization_risk, best_practice]
+  magnitude: [unbounded, bounded, dust]
+  trigger: [anyone, permissionless_role, privileged_role, privileged_role_unprotected, upgrade_authority]
+  precondition: [none, normal_operation, market_condition, timing_or_ordering, uncommon_protocol_state,
+                 external_failure, victim_unusual_action]
+  reversibility: [irreversible, admin_reversible, self_recovering]
+quote_role: [location, bound_ref, role_path, context]
+finding_status: [needs_text, needs_challenge, accepted, withdrawn]
+evidence_level: [analyzer_and_reasoning, reasoning_challenged, reasoning_only]
+lead_state: [open, promoted, merged, dismissed, not_reviewed]
+lead_origin: [analyzer, previous_report]
+dismissal_reason:
+  model: [fp_guarded, fp_unreachable, duplicate_of, fixed]   # fixed: previous_report leads only (03)
+  server: [out_of_scope, disproved_by_challenge, not_reviewed]   # out_of_scope: analyzer leads only (04 10)
+absence_kind: [no_reads, no_writes, no_calls, no_guard, all_paths_unguarded]
+absence_scope: [in_scope_files, unit, entry_function]
+guard_classes: [caller_check, reentrancy_lock, initializer_guard, pause_check]   # families may append, e.g. solana signer_constraint
+dep_match: [exact, metadata_only, third_party_verified_only, mismatch, not_checkable]
+live_match: [matched, not_matched, unknown]
+profile: [public_review, owner]
+coverage_status: [read, partially_read, not_covered, no_candidates, not_applicable]
+challenge_value: [present, absent, not_applicable]
+checklist_kind: [kill, downgrade, context, basis]
+challenge_scope: [entry_function, call_site, shared_state_writers, account_struct, handler, module]
+na_reasons: [nr_no_external_call, nr_no_delegatecall, nr_no_oracle, nr_no_signature_check, nr_no_token_transfer,
+             nr_no_loop_over_storage, nr_no_proxy, nr_no_upgrade_path, nr_no_randomness_source, nr_no_timestamp_use]

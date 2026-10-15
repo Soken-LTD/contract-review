@@ -1,0 +1,48 @@
+{
+  "match": "match",
+  "chainId": "8453",
+  "address": "0xc2181d975c05c8c724b334bcED0764c0b86B1D53",
+  "compilation": {
+    "language": "Solidity",
+    "compiler": "solc",
+    "compilerVersion": "0.8.37+commit.f401782d",
+    "compilerSettings": {
+      "viaIR": true,
+      "optimizer": {
+        "runs": 1,
+        "enabled": true
+      },
+      "evmVersion": "cancun",
+      "metadata": {
+        "appendCBOR": false,
+        "bytecodeHash": "none"
+      }
+    },
+    "name": "GBLIN",
+    "fullyQualifiedName": "src/GBLIN.sol:GBLIN"
+  },
+  "stdJsonInput": {
+    "language": "Solidity",
+    "settings": {
+      "viaIR": true,
+      "optimizer": {
+        "runs": 1,
+        "enabled": true
+      },
+      "evmVersion": "cancun",
+      "remappings": [
+        "@openzeppelin/=lib/openzeppelin-contracts/"
+      ]
+    },
+    "sources": {
+      "src/GBLIN.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity 0.8.37;\ncontract GBLIN {}"
+      }
+    }
+  },
+  "deployment": {
+    "transactionHash": "0x5419f2da2a9eb58539453efe76515791ce549c4ce31a1cd0c696200c0d78a666",
+    "blockNumber": "51563253",
+    "deployer": "0x9FFa542E369C53af62380296092EC669f329a9ee"
+  }
+}

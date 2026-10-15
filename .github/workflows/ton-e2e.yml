@@ -1,0 +1,92 @@
+name: ton-e2e
+# Live proof of the TON adapter and supervisor path on x86_64 (06 2.4, 4.2, 4.3; 09 3.3). Manual.
+# Optional: push the ton-build image to ghcr and print its digest for images.lock.json (09 4.4).
+# A workflow file that is not on main cannot be dispatched, so pushes to the TON feature branch
+# run it too (and push the image).
+on:
+  push:
+    branches: [feat/ton-tier-a, fix/ton-tact-options]
+    paths:
+      - docker/ton-build/**
+      - src/soken_review/adapters/ton/**
+      - src/soken_review/sandbox/**
+      - src/soken_review/worker/**
+      - scripts/e2e_ton_*.py
+      - tests/integration/test_e2e_ton.py
+      - .github/workflows/ton-e2e.yml
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: "push ghcr.io/soken-ltd/ton-build:<tag> and print the digest"
+        type: boolean
+        default: false
+      tag:
+        description: "image tag when pushing"
+        default: "0.1.0-dev"
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: soken
+          POSTGRES_PASSWORD: soken
+          POSTGRES_DB: soken
+        ports: ["5434:5432"]
+        options: --health-cmd "pg_isready -U soken" --health-interval 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6.8.0
+      - run: uv sync --locked
+      - name: Build ton-build image (linux/amd64, digest-pinned base)
+        run: docker build -f docker/ton-build/Dockerfile -t soken/ton-build:ci .
+      - name: Adapter path, sandbox builds (FunC repo, Tact repo, Tolk inline)
+        env:
+          SOKEN_IMAGE_TON_BUILD: soken/ton-build:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+        run: uv run python scripts/e2e_ton_builds.py
+      - name: Adapter path, tier A on USDT master plus controls
+        env:
+          SOKEN_IMAGE_TON_BUILD: soken/ton-build:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+          SOKEN_E2E_ROOT: ${{ runner.temp }}/ton-prov
+        run: uv run python scripts/e2e_ton_provenance.py
+      - name: Supervisor path (review_start -> ready -> review_leads)
+        env:
+          SOKEN_IMAGE_TON_BUILD: soken/ton-build:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+          SOKEN_DATABASE_URL: postgresql://soken:soken@127.0.0.1:5434/soken
+          SOKEN_PIN_ROOT: ${{ runner.temp }}/pins
+        run: uv run pytest -s -q -rs tests/integration/test_e2e_ton.py
+
+  push:
+    # Separate job: the only one holding packages: write; no third-party actions.
+    needs: e2e
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/feat/ton-tier-a') || inputs.push_image }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Build, push and print digest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          TAG: ${{ inputs.tag || '0.1.0-dev' }}
+        run: |
+          [[ "$TAG" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo "bad tag"; exit 1; }
+          ref="ghcr.io/soken-ltd/ton-build:$TAG"
+          docker build -f docker/ton-build/Dockerfile -t "$ref" .
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker push "$ref"
+          echo "DIGEST $(docker inspect --format='{{index .RepoDigests 0}}' "$ref")"

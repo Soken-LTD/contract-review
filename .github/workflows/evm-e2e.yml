@@ -1,0 +1,54 @@
+name: evm-e2e
+# Live proof of the EVM adapter path on x86_64 (05 6.2, 15; 09 3.5, 4.2): fetch, sandboxed build
+# and analyze (read-only /work, writable analyze/sbx only), then review_leads through the MCP
+# client. Adapter code only: scripts/fetch_case.py, scripts/build_case.py, scripts/e2e_leads.py.
+on:
+  # push on the feature branch only: workflow_dispatch needs the file on main first
+  push:
+    branches: [feat/evm-part05-open-items]
+    paths: [".github/workflows/evm-e2e.yml", "src/soken_review/adapters/evm/**", "src/soken_review/adapters/vyper/**"]
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "name:chain:address:require_prefix ... (empty = default set)"
+        default: ""
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6.8.0
+      - run: uv sync --locked
+      - name: Build analyze image
+        run: docker build -t soken/evm-analyze:ci docker/evm-analyze
+      - name: Fetch, build, analyze, review_leads
+        env:
+          SOKEN_IMAGE_EVM_ANALYZE: soken/evm-analyze:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+          CASES: ${{ inputs.cases }}
+        run: |
+          set -u
+          export SOKEN_SOLC_CACHE_DIR="$PWD/.sbx/solc"
+          mkdir -p .sbx/cases "$SOKEN_SOLC_CACHE_DIR"
+          if [ -z "$CASES" ]; then
+            CASES="zrx_v2:1:0x080bf510FCbF18b91105470639e9561022937712:compiler. comptroller:1:0xBafE01ff935C7305907c33BF824352eE5979B526:compiler. curve3pool:1:0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7:compiler. crveth:1:0x8301AE4fc9c624d1D396cbDAa1ed877821D7C511:compiler.GHSA-5824 weth9:1:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2:"
+          fi
+          args=()
+          for c in $CASES; do
+            IFS=: read -r name chain addr req <<< "$c"
+            uv run python scripts/fetch_case.py "$chain" "$addr" ".sbx/cases/$name" | grep -E "Candidates|Proxy" || true
+            uv run python scripts/build_case.py ".sbx/cases/$name" || {
+              echo "build_case exit $? for $name"
+              python3 -c "import json,sys; b=json.load(open(sys.argv[1])); print(b.get('reason'), (b.get('stderr_head') or '')[:1500])" ".sbx/cases/$name/build_result.json" || true
+            }
+            args+=(".sbx/cases/$name${req:+:$req}")
+          done
+          uv run python scripts/e2e_leads.py "${args[@]}"
+          for c in $CASES; do
+            name=${c%%:*}
+            python3 -c "import json,sys; s=json.load(open(sys.argv[1])); print(sys.argv[2], s.get('status'), s.get('not_run'), (s.get('compiler_advisories') or {}).get('status'))" ".sbx/cases/$name/static_map.json" "$name" || true
+          done

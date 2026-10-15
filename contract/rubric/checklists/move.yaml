@@ -1,0 +1,37 @@
+# rubric/checklists, family move (Sui and Aptos; chains restricts an item). Format: part 04 section 8.1.
+# Move arithmetic aborts on overflow: "arithmetic in Move never wraps around", https://move-book.com/move-basics/primitive-types
+# Shifts abort only when the shift amount is at least the bit width: https://move-book.com/reference/primitive-types/integers
+# UNVERIFIED: that a left shift silently drops value bits; settle with a Sui and an Aptos unit test (part 04 section 17.3).
+generic_items:
+  - {id: L1, kind: kill, condition: "The claimed path is not reachable from a public or entry function, Sui init or Aptos init_module (07 12.2 roots).", auto: map.unreachable}
+  - {id: L2, kind: kill, condition: "An assert at a quoted line rejects the input the claim depends on."}
+  - {id: L3, kind: downgrade, condition: "The effect is bounded by a cap at a quoted line."}
+categories:
+  move.capability_leak:
+    items:
+      - {id: C1, kind: kill, condition: "The capability struct has no store ability and no public function returns or transfers it to an arbitrary address.", scope: module}
+  move.missing_auth:
+    items:
+      - {id: A1, kind: kill, condition: "The signer address is compared to the stored admin.", chains: [aptos]}
+      - {id: A2, kind: kill, condition: "The function takes the capability object by reference.", chains: [sui]}
+  move.shared_object_ordering:
+    items:
+      - {id: S1, kind: kill, condition: "The result does not depend on the order of transactions touching the shared object, or a version or epoch check exists."}
+  move.generic_type_confusion:
+    items:
+      - {id: G1, kind: kill, condition: "The coin or asset type parameter is bound to the pool's stored type."}
+  move.hot_potato_misuse:
+    items:
+      - {id: H1, kind: kill, condition: "The receipt struct has no abilities and is consumed by a repay function that checks the amount.", scope: module}
+  move.shift_overflow:
+    items:
+      - {id: X1, kind: kill, condition: "A range check before the shift bounds the value so that no bits are lost (quoted)."}
+  move.abort_dos:
+    items:
+      - {id: D1, kind: kill, condition: "No aborting arithmetic path is reachable with user-set values on a withdrawal path."}
+  move.upgrade_policy:
+    items:
+      - {id: U1, kind: context, condition: "Upgrade policy and holder as read on chain (fact)."}
+  move.friend_package_exposure:
+    items:
+      - {id: F1, kind: kill, condition: "The function is public(package) or friend and every caller in the package performs the check.", scope: module}

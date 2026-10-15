@@ -1,0 +1,24 @@
+# rubric/units.yaml (owner part 04, section 6.3; W0 data file). Fact meaning tags by key pattern and the
+# measurement units a fact or calc output may carry. Facts tagged amount_at_risk are allowed only under the
+# meaning rule (magnitude unbounded and fact unit_id equal to the finding component), else E_NUMBER_CONTEXT.
+version: 1
+tags:
+  amount_at_risk:            # balances, TVL, supply, vault assets (04 6.3)
+    - '^onchain\.balance(\..+)?$'
+    - '^onchain\.total_supply$'
+    - '^onchain\.tvl(\..+)?$'
+    - '^onchain\.vault_assets(\..+)?$'
+    - '^onchain\.token_balance\..+$'
+# fact unit -> unit words that may follow the value in model text (unit context, 04 6.3)
+units:
+  wei: [wei]
+  ether: [ETH, ether]
+  seconds: [seconds, second, s]
+  hours: [hours, hour]
+  days: [days, day]
+  percent: ['%', percent]
+  bps: [bps, basis points]
+  token_units: [units, token units]
+  lines: [lines, nSLOC]
+  bytes: [bytes]
+  block: [block]

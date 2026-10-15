@@ -1,0 +1,30 @@
+{
+  "match": "match",
+  "chainId": "1",
+  "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "compilation": {
+    "language": "Solidity",
+    "compiler": "solc",
+    "compilerVersion": "0.4.24+commit.e67f0147",
+    "name": "FiatTokenProxy",
+    "fullyQualifiedName": "FiatTokenProxy.sol:FiatTokenProxy"
+  },
+  "stdJsonInput": {
+    "language": "Solidity",
+    "settings": {
+      "optimizer": {
+        "enabled": false
+      }
+    },
+    "sources": {
+      "FiatTokenProxy.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.4.24;\ncontract FiatTokenProxy {}"
+      }
+    }
+  },
+  "deployment": {
+    "transactionHash": "0x0",
+    "blockNumber": "6082465",
+    "deployer": "0x0"
+  }
+}

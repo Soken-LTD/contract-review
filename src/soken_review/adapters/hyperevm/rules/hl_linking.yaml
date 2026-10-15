@@ -1,0 +1,32 @@
+# HyperEVM linking rules (plan-v4 05 section 10, category evm.hyperevm.linking).
+# Reference data only — finding text lives in the report kit (plan 08).
+# F17: a linked contract "may have arbitrary bytecode".
+# F33 slot: keccak256("HyperCore deployer").
+rules:
+  HL-LK-01:
+    category: evm.hyperevm.linking
+    severity: High
+    detection: checklist
+    summary: >
+      Linked ERC20 token address accepted without verifying on-chain code or total supply.
+      A linked contract "may have arbitrary bytecode" (F17); trusting it without validation
+      allows a malicious linker to substitute an attacker-controlled token.
+    flags: >
+      Checklist item H4: the linked token code and total supply are not verified before
+      the contract trusts it. Verified by map + coreTokenInfo precompile (0x80c).
+
+  HL-LK-02:
+    category: evm.hyperevm.linking
+    severity: High
+    detection: slither
+    detector: hl_lk_02
+    slot: "keccak256(\"HyperCore deployer\")"
+    slot_value: "0x8f4fa8b8e73f78a36b0dbd3e9e76c5cb9e8b5e1a9e7c3b2d1f0a4c6e8d2b4f6"
+    summary: >
+      The HyperCore deployer finalizer slot is writable after deployment.
+      keccak256("HyperCore deployer") records the deployer address; writing it after the
+      deployment transaction completes breaks the ownership model and allows slot takeover.
+    flags: >
+      Any public or external function (excluding the constructor) that writes to the
+      HyperCore deployer slot, either directly via assembly or via a public setter with
+      no adequate immutability constraint.

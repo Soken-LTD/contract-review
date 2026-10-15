@@ -1,0 +1,13 @@
+# rubric/na_predicates.yaml (owner part 04, section 13). Each predicate returns true, false or unknown
+# (no semantic layer, or file partial); only true accepts. EVM shown; parts 05 to 07 implement the same codes.
+evm:
+  nr_no_external_call: No call of kind external, delegatecall or value_transfer in the item scope (challenge) or in-scope units (coverage)
+  nr_no_delegatecall: No call of kind delegatecall and no delegatecall token in in-scope assembly
+  nr_no_oracle: No call to a function listed in oracle_interfaces.yaml (latestRoundData, getReserves, slot0, observe)
+  nr_no_signature_check: No call to ecrecover, ECDSA.recover, SignatureChecker, isValidSignature
+  nr_no_token_transfer: No call to transfer, transferFrom, safeTransfer, safeTransferFrom on a token interface
+  nr_no_loop_over_storage: No loop whose bound reads a storage array length or mapping-backed counter
+  nr_no_proxy: Unit has no proxy_address and no upgrade_surface entry
+  nr_no_upgrade_path: upgrade_surface empty for every unit
+  nr_no_randomness_source: No read of block.prevrandao, block.difficulty or blockhash
+  nr_no_timestamp_use: No read of block.timestamp or now

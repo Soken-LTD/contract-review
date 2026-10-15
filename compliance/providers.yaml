@@ -1,0 +1,113 @@
+- id: sourcify
+  kind: data_provider
+  hosts:
+  - sourcify.dev
+  terms_url: null
+  terms_sha256: null
+  clearance: pending
+  needs:
+  - serve_to_model
+  - quote_in_report
+  - retain_report_lifetime
+  attribution: null
+  benchmark_use: true
+- id: sourcify_similarity
+  kind: data_provider
+  hosts:
+  - sourcify.dev
+  terms_url: null
+  terms_sha256: null
+  clearance: pending
+  needs:
+  - serve_to_model
+  - quote_in_report
+  - retain_report_lifetime
+  - public_write
+  attribution: null
+  benchmark_use: false
+- id: blockscout_eth_bytecode_db
+  kind: data_provider
+  hosts:
+  - eth-bytecode-db.services.blockscout.com
+  terms_url: null
+  terms_sha256: null
+  clearance: pending
+  needs:
+  - serve_to_model
+  - quote_in_report
+  - retain_report_lifetime
+  attribution: null
+  benchmark_use: true
+- id: tronscan
+  kind: data_provider
+  hosts:
+  - apilist.tronscanapi.com
+  terms_url: null
+  terms_sha256: null
+  clearance: pending
+  needs:
+  - serve_to_model
+  - quote_in_report
+  - retain_report_lifetime
+  attribution: null
+  benchmark_use: true
+- id: etherscan
+  kind: data_provider
+  hosts:
+  - api.etherscan.io
+  terms_url: https://etherscan.io/apiterms
+  terms_sha256: null
+  clearance: refused
+  needs:
+  - serve_to_model
+  - quote_in_report
+  - retain_report_lifetime
+  attribution: Powered by Etherscan.io APIs
+  benchmark_use: false
+- id: routescan
+  kind: data_provider
+  hosts: []
+  terms_url: null
+  terms_sha256: null
+  clearance: refused
+  needs: []
+  attribution: null
+  benchmark_use: false
+- id: aptos_cli
+  kind: toolchain
+  hosts: []
+  terms_url: null
+  terms_sha256: null
+  clearance: pending
+  needs: []
+  attribution: null
+  benchmark_use: true
+- id: tron_slither_shim
+  kind: toolchain
+  hosts: []
+  terms_url: null
+  terms_sha256: null
+  clearance: pending
+  needs: []
+  attribution: null
+  benchmark_use: true
+- id: starknet_rpc_publicnode
+  kind: data_provider
+  hosts:
+  - starknet-rpc.publicnode.com
+  terms_url: null
+  terms_sha256: null
+  clearance: pending
+  needs: []
+  attribution: null
+  benchmark_use: true
+- id: starknet_rpc_cartridge
+  kind: data_provider
+  hosts:
+  - api.cartridge.gg
+  terms_url: null
+  terms_sha256: null
+  clearance: pending
+  needs: []
+  attribution: null
+  benchmark_use: true

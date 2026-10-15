@@ -1,0 +1,6 @@
+# Release config read at startup (03 section 13 "Enums"). Development values.
+# Production: chains = released plus paused chain keys from the gate registry (10 section 6);
+# languages = released adapters; dependencies = the 09 4.4 read-only package cache snapshot.
+chains: [evm, hyperevm, tron, solana, ton, sui, aptos, starknet]
+languages: [solidity, vyper, func, tact, tolk, move_sui, move_aptos, cairo]
+dependencies: []  # filled from the package cache once 09 4.4 exists

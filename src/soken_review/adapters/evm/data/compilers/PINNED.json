@@ -1,0 +1,17 @@
+{
+  "_note": "Pinned copies of the solc bug list (05 6.2). Refresh: download both files at a new ethereum/solidity commit, update commit, sha256 and checked_at, rerun tests.",
+  "solidity_commit": "4a392a063b7ba388f66a85c2f5649c8a16fdc52e",
+  "solidity_latest_release": "v0.8.37",
+  "checked_at": "2026-10-10",
+  "licence": "GPL-3.0 (ethereum/solidity repository); data files used as reference data",
+  "files": {
+    "solc_bugs.json": {
+      "source_url": "https://raw.githubusercontent.com/ethereum/solidity/4a392a063b7ba388f66a85c2f5649c8a16fdc52e/docs/bugs.json",
+      "sha256": "cfca0ca0a571db9717c0244c602d4e59513f17d65e4fc724f6730ab7a13f3855"
+    },
+    "solc_bugs_by_version.json": {
+      "source_url": "https://raw.githubusercontent.com/ethereum/solidity/4a392a063b7ba388f66a85c2f5649c8a16fdc52e/docs/bugs_by_version.json",
+      "sha256": "e67aba151b323ead83f8816f7bae875f04f1eb4defdc9895133b89f8712631f1"
+    }
+  }
+}

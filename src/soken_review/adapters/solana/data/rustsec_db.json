@@ -1,0 +1,7 @@
+{
+  "$comment": "RustSec advisory-db snapshot for cargo-audit (06 3.3.1 soken-sbx-solana: cargo-audit plus RustSec snapshot). Fetched outside the offline analysis by `python -m soken_review.adapters.solana.rustsec fetch` (sandboxed git, egress) and mounted read-only. Bump commit + commit_date together (gh api repos/rustsec/advisory-db/commits/main). Older than max_age_days at analysis time: cargo-audit still runs, analysis is degraded with rustsec_db_stale.",
+  "repo": "https://github.com/rustsec/advisory-db",
+  "commit": "7eebec69c352c7191b1f13eb95dd510eeca5d1de",
+  "commit_date": "2026-10-09T08:12:02Z",
+  "max_age_days": 30
+}

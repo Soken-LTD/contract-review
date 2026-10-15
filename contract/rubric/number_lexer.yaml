@@ -1,0 +1,22 @@
+# rubric/number_lexer.yaml (owner part 04, section 6.2). Ordered: at each position the first class that matches
+# consumes its text. Step U runs on the submitted string (before NFKC folds 10⁶ to 106); the rest on the NFKC copy.
+classes:
+  - {id: U,   pattern: 'Unicode category No or Nl, or Nd outside 0-9', on: submitted, result: E_NUMBER_FORMAT}
+  - {id: L0,  pattern: '\{\{(fact|calc|finding):[^{}]*\}\}', result: placeholder (section 6.4)}
+  - {id: L1,  pattern: '`[^`\n]+`', result: code span; validated by section 11.3; content re-lexed with L2 to L9}
+  - {id: L2,  pattern: '\b0x[0-9a-fA-F]+\b', result: 'literal in A1, else fact only; 40 and 64 hex only by fact'}
+  - {id: L3,  pattern: '\b(ERC|EIP|BEP|TRC|TEP|SPL|SIP|SNIP|SWC|CWE|CVE|RFC|FIP)-?\d+(-\d+)?\b', result: exempt if in standard_ids allowlist}
+  - {id: L4,  pattern: '\b\d+\.\d+\.\d+\b, or \d+\.\d+ directly after a tool name in number_exemptions.yaml', result: equals or is the major.minor prefix of a version fact}
+  - {id: L5,  pattern: '<manifest path>:(\d+)(-(\d+))?', result: inside a quote range of this finding or its challenge answers, else E_LINEREF_OUTSIDE}
+  - {id: L6,  pattern: '(?i)\blines?\s+\d+(\s*,\s*\d+)*(\s*,?\s*(and|to|-)\s*\d+)?', result: each number follows L5}
+  - {id: L7,  pattern: '[A-Za-z_][A-Za-z0-9_$]* containing a digit', result: 'exempt if in the manifest word set, type_names, or standard ids; else E_NUMBER_UNSOURCED'}
+  - {id: L8,  pattern: '[$€£¥]?\d{1,3}(?:[,_  ]\d{3})+(?:\.\d+)?%?|[$€£¥]?\d+(?:\.\d+)?(?:[eE]\d+)?%?', result: 'plain space never joins digits; invalid group (1,00 / 1_0) is E_NUMBER_FORMAT'}
+  - {id: L8a, pattern: 'currency symbol; (?i)\b(USD|US\$|EUR|GBP)\s?\d; a units.yaml ticker joined to or adjacent to an L8 token', result: E_NUMBER_FORMAT}
+  - {id: L8b, pattern: 'L8 token ending in %', result: E_NUMBER_FORMAT}
+  - {id: L8c, pattern: 'other L8 tokens', result: allowed-set check (section 6.3)}
+  - {id: L8d, pattern: '\b\d+(\.\d+)?\s?[kKmMbB]\b|\b\d+(st|nd|rd|th)\b', result: E_NUMBER_FORMAT}
+  - {id: L9,  pattern: '(?i)\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth|millionth)\b', except: ['third party', 'third-party'], result: E_NUMBER_UNSOURCED}
+  - {id: L9a, pattern: '(?i)\b(hundreds?|thousands?|millions?|billions?|trillions?|dozens?|twice|thrice|double|triple|\w+uple|half|halves|quarters?|\w+fold)\b', result: E_NUMBER_FORMAT}
+  - {id: L9b, pattern: '(?i)\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+(third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|hundredth|thousandth)s?\s+of\b|(?i)\b(thirds?|fourths?|fifths?|sixths?|sevenths?|eighths?|ninths?|tenths?|hundredths?|thousandths?)\s+of\b', result: E_NUMBER_FORMAT}
+exempt_everywhere: ['0', '1', zero, one, first, second, last]
+type_names: ['uint8..uint256 (step 8)', 'int8..int256 (step 8)', 'bytes1..bytes32', u8, u16, u32, u64, u128, u256, i8, i16, i32, i64, i128, felt252]

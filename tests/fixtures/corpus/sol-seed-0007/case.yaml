@@ -1,0 +1,43 @@
+case_id: sol-seed-0007
+chain: solana
+chain_id: null
+split: gate
+origin: seeded
+source:
+  provider: repo
+  repo: https://github.com/example/vault
+  commit: 4240445ed3b5145be1032cf1becc9c6866046bf7
+  subdir: programs/vault
+  license: Apache-2.0
+input_mode: upload
+run_as_chain: null
+provenance_tier_expected: B
+expected_outcome: report
+j_class: null
+ground_truth:
+- gt_id: GT-1
+  title_ref: S1 signer to UncheckedAccount
+  severity: High
+  category: solana.missing_signer
+  root_cause_lines:
+  - file: src/lib.rs
+    start: 120
+    end: 123
+  related_lines:
+  - file: src/lib.rs
+    start: 40
+    end: 44
+  source_url: null
+  min_match: location_and_category
+  exclude_chains: []
+judged: false
+seeded:
+  operator: S1
+  renamed: true
+  renamer_hash: sha256:00
+  reachability: proven
+rereview_of: null
+negatives_note: null
+consent: not_needed
+created: 2026-10-14
+created_by: eval-agent

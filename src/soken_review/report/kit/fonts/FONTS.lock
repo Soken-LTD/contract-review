@@ -1,0 +1,12 @@
+{
+  "$comment": "Font allowlist (08 1.3, U8-7). postscript_name is the name pdffonts prints after the XXXXXX+ subset prefix (read 2026-10-10 from a rendered report). required: always, or mono when the report uses mono text.",
+  "fonts": [
+    {"file": "Gilroy-Regular.woff2", "postscript_name": "Gilroy-Regular", "required": "always",
+     "sha256": "ede59d426564e6176ea4b6f865a56c996da15480c14073e0373c53dd4ac6df90", "source": "soken-offsec report-kit 2026-10-03"},
+    {"file": "Gilroy-Bold.woff2", "postscript_name": "Gilroy-Bold", "required": "always",
+     "sha256": "d79192e9c5b4dcc180901534e3adf38b5c16697ce4c8a8959fffc37799825a11", "source": "soken-offsec report-kit 2026-10-03"},
+    {"file": "JetBrainsMono-Regular.woff2", "postscript_name": "JetBrainsMono-Regular", "required": "mono",
+     "sha256": "a9cb1cd82332b23a47e3a1239d25d13c86d16c4220695e34b243effa999f45f2",
+     "source": "github.com/JetBrains/JetBrainsMono release v2.304, JetBrainsMono-2.304.zip sha256 6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf, fonts/webfonts/, SIL OFL 1.1 (OFL.txt)"}
+  ]
+}

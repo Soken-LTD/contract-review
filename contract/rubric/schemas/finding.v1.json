@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:soken:rubric:schemas:finding.v1",
+  "$comment": "Owner part 04 (plan v4). Enums are generated from rubric/enums.yaml at build; CI fails on drift. Server-created drafts (draft_key prefix srv-) accept only title and body.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "draft_key", "title", "body"],
+  "properties": {
+    "job_id": {"type": "string", "maxLength": 80},
+    "draft_key": {"$ref": "#/$defs/draft_key"},
+    "expected_revision": {"type": "integer", "minimum": 0},
+    "lead_ids": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "pattern": "^LEAD-[0-9]{4}$"}},
+    "category": {"type": "string", "pattern": "^(evm|solana|ton|move|cairo)\\.[a-z0-9_]+(\\.[a-z0-9_]+)?$", "maxLength": 60},
+    "title": {"type": "string", "minLength": 10, "maxLength": 110},
+    "quotes": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"$ref": "#/$defs/quote"}},
+    "matrix": {
+      "type": "object", "additionalProperties": false,
+      "required": ["impact_class", "magnitude", "trigger", "precondition", "reversibility"],
+      "properties": {
+        "impact_class": {"enum": ["theft_of_funds", "permanent_freeze", "temporary_freeze", "insolvency_or_bad_debt", "control_takeover", "yield_or_fee_loss", "unauthorized_state_change", "griefing_with_victim_loss", "dos_core_function", "dos_noncore_function", "incorrect_accounting_no_fund_effect", "spec_deviation_bounded", "centralization_risk", "best_practice"]},
+        "magnitude": {"enum": ["unbounded", "bounded", "dust"]},
+        "trigger": {"enum": ["anyone", "permissionless_role", "privileged_role", "privileged_role_unprotected", "upgrade_authority"]},
+        "precondition": {"enum": ["none", "normal_operation", "market_condition", "timing_or_ordering", "uncommon_protocol_state", "external_failure", "victim_unusual_action"]},
+        "reversibility": {"enum": ["irreversible", "admin_reversible", "self_recovering"]}
+      }
+    },
+    "body": {
+      "type": "object", "additionalProperties": false,
+      "required": ["description", "impact", "recommendation"],
+      "properties": {
+        "description": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"$ref": "#/$defs/block"}},
+        "impact": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"$ref": "#/$defs/block"}},
+        "recommendation": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"$ref": "#/$defs/block"}}
+      }
+    },
+    "attack_steps": {"type": "array", "maxItems": 10, "items": {
+      "type": "object", "additionalProperties": false, "required": ["text", "ref"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1, "maxLength": 300},
+        "ref": {"type": "string", "pattern": "^[A-Za-z0-9_./-]{1,200}:[0-9]{1,6}(-[0-9]{1,6})?$"}}}},
+    "absence_claims": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/absence_claim"}},
+    "distinct_from": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/draft_key"}},
+    "documented_intent_ref": {"$ref": "#/$defs/quote"},
+    "claimed_severity": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]}
+  },
+  "allOf": [
+    {"if": {"properties": {"draft_key": {"pattern": "^srv-"}}},
+     "then": {"propertyNames": {"enum": ["job_id", "draft_key", "expected_revision", "title", "body"]}},
+     "else": {"required": ["category", "quotes", "matrix"]}},
+    {"if": {"required": ["matrix"], "properties": {"matrix": {"properties": {"magnitude": {"const": "bounded"}}, "required": ["magnitude"]}}},
+     "then": {"properties": {"quotes": {"contains": {"required": ["role"], "properties": {"role": {"const": "bound_ref"}}}}}}},
+    {"if": {"required": ["matrix"], "properties": {"matrix": {"properties": {"trigger": {"const": "privileged_role_unprotected"}}, "required": ["trigger"]}}},
+     "then": {"properties": {"quotes": {"contains": {"required": ["role"], "properties": {"role": {"const": "role_path"}}}}}}}
+  ],
+  "$defs": {
+    "draft_key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,47}$"},
+    "quote": {
+      "type": "object", "additionalProperties": false, "required": ["file", "start", "end", "text"],
+      "properties": {
+        "file": {"type": "string", "maxLength": 200},
+        "start": {"type": "integer", "minimum": 1},
+        "end": {"type": "integer", "minimum": 1},
+        "text": {"type": "string", "maxLength": 6000},
+        "role": {"enum": ["location", "bound_ref", "role_path", "context"], "default": "location"}
+      }
+    },
+    "block": {"oneOf": [
+      {"type": "object", "additionalProperties": false, "required": ["p"], "properties": {"p": {"type": "string", "minLength": 1, "maxLength": 900}}},
+      {"type": "object", "additionalProperties": false, "required": ["ul"], "properties": {"ul": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "maxLength": 300}}}},
+      {"type": "object", "additionalProperties": false, "required": ["table"], "properties": {"table": {"type": "object", "additionalProperties": false, "required": ["head", "rows"],
+        "properties": {
+          "head": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "maxLength": 60}},
+          "rows": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 300}}}}}}}
+    ]},
+    "absence_claim": {
+      "type": "object", "additionalProperties": false, "required": ["says", "kind", "target", "scope"],
+      "properties": {
+        "says": {"type": "string", "minLength": 3, "maxLength": 120, "description": "the exact absence phrase as written in the finding text (part 04 section 7.6)"},
+        "kind": {"enum": ["no_reads", "no_writes", "no_calls", "no_guard", "all_paths_unguarded"]},
+        "target": {"type": "string", "maxLength": 120, "description": "identifier in the map, or a guard class"},
+        "scope": {"enum": ["in_scope_files", "unit", "entry_function"]},
+        "unit": {"type": "string", "maxLength": 120, "description": "unit id from the map, required when scope = unit"},
+        "entry": {"type": "string", "maxLength": 120, "description": "function id from the map, required when scope = entry_function"}
+      },
+      "allOf": [
+        {"if": {"properties": {"scope": {"const": "entry_function"}}}, "then": {"required": ["entry"]}},
+        {"if": {"properties": {"scope": {"const": "unit"}}}, "then": {"required": ["unit"]}}
+      ]
+    }
+  }
+}

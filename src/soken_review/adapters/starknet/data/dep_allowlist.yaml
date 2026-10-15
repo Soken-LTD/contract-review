@@ -1,0 +1,10 @@
+# Pinned external Scarb packages the Starknet trust scan accepts (trust_scan.py). Reference data.
+# A Scarb.lock package with a `source` is trusted only when name, version, source and checksum
+# match a row here exactly. `cairo_plugin: true` rows are still untrusted for tier A (a procedural
+# macro runs native code at build time); they are listed so the reason names them precisely.
+# Add a row only from a lockfile read by hand with the registry page of that exact version.
+packages:
+  - {name: snforge_std, version: "0.51.2", source: "registry+https://scarbs.xyz/",
+     checksum: "sha256:d7287b7e9c826ee560788a7a9b808a2a0454977ac4111bd3c1bcb3c7c5f01040", cairo_plugin: false}
+  - {name: snforge_scarb_plugin, version: "0.51.2", source: "registry+https://scarbs.xyz/",
+     checksum: "sha256:7b94edb0a94b93915200275076c29ef8266f4b870ffda04360cf36bc3b5e67cc", cairo_plugin: true}

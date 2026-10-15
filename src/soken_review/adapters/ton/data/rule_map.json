@@ -1,0 +1,43 @@
+{
+  "soken-ton-rules": {
+    "TON-BNC-01": "ton.bounce_handling",
+    "TON-BNC-02": "ton.bounce_handling",
+    "TON-BNC-03": "ton.bounce_body",
+    "TON-BNC-04": "ton.unrecoverable_send",
+    "TON-MODE-01": "ton.send_mode_drain",
+    "TON-MODE-02": "ton.unrecoverable_send",
+    "TON-MODE-03": "ton.send_order",
+    "TON-MODE-04": "ton.account_destroy",
+    "TON-GAS-01": "ton.gas_storage",
+    "TON-GAS-02": "ton.unbounded_loop",
+    "TON-GAS-03": "ton.send_mode_reserve",
+    "TON-GAS-04": "ton.excess_return",
+    "TON-AUTH-01": "ton.sender_auth",
+    "TON-AUTH-02": "ton.address_parsing",
+    "TON-RPL-01": "ton.external_accept_early",
+    "TON-RPL-02": "ton.replay",
+    "TON-RPL-03": "ton.replay",
+    "TON-RPL-04": "ton.signature_binding",
+    "TON-UPG-01": "ton.code_update",
+    "TON-UPG-02": "ton.upgrade_migration",
+    "TON-INT-01": "ton.signed_integer",
+    "TON-RND-01": "ton.randomness",
+    "TON-RACE-01": "ton.async_race",
+    "TON-JET-01": "ton.jetton_standard"
+  },
+  "misti": {
+    "NeverAccessedVariables": "ton.arithmetic",
+    "UnboundLoop": "ton.unbounded_loop",
+    "StringReceiversOverlap": "ton.bounce_handling",
+    "ZeroAddress": "ton.address_parsing",
+    "SendInLoop": "ton.gas_storage",
+    "FieldDoubleInit": "ton.arithmetic",
+    "PreferAugmentedAssign": "ton.arithmetic",
+    "ArgCopyMutation": "ton.arithmetic",
+    "CellOverflow": "ton.gas_storage",
+    "CellUnderflow": "ton.gas_storage",
+    "DivideBeforeMultiply": "ton.arithmetic",
+    "ShiftOverflow": "ton.arithmetic",
+    "EtaLikeSimplifications": "ton.arithmetic"
+  }
+}

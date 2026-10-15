@@ -1,0 +1,73 @@
+# config/limits.yaml, schema v2. Owner: plan-v4 part 09 (M15, O3).
+# Technical guards only (D-LIMITS): step walls, sandbox CPU/RAM/disk, input size per job, render budget,
+# outbound per-provider politeness. No usage quota, rate limit, per-principal, daily or admission cap.
+# Loaded by soken-api, soken-scheduler, soken-worker into pydantic model Limits; unknown keys refused.
+# Surfaces (03): plugin (header X-Soken-Client), connector.
+# Values are launch defaults (09 UV9-8). null = set from measurement before release; a null key blocks its chain's gate.
+
+surface:                       # input size per job (03 S6); values from the part 10 driver pilot (UNVERIFIED)
+  plugin:    {max_nsloc: 10000}
+  connector: {max_nsloc: 3000}
+job:
+  ready_idle_ttl_h: 24
+  rejected_per_draft: 6
+  dismiss_items_per_call: 50
+  read_lines: 400
+inline:                        # inline files input, checked in review_start
+  files: 20
+  chars_per_file: 60000
+  chars_total: 200000
+upload:                        # S4 (03 signed URL; 09 5.3)
+  url_ttl_s: 1800
+  max_bytes: 52428800
+  max_files: 20000
+chain_state:                   # 05 12.3; call ceiling = 09 step wall x outbound.<provider>.per_s; max_seconds is the EVM chain_state 1 wall
+  max_seconds: 120
+  max_calls_role: 200
+  read_retries: 2
+loop:
+  max_new_targets: 5           # 05 proxy and facet loop
+solana:                        # 06 2.10
+  max_programs_per_job: 3
+  max_candidates_per_unit: 3
+  max_builds_per_unit: 2
+ton:                           # 06 2.10
+  max_compilations_per_job: 8
+  max_targets_per_candidate: null
+  get_method_gas: null
+deps:                          # P0-DEPS results (09 UV9-3)
+  evm: {p95_wall_s: null, p95_bytes: null}
+  solana: {p95_wall_s: null, p95_bytes: null}
+  move: {p95_wall_s: null, p95_bytes: null}
+  starknet: {p95_wall_s: null, p95_bytes: null}
+  ton: {p95_wall_s: null, p95_bytes: null}
+egress:                        # 09 4.3: sandbox outbound allowlist, one smokescreen per family (ACL `default:` only,
+                               # allow_missing_role). Only repo fetch and deps reach it. Host names, no wildcards.
+                               # No explorer, verifier or RPC host ever appears here (those are supervisor calls).
+  all: [github.com, gitlab.com, codeberg.org]
+  evm: [registry.npmjs.org, api.soldeer.xyz]   # soldeer host UNVERIFIED (UV9-6, smokescreen report mode)
+  solana: [index.crates.io, static.crates.io]  # cargo sparse index and crate downloads
+  move: []
+  starknet: [scarbs.xyz]                       # UNVERIFIED (UV9-6)
+  ton: []
+outbound:                      # politeness, supervisor only; rate_buckets out:s:<provider>; a provider without a row is not callable
+  quicknode: {per_s: 40}
+  sourcify: {per_s: 2}         # 05 R4; value set by 05 UV5-02
+  eth_bytecode_db: {per_s: 2}  # SCOPE 8 step 2, bytecode-only sources:search; never sources:search-all; UV5-02
+  ipfs: {per_s: 2}             # SCOPE 8 step 4; one bucket per gateway host (out:s:ipfs:<host>): Filebase, Lighthouse, Pinata, 4everland, delegated-ipfs.dev
+  etherscan: {per_s: 10}       # SCOPE 8 step 5, getsourcecode only; callable only with etherscan_licence on (Advanced, 20/s)
+  tronscan: {per_s: 2}         # 05 R4; UV5-02
+  trongrid: {per_s: 2}         # 05 R4; UV5-02
+  hyperliquid: {per_s: 2}      # 05 R4, rpc.hyperliquid.xyz/evm; UV5-02
+  toncenter: {per_s: 10}       # 06 4.3, keyed plan; UNVERIFIED until 06 U-T5 measures it
+  ottersec: {per_s: 2}         # 06 3.2, verify.osec.io; UNVERIFIED
+  ton_verifier: {per_s: 2}     # 06 4.3, verifier.ton.org; UNVERIFIED
+  sui_graphql: {per_s: null}   # 07 3, graphql.mainnet.sui.io; 09 UV9-8 (documented limit, then 429 probe)
+  aptos_rest: {per_s: null}    # 07 3, api.mainnet.aptoslabs.com; 09 UV9-8
+  starknet: {per_s: null}      # 07 3, one bucket per cleared host (out:s:starknet:<host>); 09 UV9-8, 07 U-09
+claim:                         # 08 claim page
+  nonce_ttl_min: 30
+report:                        # S8 durations; keys of the 09 retention table
+  default_days: 30
+  extend_days: 60
+  max_days: 90

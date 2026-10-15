@@ -1,0 +1,166 @@
+"""Unit label and store-path helpers for the TON adapter (plan v4 06 section 2.6).
+
+unit_label = <name>_<h6>
+  name: contract/file name, [A-Za-z0-9_], at most 40 chars
+  h6:   first 6 lowercase hex chars of the raw address account bytes (64-hex string)
+        or, with no address, first 6 hex of sha256 of the entry file store path
+
+Store path rule: <unit_label>/<relative_file_path>
+Path safety: same allowlist as evm/units.safe_store_path  (RULES.md §3)
+"""
+
+from __future__ import annotations
+
+import hashlib
+import posixpath
+import re
+
+_H6_STRIP = re.compile(r"[^A-Za-z0-9_]")
+
+# Allowlist from RULES.md §3: same as evm/units.safe_store_path
+_SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9_./-]{1,200}$")
+
+
+def make_h6(raw_address: str) -> str:
+    """First 6 lowercase hex chars of the account-id part of a raw TON address.
+
+    raw_address: '-1:abcdef...' (64-hex account id after the colon)
+    Falls back to zeros if the format is unexpected.
+    """
+    if ":" in raw_address:
+        account = raw_address.split(":", 1)[1].lower()
+        if len(account) >= 6:
+            return account[:6]
+    return "000000"
+
+
+def make_h6_from_path(store_path: str) -> str:
+    """First 6 hex chars of sha256 of a store path (fallback when no address)."""
+    return hashlib.sha256(store_path.encode()).hexdigest()[:6]
+
+
+def sanitize_name(raw: str) -> str:
+    """Strip non-[A-Za-z0-9_] and truncate to 40 chars."""
+    return _H6_STRIP.sub("_", raw)[:40]
+
+
+def make_unit_label(name: str, raw_address: str | None, store_path: str | None = None) -> str:
+    """Compose <name>_<h6> unit label (plan 06 2.6, 05 3.4)."""
+    safe = sanitize_name(name)
+    if raw_address is not None:
+        h6 = make_h6(raw_address)
+    elif store_path is not None:
+        h6 = make_h6_from_path(store_path)
+    else:
+        h6 = "000000"
+    return f"{safe}_{h6}"
+
+
+def safe_store_path(raw_path: str) -> str | None:
+    """Validate and normalise a file path from an untrusted source (RULES.md §3).
+
+    Rejects absolute paths, .., backslashes, NUL bytes, empty segments,
+    anything outside ^[A-Za-z0-9_./-]{1,200}$.
+    Returns the normalised path or None.
+    """
+    if not raw_path:
+        return None
+    if "\x00" in raw_path or "\\" in raw_path:
+        return None
+    normalised = posixpath.normpath(raw_path)
+    if normalised.startswith("/"):
+        return None
+    parts = normalised.split("/")
+    if ".." in parts:
+        return None
+    if "" in parts:
+        return None
+    if not _SAFE_PATH_RE.match(normalised):
+        return None
+    return normalised
+
+
+def filter_candidate_files(files: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """Apply safe_store_path to every key. Returns (safe_files, dropped_paths)."""
+    safe: dict[str, str] = {}
+    dropped: list[str] = []
+    for raw_path, content in files.items():
+        norm = safe_store_path(raw_path)
+        if norm is None:
+            dropped.append(raw_path)
+        else:
+            safe[norm] = content
+    return safe, dropped
+
+
+def count_nsloc_ton(source: str, language: str) -> int:
+    """Count nSLOC for FunC, Tact, or Tolk (plan 06 2.9).
+
+    FunC: ;; single-line, {- -} nested block comments
+    Tact/Tolk: // single-line, /* */ non-nested block comments
+    """
+    lines = source.splitlines()
+    count = 0
+    in_block = False
+    nest_level = 0
+
+    if language == "func":
+        # FunC: {- -} nested block comments, ;; single-line
+        for line in lines:
+            stripped = line.strip()
+            code_on_line = False
+            text = stripped
+            j = 0
+            while j < len(text):
+                if not in_block and text[j:j+2] == "{-":
+                    in_block = True
+                    nest_level = 1
+                    j += 2
+                    continue
+                if in_block:
+                    if text[j:j+2] == "{-":
+                        nest_level += 1
+                        j += 2
+                        continue
+                    if text[j:j+2] == "-}":
+                        nest_level -= 1
+                        if nest_level == 0:
+                            in_block = False
+                        j += 2
+                        continue
+                    j += 1
+                    continue
+                # not in block
+                if text[j:j+2] == ";;":
+                    break  # rest is comment
+                code_on_line = True
+                j += 1
+            if code_on_line and not in_block:
+                count += 1
+            elif not in_block and text and not text.startswith(";;") and ";;" not in text:
+                # line had only non-comment content
+                has_code = bool(text.replace(" ", "").replace("\t", ""))
+                if has_code and not text.startswith(";;"):
+                    # Re-check: after stripping ;; comment
+                    before_comment = text.split(";;", 1)[0].strip() if ";;" in text else text
+                    if before_comment:
+                        count += 1
+    else:
+        # Tact / Tolk: // single-line, /* */ non-nested
+        for line in lines:
+            stripped = line.strip()
+            if in_block:
+                if "*/" in stripped:
+                    in_block = False
+                continue
+            if stripped.startswith("/*"):
+                if "*/" not in stripped[2:]:
+                    in_block = True
+                continue
+            if stripped.startswith("//"):
+                continue
+            if not stripped:
+                continue
+            count += 1
+
+    return count

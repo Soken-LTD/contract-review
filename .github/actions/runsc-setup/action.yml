@@ -1,0 +1,38 @@
+name: runsc-setup
+description: gVisor runtimes runsc-none (loopback only) and runsc-egress (netstack) on the runner (09 4.1, S3)
+inputs:
+  release:
+    description: gVisor release directory (storage.googleapis.com/gvisor/releases/release/<release>)
+    default: "20260921.0"
+  sha512:
+    description: sha512 of x86_64/gvisor.tar.bz2 of that release
+    default: "7c899979bed334f0987888c41e545cede8e1f7e67a257978c8de244c3867e32bc30d08491e9af36720273c502acd01d8d86c9844ebcbe125790c43fe6bdf563e"
+runs:
+  using: composite
+  steps:
+    - name: Install runsc (sha512 checked) and register the two runtimes
+      shell: bash
+      env:
+        RELEASE: ${{ inputs.release }}
+        SUM: ${{ inputs.sha512 }}
+      run: |
+        set -euo pipefail
+        url="https://storage.googleapis.com/gvisor/releases/release/${RELEASE}/x86_64/gvisor.tar.bz2"
+        curl -fsSL -o /tmp/gvisor.tar.bz2 "$url"
+        echo "${SUM}  /tmp/gvisor.tar.bz2" | sha512sum -c -
+        sudo mkdir -p /opt/gvisor && sudo tar -xjf /tmp/gvisor.tar.bz2 -C /opt/gvisor
+        sudo ln -sf /opt/gvisor/runsc /usr/local/bin/runsc
+        runsc --version
+        cfg=/etc/docker/daemon.json
+        [ -s "$cfg" ] || echo '{}' | sudo tee "$cfg" >/dev/null
+        # systrap needs no virtualization (S3); runsc-none: --network=none gives loopback only.
+        jq '. + {"registry-mirrors": ["https://mirror.gcr.io"],
+                 "runtimes": ((.runtimes // {}) + {
+                   "runsc-none":   {"path": "/usr/local/bin/runsc", "runtimeArgs": ["--platform=systrap", "--network=none"]},
+                   "runsc-egress": {"path": "/usr/local/bin/runsc", "runtimeArgs": ["--platform=systrap"]}})}' \
+          "$cfg" | sudo tee "$cfg.new" >/dev/null
+        sudo mv "$cfg.new" "$cfg"
+        cat "$cfg"
+        sudo systemctl restart docker
+        docker info --format '{{json .Runtimes}}' | jq -c 'keys'
+        docker run --rm --runtime=runsc-none --network=none mirror.gcr.io/library/alpine:3.20 dmesg | head -3

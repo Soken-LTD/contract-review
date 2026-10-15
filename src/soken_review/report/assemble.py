@@ -1,0 +1,474 @@
+"""`assemble_report(job_id)` (08 3.1): report.json from a finalized job, server fields only.
+
+Reads the pin store, the job work dir (candidates, chain state, build result), `leads.json`,
+the finding, challenge, section and read tables. Every printed number is recomputed from rows
+here (08 3.1 step 5). Model strings stay in placeholder form; `{{finding:key}}` is replaced by
+the final id because report.json has no draft-key map (W0 finding). `project()` at build is the
+only place facts expand and withholding happens (08 2.4).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from ..adapters.evm.registry import get_chain
+from ..adapters.evm.units import count_nsloc
+from ..pinning.store import PinnedSource
+from .kit.build import SEV_PREFIX, SEVS, build_date_text, check_strings, counts, kit_texts, out_name, validate
+
+REPO = Path(__file__).resolve().parents[3]
+RUBRIC = REPO / "contract" / "rubric"
+LIMITS = REPO / "contract" / "ops" / "limits.yaml"
+
+ROLE_LABELS = {"owner": "Code owner or its team", "authorized": "Party authorized by the code owner",
+               "third_party_public_code": "Third party reviewing public code"}
+QUOTE_ROLE_ORDER = ["location", "bound_ref", "role_path", "context"]
+SEV_RANK = {s: i for i, s in enumerate(SEVS)}
+LEAD_SEV = {"Critical": "Critical", "High": "High", "Medium": "Medium", "Low": "Low", "Info": "Informational"}
+MAX_LINE = 2000
+# Category label words that are not plain title case (08 2.3 category label; enums.yaml has ids only).
+_LABEL_WORDS = {"dos": "DoS", "mev": "MEV", "evm": "EVM", "pda": "PDA", "cpi": "CPI", "ata": "ATA", "tron": "TRON",
+                "hyperevm": "HyperEVM", "corewriter": "CoreWriter"}
+
+
+class AssemblyError(Exception):
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(f"{code}: {detail}")
+        self.code, self.detail = code, detail
+
+
+def category_label(cat: str) -> str:
+    """Readable label of an enums.yaml id: family dropped, words title-cased (e.g. `evm.dos` -> DoS)."""
+    parts = cat.split(".")[1:] or [cat]
+    words = " ".join(parts).replace("_", " ").split()
+    out = [_LABEL_WORDS.get(w, w) for w in words]
+    label = " ".join(out)
+    return (label[:1].upper() + label[1:])[:60]
+
+
+def _enums() -> list[dict[str, Any]]:
+    return yaml.safe_load((RUBRIC / "enums.yaml").read_text(encoding="utf-8"))["categories"]
+
+
+def coverage_categories(family: str, chain: str | None) -> list[dict[str, Any]]:
+    """Checklist areas of a family (04 coverage rows): server-only categories excluded."""
+    out = []
+    for c in _enums():
+        if c["family"] != family or c.get("server_only"):
+            continue
+        if c.get("chains") and chain not in c["chains"]:
+            continue
+        out.append(c)
+    return out[:60]
+
+
+def date_text(d: date) -> str:
+    return build_date_text(d)
+
+
+def _limits() -> dict[str, Any]:
+    return yaml.safe_load(LIMITS.read_text(encoding="utf-8"))
+
+
+# ------------------------------------------------------------------ subject chain (08 2.6)
+def subject_candidates(job: dict[str, Any], cands: list[dict[str, Any]], pin: PinnedSource) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    args = job.get("source_args") or {}
+    repo = args.get("repo") if isinstance(args, dict) else None
+    commit = job.get("resolved_commit")
+    address = job.get("address")
+    proven_by_repo = bool(job.get("ownership_proven") and repo and not address)
+    if address and cands and cands[0].get("entry_contract") and not proven_by_repo:
+        out.append({"source": "verified_name", "value": cands[0]["entry_contract"].rsplit(":", 1)[-1]})
+    if repo:
+        name = repo.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+        owner_repo = "/".join(repo.rstrip("/").split("/")[-2:]).removesuffix(".git")
+        if not proven_by_repo:
+            out.append({"source": "repo_name", "value": name})
+        if commit:
+            out.append({"source": "repo_at_commit", "value": f"{owner_repo}@{commit[:7]}"})
+    if address:
+        out.append({"source": "address_short", "value": f"{address[:8]}...{address[-6:]}"})
+    if not address and pin.entries:
+        largest = max(pin.entries.values(), key=lambda e: e.lines)
+        out.append({"source": "largest_unit", "value": Path(largest.path).stem})
+    out.append({"source": "kit_fallback", "value": kit_texts()["subject_fallback"]})
+    return out
+
+
+def pick_subject(candidates: list[dict[str, str]]) -> dict[str, str]:
+    """First candidate that passes the 04 gate in scopes server and subject, max 60 chars."""
+    from ..engine.text_gate import check_text
+
+    for c in candidates:
+        v = c["value"]
+        if len(v) > 60 or not v.strip():
+            continue
+        if check_text(v, "server") or check_text(v, "subject"):
+            continue
+        return c
+    return candidates[-1]
+
+
+# ------------------------------------------------------------------ provenance (08 1.4 label_key)
+def provenance(job: dict[str, Any], cands: list[dict[str, Any]], chain_state: dict[str, Any] | None) -> dict[str, Any]:
+    t = kit_texts()["tier_labels"]
+    tier = job.get("tier")
+    address = job.get("address")
+    args = job.get("source_args") or {}
+    cand = cands[0] if cands else {}
+    if tier in ("A", "C"):
+        raise AssemblyError("schema", f"tier {tier} needs the deployment check rows (05 13.1), not built yet")
+    if address:
+        third = bool(cand.get("explorer_verified") or cand.get("sourcify_match"))
+        key = "tier_b_third_party" if third else "tier_b_not_checked"
+    elif isinstance(args, dict) and args.get("repo"):
+        key = "tier_b_commit"
+    else:
+        key = "tier_b_files"
+    label = t[key].format(commit=(job.get("resolved_commit") or "")[:12])
+    prov: dict[str, Any] = {"tier": "B", "label": label, "label_key": key, "source_hash": job["source_pin"]}
+    if address:
+        prov["address"] = address
+    if isinstance(args, dict) and args.get("repo"):
+        prov["repo"] = str(args["repo"])[:200]
+        if job.get("resolved_commit"):
+            prov["commit"] = job["resolved_commit"]
+    return prov
+
+
+# ------------------------------------------------------------------ helpers
+def _ref(path: str, start: int, end: int) -> dict[str, Any]:
+    return {"path": path, "start": int(start), "end": int(max(start, end))}
+
+
+def _parse_ref(s: str) -> dict[str, Any]:
+    m = re.match(r"^(.+):(\d+)(?:-(\d+))?$", s)
+    if not m:
+        raise AssemblyError("schema", f"bad code ref {s!r}")
+    return _ref(m[1], int(m[2]), int(m[3] or m[2]))
+
+
+def _code_block(pin: PinnedSource, path: str, start: int, end: int, cap: int) -> dict[str, Any]:
+    end = min(end, start + cap - 1, pin.line_count(path))
+    lines = pin.read_lines(path, start, end)
+    return {"code": {"ref": _ref(path, start, end),
+                     "lines": [[start + i, line[:MAX_LINE]] for i, line in enumerate(lines)]}}
+
+
+def _unit_of(path: str) -> str:
+    return Path(path).stem or path
+
+
+def _sub_findings(obj: Any, keymap: dict[str, str]) -> Any:
+    if isinstance(obj, str):
+        def rep(m: re.Match) -> str:
+            if m[1] not in keymap:
+                raise AssemblyError("schema", f"finding placeholder {m[1]} has no final id")
+            return keymap[m[1]]
+        return re.sub(r"\{\{finding:([a-z0-9][a-z0-9-]{2,47})\}\}", rep, obj)
+    if isinstance(obj, list):
+        return [_sub_findings(x, keymap) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _sub_findings(v, keymap) for k, v in obj.items()}
+    return obj
+
+
+def _model_blocks(blocks: list[Any]) -> list[dict[str, Any]]:
+    """finding.v1 blocks to report model blocks (p, ul, table); others are rejected."""
+    out = []
+    for b in blocks:
+        if "p" in b or "ul" in b or "table" in b:
+            out.append({k: b[k] for k in ("p", "ul", "table") if k in b})
+        else:
+            raise AssemblyError("schema", f"unknown body block {sorted(b)}")
+    return out
+
+
+async def _rows(conn: Any, sql: str, params: tuple) -> list[dict[str, Any]]:
+    from psycopg.rows import dict_row
+
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(sql, params)
+        return list(await cur.fetchall())
+
+
+def _json(path: Path, default: Any) -> Any:
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+
+
+# ------------------------------------------------------------------ main
+async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date | None = None,
+                          report_id_short: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return (report, extras). extras: subject candidates, profile, final ids, nsloc (reports row)."""
+    texts = kit_texts()
+    today = today or datetime.now(UTC).date()
+    job = (await _rows(conn, "select * from jobs where job_id = %s", (job_id,)) or [None])[0]
+    if job is None:
+        raise AssemblyError("schema", "job not found")
+    if not job.get("report_id") or not job.get("source_pin"):
+        raise AssemblyError("schema", "job has no report_id or source_pin (finalize first)")
+    work = pin_root.parent / "work" / job_id
+    pin = PinnedSource.load(pin_root, job_id)
+    cands = _json(work / "candidates.json", [])
+    chain_state = _json(work / "chain_state.json", None)
+    file_leads: list[dict[str, Any]] = _json(pin_root / job_id / "leads.json", [])
+    db_leads = await _rows(conn, "select * from leads where job_id = %s", (job_id,))
+    lead_state = {r["lead_id"]: r for r in db_leads}
+    leads = []
+    for lead in file_leads:
+        st = lead_state.get(lead["id"])
+        leads.append({**lead, "state": st["state"] if st else lead.get("state", "open"),
+                      "reason": st["reason"] if st else None})
+    family = "evm"
+    chain_id = job.get("chain_id")
+    rec = get_chain(int(chain_id)) if chain_id is not None else None
+    network = f"{rec.name} ({chain_id})" if rec else (str(chain_id) if chain_id else "Not deployed")
+    chain = "evm"
+    if rec is not None and getattr(rec, "family", "evm") in ("hyperevm", "tron"):
+        chain = rec.family
+
+    # Findings (03 4.14 final ids, 08 2.3 card)
+    drafts = await _rows(conn, """
+        select d.*, r.content, r.category, r.impact_class, r.computed_severity, r.severity_rule, r.caps_applied,
+               r.map_unavailable
+        from finding_drafts d join finding_revisions r
+          on r.job_id = d.job_id and r.draft_key = d.draft_key and r.revision = d.current_revision
+        where d.job_id = %s order by d.finding_no""", (job_id,))
+    ranges = await _rows(conn, """select q.* from finding_quote_ranges q join finding_drafts d
+        on d.job_id = q.job_id and d.draft_key = q.draft_key and d.current_revision = q.revision
+        where q.job_id = %s order by q.draft_key, q.ord""", (job_id,))
+    challenges = await _rows(conn, """select c.* from challenge_answers c join finding_drafts d
+        on d.job_id = c.job_id and d.draft_key = c.draft_key and d.current_revision = c.revision
+        where c.job_id = %s""", (job_id,))
+    flinks = await _rows(conn, """select l.* from finding_leads l join finding_drafts d
+        on d.job_id = l.job_id and d.draft_key = l.draft_key and d.current_revision = l.revision
+        where l.job_id = %s""", (job_id,))
+    by_key_ranges: dict[str, list[dict[str, Any]]] = {}
+    for q in ranges:
+        by_key_ranges.setdefault(q["draft_key"], []).append(q)
+    chal = {c["draft_key"]: c for c in challenges}
+    lead_of = {}
+    for fl in flinks:
+        lead_of.setdefault(fl["draft_key"], fl["lead_id"])
+    lead_by_id = {lead["id"]: lead for lead in leads}
+
+    accepted = [d for d in drafts if d["status"] == "accepted" and d["final_id"]]
+    keymap = {d["draft_key"]: d["final_id"] for d in accepted}
+    accepted.sort(key=lambda d: (SEV_RANK[d["severity"]], d["final_id"]))
+    expect = {}
+    for d in accepted:
+        expect[d["severity"]] = expect.get(d["severity"], 0) + 1
+        want = f"{SEV_PREFIX[d['severity']]}-{expect[d['severity']]:03d}"
+        if d["final_id"] != want:
+            raise AssemblyError("schema", f"final id {d['final_id']} out of order, expected {want} (03 4.14)")
+    findings = []
+    for d in accepted:
+        c = d["content"]
+        sev = d["severity"]
+        low = sev in ("Low", "Informational")
+        blocks_cap, lines_cap = (1, 20) if low else (3, 40)
+        qs = sorted(by_key_ranges.get(d["draft_key"], []), key=lambda q: (QUOTE_ROLE_ORDER.index(q["role"])
+                                                                        if q["role"] in QUOTE_ROLE_ORDER else 9, q["ord"]))
+        code_qs = [q for q in qs if q["role"] in QUOTE_ROLE_ORDER]
+        loc = next((q for q in code_qs if q["role"] == "location"), None)
+        if loc is None:
+            raise AssemblyError("schema", f"{d['final_id']} has no location quote")
+        code = [_code_block(pin, q["path"], q["start_line"], q["end_line"], lines_cap) for q in code_qs[:blocks_cap]]
+        further = [_ref(q["path"], q["start_line"], q["end_line"]) for q in code_qs[blocks_cap:]][:20]
+        matrix = d.get("matrix_effective") or c.get("matrix") or {}
+        basis = {"head": ["Impact class", "Magnitude", "Trigger", "Precondition", "Reversibility", "Rule"],
+                 "rows": [[matrix.get("impact_class", d["impact_class"]), matrix.get("magnitude", ""),
+                           matrix.get("trigger", ""), matrix.get("precondition", ""), matrix.get("reversibility", ""),
+                           d["severity_rule"]]]}
+        level = d["evidence_level"] or "reasoning_only"
+        ch = chal.get(d["draft_key"])
+        challenge = None
+        if level != "reasoning_only" and ch:
+            answers = ch["answers"] if isinstance(ch["answers"], list) else ch["answers"].get("items", [])
+            items = {i["id"]: i for i in (ch["items"] if isinstance(ch["items"], list) else [])}
+            challenge = {"head": ["Item", "Condition", "Answer"],
+                         "rows": [[a.get("item_id", a.get("id", "")), items.get(a.get("item_id", a.get("id")), {})
+                                   .get("condition", "")[:600], str(a.get("answer", ""))[:600]] for a in answers][:60]}
+        if level != "reasoning_only" and challenge is None:
+            challenge = {"head": ["Item", "Condition", "Answer"], "rows": []}
+        lead = None
+        if level == "analyzer_and_reasoning":
+            lid = lead_of.get(d["draft_key"])
+            ld = lead_by_id.get(lid) if lid else None
+            if ld is None:
+                raise AssemblyError("schema", f"{d['final_id']} analyzer evidence without a lead row")
+            tool = (ld.get("tools") or ["analyzer"])[0]
+            lead = {"analyzer": tool.replace("@", " ")[:40], "rule_id": ld["rule_id"][:80]}
+        body = c.get("body", {})
+        f: dict[str, Any] = {
+            "id": d["final_id"], "severity": sev, "evidence_level": level,
+            "title": _sub_findings(c["title"], keymap),
+            "component": _unit_of(loc["path"]),
+            "location": _ref(loc["path"], loc["start_line"], loc["end_line"]),
+            "category": category_label(d["category"]), "category_key": d["category"],
+            "description": _sub_findings(_model_blocks(body.get("description", [])), keymap),
+            "impact": _sub_findings(_model_blocks(body.get("impact", [])), keymap),
+            "recommendation": _sub_findings(_model_blocks(body.get("recommendation", [])), keymap),
+            "evidence": {"code": code, "basis": basis, "challenge": challenge, "lead": lead},
+        }
+        if further:
+            f["evidence"]["further"] = further
+        if c.get("attack_steps"):
+            f["attack_steps"] = [{"text": _sub_findings(s["text"], keymap), "ref": _parse_ref(s["ref"])}
+                                 for s in c["attack_steps"]][:10]
+        di = c.get("documented_intent_ref")
+        if di:
+            f["documented_intent"] = _ref(di["file"], di["start"], di["end"])
+        if job["tier"] == "C":
+            f["tier_c_line"] = True
+        if job["map_status"] == "failed" or d.get("map_unavailable"):
+            f["no_map_line"] = True
+        if job.get("previous_report_id"):
+            f["status"] = "Open"
+        findings.append(f)
+
+    # Scope (08 2.2): in-scope source files, nSLOC counted from the pinned lines
+    scope_files, oos = [], []
+    entry_file = (cands[0].get("entry_contract") or "").rsplit(":", 1)[0] if cands else ""
+    for path, e in sorted(pin.entries.items()):
+        if e.in_scope and e.role == "source":
+            row: dict[str, Any] = {"name": _unit_of(path), "file": path, "nsloc": count_nsloc("\n".join(pin.read_all(path)))}
+            if job.get("address") and path == entry_file:
+                row["addr"] = job["address"]
+            scope_files.append(row)
+        elif not e.in_scope:
+            oos.append({"path": path, "reason": "Excluded by the scope rules", "by": "server"})
+    if not scope_files:
+        raise AssemblyError("schema", "no in-scope file")
+    sections = {r["section"]: r["content"] for r in await _rows(conn, """
+        select distinct on (section) section, content from sections where job_id = %s
+        order by section, revision desc""", (job_id,))}
+    for row in (sections.get("out_of_scope_reasons") or {}).get("rows", [])[:20]:
+        if pin.has_path(row.get("path", "")):
+            oos.append({"path": row["path"], "reason": row["reason"], "by": "model"})
+    nsloc = sum(f["nsloc"] for f in scope_files)
+
+    # Leads per analyzer, promoted, dismissed (08 2.2 Review coverage; KPIs)
+    promoted_ids = {fl["lead_id"] for fl in flinks} | {lead["id"] for lead in leads if lead["state"] == "promoted"}
+    per_tool: dict[tuple[str, str], dict[str, int]] = {}
+    for lead in leads:
+        tool = (lead.get("tools") or ["analyzer@"])[0]
+        name, _, ver = tool.partition("@")
+        row = per_tool.setdefault((name, ver or "unknown"), {"leads": 0, "promoted": 0, "dismissed": 0})
+        row["leads"] += 1
+        row["promoted"] += lead["id"] in promoted_ids
+        row["dismissed"] += lead["state"] == "dismissed"
+    reads = await _rows(conn, "select path, start_line, end_line from job_reads where job_id = %s", (job_id,))
+
+    def returned(cat: str) -> bool:
+        for lead in leads:
+            if lead["category"] == cat and any(r["path"] == lead["file"] and r["start_line"] <= lead["end"]
+                                               and r["end_line"] >= lead["start"] for r in reads):
+                return True
+        return any(f["category_key"] == cat for f in findings)
+
+    areas = []
+    na_rows = {r["area_id"]: r for r in (sections.get("coverage") or {}).get("rows", [])}
+    for cat in coverage_categories(family, chain if chain != "evm" else None):
+        ids = [f["id"] for f in findings if f["category_key"] == cat["id"]][:20]
+        a: dict[str, Any] = {"area_id": cat["id"][:40], "area": category_label(cat["id"])}
+        if cat["id"] in na_rows:
+            a.update(code_returned="Not applicable", result="Not applicable (marked by the requester's session)",
+                     note=na_rows[cat["id"]]["note"])
+        elif ids:
+            a.update(code_returned="Yes", result=ids)
+        elif returned(cat["id"]):
+            a.update(code_returned="Yes", result="No finding submitted")
+        else:
+            a.update(code_returned="No", result="Not covered")
+        areas.append(a)
+    n_returned = sum(1 for a in areas if a["code_returned"] in ("Yes", "Partly"))
+
+    withdrawn = []
+    for d in drafts:
+        if d["status"] != "withdrawn":
+            continue
+        loc = next((q for q in by_key_ranges.get(d["draft_key"], []) if q["role"] == "location"), None)
+        if loc is None:
+            continue
+        w = {"candidate": f"F-{d['finding_no']:02d}", "category": category_label(d["category"]),
+             "withdrawn_by": d["withdrawn_by"] or "model", "lines": _ref(loc["path"], loc["start_line"], loc["end_line"])}
+        if w["withdrawn_by"] == "challenge":
+            w["item_id"] = (d.get("kill_item") or "")[:40]
+            w["condition"] = ""
+        withdrawn.append(w)
+
+    c = counts(findings)
+    dismissed = [lead for lead in leads if lead["state"] == "dismissed"]
+    summary: dict[str, Any] = {"kpis": [
+        {"key": "files", "value": len(scope_files), "label": texts["kpi_labels"]["files"]},
+        {"key": "nsloc", "value": nsloc, "label": texts["kpi_labels"]["nsloc"]},
+        {"key": "leads", "value": len(leads), "label": texts["kpi_labels"]["leads"]},
+        {"key": "promoted", "value": len(promoted_ids), "label": texts["kpi_labels"]["promoted"]},
+        {"key": "areas_returned", "value": f"{n_returned} of {len(areas)}", "label": texts["kpi_labels"]["areas_returned"]},
+        {"key": "deployed_code", "value": "Not checked", "label": texts["kpi_labels"]["deployed_code"]}]}
+    if c["Critical"] == 0 and c["High"] == 0 and dismissed:
+        rows = sorted(dismissed, key=lambda x: (SEV_RANK[LEAD_SEV[x["severity_norm"]]], x["file"], x["start"]))
+        summary["dismissed_leads"] = {"rows": [{"detector": x["rule_id"][:80], "severity_class": LEAD_SEV[x["severity_norm"]],
+                                                "location": _ref(x["file"], x["start"], x["end"])} for x in rows[:10]],
+                                      "remainder": max(0, len(rows) - 10)}
+
+    m = texts["method_steps"]
+    tools_line = ", ".join(f"{n} {v}: {r['leads']:,} leads" for (n, v), r in sorted(per_tool.items())) or "No analyzer leads"
+    degraded = " One analyzer did not run." if job.get("analyzer_degraded") else ""
+    method = [
+        {"step": m["pin"], "detail": f"{len(pin.entries):,} file{"s" if len(pin.entries) != 1 else ""} pinned by sha256; source pin {job['source_pin'][:16]}"},
+        {"step": m["analyzer"], "detail": (tools_line + "." + degraded)[:400]},
+        {"step": m["selection"], "detail": f"{len(accepted):,} findings accepted, "
+                                           f"{sum(1 for d in drafts if d['status'] == 'withdrawn'):,} withdrawn"},
+        {"step": m["checks"], "detail": "Every code quote matched to the pinned source; text and number rules on every "
+                                        "finding; severity mapped from the classifications through the fixed matrix"},
+        {"step": m["deployment"], "detail": "Not run: the deployed code was not compared with a rebuild of the source"},
+    ]
+    roles_notes = sections.get("roles_notes") or {}
+    profile = "owner" if job["ownership_proven"] else "public_review"
+    rid = job["report_id"]
+    short = report_id_short or rid[:10]
+    subj_cands = subject_candidates(job, cands, pin)
+    subj = pick_subject(subj_cands)
+    days = int(_limits()["report"]["default_days"])
+    meta: dict[str, Any] = {
+        "report_type": "automated", "kind": texts["sub_line"], "subject": subj["value"], "subject_source": subj["source"],
+        "chain": chain, "network": network[:60], "chain_id": chain_id, "explorer": None,
+        "addr_url": getattr(rec, "addr_url", None) if rec else None,
+        "deployed_noun": "contract", "source_id_label": "Bytecode hash" if job.get("address") else
+        ("Commit" if job.get("resolved_commit") else "Files sha256"),
+        "provenance": provenance(job, cands, chain_state), "report_id": rid, "report_id_short": short,
+        "ownership_proven": bool(job["ownership_proven"]), "profile": profile,
+        "requested_by": {"role": job["requester_role"], "label": ROLE_LABELS[job["requester_role"]]},
+        "date": date_text(today), "expires": (today + timedelta(days=days)).isoformat(),
+    }
+    if job.get("previous_report_id"):
+        meta["previous_report_id"] = job["previous_report_id"]
+    meta["out_name"] = out_name({**meta, "date_iso": today.isoformat()}, profile, subj["value"])
+    t = texts
+    report = {
+        "meta": meta, "facts": {}, "summary": summary,
+        "scope": {"head": ["Unit", "File", "nSLOC", "Address"], "files": scope_files[:400], "out_of_scope": oos[:40]},
+        "architecture": {"title": t["architecture_title"], "cols": 4, "rows": 1, "edges": [],
+                         "nodes": [{"id": "no_map", "label": "map", "kind": "scope", "col": 0, "row": 0}]},
+        "roles": {"rows": [], "notes": _model_blocks(roles_notes.get("notes", []))[:8]},
+        "method": method,
+        "severity_scale": [{"severity": s, "text": t["severity_scale"][s.lower()]} for s in SEVS],
+        "findings": findings,
+        "review_coverage": {"areas": areas,
+                            "leads": [{"analyzer": n[:40], "version": v[:40], **r} for (n, v), r in sorted(per_tool.items())],
+                            "withdrawn": withdrawn[:60], "injection_flags": []},
+    }
+    validate(report)
+    check_strings(report)
+    extras = {"subject_candidates": subj_cands, "profile": profile, "final_ids": sorted(keymap.values()),
+              "counts": c, "nsloc": nsloc}
+    return report, extras

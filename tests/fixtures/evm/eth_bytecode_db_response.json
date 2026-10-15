@@ -1,0 +1,18 @@
+{
+  "_note": "Sample eth-bytecode-db sources:search response (bytecode-only, no chain/address per F45)",
+  "ethBytecodeDbSources": [
+    {
+      "language": "Solidity",
+      "compilerVersion": "0.8.24+commit.e11b9ed9",
+      "contractName": "SimpleToken",
+      "sourceFiles": {
+        "SimpleToken.sol": {
+          "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract SimpleToken {}"
+        }
+      },
+      "compilationArtifacts": {
+        "optimizer": {"enabled": true, "runs": 200}
+      }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+# rubric/checklists, family cairo (Starknet). Format: part 04 section 8.1. Defaults as in evm.yaml.
+# felt252 arithmetic is modulo P = 2^251 + 17*2^192 + 1: https://docs.starknet.io/build/corelib/core-felt252
+generic_items:
+  - {id: L1, kind: kill, condition: "The claimed path is not reachable from an external function, l1_handler or constructor (07 12.2 roots).", auto: map.unreachable}
+  - {id: L2, kind: kill, condition: "An assert at a quoted line rejects the input the claim depends on."}
+  - {id: L3, kind: downgrade, condition: "The effect is bounded by a cap at a quoted line."}
+categories:
+  cairo.felt_arithmetic:
+    items:
+      # UNVERIFIED: integer types panic on overflow in the pinned Cairo version; settle with an snforge test adding 1 to u128 max.
+      - {id: F1, kind: kill, condition: "The value at the line is u128 or u256, or is bounded before conversion to felt252."}
+  cairo.l1_handler_auth:
+    items:
+      - {id: L1H, kind: kill, condition: "The l1_handler compares from_address to the stored L1 contract.", scope: handler}
+  cairo.storage_collision:
+    items:
+      - {id: S1, kind: kill, condition: "Component storage is nested under distinct substorage names.", scope: module}
+  cairo.account_validate:
+    items:
+      - {id: V1, kind: kill, condition: "__validate__ has no state writes and checks the signature over a hash that includes the nonce and chain id."}
+  cairo.signature_replay:
+    items:
+      - {id: R1, kind: kill, condition: "A nonce or used-hash map is consumed per signature and the domain includes chain id and contract address."}
+  cairo.reentrancy:
+    items:
+      - {id: E1, kind: kill, condition: "State is written before the external call, or a guard component is used."}
+  cairo.upgrade:
+    items:
+      - {id: U1, kind: kill, condition: "replace_class_syscall is reachable only by the owner role."}
+      - {id: U2, kind: context, condition: "Owner key as read on chain (fact)."}

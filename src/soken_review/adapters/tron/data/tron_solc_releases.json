@@ -1,0 +1,191 @@
+{
+  "_comment": "Pinned sha256 for tron-solc releases (05 section 6.3). All sha256 values are '0x'+hex and were measured once from the official GitHub release asset, then cross-checked against the release's own shasum.txt or md5.txt. method field: 'measured+release_sum' = measured + cross-checked; 'github_digest' = provided by GitHub API (none available as of 2026-10-09, all null). A null sha256 = not yet pinned = compiler_binary_missing (fail closed). github_tag = actual GitHub release tag when it differs from the internal key (only 0.4.25 Odyssey).",
+  "source_url": "https://github.com/tronprotocol/solidity/releases",
+  "checked_at": "2026-10-09",
+  "releases": {
+    "tv_0.8.31": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": "0xfa664fe58fb300ead5fb7ffda7bf75bc0b0db03fcb6f1686a53edaa16b6a9a91",
+      "method": "github_digest",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.31/solc-static-linux",
+      "checked_at": "2026-10-09",
+      "note": "orchestrator-pinned 2026-10-09"
+    },
+    "tv_0.8.30": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": "0xdd5c34fdfd628f2009510e9ffebf544899c391c3a56b0a6d2d31dc6842b83834",
+      "method": "github_digest",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.30/solc-static-linux",
+      "checked_at": "2026-10-09",
+      "note": "orchestrator-pinned 2026-10-09"
+    },
+    "tv_0.8.29": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": "0x7188205993df83bdf31e870779b252a437bec048714404230f401e5f0fbc2220",
+      "method": "github_digest",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.29/solc-static-linux",
+      "checked_at": "2026-10-09",
+      "note": "orchestrator-pinned 2026-10-09"
+    },
+    "tv_0.8.28": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": "0x0eba121b08e9fbc1019e71bb6d36467a7f653929af9f51a793a17688d859f856",
+      "method": "github_digest",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.28/solc-static-linux",
+      "checked_at": "2026-10-09",
+      "note": "orchestrator-pinned 2026-10-09"
+    },
+    "tv_0.8.27": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": "0x7a3dfc3d987bbe447c0eba89e5fd89a1fc053e8629799e167810367196a3281e",
+      "method": "github_digest",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.27/solc-static-linux",
+      "checked_at": "2026-10-09",
+      "note": "orchestrator-pinned 2026-10-09"
+    },
+    "tv_0.8.26": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": "0x98a0df6518346d07f13ec151f64bed48f4df9dd01fbfd81018f9485a374f8edd",
+      "method": "github_digest",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.26/solc-static-linux",
+      "checked_at": "2026-10-09",
+      "note": "orchestrator-pinned 2026-10-09"
+    },
+    "tv_0.8.25": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": "0x203573476b68e657d274fffc6713214497881439039f2c74a9c64fe9e8a58ccf",
+      "method": "github_digest",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.25/solc-static-linux",
+      "checked_at": "2026-10-09",
+      "note": "orchestrator-pinned 2026-10-09"
+    },
+    "tv_0.8.24": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": null,
+      "method": null,
+      "source_url": "https://github.com/tronprotocol/solidity/releases/tag/tv_0.8.24",
+      "checked_at": "2026-10-09",
+      "note": "UV5-31 pending"
+    },
+    "tv_0.8.23": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": "0x40f5145ef352bc139acfcc0e257db67a80de1dcdc018d1762d584dff866faa6c",
+      "method": "measured+release_sum",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.23/solc-static-linux",
+      "checked_at": "2026-10-09",
+      "note": "sha256 measured + cross-checked against release shasum.txt (match confirmed 2026-10-09)"
+    },
+    "tv_0.8.22": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": null,
+      "method": null,
+      "source_url": "https://github.com/tronprotocol/solidity/releases/tag/tv_0.8.22",
+      "checked_at": "2026-10-09",
+      "note": "UV5-31 pending"
+    },
+    "tv_0.8.21": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": null,
+      "method": null,
+      "source_url": "https://github.com/tronprotocol/solidity/releases/tag/tv_0.8.21",
+      "checked_at": "2026-10-09",
+      "note": "UV5-31 pending"
+    },
+    "tv_0.8.20": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": null,
+      "method": null,
+      "source_url": "https://github.com/tronprotocol/solidity/releases/tag/tv_0.8.20",
+      "checked_at": "2026-10-09",
+      "note": "UV5-31 pending"
+    },
+    "tv_0.8.18": {
+      "asset": "solc-static-linux",
+      "github_tag": null,
+      "sha256": "0xafdf3f5036d095e8391be62f962a4cc75e4d775f6f6059e54203d26fc1754eb1",
+      "method": "measured+release_sum",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.18/solc-static-linux",
+      "checked_at": "2026-10-09",
+      "note": "sha256 measured + cross-checked against release shasum.txt (match confirmed 2026-10-09)"
+    },
+    "tv_0.8.11": {
+      "asset": "linux.zip",
+      "github_tag": null,
+      "sha256": null,
+      "method": null,
+      "source_url": "https://github.com/tronprotocol/solidity/releases/tag/tv_0.8.11",
+      "checked_at": "2026-10-09",
+      "note": "UV5-31 pending; zip asset; asset name unknown \u2014 check gh release view tv_0.8.11 --json assets"
+    },
+    "tv_0.8.6": {
+      "asset": "solidity-linux_0.8.6_Bacon_v4.3.zip",
+      "github_tag": null,
+      "sha256": "0xf300110daf356f8fd3cd901cf34d8ba8db1b946cd061afa36aba6dd62cbaff7c",
+      "binary_sha256": "0xcbd4cc37b419c4854ab7dace0a343b1ac98e6344539ef6932ed3f03de25f33d6",
+      "method": "measured+release_sum",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.8.6/solidity-linux_0.8.6_Bacon_v4.3.zip",
+      "checked_at": "2026-10-09",
+      "note": "sha256=zip; binary_sha256=extracted solc-static-linux; both measured 2026-10-09; seen as 'tron_v0.8.6+commit.0e36fba' in TronScan"
+    },
+    "tv_0.6.13": {
+      "asset": "linux.zip",
+      "github_tag": null,
+      "sha256": null,
+      "method": null,
+      "source_url": "https://github.com/tronprotocol/solidity/releases/tag/tv_0.6.13",
+      "checked_at": "2026-10-09",
+      "note": "UV5-31 pending; zip asset"
+    },
+    "tv_0.5.18": {
+      "asset": "linux.zip",
+      "github_tag": null,
+      "sha256": null,
+      "method": null,
+      "source_url": "https://github.com/tronprotocol/solidity/releases/tag/tv_0.5.18",
+      "checked_at": "2026-10-09",
+      "note": "UV5-31 pending; zip asset"
+    },
+    "tv_0.5.12": {
+      "asset": "solidity-linux_0.5.12_GreatVoyage_v4.0.1.zip",
+      "github_tag": null,
+      "sha256": "0x443f884c12402b84f665814488f78dcee6a04b621674c1bcc1e91ec014d18042",
+      "binary_sha256": "0x7c942294f3755bee2128d62d17f97870a8b078ce982b6b2822d5cc2bed7d0edd",
+      "method": "measured+release_sum",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.5.12/solidity-linux_0.5.12_GreatVoyage_v4.0.1.zip",
+      "checked_at": "2026-10-09",
+      "note": "sha256=zip; binary_sha256=extracted solc binary; both measured 2026-10-09; seen as 'tron_0.5.12_GreatVoyage_v4.0.1' in TronScan"
+    },
+    "tv_0.5.10": {
+      "asset": "solidity-linux_0.5.10_Odyssey_v3.6.6.zip",
+      "github_tag": null,
+      "sha256": "0xda8d73f733e5efeaeab0c597532ce026d01aeecb7f7dac70e0ac9be645b9949d",
+      "binary_sha256": "0xf073c2589d9730982974503774ac2fb82fe1715e986f912e06e7ab9393872f88",
+      "method": "measured+release_sum",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/tv_0.5.10/solidity-linux_0.5.10_Odyssey_v3.6.6.zip",
+      "checked_at": "2026-10-09",
+      "note": "sha256=zip; binary_sha256=extracted solc; both measured 2026-10-09; seen as 'tron-0.5.10_Odyssey_v3.6.6' in TronScan"
+    },
+    "tv_0.4.25_Odyssey_v3.2.3": {
+      "asset": "tron-solidity-linux_0.4.25_Odyssey_v3.2.3.zip",
+      "github_tag": "0.4.25_Odyssey_v3.2.3",
+      "sha256": "0xaffd2e8d29a61738ff2c557ea87a3569cabcef8224fbdfa46f0821732d05ca1b",
+      "binary_sha256": "0x855627a09794fcb00757947ee9ff6dd2749d3d500c5b44859ec735c15745b345",
+      "method": "measured+release_sum",
+      "source_url": "https://github.com/tronprotocol/solidity/releases/download/0.4.25_Odyssey_v3.2.3/tron-solidity-linux_0.4.25_Odyssey_v3.2.3.zip",
+      "checked_at": "2026-10-09",
+      "note": "sha256=zip; binary_sha256=extracted solc-static-linux; both measured 2026-10-09; github_tag='0.4.25_Odyssey_v3.2.3' (no tv_ prefix \u2014 special case); seen as 'tron-0.4.25_Odyssey_v3.2.3' in TronScan"
+    }
+  }
+}

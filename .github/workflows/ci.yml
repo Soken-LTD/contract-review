@@ -1,0 +1,21 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Pre-pull test images (Docker Hub anonymous pulls fail on shared runners)
+        run: |
+          for img in postgres:16 alpine:3.20; do
+            docker pull -q "$img" || { docker pull -q "mirror.gcr.io/library/$img" && docker tag "mirror.gcr.io/library/$img" "$img"; }
+          done
+      - name: Every action pinned to a commit SHA
+        run: python3 scripts/check_actions_pinned.py
+      - run: uv sync --locked
+      - run: uv run ruff check src tests
+      - run: uv run pytest -q -rs

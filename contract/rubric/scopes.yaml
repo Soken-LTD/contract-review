@@ -1,0 +1,24 @@
+# rubric/scopes.yaml (owner part 04, section 8.4). resolve_scope per family. Dependency lines are never in a scope;
+# cap 400 lines per item, above which NOT_COVERED. Without a semantic layer: entry_function = lexical span, depth 0; others NOT_COVERED.
+entry_function:
+  evm: Entry function body, modifiers in in-scope files, internal and private callees to call-graph depth 2
+  solana: Instruction handler body plus helper functions depth 2
+  ton: The recv_internal / recv_external / Tact receive op branch for the quoted op, plus inline functions depth 2
+  move: Public or entry function plus callees depth 2 inside the package
+  cairo: External function plus callees depth 2, component functions included
+call_site:
+  all: The statement line plus the enclosing function signature line (TON, the send line)
+shared_state_writers:
+  evm: Every external or public function, views included, reading or writing a state variable the entry function writes, bodies only, depth 0 (read-only reentrancy)
+  solana: Every instruction whose accounts struct marks the same account mut
+  ton: Every op branch writing the same storage field
+  move: Every function taking the same object or resource mutably
+  cairo: Every external function writing the same storage member
+account_struct:
+  solana: The derive(Accounts) struct of the instruction with its constraints, or the native account parsing block
+handler:
+  ton: recv_internal / recv_external / Tact receive for the op, depth 0
+  cairo: l1_handler function, depth 0
+module:
+  move: The whole module file
+  cairo: The whole module or contract file

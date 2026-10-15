@@ -1,0 +1,78 @@
+# rubric/checklists, family ton (FunC, Tact, Tolk). Format: part 04 section 8.1. Defaults as in evm.yaml.
+# Source: TON Docs "Security", https://docs.ton.org/contracts/techniques/security (read 2026-10-07).
+generic_items:
+  - {id: L1, kind: kill, condition: "The claimed path is not reachable from a message handler.", auto: map.unreachable}
+  - {id: L2, kind: kill, condition: "A check at a quoted line rejects the input the claim depends on."}
+  - {id: L3, kind: downgrade, condition: "The effect is bounded by a cap at a quoted line."}
+categories:
+  ton.external_accept_early:
+    items:
+      - {id: E1, kind: kill, condition: "accept_message (ACCEPT) runs only after signature and seqno checks at quoted lines.", scope: handler}
+  ton.replay:
+    items:
+      - {id: R1, kind: kill, condition: "seqno is stored and incremented, and the signed payload binds a contract-specific id and a valid_until."}
+  ton.sender_auth:
+    items:
+      - {id: A1, kind: kill, condition: "Authorization compares the message sender address, not an address read from the body."}
+      - {id: A2, kind: kill, condition: "transfer_notification sender equals the jetton wallet computed from the master and owner."}
+  ton.bounce_body:
+    items:
+      - {id: B3, kind: kill, condition: "The send uses RichBounce or RichBounceOnlyRootCell.", auto: ton_model.rich_bounce}
+      - {id: B4, kind: kill, condition: "The bounced handler reads at most 288 bits of the body.", scope: handler}
+  ton.unrecoverable_send:
+    items:
+      - {id: S1, kind: kill, condition: "No value field is debited before the send on the quoted path."}
+  ton.bounce_handling:
+    items:
+      # UNVERIFIED: the TON security page does not cover bounce handling; settled on the TON benchmark (part 10).
+      - {id: B1, kind: kill, condition: "Bounced messages are handled and the state change made before sending is reverted.", scope: handler}
+      - {id: B2, kind: context, condition: "The message is sent non-bounceable by design."}
+  ton.send_mode_drain:
+    items:
+      - {id: M1, kind: kill, condition: "A send with mode 128 is reachable only on an owner-authorized path."}
+  ton.send_mode_reserve:
+    items:
+      - {id: V1, kind: kill, condition: "The storage reserve is set before every send with mode 64 or 128 on the quoted path.", auto: ton_model.reserve_before_send}
+  ton.send_order:
+    items:
+      - {id: V2, kind: kill, condition: "No send follows the mode 64 or 128 send in the handler.", auto: ton_model.no_send_after}
+  ton.excess_return:
+    items:
+      - {id: V3, kind: kill, condition: "Excess is returned once, to the sender or the response destination."}
+  ton.account_destroy:
+    items:
+      - {id: D1, kind: kill, condition: "The +32 path accepts only the owner, and redeploy resets no counter or user balance."}
+  ton.gas_storage:
+    items:
+      - {id: G1, kind: kill, condition: "Incoming value is checked against forward and storage fees before state changes."}
+  ton.unbounded_loop:
+    items:
+      - {id: G2, kind: kill, condition: "The collection size is bounded by a quoted check or constant."}
+  ton.async_race:
+    items:
+      - {id: Q1, kind: kill, condition: "No state is assumed unchanged between a send and its reply (carry-value pattern)."}
+  ton.code_update:
+    items:
+      - {id: U1, kind: kill, condition: "set_code is reachable only by the admin sender."}
+      - {id: U2, kind: context, condition: "Admin address as read on chain (fact)."}
+  ton.signature_binding:
+    items:
+      - {id: R2, kind: kill, condition: "The signed payload includes the recipient."}
+  ton.upgrade_migration:
+    items:
+      - {id: U3, kind: kill, condition: "The upgrade path migrates the data or keeps a compatible data layout."}
+  ton.signed_integer:
+    items:
+      - {id: I2, kind: kill, condition: "The field is loaded unsigned or checked non-negative."}
+  ton.randomness:
+    items:
+      - {id: N1, kind: downgrade, condition: "randomize_lt (or randomize with an external seed) runs before random()."}
+  ton.address_parsing:
+    items:
+      - {id: P1, kind: kill, condition: "The workchain is checked and both addresses are normalized before comparison."}
+  ton.jetton_standard:
+    items:
+      - {id: J1, kind: kill, condition: "internal_transfer is accepted only from the master or the computed wallet."}
+  ton.arithmetic:
+    items:
+      - {id: I1, kind: kill, condition: "The integer range at the line cannot exceed the 257-bit range or the serialization width."}

@@ -1,0 +1,30 @@
+# rubric/analyzer_severity.yaml (owner part 04, M11). Maps an analyzer's own severity to lead severity_norm.
+# Fail closed: a raw value not listed normalizes to High, so an unknown scale forces handling before finalize.
+default: High
+analyzers:
+  slither:   # impact levels, https://github.com/crytic/slither/wiki/Detector-Documentation
+    {High: High, Medium: Medium, Low: Low, Informational: Info, Optimization: Info}
+  semgrep:   # https://semgrep.dev/docs/writing-rules/rule-syntax (read 2026-10-08):
+             # "The older levels ERROR, WARNING, and INFO match HIGH, MEDIUM, and LOW."
+    {CRITICAL: High, HIGH: High, MEDIUM: Medium, LOW: Low, ERROR: High, WARNING: Medium, INFO: Low}
+  aderyn:    # UNVERIFIED: JSON field names and values; settle by the part 05 sandbox run
+    {High: High, Low: Low}
+  wake:      # UNVERIFIED: settle by the part 05 sandbox run
+    {high: High, medium: Medium, low: Low, warning: Info, info: Info}
+  # part 05 6.2 A2: severity field of the pinned solc bugs.json; Vyper GHSA severity
+  solc-bugs:         {high: High, medium/high: High, medium: Medium, low/medium: Medium, low: Low, very low: Info}
+  vyper-advisories:  {critical: High, high: High, moderate: Medium, medium: Medium, low: Low}
+  # part 06 2.7: SARIF level values; UNVERIFIED until part 06 U-S3 (Radar), U-T2 (acton), F19 Misti run
+  radar:             {error: High, warning: Medium, note: Low, none: Info}
+  misti:             {error: High, warning: Medium, note: Low, none: Info}
+  acton:             {error: High, warning: Medium, note: Low, none: Info}
+  soken-solana-rules: {error: High, warning: Medium, note: Low, none: Info}
+  soken-ton-rules:   {error: High, warning: Medium, note: Low, none: Info}
+  clippy:            {error: Medium, warning: Low}   # UNVERIFIED: part 06 U-S10
+  cargo-audit:       {critical: High, high: High, medium: Medium, low: Low, none: Medium}  # CVSS band; no score = none
+  # part 07 5.3: raw values are lint_map.yaml or rule values; stock-lint raws UNVERIFIED until part 07 U-03
+  sui-lint:          {high: High, medium: Medium, low: Low, info: Info}
+  aptos-lint:        {high: High, medium: Medium, low: Low, info: Info}
+  scarb-lint:        {high: High, medium: Medium, low: Low, info: Info}
+  soken-move-rules:  {high: High, medium: Medium, low: Low, info: Info}
+  soken-cairo-rules: {high: High, medium: Medium, low: Low, info: Info}

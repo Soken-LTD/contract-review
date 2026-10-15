@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.bak*
+.env
+.env.*
+!.env.example
+.sbx/
+.claude/
+
+# held-out corpus cases (10 2.1 ACL); written by soken-eval corpus import
+evals/heldout/

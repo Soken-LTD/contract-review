@@ -1,0 +1,59 @@
+# evals/seed reference data (plan v4, owner part 10 section 2.3). Not LLM content.
+# Gate copies of operators, templates and site choices live in the held-out repo (gate seeder agent).
+operators:   # id: [change, default GT severity, rubric/enums.yaml category]
+  evm:       # also run on hyperevm and tron builds
+    E1: [access modifier removed on state-changing function, High, evm.access_control]
+    E2: [external call moved before state write in withdraw path, High, evm.reentrancy]
+    E3: [token transfer return value unchecked, Medium, evm.token_integration]
+    E4: [slippage or deadline check removed, Medium, evm.ordering_mev]
+    E5: [initializer callable twice, High, evm.upgradeability.initialization]
+    E6: [">= to > in bound check", Medium, evm.input_validation]
+    E7: [oracle price used without staleness check, Medium, evm.oracle_manipulation]
+  tron:
+    T1: [msg.tokenid not checked, High, evm.tron.token]   # no runner until O10-6
+  hyperevm:
+    H1: [CoreWriter action treated as executed, High, evm.hyperevm.corewriter]
+    H2: [precompile price used without bound, Medium, evm.hyperevm.precompile]
+    H3: [Core and EVM decimals mismatch, High, evm.hyperevm.bridge_decimals]
+    H4: [precompile call without gas cap, Medium, evm.hyperevm.precompile]
+  solana:
+    S1: [Signer to UncheckedAccount, High, solana.missing_signer]
+    S2: [has_one or owner constraint removed, High, solana.missing_owner_check]
+    S3: [non-canonical bump accepted, Medium, solana.pda_seeds]
+    S4: [close without zeroing data or discriminator, High, solana.close_revival]
+    S5: [arbitrary CPI target, High, solana.arbitrary_cpi]
+    S6: [duplicate mutable accounts allowed, Medium, solana.duplicate_mutable]
+    S7: [ATA owner reassign leaves payouts unreachable, High, solana.ata_owner_reassign]
+  ton:
+    N1: [bounce handler removed, Medium, ton.bounce_handling]
+    N2: [sender not checked on internal message, High, ton.sender_auth]
+    N3: [forward amount without gas check, Medium, ton.gas_storage]
+    N4: [set_code reachable without owner check, Critical, ton.code_update]
+    N5: [state written before message validation, Medium, ton.business_logic]
+    N6: [jetton wallet address not verified, High, ton.jetton_standard]
+  move:      # sui and aptos
+    M1: [capability check removed from entry function, High, move.missing_auth]
+    M2: [shared object mutated without version or owner check, Medium, move.version_gating]
+    M3: [public function exposes &mut to privileged object, High, move.object_ref_leak]
+    M4: [UpgradeCap or signer capability leaked, Critical, move.capability_leak]
+    M5: [arithmetic order before division changed, Low, move.arithmetic_precision]
+  starknet:
+    C1: [caller check removed, High, cairo.access_control]
+    C2: [L1 handler from_address not checked, High, cairo.l1_handler_auth]
+    C3: [felt252 arithmetic replaces checked u256, Medium, cairo.felt_arithmetic]
+    C4: [replay nonce not incremented, High, cairo.signature_replay]
+runners:
+  evm: "forge test --match-test <name>"            # hyperevm: vm.etch mocks on precompile addresses
+  tron: "forge test on the upstream-solc build"     # EVM-compatible operators only
+  solana: "cargo test with LiteSVM loading the built .so"
+  ton: "npx blueprint test (@ton/sandbox), FunC, Tact, Tolk templates"
+  sui: "sui move test"
+  aptos: "aptos move test"
+  starknet: "snforge test"
+do_not_rename:   # minimum lists per language; grammar per language checked by O10-5
+  solidity: [constructor, fallback, receive, ERC20/ERC721/ERC4626 interface names, names in abi.encodeWithSignature, NatSpec tags]
+  rust: [declare_id! value, "#[program] instruction names called by tests", seed byte strings, IDL type names used by tests]
+  func_tolk: [recv_internal, recv_external, get-method names, op-code constants]
+  tact: [message names without explicit opcode, receive selectors, getters called by tests]
+  move: [named addresses in Move.toml, entry functions called by tests, init, one-time witness (renamed with its module)]
+  cairo: [interface functions called by tests, __validate__, __execute__, constructor, "#[l1_handler] names"]

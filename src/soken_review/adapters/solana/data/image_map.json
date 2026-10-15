@@ -1,0 +1,147 @@
+{
+  "$comment": "Solana build images per version (06 3.3.1). version -> upstream solana-verifiable-build digest (the IMAGE_MAP of solana-foundation/solana-verifiable-build src/image_config.rs), our derived image (docker/solana-build/Dockerfile, target build: clippy, readable homes, cargo bin outside CARGO_HOME), working_dir W, cargo_home CH, home, active_toolchain (RUSTUP_TOOLCHAIN, from `rustup show active-toolchain`, checked at image build). soken_image digests are placeholders until the image push; dev and CI set SOKEN_IMAGE_SOLANA_BUILD_<x_y_z>. version_lines: U-S1 row per major.minor; only a passed row lets a build hash give tier A. Upstream configs read 2026-10-10 from the registry (env, WorkingDir, RUST_VERSION).",
+  "images": {
+    "1.18.26": {
+      "repository": "solanafoundation/solana-verifiable-build",
+      "tag": "1.18.26",
+      "digest": "sha256:ec2e20e1f80607150a71e4c72adfe64be24347ed0b4fb741c32b34eaf7549a25",
+      "soken_image": {
+        "repository": "ghcr.io/soken-ltd/solana-build",
+        "tag": "1.18.26",
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "working_dir": "/build",
+      "cargo_home": "/usr/local/cargo",
+      "rustup_home": "/usr/local/rustup",
+      "home": "/root",
+      "user": "root",
+      "uid": 0,
+      "active_toolchain": "1.75.0-x86_64-unknown-linux-gnu",
+      "arch_values": [],
+      "clippy_present": true,
+      "platform": "linux/amd64",
+      "note": "Upstream user root; derived image runs as 10001 with /root readable. clippy added in the derived image."
+    },
+    "3.1.8": {
+      "repository": "solanafoundation/solana-verifiable-build",
+      "tag": "3.1.8",
+      "digest": "sha256:8faa93c144f595756148a20fb0e6151eff4d869726e52520119406a944994101",
+      "soken_image": {
+        "repository": "ghcr.io/soken-ltd/solana-build",
+        "tag": "3.1.8",
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "working_dir": "/build",
+      "cargo_home": "/usr/local/cargo",
+      "rustup_home": "/usr/local/rustup",
+      "home": "/root",
+      "user": "root",
+      "uid": 0,
+      "active_toolchain": "1.86.0-x86_64-unknown-linux-gnu",
+      "arch_values": [],
+      "clippy_present": true,
+      "platform": "linux/amd64",
+      "note": "Platform-tools cargo hashes the registry dir differently from the host cargo 1.86; deps fetch with both."
+    },
+    "3.1.10": {
+      "repository": "solanafoundation/solana-verifiable-build",
+      "tag": "3.1.10",
+      "digest": "sha256:f71be5ca7620b7e40933b7f1294fa44e01d08c1fc5ba1f375a2478f5a01580d3",
+      "soken_image": {
+        "repository": "ghcr.io/soken-ltd/solana-build",
+        "tag": "3.1.10",
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "working_dir": "/build",
+      "cargo_home": "/usr/local/cargo",
+      "rustup_home": "/usr/local/rustup",
+      "home": "/root",
+      "user": "root",
+      "uid": 0,
+      "active_toolchain": "1.86.0-x86_64-unknown-linux-gnu",
+      "arch_values": [],
+      "clippy_present": true,
+      "platform": "linux/amd64",
+      "note": "Same layout as 3.1.8 (RUST_VERSION 1.86.0)."
+    },
+    "4.3.0": {
+      "repository": "solanafoundation/solana-verifiable-build",
+      "tag": "4.3.0",
+      "digest": "sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd",
+      "soken_image": {
+        "repository": "ghcr.io/soken-ltd/solana-build",
+        "tag": "4.3.0",
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "working_dir": "/build",
+      "cargo_home": "/usr/local/cargo",
+      "rustup_home": "/usr/local/rustup",
+      "home": "/root",
+      "user": "root",
+      "uid": 0,
+      "active_toolchain": "1.97.1-x86_64-unknown-linux-gnu",
+      "arch_values": [
+        "v0",
+        "v1",
+        "v2",
+        "v3",
+        "v4"
+      ],
+      "clippy_present": true,
+      "platform": "linux/amd64",
+      "note": "Also the base of the analysis image (target analyze: cargo-audit, Python). arch values from cargo-build-sbf --help in the image."
+    },
+    "2.1.21": {
+      "repository": "solanafoundation/solana-verifiable-build",
+      "tag": "2.1.21",
+      "digest": "sha256:c78fd4ff5399ee5ea3e154881e8991bd8064899ca162a59cafc682da5a5bd516",
+      "working_dir": "/build",
+      "cargo_home": "/usr/local/cargo",
+      "rustup_home": "/usr/local/rustup",
+      "user": "root",
+      "uid": 0,
+      "active_toolchain": "1.81.0-x86_64-unknown-linux-gnu",
+      "arch_values": [],
+      "clippy_present": false,
+      "platform": "linux/amd64",
+      "note": "Upstream only, no derived image yet: builds for 2.1.21 are unsupported_toolchain."
+    },
+    "bpf": {
+      "repository": "projectserum/build",
+      "tag": "v0.27.0",
+      "digest": "sha256:75b75eabd6c09dc16f64f8db8d7b36cc59d1f3c6fa5bfd9e4e83ddb787a72ebe",
+      "working_dir": "/workdir",
+      "cargo_home": "/root/.cargo",
+      "rustup_home": "/root/.rustup",
+      "user": "root",
+      "uid": 0,
+      "active_toolchain": "bpf",
+      "arch_values": [],
+      "clippy_present": false,
+      "platform": "linux/amd64",
+      "note": "Legacy --bpf image (F29). Used after U-S1 row passes for --bpf builds."
+    }
+  },
+  "version_lines": {
+    "1.18": {
+      "u_s1": "failed",
+      "u_s1_reason": "deps_failed: wagon (1.18.26) Cargo.lock is version=3; cargo 1.75.0 (both sbf-cargo platform-tools and host active_toolchain) refuses to read it under --locked ('needs to be updated but --locked was passed'). No unlocked fallback permitted (security: re-resolution changes the dep set, violating provenance). Fix: update 1.18 image with a cargo >=1.77 binary (by digest) for the fetch step; that cargo reads v3 natively under --locked without rewriting. Measured runs 38052400187 38267011849 38288915563; security fix committed dcd0983 2026-10-12."
+    },
+    "3.1": {
+      "u_s1": "passed",
+      "u_s1_reason": "hash_equal: true for ripstr-token-hook (3.1.10); sandbox build_hash 64274c0b... == deployed_hash 64274c0b... == osec_hash 64274c0b...; root cause was --config build.rustc-wrapper='' overriding cargo-build-sbf internal RUSTC_WRAPPER; fixed by removing those flags in build.py; measured run 38288915563 2026-10-12"
+    },
+    "4.3": {
+      "u_s1": "failed",
+      "u_s1_reason": "All 580 OtterSec verified programs checked: zero have owner-linked 4.3.0 PDAs (OtterSec signer != upgrade authority for every 4.3.0 candidate). Bordrless-token added as hardcoded target (repo/commit/args from OtterSec API); run() bypasses owner_linked_verify_pdas for targets with hardcoded fields. Pending e2e run to measure hash_equal after rustc-wrapper fix; reference build (run 38029977515) produced ec9d9f... with anchor 1.2.0 deps. Updated dcd0983 2026-10-12."
+    },
+    "2.1": {
+      "u_s1": "not_run",
+      "u_s1_reason": "no soken_image for 2.1 line; upstream-only entry; not tested"
+    },
+    "bpf": {
+      "u_s1": "not_run",
+      "u_s1_reason": "legacy projectserum/build image; U-S1 test not run"
+    }
+  }
+}

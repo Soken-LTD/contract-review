@@ -1,0 +1,27 @@
+{
+  "name": "soken-ton-build-image",
+  "version": "0.1.0",
+  "description": "npm dependency manifest for the ton-build Docker image (plan v4 06 section 4.2). All tools installed via npm ci --ignore-scripts. func-* aliases = the verifier compiler worker's FunC versions (acton apps/verifier/compiler-worker, F32).",
+  "private": true,
+  "scripts": {},
+  "dependencies": {
+    "@ton/core": "0.61.0",
+    "@ton/sandbox": "0.45.0",
+    "@ton-community/func-js": "0.10.0",
+    "@tact-lang/compiler": "1.6.13",
+    "@ton/tolk-js": "0.12.0",
+    "@nowarp/misti": "0.9.0",
+    "func-0.2.0": "npm:@ton-community/func-js-bin@0.2.0",
+    "func-0.3.0": "npm:@ton-community/func-js-bin@0.3.0",
+    "func-0.4.0": "npm:@ton-community/func-js-bin@0.4.0",
+    "func-0.4.1": "npm:@ton-community/func-js-bin@0.4.1",
+    "func-0.4.2": "npm:@ton-community/func-js-bin@0.4.2",
+    "func-0.4.3": "npm:@ton-community/func-js-bin@0.4.3",
+    "func-0.4.4": "npm:@ton-community/func-js-bin@0.4.4",
+    "func-0.4.4-newops": "npm:@ton-community/func-js-bin@0.4.4-newops",
+    "func-0.4.4-newops.1": "npm:@ton-community/func-js-bin@0.4.4-newops.1",
+    "func-0.4.5": "npm:@ton-community/func-js-bin@0.4.5",
+    "func-0.4.6": "npm:@ton-community/func-js-bin@0.4.6",
+    "func-0.4.6-wasmfix.0": "npm:@ton-community/func-js-bin@0.4.6-wasmfix.0"
+  }
+}

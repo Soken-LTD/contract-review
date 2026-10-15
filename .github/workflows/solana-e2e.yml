@@ -1,0 +1,118 @@
+name: solana-e2e
+# Live proof of the Solana adapter path on x86_64 (06 2.4, 3.3; 09 5.2; U-S1). Manual, heavy.
+# Images: one build image per Solana version the targets need (docker/solana-build target build, FROM
+# the pinned upstream solana-verifiable-build digest), plus the analysis image (target analyze on 4.3.0).
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "space-separated target names (empty = all)"
+        default: ""
+      mode:
+        description: "e2e (adapter path) or reference (upstream solana-verify build, U-S1 diagnosis only)"
+        default: "e2e"
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    if: inputs.mode != 'reference'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Free disk for four build images
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv sync --locked
+      - name: Build sandbox images
+        run: |
+          set -euo pipefail
+          docker build -t soken/git-fetch:ci -f docker/git-fetch/Dockerfile .
+          docker build -t soken/smokescreen:ci -f docker/smokescreen/Dockerfile .
+          versions="$(uv run python scripts/e2e_solana_adapter.py --versions)"
+          uv run python -m soken_review.adapters.solana.images build-args $versions | while read -r v base toolchain; do
+            docker build --target build --build-arg BASE_IMAGE="$base" --build-arg ACTIVE_TOOLCHAIN="$toolchain" \
+              -t "soken/solana-build:$v-ci" docker/solana-build
+            echo "SOKEN_IMAGE_SOLANA_BUILD_${v//./_}=soken/solana-build:$v-ci" >> "$GITHUB_ENV"
+          done
+          read -r _ base toolchain < <(uv run python -m soken_review.adapters.solana.images build-args 4.3.0)
+          docker build --target analyze --build-arg BASE_IMAGE="$base" --build-arg ACTIVE_TOOLCHAIN="$toolchain" \
+            -t soken/solana-analyze:ci docker/solana-build
+          uv run python -m soken_review.sandbox.egress up solana --image soken/smokescreen:ci
+          docker images | grep soken/
+          df -h /
+      - name: Fetch pinned RustSec advisory-db (sandboxed git, outside the offline analysis)
+        env:
+          SOKEN_IMAGE_GIT_FETCH: soken/git-fetch:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+        run: uv run python -m soken_review.adapters.solana.rustsec fetch
+      - name: Run adapter e2e
+        env:
+          SOKEN_IMAGE_GIT_FETCH: soken/git-fetch:ci
+          SOKEN_IMAGE_SOLANA_ANALYZE: soken/solana-analyze:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+          TARGETS: ${{ inputs.targets }}
+        run: uv run python scripts/e2e_solana_adapter.py $TARGETS
+  # Reference: upstream `solana-verify build` on the same targets (not our adapter). Tells a difference in
+  # our sandbox from a difference in image or args.
+  reference:
+    if: inputs.mode == 'reference'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+      - name: Install solana-verify 0.5.2 (sha256 checked)
+        run: |
+          set -euo pipefail
+          base=https://github.com/solana-foundation/solana-verifiable-build/releases/download/v0.5.2
+          curl -sSfL -o solana-verify "$base/solana-verify-0.5.2-linux"
+          curl -sSfL -o sv.sha256 "$base/solana-verify-0.5.2-linux.sha256"
+          cat sv.sha256
+          test "$(sha256sum solana-verify | cut -d' ' -f1)" = "$(grep -oE '[0-9a-f]{64}' sv.sha256 | head -n1)"
+          chmod +x solana-verify && sudo mv solana-verify /usr/local/bin/
+          solana-verify --version
+      - name: Build targets with solana-verify
+        env:
+          ONLY: ${{ inputs.targets }}
+        run: |
+          set -uo pipefail
+          run() {  # name repo commit args...
+            name=$1; repo=$2; commit=$3; shift 3
+            if [ -n "$ONLY" ] && ! grep -qw "$name" <<<"$ONLY"; then return; fi
+            echo "::group::$name"
+            git init -q "$name" && git -C "$name" fetch -q --depth=1 "$repo" "$commit" && git -C "$name" checkout -q FETCH_HEAD
+            ( cd "$name" && solana-verify build "$@" ) > "$name.log" 2>&1
+            echo "exit $?"; tail -30 "$name.log"
+            echo "::endgroup::"
+            echo "RESULT $name $(grep -oE '^[0-9a-f]{64}$' "$name.log" | tail -n1)"
+          }
+          run wagon https://github.com/juancanero03-hue/wagon-program a398c7a4fb7d7b13411bc0390546624d8d02c17a --library-name wagon
+          run spl-token-2022 https://github.com/solana-program/token-2022 9bc02757f600ffe754746708a8a072bcd49d1260 --library-name spl_token_2022
+          run ripstr-token-hook https://github.com/ripstr-dev/ripstr-programs 21ecd5c9b8b9787b38aa26ee059c176ed613412e --library-name ripstr_token_hook --base-image solanafoundation/solana-verifiable-build:3.1.10
+          run bordrless-token https://github.com/BordrlessDex/bordrless-programs be0f9feb5503d246f3d71d7d641cc325c8ec2e08 --library-name bordrless_token --base-image solanafoundation/solana-verifiable-build:4.3.0 --arch v3
+          docker images --digests | grep verifiable || true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: inputs.targets == 'matrix'
+        with:
+          path: src
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        if: inputs.targets == 'matrix'
+      - name: Factor matrix on token-2022 (3.1.8)
+        if: inputs.targets == 'matrix'
+        working-directory: src
+        run: |
+          set -uo pipefail
+          uv sync --locked -q
+          read -r _ base toolchain < <(uv run python -m soken_review.adapters.solana.images build-args 3.1.8)
+          docker build -q --target build --build-arg BASE_IMAGE="$base" --build-arg ACTIVE_TOOLCHAIN="$toolchain" \
+            -t soken/solana-build:3.1.8-ci docker/solana-build
+          git init -q ../t22 && git -C ../t22 fetch -q --depth=1 https://github.com/solana-program/token-2022 \
+            9bc02757f600ffe754746708a8a072bcd49d1260 && git -C ../t22 checkout -q FETCH_HEAD
+          uv run python scripts/diag_subset_tree.py ../t22 ../sub
+          bash scripts/diag_solana_parity.sh "$(cd ../t22 && pwd)" spl_token_2022 "$base" soken/solana-build:3.1.8-ci "$(cd ../sub && pwd)"

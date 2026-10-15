@@ -1,0 +1,32 @@
+{
+ "language": "Solidity",
+ "sources": {
+  "Legacy.sol": {
+   "content": "// SPDX-License-Identifier: MIT\npragma solidity 0.8.26;\n\ncontract Legacy {\n    function g(bytes memory b) external pure returns (bytes memory) {\n        delete b[0];\n        return b;\n    }\n}\n"
+  }
+ },
+ "settings": {
+  "optimizer": {
+   "enabled": false,
+   "runs": 200
+  },
+  "outputSelection": {
+   "*": {
+    "*": [
+     "evm.bytecode",
+     "evm.deployedBytecode",
+     "evm.deployedBytecode.immutableReferences",
+     "evm.bytecode.linkReferences",
+     "evm.deployedBytecode.linkReferences",
+     "evm.deployedBytecode.sourceMap",
+     "storageLayout",
+     "metadata"
+    ],
+    "": [
+     "ast"
+    ]
+   }
+  },
+  "remappings": []
+ }
+}

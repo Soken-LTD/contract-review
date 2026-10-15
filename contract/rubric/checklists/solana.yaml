@@ -1,0 +1,87 @@
+# rubric/checklists, family solana. Format: part 04 section 8.1. Defaults as in evm.yaml.
+# Reference cases: https://github.com/coral-xyz/sealevel-attacks
+generic_items:
+  - {id: L1, kind: kill, condition: "The claimed path is not reachable from an instruction entry point.", auto: map.unreachable}
+  - {id: L2, kind: kill, condition: "A constraint or check at a quoted line rejects the input the claim depends on."}
+  - {id: L3, kind: downgrade, condition: "The effect is bounded by a cap at a quoted line."}
+categories:
+  solana.missing_signer:
+    items:
+      - {id: S1, kind: kill, condition: "The authority account is Signer<'info> or is_signer is checked at a quoted line."}
+      - {id: S2, kind: kill, condition: "A has_one or constraint ties the authority to stored state.", scope: account_struct}
+  solana.missing_owner_check:
+    items:
+      # Anchor Account<'info, T> checks ownership on deserialization: https://www.anchor-lang.com/docs/references/account-types
+      - {id: O1, kind: kill, condition: "The account is Account<'info, T> or its owner is compared at a quoted line.", scope: account_struct}
+      - {id: O2, kind: context, condition: "The account is UncheckedAccount with a CHECK comment (the comment is never a disproof)."}
+  solana.type_confusion:
+    items:
+      # UNVERIFIED: Account<'info, T> discriminator check; settle with a wrong-type account test (part 04 section 17.3).
+      - {id: C1, kind: kill, condition: "The account is deserialized with a discriminator check.", scope: account_struct}
+  solana.pda_seeds:
+    items:
+      - {id: P1, kind: kill, condition: "A seeds and bump constraint is on the account (canonical bump stored or derived).", scope: account_struct}
+  solana.pda_sharing:
+    items:
+      - {id: P2, kind: kill, condition: "The seeds include the user key or mint key where uniqueness per user or mint is required.", scope: account_struct}
+  solana.seed_collision:
+    items:
+      - {id: P3, kind: kill, condition: "Adjacent variable-length seeds are separated by a fixed-length seed or length-checked at a quoted line."}
+  solana.precreation:
+    items:
+      - {id: P4, kind: kill, condition: "The seeds hold a key only the creator signs for."}
+  solana.signed_cpi_accounts:
+    items:
+      - {id: X2, kind: kill, condition: "Every writable account passed to the callee is constrained at a quoted line."}
+  solana.stale_after_cpi:
+    items:
+      - {id: X3, kind: kill, condition: "reload() or a re-borrow precedes the read after the CPI."}
+  solana.cpi_recursion:
+    items:
+      - {id: X4, kind: kill, condition: "The CPI target is another program, not this program."}
+  solana.account_relationship:
+    items:
+      - {id: B1, kind: kill, condition: "A has_one, constraint or address check binds the stored Pubkey field to the account.", scope: account_struct}
+  solana.sysvar_address:
+    items:
+      - {id: Y1, kind: kill, condition: "The sysvar is Sysvar<T> or its id is compared at a quoted line.", scope: account_struct}
+  solana.introspection:
+    items:
+      - {id: N1, kind: kill, condition: "The instruction index is relative to the current instruction and the loaded program id is checked."}
+  solana.arbitrary_cpi:
+    items:
+      - {id: X1, kind: kill, condition: "The CPI target is Program<'info, T> or its program id is compared at a quoted line."}
+  solana.reinitialization:
+    items:
+      - {id: I1, kind: kill, condition: "init (not init_if_needed) is used or an initialized flag is checked."}
+  solana.close_revival:
+    items:
+      - {id: K1, kind: kill, condition: "A close constraint is used, or data is zeroed and lamports moved in one instruction."}
+  solana.ata_owner_reassign:
+    items:
+      # SOL-ATA-01 (part 06 3.5). The bug: a counterparty reassigns its classic token account owner, so the ATA constraint fails for everyone.
+      - {id: W0, kind: kill, condition: "Only Token-2022 is admitted as the token program of the account.", auto: map.token_program_token2022_only}
+      - {id: W0b, kind: kill, condition: "The mint is owned by Token-2022 at the read slot.", auto: chain.mint_owner_is_token2022}
+      - {id: W1, kind: kill, condition: "Another instruction lets the other parties finish (withdraw, repay, close) without this account."}
+      - {id: W3, kind: kill, condition: "The account is optional in the instruction."}
+      - {id: W2, kind: downgrade, condition: "The payout is pull-based and the recipient can supply a fresh account."}
+  solana.ata_validation:
+    items:
+      - {id: W4, kind: kill, condition: "Both the ATA derivation and the token account owner are checked."}
+  solana.arithmetic:
+    items:
+      # Overflow checks do not disprove: casts still truncate and overflow becomes a panic (part 06 5).
+      - {id: A1, kind: kill, condition: "Checked or saturating math is used at the line."}
+      - {id: A0, kind: context, condition: "Overflow checks in the program crate build (fact).", auto: build.overflow_checks}
+  solana.duplicate_mutable:
+    items:
+      - {id: D1, kind: kill, condition: "A key inequality constraint holds between the two mutable accounts.", scope: account_struct}
+  solana.remaining_accounts:
+    items:
+      - {id: R1, kind: kill, condition: "Every remaining account's owner and key are checked."}
+  solana.token2022_extensions:
+    items:
+      - {id: E1, kind: context, condition: "Transfer fee and transfer hook extensions are handled."}
+  solana.upgrade_authority:
+    items:
+      - {id: U1, kind: kill, condition: "The program is immutable (loader v1 or v2, or upgrade authority None).", auto: chain.immutable}

@@ -1,0 +1,87 @@
+name: image-build
+description: Build one sandbox image for linux/amd64 and run the Trivy gate (09 4.4). No write token here; the image leaves as an artifact for the push job.
+inputs:
+  image:
+    description: plan entry from scripts/images.py plan (JSON)
+    required: true
+  deps_dir:
+    description: directory with pushed digests of dependencies (level 1)
+    default: ""
+outputs:
+  name:
+    description: image name
+    value: ${{ steps.build.outputs.name }}
+runs:
+  using: composite
+  steps:
+    - name: Free runner disk (toolchain images are several GiB)
+      shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        df -h / | tail -1
+
+    - name: Docker Hub through mirror.gcr.io
+      shell: bash
+      run: |
+        cfg=/etc/docker/daemon.json
+        [ -s "$cfg" ] || echo '{}' | sudo tee "$cfg" >/dev/null
+        jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' "$cfg" | sudo tee "$cfg.new" >/dev/null
+        sudo mv "$cfg.new" "$cfg"
+        sudo systemctl restart docker
+        docker info --format '{{json .RegistryConfig.Mirrors}}'
+
+    - name: Install Trivy (release tarball, sha256 checked)
+      shell: bash
+      run: |
+        curl -fsSL -o /tmp/trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+        echo "${TRIVY_SHA256}  /tmp/trivy.tgz" | sha256sum -c -
+        sudo tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy
+        trivy --version
+
+    - name: Build
+      id: build
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        DEPS_DIR: ${{ inputs.deps_dir }}
+      run: |
+        name=$(jq -r .name <<<"$IMAGE"); repo=$(jq -r .repository <<<"$IMAGE"); tag=$(jq -r .tag <<<"$IMAGE")
+        echo "name=$name" >> "$GITHUB_OUTPUT"; echo "repo=$repo" >> "$GITHUB_OUTPUT"; echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        mapfile -t opts < <(python3 scripts/images.py argv "$IMAGE" "$DEPS_DIR")
+        printf '%s\n' "${opts[@]}"
+        docker buildx build "${opts[@]}" --load -t "$repo:$tag" .
+
+    - name: Trivy gate (a Critical with a fix blocks the push)
+      id: trivy
+      shell: bash
+      env:
+        REF: ${{ steps.build.outputs.repo }}:${{ steps.build.outputs.tag }}
+      run: |
+        db="--db-repository mirror.gcr.io/aquasec/trivy-db,ghcr.io/aquasecurity/trivy-db"
+        trivy image $db --scanners vuln --severity CRITICAL --format json -o /tmp/trivy-all.json "$REF"
+        all=$(jq '[.Results[]?.Vulnerabilities[]?] | length' /tmp/trivy-all.json)
+        echo "critical_total=$all" >> "$GITHUB_OUTPUT"
+        echo "Critical (incl. unfixed): $all"
+        trivy image $db --skip-db-update --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --format table "$REF"
+
+    - name: Save the scanned image
+      shell: bash
+      env:
+        NAME: ${{ steps.build.outputs.name }}
+        REPO: ${{ steps.build.outputs.repo }}
+        TAG: ${{ steps.build.outputs.tag }}
+        CRIT: ${{ steps.trivy.outputs.critical_total }}
+      run: |
+        mkdir -p /tmp/img
+        docker image inspect --format '{{.Id}}' "$REPO:$TAG" > "/tmp/img/$NAME.id"
+        jq -n --arg name "$NAME" --arg repository "$REPO" --arg tag "$TAG" --arg crit "$CRIT" \
+              '{name:$name, repository:$repository, tag:$tag, trivy_critical:($crit|tonumber? // null)}' > "/tmp/img/$NAME.meta.json"
+        docker save "$REPO:$TAG" | zstd -T0 -3 -q -o "/tmp/img/$NAME.tar.zst"
+        ls -la /tmp/img
+
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: image-${{ steps.build.outputs.name }}
+        path: /tmp/img/
+        retention-days: 1
+        compression-level: 0

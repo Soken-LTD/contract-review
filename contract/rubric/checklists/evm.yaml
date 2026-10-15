@@ -1,0 +1,105 @@
+# rubric/checklists, family evm (EVM, HyperEVM, TRON). Format: part 04 section 8.1.
+# Item defaults: scope entry_function, auto null, na [], chains null. One file per family in the plan;
+# the product splits it into rubric/checklists/evm/<category>.yaml at build.
+# Rule: a kill item must disprove every detector rule mapped to its category (part 04 section 8.1).
+# map.initializer_guard and map.storage_layout are context only (never kill, 04 8.5); no
+# checklist item of another category uses them (former A4, D2 killed true findings behind proxies).
+generic_items:   # used by every category with generic: true in enums.yaml
+  - {id: L1, kind: kill, condition: "The claimed path is not reachable from an external entry point.", auto: map.unreachable}
+  - {id: L2, kind: kill, condition: "A guard at a quoted line rejects the input the claim depends on."}
+  - {id: L3, kind: downgrade, condition: "The effect is bounded by a cap at a quoted line."}
+categories:
+  evm.access_control:
+    maps_to: [SWC-105, SWC-106, CWE-284]
+    items:
+      - {id: A1, kind: kill, condition: "A caller check (modifier or require on msg.sender) guards the function."}
+      - {id: A2, kind: kill, condition: "The function is not reachable from an external entry point.", auto: map.unreachable}
+      - {id: A3, kind: downgrade, condition: "Only a role assigned in a guarded constructor or initializer passes the check."}
+  evm.reentrancy:
+    maps_to: [SWC-107, CWE-841]
+    items:
+      - {id: R1, kind: kill, condition: "Every state variable the attacker profits from is written before the external call, in the entry function and every internal function it reaches."}
+      - {id: R2, kind: kill, condition: "A reentrancy lock guards the entry function and every external function that reads or writes the same state.", scope: shared_state_writers, auto: map.modifiers_and_bases}
+      - {id: R3, kind: downgrade, condition: "The call target cannot be an account the attacker controls (fixed trusted address, no hooks).", scope: call_site, na: [nr_no_external_call]}
+      - {id: R4, kind: context, condition: "The entry function makes an external call while state that a view function returns is not yet updated."}
+  evm.oracle_manipulation:
+    maps_to: [CWE-682]
+    items:
+      - {id: O1, kind: kill, condition: "The price comes from a push feed or a time-weighted average, not spot reserves read in the same transaction."}
+      - {id: O2, kind: downgrade, condition: "Staleness and zero-price checks are present."}
+      - {id: O3, kind: context, condition: "Feed decimals are handled at the conversion line."}
+  evm.arithmetic_precision:
+    maps_to: [SWC-101, CWE-682, CWE-190]
+    items:
+      - {id: P1, kind: kill, condition: "Checked arithmetic of compiler 0.8 or later covers the line (no unchecked block)."}
+      - {id: P2, kind: downgrade, condition: "The rounding direction favours the protocol."}
+      - {id: P3, kind: kill, condition: "The value range at the line cannot reach the failing input (bound quoted)."}
+  evm.unchecked_call:
+    maps_to: [SWC-104, CWE-252]
+    items:
+      - {id: U1, kind: kill, condition: "The return value is checked or SafeERC20 is used."}
+      - {id: U2, kind: downgrade, condition: "The token in scope is fixed and reverts on failure (quoted)."}
+  evm.delegatecall_proxy:
+    maps_to: [SWC-112, SWC-124]
+    items:
+      - {id: D1, kind: kill, condition: "The delegatecall target is immutable or admin-only."}
+  evm.signature_replay:
+    maps_to: [SWC-117, SWC-121, CWE-347]
+    items:
+      - {id: S1, kind: kill, condition: "A nonce is consumed per signature."}
+      - {id: S2, kind: kill, condition: "Chain id and contract address are in the signed digest."}
+      - {id: S3, kind: downgrade, condition: "A zero address from ecrecover is rejected."}
+  evm.ordering_mev:
+    maps_to: [SWC-114]
+    items:
+      - {id: M1, kind: kill, condition: "A slippage or minimum-output bound supplied by the caller is enforced."}
+      - {id: M2, kind: downgrade, condition: "Commit-reveal or a deadline is present."}
+  evm.dos:
+    maps_to: [SWC-113, SWC-128]
+    items:
+      - {id: G1, kind: kill, condition: "The loop bound is fixed or caller-paginated."}
+      - {id: G2, kind: kill, condition: "A failing external call cannot block other users (pull pattern)."}
+  evm.token_integration:
+    items:
+      - {id: T1, kind: kill, condition: "The balance delta is measured instead of trusting the amount (fee-on-transfer)."}
+      - {id: T2, kind: context, condition: "Rebasing tokens are handled."}
+      - {id: T3, kind: downgrade, condition: "A token allowlist is enforced."}
+  evm.randomness:
+    maps_to: [SWC-120]
+    items:
+      - {id: Q1, kind: kill, condition: "Randomness comes from a VRF callback."}
+  evm.timestamp:
+    maps_to: [SWC-116]
+    items:
+      - {id: Q2, kind: downgrade, condition: "The time tolerance is larger than validator influence."}
+  evm.hyperevm.corewriter:
+    items:
+      # Source: hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm/interacting-with-hypercore (read 2026-10-07):
+      # "order actions and vault transfers sent from CoreWriter are delayed onchain for a few seconds"
+      - {id: H1, kind: kill, condition: "The code does not assume that a CoreWriter order action or vault transfer took effect in the same transaction."}
+  evm.hyperevm.precompile:
+    items:
+      - {id: H2, kind: downgrade, condition: "The precompile price is checked for staleness."}
+  evm.hyperevm.bridge_decimals:
+    items:
+      # Source: part 05 F42, api.hyperliquid.xyz/info spotMeta (weiDecimals, evm_extra_wei_decimals; live call 2026-10-08) and the HyperCore<>HyperEVM transfers page.
+      - {id: H3, kind: kill, condition: "Decimals conversion between HyperCore and the EVM uses the token index metadata."}
+  evm.hyperevm.linking:
+    items:
+      # Source: hypercore-less-than-greater-than-hyperevm-transfers (part 05 F17): a linked contract "may have arbitrary bytecode".
+      - {id: H4, kind: downgrade, condition: "The linked token's code and total supply are checked before the contract trusts it (quoted line)."}
+      - {id: H5, kind: downgrade, condition: "No function reachable after deployment writes the HyperCore deployer finalizer slot."}
+  evm.tron.token:
+    items:
+      # Source: part 05 F27 (TRON USDT transfer returns false on success) and F28 (TRX transfers bypass fallback).
+      - {id: TT1, kind: downgrade, condition: "The token in scope is fixed and is not TRON USDT, or success is measured by balance delta instead of the return value."}
+      - {id: TT2, kind: context, condition: "TRX deposits that do not run receive or fallback are not counted by deposit accounting."}
+      - {id: TT3, kind: downgrade, condition: "Payable functions reject or account for msg.tokenvalue when msg.tokenid is non-zero."}
+  evm.tron.resource:
+    items:
+      - {id: TR1, kind: downgrade, condition: "Stake, vote and reward builtins are reachable only behind a caller check (quoted)."}
+      - {id: TR2, kind: context, condition: "Rewards earned through stake builtins have a withdrawal path."}
+  evm.tron.evm_diff:
+    items:
+      # Source: developers.tron.network/docs/tvm-vs-evm (part 05 F28).
+      - {id: TD1, kind: context, condition: "The CREATE2 prefix, block values, chain id, SELFDESTRUCT and precompile behaviour the code assumes are the TVM ones."}

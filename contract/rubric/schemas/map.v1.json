@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:soken:rubric:schemas:map.v1",
+  "$comment": "Owner part 04 (plan v4, section 2.1). Lexical layer is built by a grammar parser without a build; semantic layer from build and IR, absent when the build failed. Tokens are stored per file as tokens/<path>.jsonl, one token object per line (see $defs.token).",
+  "type": "object", "additionalProperties": false,
+  "required": ["files", "spans", "references", "constants"],
+  "properties": {
+    "files": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["path", "status", "lexer"],
+      "properties": {"path": {"type": "string"}, "status": {"enum": ["ok", "partial", "failed"]}, "lexer": {"enum": ["grammar", "fallback"]}, "error_class": {"type": "string"}}}},
+    "spans": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "name", "file", "start", "end"],
+      "properties": {"id": {"type": "string", "description": "Unit.name(sig), or path:name without a semantic layer"}, "unit": {"type": "string"}, "name": {"type": "string"},
+        "kind": {"enum": ["function", "modifier", "handler"]}, "file": {"type": "string"}, "start": {"type": "integer"}, "end": {"type": "integer"}}}},
+    "references": {"type": "object", "description": "identifier -> [path:line], comments and strings excluded",
+      "additionalProperties": {"type": "array", "items": {"type": "string", "pattern": "^.+:[0-9]+$"}}},
+    "constants": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "decl_ref", "folded_value"],
+      "properties": {"name": {"type": "string"}, "unit": {"type": "string"}, "decl_ref": {"type": "string"}, "folded_value": {"type": "string", "pattern": "^-?[0-9]+$"}}}},
+    "semantic": {"type": "object", "additionalProperties": false,
+      "required": ["units", "functions", "state_vars", "category_to_functions", "roles", "upgrade_surface"],
+      "properties": {
+        "units": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "name", "kind", "file", "start", "end"],
+          "properties": {"id": {"type": "string", "description": "<path>:<UnitName>"}, "name": {"type": "string"}, "kind": {"enum": ["contract", "program", "module", "account", "class"]},
+            "file": {"type": "string"}, "start": {"type": "integer"}, "end": {"type": "integer"}, "address": {"type": "string"}, "proxy_address": {"type": "string"}}}},
+        "functions": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["span", "visibility", "is_entry", "modifiers", "guards", "calls", "writes", "reads"],
+          "properties": {"span": {"type": "string", "description": "spans[].id"}, "visibility": {"type": "string"}, "is_entry": {"type": "boolean"},
+            "modifiers": {"type": "array", "items": {"type": "string"}},
+            "guards": {"type": "array", "items": {"type": "object", "required": ["class", "line"], "properties": {"class": {"type": "string", "description": "enums.yaml guard_classes"}, "line": {"type": "string"}}}},
+            "calls": {"type": "array", "items": {"type": "object", "required": ["kind", "target", "line"], "properties": {"kind": {"enum": ["internal", "external", "delegatecall", "value_transfer", "cpi", "message"]}, "target": {"type": "string"}, "line": {"type": "string"}, "value_bearing": {"type": "boolean"}}}},
+            "writes": {"type": "array", "items": {"type": "object", "required": ["var", "line"], "properties": {"var": {"type": "string"}, "line": {"type": "string"}}}},
+            "reads": {"type": "array", "items": {"type": "object", "required": ["var", "line"], "properties": {"var": {"type": "string"}, "line": {"type": "string"}}}}}}},
+        "state_vars": {"type": "array", "items": {"type": "object", "required": ["id", "unit", "name", "decl_ref"]}},
+        "category_to_functions": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
+        "roles": {"type": "array", "items": {"type": "object", "required": ["name", "holder_kind", "gated_functions"],
+          "properties": {"name": {"type": "string"}, "holder_kind": {"enum": ["eoa", "multisig", "timelock", "contract", "pda", "unknown"]}, "gated_functions": {"type": "array", "items": {"type": "string"}}}}},
+        "upgrade_surface": {"type": "array", "items": {"type": "object", "required": ["unit", "mechanism", "authority_fact_key"]}},
+        "chain_extras": {"type": "object", "description": "free shape owned by parts 05 to 07"}
+      }}
+  },
+  "$defs": {
+    "token": {"type": "object", "additionalProperties": false, "required": ["line", "col", "kind", "text"],
+      "properties": {"line": {"type": "integer"}, "col": {"type": "integer"},
+        "kind": {"enum": ["identifier", "keyword", "type_name", "operator", "punct", "literal_num", "literal_str", "comment"]}, "text": {"type": "string"}}}
+  }
+}

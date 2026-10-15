@@ -1,0 +1,61 @@
+# HyperEVM CoreWriter rules (plan-v4 05 section 10, category evm.hyperevm.corewriter).
+# Reference data only — finding text lives in the report kit (plan 08).
+# snapshot_key: references upstream/hyperevm_corewriter.json value keys.
+rules:
+  HL-CW-01:
+    category: evm.hyperevm.corewriter
+    severity: High
+    detection: slither
+    detector: hl_cw_01
+    snapshot_key: delay_note
+    summary: >
+      Accounting written as if sendRawAction (CoreWriter) succeeded in the same transaction.
+      Order and vault-transfer actions are delayed by several seconds (F15); a read-back
+      via a precompile is required before treating the action as settled.
+    flags: >
+      sendRawAction call in a function that writes accounting state (balance, price, flag)
+      after the call without an intervening precompile staticcall to confirm the action.
+
+  HL-CW-02:
+    category: evm.hyperevm.corewriter
+    severity: High
+    detection: semgrep
+    snapshot_key: action_ids
+    summary: >
+      CoreWriter call with a version byte, action id or ABI field layout that differs
+      from the upstream snapshot.
+    flags: >
+      Hard-coded version != 1, action id not in snapshot table, or field encoding
+      inconsistent with snapshot field_types.
+
+  HL-CW-03:
+    category: evm.hyperevm.corewriter
+    severity: High
+    detection: semgrep
+    snapshot_key: price_scaling
+    summary: >
+      Price, size or Tif encoding in a CoreWriter call differs from the snapshot scaling rule.
+    flags: >
+      Price encoded without floatToWire *1e8; size encoded without asset-decimal scaling;
+      Tif value outside snapshot tif_values set.
+
+  HL-CW-04:
+    category: evm.hyperevm.corewriter
+    severity: Medium
+    detection: slither
+    detector: hl_cw_04
+    snapshot_key: action_ids
+    summary: >
+      CoreWriter action dispatched without first checking coreUserExists (precompile 0x810).
+      An action sent for a non-existent user consumes all passed gas and the action is dropped.
+    flags: >
+      sendRawAction call where no staticcall to 0x810 (coreUserExists) is reachable
+      on any code path that leads to the sendRawAction.
+
+  HL-CW-05:
+    category: evm.hyperevm.corewriter
+    severity: Medium
+    detection: checklist
+    summary: >
+      CoreWriter actions assumed atomic with EVM logic.
+      See checklist item H1 (evm.yaml evm.hyperevm.corewriter section).

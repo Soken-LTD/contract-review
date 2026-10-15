@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "comment": "Exact Scarb package IDs (name + version + source) from the public scarbs.xyz registry whose cairo-plugin code has been reviewed and is safe to load during a Scarb build. Only registry+https://scarbs.xyz/ sources are eligible. Path, git, file and unknown sources are never added here regardless of name. The checksum must match the Scarb.lock entry in the pinned source tree. Add entries only after verifying the package on scarbs.xyz and auditing its macro code.",
+  "packages": []
+}

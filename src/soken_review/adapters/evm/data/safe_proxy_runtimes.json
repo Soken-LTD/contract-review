@@ -1,0 +1,46 @@
+{
+  "_schema": "safe_proxy_runtimes.v1",
+  "_note": "Safe proxy runtimes for proxy pattern 6 (05 section 5, UV5-07). A runtime matches when the sha256 of the deployed bytes equals one row. Rows measured with eth_getCode on proxies taken from the factory ProxyCreation logs; the bytes differ between versions only in the CBOR metadata tail. Singleton address is storage slot 0.",
+  "runtimes": [
+    {
+      "version": "1.1.1",
+      "runtime_sha256": "e49f633c212ea826b96623b9d3ab4600cc50c607a26547a07522dfbe80b28774",
+      "runtime_len": 170,
+      "solc": "0.5.14",
+      "factory": "0x76E2cFc1F5Fa8F6a5b3fC4c8F4788F0116861F9B",
+      "examples": [
+        {"chain_id": 1, "address": "0xF529d79e96358d47455451dDC2a2a60BB0CE9e46", "created_block": 11500528}
+      ],
+      "source_url": "https://github.com/safe-global/safe-deployments/blob/main/src/assets/v1.1.1/proxy_factory.json",
+      "checked_at": "2026-10-10"
+    },
+    {
+      "version": "1.3.0",
+      "runtime_sha256": "5b8bff324e02136edb0775bd77aa0fe773c1e23092305fe63f50a9e92f5b8faf",
+      "runtime_len": 171,
+      "solc": "0.7.6",
+      "factory": "0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2",
+      "factory_eip155": "0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC",
+      "examples": [
+        {"chain_id": 1, "address": "0xac1ee53F3C590A78e9E322066a30C6c0E237E45a", "created_block": 26150007},
+        {"chain_id": 8453, "address": "0x9779c9C849F47a746eB777Acb7Df7bF73A54ecDc", "created_block": 52409079},
+        {"chain_id": 8453, "address": "0xE840141570f3C1dd23fD6718A6dec9f33EE80cf7", "created_block": 52300012}
+      ],
+      "source_url": "https://github.com/safe-global/safe-deployments/blob/main/src/assets/v1.3.0/proxy_factory.json",
+      "checked_at": "2026-10-10"
+    },
+    {
+      "version": "1.4.1",
+      "runtime_sha256": "a8a0fbd3cdf49e751346664e01b529a58322a814cf8df8d85deb20e63bd6415e",
+      "runtime_len": 171,
+      "solc": "0.7.6",
+      "factory": "0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67",
+      "examples": [
+        {"chain_id": 1, "address": "0xC3F92E082bcCBC51470b05312dfdB9304Ad11873", "created_block": 26159007},
+        {"chain_id": 8453, "address": "0xC0c894CbDeE763D2bCC1616eFE89d64662938F82", "created_block": 52410150}
+      ],
+      "source_url": "https://github.com/safe-global/safe-deployments/blob/main/src/assets/v1.4.1/safe_proxy_factory.json",
+      "checked_at": "2026-10-10"
+    }
+  ]
+}

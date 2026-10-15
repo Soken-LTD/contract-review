@@ -1,0 +1,21 @@
+[project]
+name = "soken-slither-plugins"
+version = "0.1.0"
+description = "Soken HyperEVM Slither detectors (HL-* rules, plan-v4 05 section 8.2)"
+license = {text = "AGPL-3.0"}
+requires-python = ">=3.10"
+dependencies = [
+    "slither-analyzer==0.11.6",
+]
+
+[project.entry-points."slither_analyzer.plugin"]
+soken-hl = "slither_plugins:make_plugin"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# This directory is the package itself.
+packages = ["slither_plugins", "slither_plugins.tron_shim"]
+package-dir = {"slither_plugins" = ".", "slither_plugins.tron_shim" = "tron_shim"}

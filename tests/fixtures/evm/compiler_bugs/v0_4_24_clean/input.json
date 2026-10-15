@@ -1,0 +1,32 @@
+{
+ "language": "Solidity",
+ "sources": {
+  "Clean.sol": {
+   "content": "pragma solidity 0.4.24;\n\ncontract Clean {\n    uint public x;\n    constructor() public { x = 1; }\n    function set(uint v) public { x = v; }\n    function arr() public pure returns (uint[] memory a) { a = new uint[](3); }\n}\n"
+  }
+ },
+ "settings": {
+  "optimizer": {
+   "enabled": true,
+   "runs": 200
+  },
+  "outputSelection": {
+   "*": {
+    "*": [
+     "evm.bytecode",
+     "evm.deployedBytecode",
+     "evm.deployedBytecode.immutableReferences",
+     "evm.bytecode.linkReferences",
+     "evm.deployedBytecode.linkReferences",
+     "evm.deployedBytecode.sourceMap",
+     "storageLayout",
+     "metadata"
+    ],
+    "": [
+     "ast"
+    ]
+   }
+  },
+  "remappings": []
+ }
+}

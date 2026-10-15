@@ -1,0 +1,747 @@
+{
+ "meta": {
+  "report_type": "automated",
+  "kind": "Smart contract security review",
+  "subject": "GBLIN",
+  "subject_source": "verified_name",
+  "chain": "evm",
+  "network": "Base Mainnet (8453)",
+  "chain_id": 8453,
+  "explorer": null,
+  "addr_url": null,
+  "deployed_noun": "contract",
+  "source_id_label": "Bytecode hash",
+  "provenance": {
+   "tier": "B",
+   "label": "Source verified by a third party; rebuild not matched",
+   "label_key": "tier_b_third_party",
+   "source_hash": "b4cc916ccf88bed8f28f6c15752c424fe8ef881983807d4240895a129f9adf49",
+   "address": "0xc2181d975c05c8c724b334bcED0764c0b86B1D53"
+  },
+  "report_id": "ziitosi2xkzhp5hl4ao35kcjxa",
+  "report_id_short": "ziitosi2xk",
+  "ownership_proven": false,
+  "profile": "public_review",
+  "requested_by": {
+   "role": "third_party_public_code",
+   "label": "Third party reviewing public code"
+  },
+  "date": "10 October 2026",
+  "expires": "2026-11-09",
+  "out_name": "Automated_Review_ziitosi2xk.pdf"
+ },
+ "facts": {},
+ "summary": {
+  "kpis": [
+   {
+    "key": "files",
+    "value": 17,
+    "label": "Files in scope"
+   },
+   {
+    "key": "nsloc",
+    "value": 2697,
+    "label": "Source lines in scope"
+   },
+   {
+    "key": "leads",
+    "value": 156,
+    "label": "Analyzer leads"
+   },
+   {
+    "key": "promoted",
+    "value": 1,
+    "label": "Leads promoted to findings"
+   },
+   {
+    "key": "areas_returned",
+    "value": "3 of 23",
+    "label": "Areas with code returned"
+   },
+   {
+    "key": "deployed_code",
+    "value": "Not checked",
+    "label": "Deployed code"
+   }
+  ]
+ },
+ "scope": {
+  "head": [
+   "Unit",
+   "File",
+   "nSLOC",
+   "Address"
+  ],
+  "files": [
+   {
+    "name": "IERC5267",
+    "file": "lib/openzeppelin-contracts/contracts/interfaces/IERC5267.sol",
+    "nsloc": 16
+   },
+   {
+    "name": "IERC20",
+    "file": "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol",
+    "nsloc": 11
+   },
+   {
+    "name": "IERC20Metadata",
+    "file": "lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol",
+    "nsloc": 7
+   },
+   {
+    "name": "ReentrancyGuard",
+    "file": "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol",
+    "nsloc": 40
+   },
+   {
+    "name": "StorageSlot",
+    "file": "lib/openzeppelin-contracts/contracts/utils/StorageSlot.sol",
+    "nsloc": 69
+   },
+   {
+    "name": "ERC20",
+    "file": "lib/solady/src/tokens/ERC20.sol",
+    "nsloc": 360
+   },
+   {
+    "name": "SafeTransferLib",
+    "file": "lib/solady/src/utils/SafeTransferLib.sol",
+    "nsloc": 472
+   },
+   {
+    "name": "SignatureCheckerLib",
+    "file": "lib/solady/src/utils/SignatureCheckerLib.sol",
+    "nsloc": 402
+   },
+   {
+    "name": "GBLIN",
+    "file": "src/GBLIN.sol",
+    "nsloc": 969,
+    "addr": "0xc2181d975c05c8c724b334bcED0764c0b86B1D53"
+   },
+   {
+    "name": "IAuctionCallback",
+    "file": "src/interfaces/IAuctionCallback.sol",
+    "nsloc": 5
+   },
+   {
+    "name": "IGBLIN",
+    "file": "src/interfaces/IGBLIN.sol",
+    "nsloc": 119
+   },
+   {
+    "name": "AggregatorV3Interface",
+    "file": "src/interfaces/external/AggregatorV3Interface.sol",
+    "nsloc": 8
+   },
+   {
+    "name": "IChainlinkAggregator",
+    "file": "src/interfaces/external/IChainlinkAggregator.sol",
+    "nsloc": 6
+   },
+   {
+    "name": "IWETH",
+    "file": "src/interfaces/external/IWETH.sol",
+    "nsloc": 8
+   },
+   {
+    "name": "OracleLib",
+    "file": "src/libraries/OracleLib.sol",
+    "nsloc": 65
+   },
+   {
+    "name": "ShieldLib",
+    "file": "src/libraries/ShieldLib.sol",
+    "nsloc": 122
+   },
+   {
+    "name": "Asset",
+    "file": "src/types/Asset.sol",
+    "nsloc": 18
+   }
+  ],
+  "out_of_scope": []
+ },
+ "architecture": {
+  "title": "Units in scope and their external dependencies",
+  "cols": 4,
+  "rows": 1,
+  "edges": [],
+  "nodes": [
+   {
+    "id": "no_map",
+    "label": "map",
+    "kind": "scope",
+    "col": 0,
+    "row": 0
+   }
+  ]
+ },
+ "roles": {
+  "rows": [],
+  "notes": []
+ },
+ "method": [
+  {
+   "step": "Source pinning",
+   "detail": "17 files pinned by sha256; source pin b4cc916ccf88bed8"
+  },
+  {
+   "step": "Static analysis",
+   "detail": "slither 0.11.6: 156 leads."
+  },
+  {
+   "step": "Finding selection",
+   "detail": "3 findings accepted, 0 withdrawn"
+  },
+  {
+   "step": "Server checks",
+   "detail": "Every code quote matched to the pinned source; text and number rules on every finding; severity mapped from the classifications through the fixed matrix"
+  },
+  {
+   "step": "Deployment check",
+   "detail": "Not run: the deployed code was not compared with a rebuild of the source"
+  }
+ ],
+ "severity_scale": [
+  {
+   "severity": "Critical",
+   "text": "Loss or permanent freeze of holder funds with no unusual precondition"
+  },
+  {
+   "severity": "High",
+   "text": "Loss or freeze under realistic preconditions"
+  },
+  {
+   "severity": "Medium",
+   "text": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol"
+  },
+  {
+   "severity": "Low",
+   "text": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification"
+  },
+  {
+   "severity": "Informational",
+   "text": "Documentation, hardening and integration notes"
+  }
+ ],
+ "findings": [
+  {
+   "id": "H-001",
+   "severity": "High",
+   "evidence_level": "analyzer_and_reasoning",
+   "title": "Test fixture HIGHSECRET drift clock write in the auction marker",
+   "component": "GBLIN",
+   "location": {
+    "path": "src/GBLIN.sol",
+    "start": 714,
+    "end": 728
+   },
+   "category": "Reentrancy",
+   "category_key": "evm.reentrancy",
+   "description": [
+    {
+     "p": "Seeded test finding for the render proof; not a review result. The `_markDrift` function writes `driftSince` after it reads the basket value."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Seeded test text; it states no impact of the deployed code."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Seeded test text; no change is recommended."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "src/GBLIN.sol",
+        "start": 714,
+        "end": 728
+       },
+       "lines": [
+        [
+         714,
+         "    function _markDrift() internal {"
+        ],
+        [
+         715,
+         "        uint256 tot = totalEthValue(0);"
+        ],
+        [
+         716,
+         "        if (tot == 0 || _isStale()) return;"
+        ],
+        [
+         717,
+         "        uint256 worst = _worstDrift(tot);"
+        ],
+        [
+         718,
+         "        uint256 driftBps = (worst * BPS) / tot;"
+        ],
+        [
+         719,
+         "        if (driftBps > driftBandBps) {"
+        ],
+        [
+         720,
+         "            if (driftSince == 0) {"
+        ],
+        [
+         721,
+         "                driftSince = block.timestamp;"
+        ],
+        [
+         722,
+         "                emit AuctionOpened(worst);"
+        ],
+        [
+         723,
+         "            }"
+        ],
+        [
+         724,
+         "        } else if (driftSince != 0 && driftBps <= driftCloseBps) {"
+        ],
+        [
+         725,
+         "            driftSince = 0;"
+        ],
+        [
+         726,
+         "            emit AuctionClosed();"
+        ],
+        [
+         727,
+         "        }"
+        ],
+        [
+         728,
+         "    }"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "src/GBLIN.sol",
+        "start": 700,
+        "end": 709
+       },
+       "lines": [
+        [
+         700,
+         "        if (tot == 0) return 0;"
+        ],
+        [
+         701,
+         "        uint256 n = basket.length;"
+        ],
+        [
+         702,
+         "        for (uint256 i = 0; i < n; ++i) {"
+        ],
+        [
+         703,
+         "            Asset storage a = basket[i];"
+        ],
+        [
+         704,
+         "            if (a.token == WETH || (abandonedMask & (1 << i)) != 0) continue;"
+        ],
+        [
+         705,
+         "            uint256 target = (tot * a.dynamicWeight) / BPS;"
+        ],
+        [
+         706,
+         "            uint256 cur = _toEth(a, _freeBalance(a.token));"
+        ],
+        [
+         707,
+         "            uint256 d = cur > target ? cur - target : target - cur;"
+        ],
+        [
+         708,
+         "            if (d > worst) worst = d;"
+        ],
+        [
+         709,
+         "        }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "theft_of_funds",
+       "bounded",
+       "anyone",
+       "none",
+       "irreversible",
+       "S2"
+      ]
+     ]
+    },
+    "challenge": {
+     "head": [
+      "Item",
+      "Condition",
+      "Answer"
+     ],
+     "rows": [
+      [
+       "R1",
+       "Every state variable the caller profits from is written before the external call.",
+       "No"
+      ]
+     ]
+    },
+    "lead": {
+     "analyzer": "slither 0.11.6",
+     "rule_id": "reentrancy-eth"
+    }
+   }
+  },
+  {
+   "id": "M-001",
+   "severity": "Medium",
+   "evidence_level": "reasoning_challenged",
+   "title": "Test fixture drift basis points rounded down in the auction marker",
+   "component": "GBLIN",
+   "location": {
+    "path": "src/GBLIN.sol",
+    "start": 718,
+    "end": 718
+   },
+   "category": "Arithmetic precision",
+   "category_key": "evm.arithmetic_precision",
+   "description": [
+    {
+     "p": "Seeded test finding for the render proof; not a review result. Line 718 divides by `tot` after the multiplication by `BPS`."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Seeded test text; it states no impact of the deployed code."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Seeded test text; no change is recommended."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "src/GBLIN.sol",
+        "start": 718,
+        "end": 718
+       },
+       "lines": [
+        [
+         718,
+         "        uint256 driftBps = (worst * BPS) / tot;"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "incorrect_accounting_no_fund_effect",
+       "bounded",
+       "anyone",
+       "none",
+       "irreversible",
+       "M1"
+      ]
+     ]
+    },
+    "challenge": {
+     "head": [
+      "Item",
+      "Condition",
+      "Answer"
+     ],
+     "rows": [
+      [
+       "R1",
+       "Every state variable the caller profits from is written before the external call.",
+       "No"
+      ]
+     ]
+    },
+    "lead": null
+   }
+  },
+  {
+   "id": "L-001",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "Test fixture pending owner accepts the zero address",
+   "component": "GBLIN",
+   "location": {
+    "path": "src/GBLIN.sol",
+    "start": 1068,
+    "end": 1071
+   },
+   "category": "Input validation",
+   "category_key": "evm.input_validation",
+   "description": [
+    {
+     "p": "Seeded test finding for the render proof; not a review result. The `transferOwnership` function stores `newOwner` in `pendingOwner` without a zero address check."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Seeded test text; the two step transfer still needs the pending owner to accept."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Seeded test text; no change is recommended."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "src/GBLIN.sol",
+        "start": 1068,
+        "end": 1071
+       },
+       "lines": [
+        [
+         1068,
+         "    function transferOwnership(address newOwner) external onlyOwner {"
+        ],
+        [
+         1069,
+         "        pendingOwner = newOwner;"
+        ],
+        [
+         1070,
+         "        emit OwnershipTransferStarted(owner, newOwner);"
+        ],
+        [
+         1071,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "spec_deviation_bounded",
+       "bounded",
+       "anyone",
+       "none",
+       "irreversible",
+       "L1"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null
+   }
+  }
+ ],
+ "review_coverage": {
+  "areas": [
+   {
+    "area_id": "evm.access_control",
+    "area": "Access control",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.selfdestruct",
+    "area": "Selfdestruct",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.centralization",
+    "area": "Centralization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.initialization",
+    "area": "Upgradeability initialization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.storage_authority",
+    "area": "Upgradeability storage authority",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.delegatecall_proxy",
+    "area": "Delegatecall proxy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.storage",
+    "area": "Storage",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.reentrancy",
+    "area": "Reentrancy",
+    "code_returned": "Yes",
+    "result": [
+     "H-001"
+    ]
+   },
+   {
+    "area_id": "evm.ordering_mev",
+    "area": "Ordering MEV",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.unchecked_call",
+    "area": "Unchecked call",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.arithmetic_precision",
+    "area": "Arithmetic precision",
+    "code_returned": "Yes",
+    "result": [
+     "M-001"
+    ]
+   },
+   {
+    "area_id": "evm.accounting_logic",
+    "area": "Accounting logic",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.token_integration",
+    "area": "Token integration",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.oracle_manipulation",
+    "area": "Oracle manipulation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.randomness",
+    "area": "Randomness",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.timestamp",
+    "area": "Timestamp",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.signature_replay",
+    "area": "Signature replay",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.dos",
+    "area": "DoS",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.input_validation",
+    "area": "Input validation",
+    "code_returned": "Yes",
+    "result": [
+     "L-001"
+    ]
+   },
+   {
+    "area_id": "evm.compiler_bug",
+    "area": "Compiler bug",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.other",
+    "area": "Other",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.events",
+    "area": "Events",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.best_practice",
+    "area": "Best practice",
+    "code_returned": "No",
+    "result": "Not covered"
+   }
+  ],
+  "leads": [
+   {
+    "analyzer": "slither",
+    "version": "0.11.6",
+    "leads": 156,
+    "promoted": 1,
+    "dismissed": 0
+   }
+  ],
+  "withdrawn": [],
+  "injection_flags": []
+ }
+}

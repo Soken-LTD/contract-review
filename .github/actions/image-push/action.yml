@@ -1,0 +1,55 @@
+name: image-push
+description: Push one scanned image to private GHCR and record its digest (09 4.4). Runs in the only job with packages:write; no third-party action, no build.
+inputs:
+  name:
+    description: image name (artifact image-<name>)
+    required: true
+  token:
+    description: token with packages:write
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Free runner disk (the solana image is several GiB loaded)
+      shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        df -h / | tail -1
+
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: image-${{ inputs.name }}
+        path: /tmp/img
+
+    - name: Load, push, pull back by digest
+      shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        meta="/tmp/img/$NAME.meta.json"
+        REPO=$(jq -r .repository "$meta"); TAG=$(jq -r .tag "$meta"); CRIT=$(jq -r '.trivy_critical // "null"' "$meta")
+        [[ "$REPO" =~ ^ghcr\.io/soken-ltd/[a-z0-9._-]+$ ]] || { echo "bad repository $REPO"; exit 1; }
+        zstd -dc "/tmp/img/$NAME.tar.zst" | docker load -q
+        test "$(docker image inspect --format '{{.Id}}' "$REPO:$TAG")" = "$(cat "/tmp/img/$NAME.id")"
+        printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        docker push "$REPO:$TAG"
+        digest=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$REPO:$TAG" | grep "^$REPO@" | head -1 | cut -d@ -f2)
+        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no digest"; exit 1; }
+        # The runtime path: drop the local copy, pull by digest only.
+        docker rmi "$REPO:$TAG" >/dev/null
+        docker pull -q "$REPO@$digest"
+        docker image inspect --format '{{.Architecture}} user={{.Config.User}}' "$REPO@$digest"
+        docker logout ghcr.io
+        mkdir -p /tmp/digest
+        jq -n --arg name "$NAME" --arg repository "$REPO" --arg tag "$TAG" --arg digest "$digest" \
+              --arg commit "$GITHUB_SHA" --arg run_id "$GITHUB_RUN_ID" --arg crit "$CRIT" \
+              '{name:$name, repository:$repository, tag:$tag, digest:$digest, commit:$commit, run_id:$run_id, trivy_critical:($crit|tonumber? // null)}' \
+              > "/tmp/digest/$NAME.json"
+        cat "/tmp/digest/$NAME.json" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: digest-${{ inputs.name }}
+        path: /tmp/digest/${{ inputs.name }}.json

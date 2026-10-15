@@ -1,0 +1,11 @@
+{
+  "$comment": "HyperEVM HL-* rule_id to enums.yaml category map (plan-v4 05 section 8.3). Merged with evm/data/rule_map.json by the HyperEVM adapter. Reference data only.",
+  "slither": {
+    "hl-cw-01": "evm.hyperevm.corewriter",
+    "hl-cw-04": "evm.hyperevm.corewriter",
+    "hl-pc-01": "evm.hyperevm.precompile",
+    "hl-pc-02": "evm.hyperevm.precompile",
+    "hl-br-01": "evm.hyperevm.bridge_decimals",
+    "hl-lk-02": "evm.hyperevm.linking"
+  }
+}

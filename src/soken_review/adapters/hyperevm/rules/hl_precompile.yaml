@@ -1,0 +1,46 @@
+# HyperEVM precompile rules (plan-v4 05 section 10, category evm.hyperevm.precompile).
+# Reference data only — finding text lives in the report kit (plan 08).
+# snapshot_key: references upstream/hyperevm_precompiles.json value keys.
+rules:
+  HL-PC-01:
+    category: evm.hyperevm.precompile
+    severity: High
+    detection: slither
+    detector: hl_pc_01
+    snapshot_key: price_precompiles
+    summary: >
+      Price precompile value used without a bound or freshness check.
+      Affected precompiles: 0x806 (PerpPositionValue), 0x807 (PerpPositionFunding),
+      0x808 (PerpOpenInterest), 0x80e (PerpPosition).
+      An oracle-manipulation or extreme-volatility event can produce stale or out-of-range
+      values that are directly trusted for liquidation or collateral decisions.
+    flags: >
+      staticcall to a price precompile address (per snapshot price_precompiles) where
+      the return value is used arithmetically without a comparison against a bound
+      (min/max) or a staleness timestamp check.
+
+  HL-PC-02:
+    category: evm.hyperevm.precompile
+    severity: Medium
+    detection: slither
+    detector: hl_pc_02
+    snapshot_key: invalid_input_cost
+    summary: >
+      Precompile call without a gas cap, or with a caller-supplied asset/token index.
+      Invalid input to a HyperEVM precompile consumes all gas passed (F14).
+      Caller-controlled index enables griefing by targeting an invalid index.
+    flags: >
+      staticcall to any 0x800-0x813 address where the gas argument is not a constant
+      or where the index argument can be influenced by msg.sender or any external input.
+
+  HL-PC-03:
+    category: evm.hyperevm.precompile
+    severity: Medium
+    detection: semgrep
+    snapshot_key: price_decode_rule
+    summary: >
+      Price decoding differs from the snapshot decode rule.
+      Mismatched decimal scaling leads to incorrect liquidation or collateral values.
+    flags: >
+      Return value of a price precompile decoded with a scale factor or decimal count
+      that does not match snapshot price_decode_rule for the market type.

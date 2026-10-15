@@ -1,0 +1,67 @@
+name: starknet-e2e
+# Live proof of the Starknet adapter on x86_64 (07 8, 9; 09 3.1, 5.2). Manual, heavy.
+# review_start -> supervisor (sandboxed git fetch, scarb deps with egress, offline release build,
+# supervisor class hash + dep.match, scarb lint + soken-cairo-rules) -> ready, against mainnet RPC.
+on:
+  # workflow_dispatch needs the file on the default branch; until merge, a push to a Starknet
+  # feature branch runs it (all targets).
+  push:
+    branches: ["feat/starknet-*"]
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "space-separated target names from scripts/e2e_starknet.py (empty = all)"
+        default: ""
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: soken
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv sync --locked
+      - name: Host facts (uid, arch, memory)
+        run: id && uname -m && free -g && nproc
+      - name: Build sandbox images (one per Cairo version, 07 3.1)
+        run: |
+          docker build -t soken/git-fetch:ci -f docker/git-fetch/Dockerfile .
+          docker build -t soken/starknet-build:2.13.1 docker/starknet-build
+          docker build -t soken/starknet-build:2.11.4 \
+            --build-arg SCARB_VERSION=2.11.4 \
+            --build-arg SCARB_SHA256_AMD64=356b0211123cb8aefc589bc277d7475168032dce0675de55fcaf0dabe684abfb \
+            --build-arg SCARB_SHA256_ARM64=87793daaa6a618747e0b53ca891a09b81d1303f2cf8be1711d4c2596cb425afb \
+            docker/starknet-build
+          docker build -t soken/smokescreen:ci -f docker/smokescreen/Dockerfile .
+          uv run python -m soken_review.sandbox.egress up starknet --image soken/smokescreen:ci
+      - name: Starknet unit tests
+        run: uv run pytest -q tests/adapters/starknet
+      - name: Live e2e through review_start
+        env:
+          SOKEN_DATABASE_URL: postgresql://postgres:soken@127.0.0.1:5432/postgres
+          SOKEN_IMAGE_GIT_FETCH: soken/git-fetch:ci
+          SOKEN_IMAGE_STARKNET_BUILD_2_13_1: soken/starknet-build:2.13.1
+          SOKEN_IMAGE_STARKNET_BUILD_2_11_4: soken/starknet-build:2.11.4
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+          TARGETS: ${{ inputs.targets }}
+        run: uv run python scripts/e2e_starknet.py $TARGETS
+      - name: Build logs and supervisor files
+        if: always()
+        run: |
+          set +e
+          for d in .sbx/stk-e2e/work/*/; do
+            echo "== $d"; ls "$d" "$d/build/host" 2>/dev/null
+            cat "$d/build/host/trust_scan.json" "$d/build/host/build_status.json" 2>/dev/null; echo
+            tail -n 30 "$d/build/host/build.log" 2>/dev/null
+          done
+          exit 0  # always green: missing build/host (insufficient_source targets) is not a failure

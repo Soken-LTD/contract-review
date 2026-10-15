@@ -1,0 +1,20 @@
+{
+  "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm/dual-block-architecture",
+  "fetched_at": "2026-10-09",
+  "source_sha256": "UNVERIFIED",
+  "_note": "05 section 11: HyperEVM dual-block architecture (F13). While stale, small-block gas checklist item is off.",
+  "values": {
+    "small_block": {
+      "interval_ms": 500,
+      "gas_limit": 2000000,
+      "note": "Small block: 0.5 s interval, 2M gas limit — checklist item reads this value"
+    },
+    "big_block": {
+      "interval_ms": 2000,
+      "gas_limit": 20000000,
+      "note": "Big block: 2 s interval, 20M gas limit"
+    },
+    "cancun_without_blobs": true,
+    "selfdestruct_semantics_note": "HyperEVM runs Cancun EVM rules but blob transactions are not supported (F13)"
+  }
+}

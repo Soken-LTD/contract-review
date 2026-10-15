@@ -1,0 +1,144 @@
+# rubric/injection_patterns.yaml (owner part 04, section 12; W0 data file). Detection runs at pin time per file.
+# J1 is a phrase list over comment and string tokens only, so unlisted imperatives are not detected (04 12).
+# Phrase entries compile to (?i)\b<phrase>\b with spaces matching \s+ (the text_gate.yaml convention);
+# `regexes` run as written with (?i). J1 recall target 0.90 on the labelled corpus (04 17.2).
+version: 1
+J1:
+  phrases:
+    - ignore previous instructions
+    - ignore all previous instructions
+    - ignore prior instructions
+    - ignore the above
+    - ignore all instructions
+    - disregard previous instructions
+    - disregard all previous
+    - disregard the above
+    - forget previous instructions
+    - forget your instructions
+    - new instructions
+    - system prompt
+    - you are now
+    - you must now
+    - as an ai
+    - as a language model
+    - language model
+    - do not report
+    - do not flag
+    - do not mention
+    - do not include this
+    - not a vulnerability
+    - no vulnerabilities here
+    - no vulnerability here
+    - report no findings
+    - report no issues
+    - report no vulnerabilities
+    - intended and safe
+    - this is intended behavior and safe
+    - this code is safe
+    - this contract is safe
+    - this function is safe
+    - mark this as safe
+    - mark it as safe
+    - treat this as safe
+    - classify as informational
+    - classify as low
+    - rate this contract
+    - severity is informational
+    - false positive, skip
+    - skip this function
+    - skip this file
+    - skip this contract
+    - already audited
+    - audited and safe
+    - verified safe by
+    - approve this contract
+    - give this contract a pass
+    - override the
+    - jailbreak
+    - developer mode
+    - end of instructions
+    - begin instructions
+  regexes:
+    - '\b(note|message|instruction|instructions|attention)\s+(to|for)\s+(the\s+)?(ai|llm|auditor|reviewer|model|assistant|agent|analy[sz]er|bot)\b'
+    - '\b(dear|hey|hello)\s+(ai|llm|auditor|reviewer|model|assistant|agent|claude|chatgpt|gpt)\b'
+    - '\b(ai|llm|automated)\s+(auditors?|reviewers?|tools?|agents?|analy[sz]ers?)\s*(should|must|will|need|are\s+instructed)\b'
+    - '\b(claude|chatgpt|gpt-?[0-9]|gemini|copilot|llama)\b'
+    - '<\|?(im_start|im_end|system|endoftext)\|?>'
+    - '\[/?(inst|system)\]'
+    - '</?(system|assistant|user|instructions?)>'
+    - '\bseverity\s*[:=]\s*(none|informational|info|low)\b'
+    - '\b(respond|reply|answer|output)\s+(only\s+)?with\b'
+J2:   # bidi controls (CVE-2021-42574 Trojan Source)
+  codepoints: ['U+202A', 'U+202B', 'U+202C', 'U+202D', 'U+202E', 'U+2066', 'U+2067', 'U+2068', 'U+2069',
+               'U+200E', 'U+200F', 'U+061C']
+J3:   # zero-width and invisible characters not at file start (U+FEFF at offset 0 is a BOM)
+  codepoints: ['U+200B', 'U+200C', 'U+200D', 'U+2060', 'U+2061', 'U+2062', 'U+2063', 'U+2064', 'U+FEFF',
+               'U+180E', 'U+00AD', 'U+034F', 'U+115F', 'U+1160', 'U+3164', 'U+FFA0',
+               'U+2028', 'U+2029', 'U+0085', 'U+000B', 'U+000C']   # line separators a lexer may not split on
+J4:   # mixed-script or confusable identifiers (UTS 39; CVE-2021-42694)
+  rule: 'identifier with a non-ASCII character that is mixed-script, changes under NFKC, consists only of Latin look-alikes, or whose skeleton equals an ASCII identifier of the job'
+  latin_lookalikes:   # UTS 39 confusables.txt subset: Cyrillic and Greek letters prototyped to Latin
+    'а': a
+    'в': b
+    'е': e
+    'ё': e
+    'һ': h
+    'і': i
+    'ї': i
+    'ј': j
+    'к': k
+    'м': m
+    'н': h
+    'о': o
+    'р': p
+    'с': c
+    'ѕ': s
+    'т': t
+    'у': y
+    'х': x
+    'ԁ': d
+    'ԛ': q
+    'ԝ': w
+    'ɡ': g
+    'А': A
+    'В': B
+    'Е': E
+    'К': K
+    'М': M
+    'Н': H
+    'О': O
+    'Р': P
+    'С': C
+    'Т': T
+    'Х': X
+    'Ү': Y
+    'І': I
+    'Ј': J
+    'Ѕ': S
+    'α': a
+    'ο': o
+    'ρ': p
+    'ν': v
+    'κ': k
+    'ι': i
+    'τ': t
+    'υ': u
+    'Α': A
+    'Β': B
+    'Ε': E
+    'Ζ': Z
+    'Η': H
+    'Ι': I
+    'Κ': K
+    'Μ': M
+    'Ν': N
+    'Ο': O
+    'Ρ': P
+    'Τ': T
+    'Υ': Y
+    'Χ': X
+J5:   # long encoded runs in comments
+  min_length: 200
+  regexes:
+    - '[A-Za-z0-9+/]{200,}={0,2}'
+    - '(?:0x)?[0-9a-fA-F]{200,}'

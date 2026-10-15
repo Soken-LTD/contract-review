@@ -1,0 +1,29 @@
+# rubric/dep_match.yaml (owner part 04, section 3). The only dep.match vocabulary; adapters 05 to 07 emit exactly these.
+# A source with no answer (Sourcify HTTP 404 with "match": null) is not a value: the adapter tries the next source.
+exact:
+  evm: Rebuilt runtime bytecode equal (immutables masked at immutableReferences, libraries linked), or Sourcify runtimeMatch exact_match when the Sourcify candidate is the reviewed one (runtimeMatch, not match, which also counts creation code); a user or repo candidate always takes its own rebuild (part 05 R1)
+  solana: solana-verify executable hash equal to the on-chain hash
+  ton: Rebuilt root code cell hash equal to the account code cell hash, or to the library body hash when the code is a library ref (part 06 4.6)
+  sui: Part 07 6.2 comparison passes with the recorded toolchain
+  aptos: Rebuilt bytecode equal per module (part 07 7.2)
+  starknet: Rebuilt Sierra class hash equal (part 07 8.2)
+metadata_only:
+  evm: Equal with the part 05 13.2 auxdata ranges masked (CBOR trailer, embedded child CBOR, Vyper immutables tail), or Sourcify runtimeMatch match for a reviewed Sourcify candidate
+third_party_verified_only:
+  evm: Third party (eth-bytecode-db bytecode-only search, TronScan, Etherscan getsourcecode only with etherscan_licence on; no Blockscout read or Routescan, D-ESC) verified, own rebuild failed; a Sourcify record maps to exact or metadata_only directly
+  solana: OtterSec entry signed by the upgrade authority, own rebuild not completed (part 06 2.4)
+  # ton: not produced; a TON unit with an address is exact or tier D (part 06 2.3)
+  # sui, aptos, starknet: not produced (part 07 9.1)
+mismatch:
+  all: Rebuilt code differs (EVM beyond metadata); solana and ton rows below override
+  solana: an owner-linked candidate built with declared settings differs (part 06 2.4)
+  ton: not produced
+  evm: the reviewed candidate, built with recorded compiler and settings (its own repo config or the explorer candidate's), differs; Sourcify null, lookup errors and rate limits are never evidence
+  sui: any 6.2 check fails with the recorded toolchain (part 07 9.1)
+  aptos: rebuilt module set differs from the on-chain module set; equal sets with differing bytes are not_checkable (part 07 7.2)
+  starknet: no artifact has the deployed entry point selector set; equal selectors with a different hash are not_checkable
+not_checkable:
+  all: Compiler, settings, build image or toolchain unavailable, or dependency fetch failed; the adapter names which
+  solana: an owner-linked candidate has untrusted build inputs, an owner-linked rebuild with undeclared settings differs, an owner-linked user, verify PDA or security.txt source was not rebuilt, or the deployment is not hashable (part 06 2.4, 2.5)
+  evm_reasons: [settings_unknown, compiler_binary_missing, tron_compiler_unmapped, tron_compiler_ambiguous, auxdata_rule_missing, state_changed_during_read, build_failed]  # part 05 13.3
+  # sui, aptos, starknet reasons: part 07 9.1 (incl. build_failed, build_settings_unknown, package_not_found)

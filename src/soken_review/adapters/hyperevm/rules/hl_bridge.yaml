@@ -1,0 +1,31 @@
+# HyperEVM bridge/decimals rules (plan-v4 05 section 10, category evm.hyperevm.bridge_decimals).
+# Reference data only — finding text lives in the report kit (plan 08).
+rules:
+  HL-BR-01:
+    category: evm.hyperevm.bridge_decimals
+    severity: High
+    detection: slither
+    detector: hl_br_01
+    summary: >
+      HyperCore system-token transfers treated as exact ERC20 sends; non-round amounts
+      silently burned. The system token address format is 0x00...00<2-byte-index> (F17).
+      When HyperCore sends tokens to HyperEVM the amount may include a non-round remainder
+      which is burned; contracts that assume the sent amount equals the received amount
+      over-count balances or mischarge users.
+    flags: >
+      Transfer or balance-change accounting that uses the calldata amount directly for a
+      system token address (0x20-series or HYPE 0x2222...) without truncating to the
+      EVM decimal precision.
+
+  HL-BR-02:
+    category: evm.hyperevm.bridge_decimals
+    severity: Medium
+    detection: semgrep
+    summary: >
+      HYPE (0x2222222222222222222222222222222222222222) and WHYPE
+      (0x5555555555555555555555555555555555555555) used interchangeably without conversion.
+      HYPE is the native gas token; WHYPE is its ERC20 wrapper; confusing them leads to
+      incorrect accounting, stuck ETH or failed unwrap calls.
+    flags: >
+      Address literal 0x2222...2222 compared with or substituted for 0x5555...5555, or
+      vice versa, without an explicit wrap/unwrap step.

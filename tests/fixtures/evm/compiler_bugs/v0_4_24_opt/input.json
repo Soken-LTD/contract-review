@@ -1,0 +1,32 @@
+{
+ "language": "Solidity",
+ "sources": {
+  "Bugs.sol": {
+   "content": "pragma solidity 0.4.24;\n\ncontract Base {\n    address owner;\n    constructor() public { owner = msg.sender; }\n}\n\ncontract Leaf is Base {\n    function h(bytes memory b) public pure returns (bytes32 r) {\n        assembly { r := keccak256(add(b, 32), mload(b)) }\n    }\n\n    function arr(uint n) public pure returns (uint[] memory a) {\n        a = new uint[](n);\n    }\n\n    function p(uint8 x, uint8 y) public pure returns (uint8) {\n        return x ** y;\n    }\n}\n"
+  }
+ },
+ "settings": {
+  "optimizer": {
+   "enabled": true,
+   "runs": 200
+  },
+  "outputSelection": {
+   "*": {
+    "*": [
+     "evm.bytecode",
+     "evm.deployedBytecode",
+     "evm.deployedBytecode.immutableReferences",
+     "evm.bytecode.linkReferences",
+     "evm.deployedBytecode.linkReferences",
+     "evm.deployedBytecode.sourceMap",
+     "storageLayout",
+     "metadata"
+    ],
+    "": [
+     "ast"
+    ]
+   }
+  },
+  "remappings": []
+ }
+}

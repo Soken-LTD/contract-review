@@ -1,0 +1,110 @@
+name: sandbox-x86
+# Live proof on x86_64 under gVisor (09 4.1 to 4.4, 5.2): every sandbox step runs on runsc
+# (runsc-none offline, runsc-egress for fetch and deps), images pulled from private GHCR by the
+# digests in images.lock.json, egress only through the family smokescreen.
+#   P0-DEPS (UV9-3): allowlisted hosts pass, others and the metadata address are denied.
+#   P0-GIT  (UV9-5): depth-1 filtered fetch by sha per git host, 09 3.6 exit codes.
+#   EVM and Solana adapter e2e under runsc.
+on:
+  push:                     # registers the workflow from a branch; dispatch runs the full set
+    branches-ignore: [main]
+    paths: [".github/workflows/sandbox-x86.yml"]
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: "space-separated: uid deps git evm solana"
+        default: "uid deps git evm solana"
+      solana_targets:
+        description: "Solana e2e targets (empty = all)"
+        default: "shrimp"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  x86:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      SUITES: ${{ inputs.suites || 'uid deps git evm' }}
+      SOKEN_SANDBOX_DEV_PERMS: "1"   # runner user is not root: job dirs get mode 0777 instead of chown
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv sync --locked
+      - uses: ./.github/actions/runsc-setup
+
+      - name: Log in to GHCR (read)
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Pull locked images by digest
+        run: |
+          names="git-fetch smokescreen"
+          case "$SUITES" in *evm*) names="$names evm-analyze";; esac
+          case "$SUITES" in *solana*) names="$names solana-analyze";; esac
+          for name in $names; do
+            ref=$(uv run python -c "from soken_review.sandbox.profile import locked_image as l; print(l('$name') or '')")
+            [ -n "$ref" ] || { echo "$name not pinned in images.lock.json"; exit 1; }
+            echo "$name -> $ref"; docker pull -q "$ref"
+          done
+          df -h / | tail -1
+
+      - name: Egress proxies (evm, solana)
+        run: |
+          for f in evm solana; do uv run python -m soken_review.sandbox.egress up "$f"; done
+          docker ps --format '{{.Names}} {{.Image}} {{.Status}}'
+          docker network ls --filter name=soken-egress --format '{{.Name}} internal={{.Internal}}'
+
+      - name: P0-UID under runsc (uid 10001, no network, read-only root and src, no caps)
+        if: always() && contains(env.SUITES, 'uid')
+        run: |
+          docker pull -q mirror.gcr.io/library/alpine:3.20
+          img=$(docker inspect --format '{{index .RepoDigests 0}}' mirror.gcr.io/library/alpine:3.20)
+          SOKEN_P0_UID_IMAGE="$img" SOKEN_P0_UID_RUNTIME=runsc-none uv run pytest -q -rs tests/test_sandbox.py
+
+      - name: P0-DEPS (smokescreen allowlist)
+        if: always() && contains(env.SUITES, 'deps')
+        run: uv run python scripts/p0_deps.py --out p0_deps.json
+
+      - name: P0-GIT (soken-fetch per host)
+        if: always() && contains(env.SUITES, 'git')
+        run: uv run python scripts/p0_git.py --out p0_git.json
+
+      - name: EVM e2e under runsc (fetch, build, analyze, review_leads)
+        if: always() && contains(env.SUITES, 'evm')
+        run: |
+          set -e
+          mkdir -p .sbx/cases
+          uv run python scripts/fetch_case.py 1 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 .sbx/cases/weth9
+          uv run python scripts/fetch_case.py 8453 0xc2181d975c05c8c724b334bcED0764c0b86B1D53 .sbx/cases/gblin
+          for c in weth9 gblin; do uv run python scripts/build_case.py ".sbx/cases/$c"; jq -c '{status, reason, nsloc}' ".sbx/cases/$c/build_result.json"; jq 'length' ".sbx/cases/$c/leads.json"; done
+          uv run python scripts/e2e_leads.py .sbx/cases/weth9 .sbx/cases/gblin
+
+      - name: Solana e2e under runsc (soken-fetch, deps through smokescreen, build, analyze)
+        if: always() && contains(env.SUITES, 'solana')
+        env:
+          TARGETS: ${{ inputs.solana_targets || 'shrimp' }}
+        run: |
+          # build and analyze use the extended image (soken-build-sbf lives only there), by digest
+          export SOKEN_IMAGE_SOLANA_BUILD=$(uv run python -c "from soken_review.sandbox.profile import locked_image as l; print(l('solana-analyze'))")
+          uv run python scripts/e2e_solana_adapter.py $TARGETS
+
+      - name: Runtimes used and proxy decisions
+        if: always()
+        run: |
+          docker logs soken-smokescreen-solana 2>&1 | grep -o '"decision_reason":"[^"]*","enforce_would_deny":[a-z]*\|"requested_host":"[^"]*"\|"allow":[a-z]*' | paste - - - | sort | uniq -c | head -40 || true
+          docker logs soken-smokescreen-evm 2>&1 | grep -o '"requested_host":"[^"]*"\|"allow":[a-z]*' | paste - - | sort | uniq -c | head -20 || true
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: sandbox-x86-reports
+          path: |
+            p0_deps.json
+            p0_git.json
+            .sbx/cases/*/build_result.json
+            .sbx/cases/*/static_map.json
+          if-no-files-found: ignore

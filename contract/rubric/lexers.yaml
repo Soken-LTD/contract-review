@@ -1,0 +1,82 @@
+# rubric/lexers.yaml (owner part 04, sections 2.1 and 2.2; W0 data file).
+# Grammar parsers come first; a language listed under `grammar` that fails to load, or a file the
+# grammar cannot parse at all, goes through the fallback lexer below, which yields tokens but no spans.
+# Fallback: identifier, number and operator regexes plus comment and string delimiters per language.
+# Grammar availability per language is UNVERIFIED (04 17.3) until the Q1 corpus parse passes.
+version: 1
+extensions:
+  .sol: solidity
+  .vy: vyper
+  .vyi: vyper
+  .rs: rust
+  .fc: func
+  .func: func
+  .tact: tact
+  .tolk: tolk
+  .move: move
+  .cairo: cairo
+grammar:
+  solidity: tree_sitter_solidity   # PyPI tree-sitter-solidity 1.2.13 (MIT)
+  rust: tree_sitter_rust           # PyPI tree-sitter-rust 0.24.2 (MIT)
+fallback:
+  default:
+    line_comment: ["//"]
+    block_comment: [["/*", "*/"]]
+    nested_block_comment: false
+    strings: ['"', "'"]
+    multiline_strings: false
+    identifier: '[^\W\d]\w*'
+    number: '0[xX][0-9a-fA-F_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?'
+    operators: ['>>=', '<<=', '**=', '==', '!=', '<=', '>=', '&&', '||', '<<', '>>', '**', '+=', '-=', '*=', '/=',
+                '%=', '&=', '|=', '^=', '++', '--', '->', '=>', '::', '+', '-', '*', '/', '%', '=', '<', '>', '!',
+                '&', '|', '^', '~', '?']
+    keywords: []
+    type_names: []
+  solidity: {}
+  rust:
+    strings: ['"']
+    multiline_strings: true
+  vyper:
+    line_comment: ["#"]
+    block_comment: []
+    strings: ['"""', "'''", '"', "'"]
+    docstring_is_comment: true
+    keywords: [def, return, if, elif, else, for, in, assert, raise, pass, break, continue, event, struct, interface,
+               implements, enum, flag, log, self, and, or, not, constant, immutable, public, external, internal,
+               view, pure, payable, nonpayable, nonreentrant, deploy, indexed, empty, range, True, False]
+    type_names: [address, bool, uint8, uint16, uint32, uint64, uint128, uint256, int128, int256, decimal,
+                 bytes32, Bytes, String, HashMap, DynArray]
+  func:
+    line_comment: [";;"]
+    block_comment: [["{-", "-}"]]
+    nested_block_comment: true
+    strings: ['"']
+    identifier: '[~.]?[^\W\d][\w?!:&'']*'
+    keywords: [if, ifnot, else, elseif, elseifnot, while, do, until, repeat, return, var, impure, inline,
+               inline_ref, method_id, forall, global, const, asm, true, false, nil, throw, throw_if, throw_unless]
+    type_names: [int, cell, slice, builder, cont, tuple]
+  tact:
+    strings: ['"']
+    keywords: [contract, trait, with, fun, receive, external, bounced, init, get, let, const, if, else, while,
+               repeat, do, until, return, self, require, message, struct, extends, mutates, virtual, override,
+               abstract, inline, native, primitive, import, as, try, catch, foreach, in, true, false, null]
+    type_names: [Int, Bool, Address, Cell, Slice, Builder, String, StringBuilder, map]
+  tolk:
+    strings: ['"']
+    keywords: [fun, get, var, val, if, else, while, do, repeat, return, match, import, tolk, const, global,
+               struct, type, asm, true, false, null, throw, assert, try, catch, mutate, self, lazy]
+    type_names: [int, bool, cell, slice, builder, address, coins, tuple, never, void]
+  move:
+    strings: ['"']
+    byte_string_prefixes: ['b', 'x']
+    keywords: [module, script, fun, public, entry, friend, struct, has, let, mut, if, else, while, loop, return,
+               abort, move, copy, use, as, const, acquires, native, spec, true, false, enum, match]
+    type_names: [u8, u16, u32, u64, u128, u256, bool, address, signer, vector]
+  cairo:
+    line_comment: ["//"]
+    block_comment: []
+    strings: ['"', "'"]
+    keywords: [fn, let, mut, ref, if, else, loop, while, for, return, match, mod, use, impl, trait, struct, enum,
+               const, pub, of, self, Self, true, false, break, continue]
+    type_names: [felt252, u8, u16, u32, u64, u128, u256, i8, i16, i32, i64, i128, bool, ContractAddress,
+                 ClassHash, ByteArray]

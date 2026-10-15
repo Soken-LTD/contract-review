@@ -1,0 +1,489 @@
+{
+  "_schema": "chains.v1",
+  "_note": "EVM chain registry (05 section 4.1). Every value carries source_url and checked_at. inactive_opcodes measured via eth_call state-override (F18). Run scripts/measure_opcodes.py to refresh.",
+  "chains": [
+    {
+      "chain_id": 1,
+      "family": "evm",
+      "name": "Ethereum Mainnet",
+      "address_format": "evm_checksum",
+      "enabled": true,
+      "native_symbol": "ETH",
+      "native_decimals": 18,
+      "addr_url": null,
+      "inactive_opcodes": [],
+      "selfdestruct_semantics": {
+        "value": "eip6780",
+        "source_url": "https://eips.ethereum.org/EIPS/eip-6780",
+        "checked_at": "2026-10-09"
+      },
+      "rpc": [
+        {
+          "url": "https://eth.llamarpc.com",
+          "log_window": 2000,
+          "archive": true,
+          "source_url": "https://chainlist.org/chain/1",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://rpc.ankr.com/eth",
+          "log_window": 2000,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/1",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://ethereum-rpc.publicnode.com",
+          "log_window": 100,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/1",
+          "checked_at": "2026-10-10",
+          "note": "free tier: logs and state older than about 128 blocks need a token (live 2026-10-10)"
+        }
+      ],
+      "sourcify_supported": {
+        "value": true,
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-09"
+      },
+      "source_url": "https://chainlist.org/chain/1",
+      "checked_at": "2026-10-09",
+      "opcode_probe": {
+        "block": 26159967,
+        "rpc": "https://ethereum-rpc.publicnode.com",
+        "checked_at": "2026-10-10",
+        "measured": true,
+        "control": "active",
+        "results": {
+          "PUSH0": "active",
+          "TSTORE": "active",
+          "TLOAD": "active",
+          "MCOPY": "active",
+          "BLOBHASH": "active",
+          "BLOBBASEFEE": "active",
+          "CLZ": "active"
+        },
+        "source_url": "scripts/measure_opcodes.py (soken_review.adapters.evm.opcode_probe)"
+      }
+    },
+    {
+      "chain_id": 8453,
+      "family": "evm",
+      "name": "Base Mainnet",
+      "address_format": "evm_checksum",
+      "enabled": true,
+      "native_symbol": "ETH",
+      "native_decimals": 18,
+      "addr_url": null,
+      "inactive_opcodes": [],
+      "selfdestruct_semantics": {
+        "value": "eip6780",
+        "source_url": "https://eips.ethereum.org/EIPS/eip-6780",
+        "checked_at": "2026-10-09"
+      },
+      "rpc": [
+        {
+          "url": "https://mainnet.base.org",
+          "log_window": 2000,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/8453",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://base.llamarpc.com",
+          "log_window": 2000,
+          "archive": true,
+          "source_url": "https://chainlist.org/chain/8453",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://base-rpc.publicnode.com",
+          "log_window": 100,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/8453",
+          "checked_at": "2026-10-10",
+          "note": "free tier: logs and state older than about 128 blocks need a token (live 2026-10-10)"
+        }
+      ],
+      "sourcify_supported": {
+        "value": true,
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-09"
+      },
+      "source_url": "https://chainlist.org/chain/8453",
+      "checked_at": "2026-10-09",
+      "opcode_probe": {
+        "block": 52410546,
+        "rpc": "https://mainnet.base.org",
+        "checked_at": "2026-10-10",
+        "measured": true,
+        "control": "active",
+        "results": {
+          "PUSH0": "active",
+          "TSTORE": "active",
+          "TLOAD": "active",
+          "MCOPY": "active",
+          "BLOBHASH": "active",
+          "BLOBBASEFEE": "active",
+          "CLZ": "active"
+        },
+        "source_url": "scripts/measure_opcodes.py (soken_review.adapters.evm.opcode_probe)"
+      }
+    },
+    {
+      "chain_id": 42161,
+      "family": "evm",
+      "name": "Arbitrum One Mainnet",
+      "address_format": "evm_checksum",
+      "enabled": true,
+      "native_symbol": "ETH",
+      "native_decimals": 18,
+      "addr_url": null,
+      "inactive_opcodes": [
+        "BLOBBASEFEE"
+      ],
+      "selfdestruct_semantics": {
+        "value": "eip6780",
+        "source_url": "https://eips.ethereum.org/EIPS/eip-6780",
+        "checked_at": "2026-10-09"
+      },
+      "rpc": [
+        {
+          "url": "https://arb1.arbitrum.io/rpc",
+          "log_window": 2000,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/42161",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://arbitrum.llamarpc.com",
+          "log_window": 2000,
+          "archive": true,
+          "source_url": "https://chainlist.org/chain/42161",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://arbitrum-one-rpc.publicnode.com",
+          "log_window": 100,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/42161",
+          "checked_at": "2026-10-10",
+          "note": "free tier: logs and state older than about 128 blocks need a token (live 2026-10-10)"
+        }
+      ],
+      "sourcify_supported": {
+        "value": true,
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-09"
+      },
+      "source_url": "https://chainlist.org/chain/42161",
+      "checked_at": "2026-10-09",
+      "opcode_probe": {
+        "block": 513422817,
+        "rpc": "https://arb1.arbitrum.io/rpc",
+        "checked_at": "2026-10-10",
+        "measured": true,
+        "control": "active",
+        "results": {
+          "PUSH0": "active",
+          "TSTORE": "active",
+          "TLOAD": "active",
+          "MCOPY": "active",
+          "BLOBHASH": "active",
+          "BLOBBASEFEE": "inactive",
+          "CLZ": "active"
+        },
+        "source_url": "scripts/measure_opcodes.py (soken_review.adapters.evm.opcode_probe)"
+      }
+    },
+    {
+      "chain_id": 10,
+      "family": "evm",
+      "name": "OP Mainnet",
+      "address_format": "evm_checksum",
+      "enabled": true,
+      "native_symbol": "ETH",
+      "native_decimals": 18,
+      "addr_url": null,
+      "inactive_opcodes": [],
+      "selfdestruct_semantics": {
+        "value": "eip6780",
+        "source_url": "https://eips.ethereum.org/EIPS/eip-6780",
+        "checked_at": "2026-10-09"
+      },
+      "rpc": [
+        {
+          "url": "https://mainnet.optimism.io",
+          "log_window": 2000,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/10",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://optimism.llamarpc.com",
+          "log_window": 2000,
+          "archive": true,
+          "source_url": "https://chainlist.org/chain/10",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://optimism-rpc.publicnode.com",
+          "log_window": 100,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/10",
+          "checked_at": "2026-10-10",
+          "note": "free tier: logs and state older than about 128 blocks need a token (live 2026-10-10)"
+        }
+      ],
+      "sourcify_supported": {
+        "value": true,
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-09"
+      },
+      "source_url": "https://chainlist.org/chain/10",
+      "checked_at": "2026-10-09",
+      "opcode_probe": {
+        "block": 158005833,
+        "rpc": "https://mainnet.optimism.io",
+        "checked_at": "2026-10-10",
+        "measured": true,
+        "control": "active",
+        "results": {
+          "PUSH0": "active",
+          "TSTORE": "active",
+          "TLOAD": "active",
+          "MCOPY": "active",
+          "BLOBHASH": "active",
+          "BLOBBASEFEE": "active",
+          "CLZ": "active"
+        },
+        "source_url": "scripts/measure_opcodes.py (soken_review.adapters.evm.opcode_probe)"
+      }
+    },
+    {
+      "chain_id": 56,
+      "family": "evm",
+      "name": "BNB Smart Chain Mainnet",
+      "address_format": "evm_checksum",
+      "enabled": true,
+      "native_symbol": "BNB",
+      "native_decimals": 18,
+      "addr_url": null,
+      "inactive_opcodes": [],
+      "selfdestruct_semantics": {
+        "value": "legacy",
+        "source_url": "https://docs.bnbchain.org/bnb-smart-chain/developers/evm-compatibility/",
+        "checked_at": "2026-10-09"
+      },
+      "rpc": [
+        {
+          "url": "https://bsc-dataseed.binance.org",
+          "log_window": 2000,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/56",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://bsc.llamarpc.com",
+          "log_window": 2000,
+          "archive": true,
+          "source_url": "https://chainlist.org/chain/56",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://bsc-rpc.publicnode.com",
+          "log_window": 100,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/56",
+          "checked_at": "2026-10-10",
+          "note": "free tier: logs and state older than about 128 blocks need a token (live 2026-10-10)"
+        }
+      ],
+      "sourcify_supported": {
+        "value": true,
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-09"
+      },
+      "source_url": "https://chainlist.org/chain/56",
+      "checked_at": "2026-10-09",
+      "opcode_probe": {
+        "block": 126772570,
+        "rpc": "https://bsc-dataseed.binance.org",
+        "checked_at": "2026-10-10",
+        "measured": true,
+        "control": "active",
+        "results": {
+          "PUSH0": "active",
+          "TSTORE": "active",
+          "TLOAD": "active",
+          "MCOPY": "active",
+          "BLOBHASH": "active",
+          "BLOBBASEFEE": "active",
+          "CLZ": "active"
+        },
+        "source_url": "scripts/measure_opcodes.py (soken_review.adapters.evm.opcode_probe)"
+      }
+    },
+    {
+      "chain_id": 137,
+      "family": "evm",
+      "name": "Polygon Mainnet",
+      "address_format": "evm_checksum",
+      "enabled": true,
+      "native_symbol": "MATIC",
+      "native_decimals": 18,
+      "addr_url": null,
+      "inactive_opcodes": [
+        "BLOBHASH",
+        "BLOBBASEFEE"
+      ],
+      "selfdestruct_semantics": {
+        "value": "eip6780",
+        "source_url": "https://eips.ethereum.org/EIPS/eip-6780",
+        "checked_at": "2026-10-09"
+      },
+      "rpc": [
+        {
+          "url": "https://polygon-rpc.com",
+          "log_window": 2000,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/137",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://polygon.llamarpc.com",
+          "log_window": 2000,
+          "archive": true,
+          "source_url": "https://chainlist.org/chain/137",
+          "checked_at": "2026-10-09"
+        },
+        {
+          "url": "https://polygon-bor-rpc.publicnode.com",
+          "log_window": 100,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/137",
+          "checked_at": "2026-10-10",
+          "note": "free tier: logs and state older than about 128 blocks need a token (live 2026-10-10)"
+        }
+      ],
+      "sourcify_supported": {
+        "value": true,
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-09"
+      },
+      "source_url": "https://chainlist.org/chain/137",
+      "checked_at": "2026-10-09",
+      "opcode_probe": {
+        "block": 95270139,
+        "rpc": "https://polygon-bor-rpc.publicnode.com",
+        "checked_at": "2026-10-10",
+        "measured": true,
+        "control": "active",
+        "results": {
+          "PUSH0": "active",
+          "TSTORE": "active",
+          "TLOAD": "active",
+          "MCOPY": "active",
+          "BLOBHASH": "inactive",
+          "BLOBBASEFEE": "inactive",
+          "CLZ": "active"
+        },
+        "source_url": "scripts/measure_opcodes.py (soken_review.adapters.evm.opcode_probe)"
+      }
+    },
+    {
+      "chain_id": 999,
+      "family": "hyperevm",
+      "name": "HyperEVM Mainnet",
+      "address_format": "evm_checksum",
+      "enabled": true,
+      "native_symbol": "HYPE",
+      "native_decimals": 18,
+      "addr_url": null,
+      "inactive_opcodes": [
+        "CLZ"
+      ],
+      "selfdestruct_semantics": null,
+      "rpc": [
+        {
+          "url": "https://rpc.hyperliquid.xyz/evm",
+          "log_window": 2000,
+          "archive": false,
+          "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm",
+          "checked_at": "2026-10-09"
+        }
+      ],
+      "sourcify_supported": {
+        "value": true,
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-09"
+      },
+      "source_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm",
+      "checked_at": "2026-10-09",
+      "opcode_probe": {
+        "block": 48143084,
+        "rpc": "https://rpc.hyperliquid.xyz/evm",
+        "checked_at": "2026-10-10",
+        "measured": true,
+        "control": "active",
+        "results": {
+          "PUSH0": "active",
+          "TSTORE": "active",
+          "TLOAD": "active",
+          "MCOPY": "active",
+          "BLOBHASH": "active",
+          "BLOBBASEFEE": "active",
+          "CLZ": "inactive"
+        },
+        "source_url": "scripts/measure_opcodes.py (soken_review.adapters.evm.opcode_probe)"
+      }
+    },
+    {
+      "chain_id": 728126428,
+      "family": "tron",
+      "name": "TRON Mainnet",
+      "address_format": "tron_base58",
+      "enabled": false,
+      "_enabled_note": "Disabled until T-PORT gate passes (Q5). Set true after UV5-05 and UV5-06 settle.",
+      "native_symbol": "TRX",
+      "native_decimals": 6,
+      "addr_url": "https://tronscan.org/#/contract/{address}",
+      "addr_url_note": "TronScan; display_address (base58); licence row UV5-02",
+      "inactive_opcodes": [
+        "BLOBHASH",
+        "BLOBBASEFEE",
+        "TLOAD",
+        "TSTORE",
+        "MCOPY"
+      ],
+      "inactive_opcodes_source": {
+        "note": "TVM does not support EIP-4844 blob opcodes or EIP-1153 transient storage; inferred from getAllowTvmCompatibleEvm getchainparameters (#60) = 0 (F41); eth_call with state override rejected by TronGrid (F26)",
+        "source_url": "https://developers.tron.network/docs/tvm-vs-evm",
+        "checked_at": "2026-10-08"
+      },
+      "selfdestruct_semantics": {
+        "value": "tron_restricted",
+        "source_url": "https://developers.tron.network/docs/tvm-vs-evm",
+        "checked_at": "2026-10-08"
+      },
+      "rpc": [
+        {
+          "url": "https://api.trongrid.io/jsonrpc",
+          "log_window": 100,
+          "archive": false,
+          "source_url": "https://developers.tron.network/docs/trongrid",
+          "checked_at": "2026-10-09",
+          "note": "JSON-RPC, latest only (F26); API key optional (TRON_GRID_API_KEY)"
+        }
+      ],
+      "sourcify_supported": {
+        "value": true,
+        "note": "chain_id 728126428 served; nearly empty (USDT 404 per F9)",
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-09"
+      },
+      "source_url": "https://developers.tron.network/docs/tvm-vs-evm",
+      "checked_at": "2026-10-09"
+    }
+  ]
+}
