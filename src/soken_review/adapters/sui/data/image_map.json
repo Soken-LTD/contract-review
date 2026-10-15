@@ -1,0 +1,14 @@
+{
+  "$comment": "Sui build image metadata (plan v4 07 wave-4). framework_commit: the commit of MystenLabs/sui cloned into /opt/sui-framework at image build time (ARG SUI_COMMIT in docker/sui-build/Dockerfile line 33). framework_url: canonical git URL written in Move.lock git deps. framework_packages: dep name -> subdir path within the MystenLabs/sui repository where that package lives; verified from MystenLabs/sui tag mainnet-v1.81.1 via the GitHub trees API. dep_cache_path_format: $MOVE_HOME/git/{url_to_file_name(url)}_{rev}/{subdir} (url_to_file_name replaces [/:. @] with _ per external-crates/move/crates/move-package-alt/src/git/cache.rs fn url_to_file_name, line ~102).",
+  "1.81.1": {
+    "framework_url": "https://github.com/MystenLabs/sui.git",
+    "framework_commit": "e04cf9aa915cb6c069092733bebc3648755998e2",
+    "framework_packages": {
+      "Sui":        "crates/sui-framework/packages/sui-framework",
+      "MoveStdlib": "crates/sui-framework/packages/move-stdlib",
+      "SuiSystem":  "crates/sui-framework/packages/sui-system",
+      "Deepbook":   "crates/sui-framework/packages/deepbook",
+      "Bridge":     "crates/sui-framework/packages/bridge"
+    }
+  }
+}

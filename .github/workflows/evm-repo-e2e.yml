@@ -1,0 +1,62 @@
+name: evm-repo-e2e
+# Live proof of the EVM repo source route on x86_64 (05 4.2, supervisor):
+# review_start (source.kind=repo) -> supervisor (sandboxed git fetch via soken-fetch,
+# repo_candidate_from_manifest, Standard JSON B3 build, analyze, map) -> ready/failed.
+# Six cases: gitlink submodules (a), in-tree deps (b), deployed contract 13.1 compare (c),
+# ffi=true untrusted_inputs flag (d), skipped off-allowlist submodule (e), bad commit (f).
+on:
+  push:
+    branches: ["feat/evm-repo-route", "feat/evm-repo-route-*"]
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "space-separated target names from scripts/e2e_evm_repo.py (empty = all)"
+        default: ""
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: soken
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv sync --locked
+      - name: Host facts (uid, arch, memory)
+        run: id && uname -m && free -g && nproc
+      - name: Verify actions pinned
+        run: uv run python scripts/check_actions_pinned.py
+      - name: Build sandbox images
+        run: |
+          docker build -t soken/git-fetch:ci -f docker/git-fetch/Dockerfile .
+          docker build -t soken/evm-analyze:ci docker/evm-analyze
+          docker build -t soken/smokescreen:ci -f docker/smokescreen/Dockerfile .
+          uv run python -m soken_review.sandbox.egress up evm --image soken/smokescreen:ci
+      - name: EVM repo unit tests
+        run: uv run pytest -q tests/adapters/evm
+      - name: Live e2e through review_start (repo source)
+        env:
+          SOKEN_DATABASE_URL: postgresql://postgres:soken@127.0.0.1:5432/postgres
+          SOKEN_IMAGE_GIT_FETCH: soken/git-fetch:ci
+          SOKEN_IMAGE_EVM_ANALYZE: soken/evm-analyze:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+          TARGETS: ${{ inputs.targets }}
+        run: uv run python scripts/e2e_evm_repo.py $TARGETS
+      - name: Work dir artifacts (always)
+        if: always()
+        run: |
+          set +e
+          for d in .sbx/evm-repo-e2e/work/*/; do
+            echo "== $d"; ls "$d" 2>/dev/null
+            cat "$d/candidates.json" "$d/build_result.json" "$d/provenance.json" 2>/dev/null; echo
+          done
+          exit 0

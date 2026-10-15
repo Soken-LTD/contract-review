@@ -23,6 +23,7 @@ class RpcEntry:
     archive: bool
     source_url: str
     checked_at: str
+    disabled: bool = False          # True when the endpoint is known-dead or requires auth
 
 
 @dataclass
@@ -57,6 +58,7 @@ def _load_chains() -> dict[int, ChainRecord]:
                 archive=r["archive"],
                 source_url=r["source_url"],
                 checked_at=r["checked_at"],
+                disabled=bool(r.get("disabled", False)),
             )
             for r in entry.get("rpc", [])
         ]

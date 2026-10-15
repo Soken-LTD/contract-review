@@ -1,0 +1,53 @@
+# soken-move-rules for Sui (plan v4 07 6.3). Detection logic = reference data (07 5.1).
+# facts: closed predicate names (adapters/move/rules.py); source.pattern must match the function
+# (or struct) text with comments and literals removed. Text never suppresses a lead: guards are
+# bytecode fact predicates (no_sender_call, ...).
+# tests: fixture packages in tests/fixtures/move/sui (positive and negative per rule).
+- id: SUI-02
+  category: move.capability_leak
+  analyzer_severity_raw: medium
+  scope: struct
+  facts: [struct_is_capability, struct_key_store]
+  tests: {positive: sui_rules_pos, negative: sui_rules_neg}
+- id: SUI-03
+  category: move.missing_auth
+  analyzer_severity_raw: high
+  facts: [fn_public_or_entry, param_mut_shared, no_sender_call]
+  tests: {positive: sui_rules_pos, negative: sui_rules_neg}
+- id: SUI-05
+  category: move.upgrade_policy
+  analyzer_severity_raw: low
+  scope: package
+  facts: [upgrade_policy_compatible_address_holder]
+  tests: {positive: chain_state, negative: chain_state}
+- id: SUI-06
+  category: move.witness
+  analyzer_severity_raw: medium
+  facts: [fn_public, generic_value_param, no_otw_assert]
+  source:
+    pattern: '<[^>]*:\s*drop\b'
+  tests: {positive: sui_rules_pos, negative: sui_rules_neg}
+- id: SUI-08
+  category: move.shift_overflow
+  analyzer_severity_raw: medium
+  facts: [shl]
+  source:
+    pattern: '<<'
+  tests: {positive: sui_rules_pos, negative: sui_rules_neg}
+- id: SUI-10
+  category: move.object_receive
+  analyzer_severity_raw: medium
+  facts: [fn_public, calls_receive, no_sender_call]
+  tests: {positive: sui_rules_pos, negative: sui_rules_neg}
+- id: SUI-11
+  category: move.dynamic_fields
+  analyzer_severity_raw: low
+  facts: [fn_public_or_entry, calls_dynamic_field_add, no_dynamic_field_exists]
+  tests: {positive: sui_rules_pos, negative: sui_rules_neg}
+- id: SUI-13
+  category: move.arithmetic_precision
+  analyzer_severity_raw: medium
+  facts: [writes_balance]
+  source:
+    pattern: '[\w)\]]\s*/\s*[\w(][\w.()]*\s*\*\s*[\w(]'
+  tests: {positive: sui_rules_pos, negative: sui_rules_neg}

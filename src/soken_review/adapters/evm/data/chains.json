@@ -23,14 +23,18 @@
           "log_window": 2000,
           "archive": true,
           "source_url": "https://chainlist.org/chain/1",
-          "checked_at": "2026-10-09"
+          "checked_at": "2026-10-13",
+          "disabled": true,
+          "disabled_reason": "returns HTTP 525 (SSL handshake failed) as of 2026-10-13"
         },
         {
           "url": "https://rpc.ankr.com/eth",
           "log_window": 2000,
           "archive": false,
           "source_url": "https://chainlist.org/chain/1",
-          "checked_at": "2026-10-09"
+          "checked_at": "2026-10-13",
+          "disabled": true,
+          "disabled_reason": "requires API key; returns RPC error -32000 Unauthorized without one as of 2026-10-13"
         },
         {
           "url": "https://ethereum-rpc.publicnode.com",
@@ -94,7 +98,9 @@
           "log_window": 2000,
           "archive": true,
           "source_url": "https://chainlist.org/chain/8453",
-          "checked_at": "2026-10-09"
+          "checked_at": "2026-10-13",
+          "disabled": true,
+          "disabled_reason": "returns HTTP 525 (SSL handshake failed) as of 2026-10-13"
         },
         {
           "url": "https://base-rpc.publicnode.com",
