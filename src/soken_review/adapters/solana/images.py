@@ -8,6 +8,16 @@ after its U-S1 row passed: our sandbox build equal to the deployed, owner-linked
 
     python -m soken_review.adapters.solana.images build-args 1.18.26 3.1.8
         prints "<version> <upstream ref> <active toolchain>" per line, for the image build step.
+    python -m soken_review.adapters.solana.images plan 1.18.26 3.1.8 3.1.10 4.3.0
+        JSON build-plan entries (the scripts/images.py shape, target `build`) for solana-images.yml.
+    python -m soken_review.adapters.solana.images record-digests <results_dir>
+        writes the digests the push job recorded (digest-*.json) into image_map.json `soken_image`.
+
+Publishing (`.github/workflows/solana-images.yml`, manual): one derived image per version is built
+from the pinned upstream digest, Trivy-gated, pushed to `ghcr.io/soken-ltd/solana-build:<version>`
+and its digest written back here, so `build_image()` can run it. images.lock.json is not involved:
+its `solana-analyze` entry (same repository, tag `<version>-analyze`) is the analysis stage that
+images.yml publishes.
 """
 
 from __future__ import annotations
@@ -117,7 +127,87 @@ def version_from_base_image(base_image: str) -> str | None:
     return None
 
 
+_DOCKER_DIR = "docker/solana-build"
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_BUILD_TARGET = "build"
+
+
+def plan_images(versions: list[str]) -> list[dict[str, Any]]:
+    """Build-plan entries (scripts/images.py shape) for the derived build image of each version.
+
+    Name `solana-build-<version>` keeps the CI artifacts apart; repository and tag are the row's
+    `soken_image`; BASE_IMAGE is the upstream digest (never a tag); the stage is `build`, so the
+    published image is the one `build_image()` runs (the analyze stage is a different image).
+    Raises ValueError for a version with no derived image (upstream-only rows, bpf, unknown).
+    """
+    data = load_map()["images"]
+    plan = []
+    for version in versions:
+        entry = data.get(version) if _VERSION_RE.match(version or "") else None
+        if not entry or "soken_image" not in entry or _placeholder(entry.get("digest", "")):
+            raise ValueError(f"no derived build image is defined for Solana {version!r}")
+        soken = entry["soken_image"]
+        plan.append({
+            "name": f"solana-build-{version}", "dir": _DOCKER_DIR, "dockerfile": f"{_DOCKER_DIR}/Dockerfile",
+            "repository": soken["repository"], "tag": soken["tag"],
+            "build_args": {"BASE_IMAGE": f"{entry['repository']}@{entry['digest']}",
+                           "ACTIVE_TOOLCHAIN": entry["active_toolchain"]},
+            "deps": [], "dep_refs": [], "target": _BUILD_TARGET,
+        })
+    return plan
+
+
+def record_digests(results_dir: Path) -> list[str]:
+    """Write pushed digests (image-push `digest-*.json`: name, repository, tag, digest, commit, run_id,
+    trivy_critical) into `soken_image` of the row whose soken_image tag and repository match.
+
+    Only `soken_image` changes (digest, tag, built); every other field, row order and the comment
+    stay. All results are validated before anything is written, so a bad result writes nothing.
+    Returns "<version> <repository>@<digest>" per written row.
+    """
+    results = [json.loads(p.read_text()) for p in sorted(Path(results_dir).rglob("*.json"))]
+    if not results:
+        raise ValueError(f"no digest results in {results_dir}")
+    data = load_map()
+    by_tag = {row["soken_image"]["tag"]: version for version, row in data["images"].items()
+              if "soken_image" in row}
+    writes = []
+    for r in results:
+        repo, tag, digest = r.get("repository", ""), r.get("tag", ""), r.get("digest", "")
+        version = by_tag.get(tag)
+        if version is None:
+            raise ValueError(f"result tag {tag!r} is not a published Solana version")
+        if repo != data["images"][version]["soken_image"]["repository"]:
+            raise ValueError(f"result repository {repo!r} is not the soken_image repository of {version}")
+        if not _DIGEST_RE.match(digest) or _placeholder(digest):
+            raise ValueError(f"bad digest for {version}: {digest!r}")
+        writes.append((version, repo, digest, r))
+    changed = []
+    for version, repo, digest, r in writes:
+        soken = data["images"][version]["soken_image"]
+        soken["digest"] = digest
+        soken["built"] = {"commit": r.get("commit"), "run_id": r.get("run_id"),
+                          "trivy_critical": r.get("trivy_critical")}
+        changed.append(f"{version} {repo}@{digest}")
+    IMAGE_MAP_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    return changed
+
+
 def _main(argv: list[str]) -> int:
+    if len(argv) >= 2 and argv[0] == "plan":
+        try:
+            print(json.dumps(plan_images(argv[1:])))
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        return 0
+    if len(argv) == 2 and argv[0] == "record-digests":
+        try:
+            print("\n".join(record_digests(Path(argv[1]))))
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        return 0
     if len(argv) < 2 or argv[0] != "build-args":
         print(__doc__, file=sys.stderr)
         return 2

@@ -117,7 +117,7 @@
     },
     "solana-analyze": {
       "repository": "ghcr.io/soken-ltd/solana-build",
-      "tag": "4.3.0",
+      "tag": "4.3.0-analyze",
       "digest": "sha256:15aacd4741c6215c525ef8d0b473d57beb21d9662119413ed25b458d6ab9d207",
       "tools": {
         "cargo-build-sbf": "4.3.0",
@@ -130,7 +130,7 @@
       "platforms": [
         "linux/amd64"
       ],
-      "note": "Extended solana-build image (docker/solana-build/Dockerfile) with clippy + cargo-audit for analyze step. Digest placeholder; replace with real digest after CI build via: docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/soken-ltd/solana-build:4.3.0",
+      "note": "Analysis stage of docker/solana-build/Dockerfile (target analyze on 4.3.0: clippy + cargo-audit + Python), published by images.yml. Tag carries -analyze: the bare <version> tags of this repository are the per-version build images that solana-images.yml publishes and image_map.json soken_image pins.",
       "built": {
         "commit": "83bc7ae15999d3f011f9ff46b2c9502b8a81704c",
         "run_id": "38712449004",
