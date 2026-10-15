@@ -97,9 +97,27 @@ def test_workspace_root_and_metadata_version_win_over_lock():
 # ---------------------------------------------------------------------------
 
 class TestImages:
-    def test_placeholder_digest_is_no_image(self, monkeypatch):
+    def test_placeholder_digest_is_no_image(self, monkeypatch, tmp_path):
+        """A zero soken_image digest means not published: fail closed, never a floating tag."""
+        import json
+        data = solana_images.load_map()
+        data["images"]["1.18.26"]["soken_image"]["digest"] = "sha256:" + "0" * 64
+        path = tmp_path / "image_map.json"
+        path.write_text(json.dumps(data))
+        monkeypatch.setattr(solana_images, "IMAGE_MAP_PATH", path)
         monkeypatch.delenv(solana_images.env_override_name("1.18.26"), raising=False)
         assert solana_images.build_image("1.18.26") is None
+
+    def test_published_digest_gives_pinned_ref(self, monkeypatch):
+        """Every version row with a soken_image is published (solana-images.yml): the ref is repository@sha256."""
+        for version, row in solana_images.load_map()["images"].items():
+            if "soken_image" not in row:
+                continue
+            monkeypatch.delenv(solana_images.env_override_name(version), raising=False)
+            img = solana_images.build_image(version)
+            assert img is not None, version
+            assert img.ref == f"{row['soken_image']['repository']}@{row['soken_image']['digest']}"
+            assert img.ref.startswith("ghcr.io/soken-ltd/solana-build@sha256:")
 
     def test_env_override_selects_derived_image(self, monkeypatch):
         monkeypatch.setenv(solana_images.env_override_name("3.1.8"), "soken/solana-build:3.1.8-ci")

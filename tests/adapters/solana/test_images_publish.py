@@ -108,6 +108,9 @@ class TestRecordDigests:
 
     def test_runtime_sees_the_recorded_image(self, map_copy, tmp_path, monkeypatch):
         monkeypatch.delenv(images.env_override_name("3.1.8"), raising=False)
+        data = json.loads(map_copy.read_text())
+        data["images"]["3.1.8"]["soken_image"]["digest"] = ZERO
+        map_copy.write_text(json.dumps(data))
         assert images.build_image("3.1.8") is None                  # placeholder: fail closed
         results = tmp_path / "r"
         results.mkdir()
