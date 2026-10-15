@@ -37,6 +37,7 @@ from ..adapters.ton.detect import parse_ton_address
 from ..adapters.ton.fetch import TonReadError, fetch_ton_sources, read_ton_chain_state
 from ..adapters.ton.provenance import Attempt, Dep, Out, resolve_provenance
 from ..db.job_repo import JobRepo
+from ..mapping import step as _map_step
 from ..pinning.store import PinnedSource
 
 if TYPE_CHECKING:
@@ -64,6 +65,8 @@ async def run_step(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -
         await _build(sup, step, job)
     elif name == "analyze":
         await _analyze(sup, step, job)
+    elif name == "map":
+        await _map(sup, step, job)
     else:
         logger.warning("ton: no handler for step %s; marking done", name)
         await sup._mark_step(step["id"], "done")
@@ -328,3 +331,42 @@ async def _analyze(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -
     leads_out.write_text(json.dumps(leads, indent=2), encoding="utf-8")
     await sup._mark_step(step["id"], "done")
     await sup._after_analyze(step, degraded=degraded)
+
+
+# ── map ───────────────────────────────────────────────────────────────────
+
+
+async def _map(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> None:
+    """Lexical map.v1, J1 to J5 flags and static facts from the pin (04 2.1, 12), family `ton`.
+
+    Queued by _analyze through sup._after_analyze; the only step that moves a TON job to `ready`
+    (03 3.1: map runs in `analyzing`). No semantic layer: there is no solc output for FunC, Tact
+    or Tolk, so the map is `partial` after a good build and `failed` after a failed one, exactly
+    as the Move pipeline reports it.
+    """
+    job_id = job["job_id"]
+    out_dir = sup._job_dir(job_id)
+    build_path = out_dir / "build_result.json"
+    build = json.loads(build_path.read_text()) if build_path.exists() else {"status": "failed"}
+    build_ok = build.get("status") == "ok"
+    cs_path = out_dir / "chain_state.json"
+    chain_state = json.loads(cs_path.read_text()) if cs_path.exists() else None
+    cands_path = out_dir / "candidates.json"
+    cands = json.loads(cands_path.read_text()) if cands_path.exists() else []
+    src = build.get("src")
+    candidate = cands[src] if isinstance(src, int) and 0 <= src < len(cands) else None
+    detail = None if build_ok else (build.get("stderr_head") or build.get("reason"))
+    summary = await asyncio.get_event_loop().run_in_executor(None, lambda: _map_step.run_map_step(
+        sup._pin_root, job_id,
+        family="ton", chain="ton",
+        solc_output_path=None, build_ok=build_ok, job=job,
+        chain_state=chain_state, candidate=candidate,
+        nsloc=build.get("nsloc"), analyzers={}, build_detail=detail,
+    ))
+    async with sup._pool.connection() as conn:
+        repo = JobRepo(conn)
+        async with conn.transaction():
+            await repo.update_job_fields(job_id, map_status=summary["map_status"])
+            await repo.complete_step(step["id"], "done", provenance=summary)
+            await repo.transition(job_id, "ready")
+    logger.info("ton job %s map %s ready", job_id[-8:], summary.get("map_status"))
