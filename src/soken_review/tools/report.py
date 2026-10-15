@@ -179,7 +179,9 @@ async def handle_review_report(args: dict[str, Any]) -> dict[str, Any]:
     if state in ("failed", "insufficient_source"):
         raise ReviewError("E_JOB_TERMINAL")
     if state in ("awaiting_upload", "queued", "fetching", "building", "analyzing", "ready"):
-        raise ReviewError("E_JOB_NOT_READY")
+        # The catalogued text is "Job is {state}, eta {eta_s} s." (contract/errors.yaml); the
+        # report exists only after review_finalize, so there is no pipeline ETA to quote.
+        raise ReviewError("E_JOB_NOT_READY", state=state, eta_s=0)
     if state in _PENDING:
         return _status_only("render_pending", job)
     if state == "render_failed":
