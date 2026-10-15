@@ -562,6 +562,11 @@
       {
        "const": "Frozen",
        "x-text-class": "kit"
+      },
+      {
+       "const": "NotChecked",
+       "x-text-class": "kit",
+       "description": "No on-chain evidence about an upgrade path was read; the kit prints its not-checked text"
       }
      ]
     },
@@ -584,8 +589,7 @@
        "address",
        "code_hash",
        "as_of",
-       "upgrade_authority",
-       "upgradeable"
+       "upgrade_authority"
       ]
      }
     }

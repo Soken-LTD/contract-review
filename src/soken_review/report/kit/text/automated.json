@@ -1,108 +1,109 @@
 {
-  "badge": "Automated security review",
-  "sub_line": "Smart contract security review",
-  "footer_line": "Automated security review of the source code, not a manual audit.",
-  "footer_public_review": "Automated security review. Code ownership not proven; not confirmed by SOKEN LTD; not for publication.",
-  "generated_by": "Generated with SOKEN LTD tooling at the request of the party named on the cover",
-  "requested_by_line": "Role declared by the requester, not verified by SOKEN LTD: {label}",
-  "public_review_banner": "Ownership of this code is not proven. Automated output, not confirmed by SOKEN LTD. Not for publication.",
-  "withheld_line": "Withheld until control of the code is proven.",
-  "withheld_value": "(withheld)",
-  "authorship_box": "Findings were written by the requester's language model session and checked by automated rules only. SOKEN LTD has not confirmed them.",
-  "tier_labels": {
-    "tier_a": "Source matched to deployed code at {unit} {n} ({date})",
-    "tier_b_commit": "Source at commit {commit}; deployment not checked",
-    "tier_b_third_party": "Source verified by a third party; rebuild not matched",
-    "tier_b_not_checked": "Deployment given; match to the deployed code could not be checked",
-    "tier_b_deployer_source": "Source published by the deployer; rebuild not confirmed",
-    "tier_b_files": "Source supplied by the requester; not linked to a repository or deployment",
-    "tier_b_proxy_unmatched": "Implementation matched; proxy not matched",
-    "tier_c": "Source does not match deployed code"
-  },
-  "tier_c_warning": "The source code reviewed does not match the code deployed at {address}. The findings describe the source code, not the deployed {noun}.",
-  "tier_c_card_line": "Applies to the source reviewed, not proven for the deployed code.",
-  "no_high_line": "No findings is not evidence of safety.",
-  "evidence_further": "Further quoted lines",
-  "documented_intent_line": "Behaviour described as intended in {path_lines}",
-  "no_map_card_line": "Checked without a contract map",
-  "carried_lines": {
-    "fixed": "Changed lines on this commit",
-    "not_verified": "Not verified as fixed on this commit"
-  },
-  "withdrawn_by": {
-    "model": "Withdrawn by the requester's session",
-    "challenge": "Disproved by challenge item {item_id}"
-  },
-  "dismissed_leads_title": "Analyzer leads dismissed by the requester's session",
-  "subject_fallback": "Smart contract under review",
-  "evidence_chips": {
-    "analyzer_and_reasoning": "Analyzer + reasoning",
-    "reasoning_challenged": "Reasoning, self-challenged",
-    "reasoning_only": "Reasoning only"
-  },
-  "evidence_compact": "Code quote omitted to keep the report within its page limit. The location above is quote-matched.",
-  "figures_title": "Figures used",
-  "severity_scale": {
-    "critical": "Loss or permanent freeze of holder funds with no unusual precondition",
-    "high": "Loss or freeze under realistic preconditions",
-    "medium": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol",
-    "low": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification",
-    "informational": "Documentation, hardening and integration notes"
-  },
-  "architecture_title": "Units in scope and their external dependencies",
-  "no_map_line": "Contract map not available; diagram and roles table omitted.",
-  "empty_findings": "No findings were recorded.",
-  "disclaimer": "This report was generated with SOKEN LTD (Companies House 15253906) tooling at the request of the party named on the cover. Analyzers produced leads; a large language model, run in the requester's own session, selected and wrote the findings and chose the classifications that feed the severity matrix. Server checks matched every code quote to the pinned source, computed every count and total in tables and tiles, and mapped severity from classifications chosen by the model through a fixed matrix. Every amount, count or percentage above one in finding text is either a value on, or folded by the server from, the quoted source lines, or a server value (pinned source, chain read or server arithmetic) listed under Figures used, except where withheld. No person at SOKEN LTD read the code or the findings before issue, and SOKEN LTD has not confirmed them. The review covers the source code identified on the cover, dated {date}. An automated review is not a manual audit: it finds part of the defects present and can report defects that do not exist; the Review coverage section lists the areas whose code was returned to the reviewing session and the areas not covered. It is not a guarantee that the code is free of defects, nor an endorsement of the project, its economics or its operators. Off-chain key management, operational practice, the front end and third-party protocol risk are outside its scope. Nothing in this document is financial, investment or legal advice.",
-  "links_valid_line": "Links valid for one hour; call review_report again for new links.",
-  "responsible_disclosure": "Before publishing any finding about code operated by others, report it privately to the code owner and allow time for a fix.",
-  "gone": {
-    "expired": "This report reached the end of its retention period.",
-    "deleted": "This report was deleted on request.",
-    "withdrawn": "SOKEN LTD withdrew this report."
-  },
-  "card_status": {
-    "render_pending": "The report is being generated. Request the report again in a few seconds.",
-    "timeout": "Still rendering. Request the report again later.",
-    "render_failed": "The report could not be generated. The review data is kept.",
-    "expired": "This report reached the end of its retention period.",
-    "deleted": "This report was deleted."
-  },
-  "labels": {
-    "attack_steps": "Attack steps",
-    "description": "Description",
-    "impact": "Impact",
-    "recommendation": "Recommendation",
-    "evidence": "Evidence",
-    "severity_basis": "Severity basis",
-    "challenge": "Challenge",
-    "analyzer_lead": "Analyzer lead: {analyzer} {rule_id}",
-    "disclaimer_ref": "See the Disclaimer, section {n}.",
-    "company_line": "SOKEN LTD, 86-90 Paul Street, London EC2A 4NE, Companies House 15253906",
-    "page": "Page {n} of {total}"
-  },
-  "kpi_labels": {
-    "files": "Files in scope",
-    "nsloc": "Source lines in scope",
-    "leads": "Analyzer leads",
-    "promoted": "Leads promoted to findings",
-    "areas_returned": "Areas with code returned",
-    "deployed_code": "Deployed code"
-  },
-  "method_steps": {
-    "pin": "Source pinning",
-    "analyzer": "Static analysis",
-    "selection": "Finding selection",
-    "checks": "Server checks",
-    "deployment": "Deployment check"
-  },
-  "section_titles": {
-    "summary": "Summary",
-    "scope": "Scope",
-    "architecture": "Architecture and privileged roles",
-    "method": "Method and severity scale",
-    "findings": "Findings",
-    "verification": "Deployment verification",
-    "coverage": "Review coverage",
-    "disclaimer": "Disclaimer"
-  }
+ "badge": "Automated security review",
+ "sub_line": "Smart contract security review",
+ "footer_line": "Automated security review of the source code, not a manual audit.",
+ "footer_public_review": "Automated security review. Code ownership not proven; not confirmed by SOKEN LTD; not for publication.",
+ "generated_by": "Generated with SOKEN LTD tooling at the request of the party named on the cover",
+ "requested_by_line": "Role declared by the requester, not verified by SOKEN LTD: {label}",
+ "public_review_banner": "Ownership of this code is not proven. Automated output, not confirmed by SOKEN LTD. Not for publication.",
+ "withheld_line": "Withheld until control of the code is proven.",
+ "withheld_value": "(withheld)",
+ "authorship_box": "Findings were written by the requester's language model session and checked by automated rules only. SOKEN LTD has not confirmed them.",
+ "tier_labels": {
+  "tier_a": "Source matched to deployed code at {unit} {n} ({date})",
+  "tier_b_commit": "Source at commit {commit}; deployment not checked",
+  "tier_b_third_party": "Source verified by a third party; rebuild not matched",
+  "tier_b_not_checked": "Deployment given; match to the deployed code could not be checked",
+  "tier_b_deployer_source": "Source published by the deployer; rebuild not confirmed",
+  "tier_b_files": "Source supplied by the requester; not linked to a repository or deployment",
+  "tier_b_proxy_unmatched": "Implementation matched; proxy not matched",
+  "tier_c": "Source does not match deployed code"
+ },
+ "tier_c_warning": "The source code reviewed does not match the code deployed at {address}. The findings describe the source code, not the deployed {noun}.",
+ "tier_c_card_line": "Applies to the source reviewed, not proven for the deployed code.",
+ "no_high_line": "No findings is not evidence of safety.",
+ "evidence_further": "Further quoted lines",
+ "documented_intent_line": "Behaviour described as intended in {path_lines}",
+ "no_map_card_line": "Checked without a contract map",
+ "carried_lines": {
+  "fixed": "Changed lines on this commit",
+  "not_verified": "Not verified as fixed on this commit"
+ },
+ "withdrawn_by": {
+  "model": "Withdrawn by the requester's session",
+  "challenge": "Disproved by challenge item {item_id}"
+ },
+ "dismissed_leads_title": "Analyzer leads dismissed by the requester's session",
+ "subject_fallback": "Smart contract under review",
+ "evidence_chips": {
+  "analyzer_and_reasoning": "Analyzer + reasoning",
+  "reasoning_challenged": "Reasoning, self-challenged",
+  "reasoning_only": "Reasoning only"
+ },
+ "evidence_compact": "Code quote omitted to keep the report within its page limit. The location above is quote-matched.",
+ "figures_title": "Figures used",
+ "severity_scale": {
+  "critical": "Loss or permanent freeze of holder funds with no unusual precondition",
+  "high": "Loss or freeze under realistic preconditions",
+  "medium": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol",
+  "low": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification",
+  "informational": "Documentation, hardening and integration notes"
+ },
+ "architecture_title": "Units in scope and their external dependencies",
+ "no_map_line": "Contract map not available; diagram and roles table omitted.",
+ "empty_findings": "No findings were recorded.",
+ "disclaimer": "This report was generated with SOKEN LTD (Companies House 15253906) tooling at the request of the party named on the cover. Analyzers produced leads; a large language model, run in the requester's own session, selected and wrote the findings and chose the classifications that feed the severity matrix. Server checks matched every code quote to the pinned source, computed every count and total in tables and tiles, and mapped severity from classifications chosen by the model through a fixed matrix. Every amount, count or percentage above one in finding text is either a value on, or folded by the server from, the quoted source lines, or a server value (pinned source, chain read or server arithmetic) listed under Figures used, except where withheld. No person at SOKEN LTD read the code or the findings before issue, and SOKEN LTD has not confirmed them. The review covers the source code identified on the cover, dated {date}. An automated review is not a manual audit: it finds part of the defects present and can report defects that do not exist; the Review coverage section lists the areas whose code was returned to the reviewing session and the areas not covered. It is not a guarantee that the code is free of defects, nor an endorsement of the project, its economics or its operators. Off-chain key management, operational practice, the front end and third-party protocol risk are outside its scope. Nothing in this document is financial, investment or legal advice.",
+ "links_valid_line": "Links valid for one hour; call review_report again for new links.",
+ "responsible_disclosure": "Before publishing any finding about code operated by others, report it privately to the code owner and allow time for a fix.",
+ "gone": {
+  "expired": "This report reached the end of its retention period.",
+  "deleted": "This report was deleted on request.",
+  "withdrawn": "SOKEN LTD withdrew this report."
+ },
+ "card_status": {
+  "render_pending": "The report is being generated. Request the report again in a few seconds.",
+  "timeout": "Still rendering. Request the report again later.",
+  "render_failed": "The report could not be generated. The review data is kept.",
+  "expired": "This report reached the end of its retention period.",
+  "deleted": "This report was deleted."
+ },
+ "labels": {
+  "attack_steps": "Attack steps",
+  "description": "Description",
+  "impact": "Impact",
+  "recommendation": "Recommendation",
+  "evidence": "Evidence",
+  "severity_basis": "Severity basis",
+  "challenge": "Challenge",
+  "analyzer_lead": "Analyzer lead: {analyzer} {rule_id}",
+  "disclaimer_ref": "See the Disclaimer, section {n}.",
+  "company_line": "SOKEN LTD, 86-90 Paul Street, London EC2A 4NE, Companies House 15253906",
+  "page": "Page {n} of {total}"
+ },
+ "kpi_labels": {
+  "files": "Files in scope",
+  "nsloc": "Source lines in scope",
+  "leads": "Analyzer leads",
+  "promoted": "Leads promoted to findings",
+  "areas_returned": "Areas with code returned",
+  "deployed_code": "Deployed code"
+ },
+ "method_steps": {
+  "pin": "Source pinning",
+  "analyzer": "Static analysis",
+  "selection": "Finding selection",
+  "checks": "Server checks",
+  "deployment": "Deployment check"
+ },
+ "section_titles": {
+  "summary": "Summary",
+  "scope": "Scope",
+  "architecture": "Architecture and privileged roles",
+  "method": "Method and severity scale",
+  "findings": "Findings",
+  "verification": "Deployment verification",
+  "coverage": "Review coverage",
+  "disclaimer": "Disclaimer"
+ },
+ "upgrade_authority_not_checked": "Not checked in this review"
 }
