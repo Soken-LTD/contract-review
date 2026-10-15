@@ -1,0 +1,67 @@
+# soken-move-rules for Aptos (plan v4 07 7.3; headings of the Aptos Move Security Guidelines).
+# facts: closed predicate names (adapters/move/rules.py); source.pattern must match the function
+# (or struct) text with comments and literals removed. Text never suppresses a lead: guards are
+# bytecode fact predicates (no_signer_address_of, ...).
+# tests: fixture packages in tests/fixtures/move/aptos (positive and negative per rule).
+- id: APT-01
+  category: move.object_owner_check
+  analyzer_severity_raw: high
+  facts: [fn_public_or_entry, object_param, signer_param, no_object_owner_check]
+  tests: {positive: aptos_rules_pos, negative: aptos_rules_neg}
+- id: APT-02
+  category: move.global_storage_access
+  analyzer_severity_raw: high
+  facts: [fn_public_or_entry, global_mut, address_param, no_signer_address_of]
+  tests: {positive: aptos_rules_pos, negative: aptos_rules_neg}
+- id: APT-03
+  category: move.visibility
+  analyzer_severity_raw: low
+  facts: [fn_public, global_mut, no_signer_param]
+  source:
+    pattern: '\b(borrow_global_mut|move_from|move_to)\b'
+  tests: {positive: aptos_rules_pos, negative: aptos_rules_neg}
+- id: APT-06
+  category: move.abilities
+  analyzer_severity_raw: medium
+  scope: struct
+  facts: [struct_copy_or_drop]
+  source:
+    pattern: '\b(Coin|FungibleAsset)\s*<|\bFungibleAsset\b'
+  tests: {positive: aptos_rules_pos, negative: aptos_rules_neg}
+- id: APT-08
+  category: move.arithmetic_precision
+  analyzer_severity_raw: medium
+  facts: [writes_balance]
+  source:
+    pattern: '[\w)\]]\s*/\s*[\w(][\w.()]*\s*\*\s*[\w(]'
+  tests: {positive: aptos_rules_pos, negative: aptos_rules_neg}
+- id: APT-08S
+  category: move.shift_overflow
+  analyzer_severity_raw: medium
+  facts: [shl]
+  source:
+    pattern: '<<'
+  tests: {positive: aptos_rules_pos, negative: aptos_rules_neg}
+- id: APT-09
+  category: move.object_ref_leak
+  analyzer_severity_raw: high
+  facts: [fn_public, returns_object_ref_handle]
+  tests: {positive: aptos_rules_pos, negative: aptos_rules_neg}
+- id: APT-10
+  category: move.signer_capability_leak
+  analyzer_severity_raw: high
+  facts: [fn_public_or_entry, calls_create_signer_with_capability, no_signer_address_of]
+  tests: {positive: aptos_rules_pos, negative: aptos_rules_neg}
+- id: APT-11
+  category: move.randomness_exposure
+  analyzer_severity_raw: high
+  facts: [fn_public, reaches_randomness]
+  source:
+    pattern: 'allow_unsafe_randomness'
+  tests: {positive: aptos_rules_pos, negative: aptos_rules_neg}
+- id: APT-14
+  category: move.upgrade_policy
+  analyzer_severity_raw: low
+  scope: package
+  facts: [upgrade_policy_compatible_address_holder]
+  tests: {positive: chain_state, negative: chain_state}

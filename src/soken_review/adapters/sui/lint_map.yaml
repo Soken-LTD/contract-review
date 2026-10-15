@@ -1,0 +1,18 @@
+# Sui stock lint -> category and raw value (plan v4 07 6.3; source sui_mode/linters/mod.rs at
+# mainnet-v1.81.1). Raw values are the plan table; UNVERIFIED until U-03 records real output levels.
+# Only lint -> category and lint -> raw rows live here (07 5.3); an unmapped lint is
+# move.best_practice / info.
+lints:
+  share_owned: {category: move.object_ownership_model, raw: medium}
+  self_transfer: {category: move.object_transfer, raw: low}
+  custom_state_change: {category: move.object_transfer, raw: medium}
+  coin_field: {category: move.coin_handling, raw: low}
+  freeze_wrapped: {category: move.object_transfer, raw: low}
+  collection_equality: {category: move.comparison, raw: low}
+  public_random: {category: move.randomness_exposure, raw: high}
+  missing_key: {category: move.abilities, raw: low}
+  freezing_capability: {category: move.capability_leak, raw: medium}
+  prefer_mut_tx_context: {category: move.best_practice, raw: info}
+  uncallable_function: {category: move.best_practice, raw: info}
+  unused_object_with_fields: {category: move.best_practice, raw: info}
+  public_entry: {category: move.visibility, raw: info}

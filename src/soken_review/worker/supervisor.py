@@ -27,6 +27,7 @@ import os
 import re
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,7 @@ from ..report import render as _render_mod
 from ..sandbox.output import UnsafeOutput, read_output_files
 from ..tools.git_probe import _SHA1_RE as _COMMIT_SHA1_RE
 from ..tools.git_probe import resolve_ref as _resolve_ref
+from . import move_steps as _move
 from . import ton_pipeline
 
 logger = logging.getLogger(__name__)
@@ -96,6 +98,31 @@ def _transient_backoff(attempt: int) -> float:
     if idx < len(_TRANSIENT_BACKOFF):
         return _TRANSIENT_BACKOFF[idx]
     return _TRANSIENT_BACKOFF[-1]
+
+
+# Max size for supervisor-written JSON metadata files (chain_state.json, build_result.json,
+# candidates.json).  These files are never container-mounted, but we use O_NOFOLLOW + a size cap
+# for defense in depth (09 3.5 principle applied to all supervisor file reads).
+_MAX_SUPERVISOR_JSON_BYTES = 1 * 1024 * 1024  # 1 MiB
+
+
+def _read_json_nofollow(path: Path, max_bytes: int = _MAX_SUPERVISOR_JSON_BYTES) -> Any:
+    """Read a supervisor-written JSON file with O_NOFOLLOW and a size cap.
+
+    Raises OSError (including from a symlink) or ValueError (oversize); neither is silently
+    swallowed — the caller's except chain marks the step failed.
+    """
+    fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        if st.st_size > max_bytes:
+            raise ValueError(f"{path.name}: {st.st_size} bytes over the {max_bytes}-byte cap")
+        data = os.read(fd, max_bytes + 1)
+    finally:
+        os.close(fd)
+    if len(data) > max_bytes:
+        raise ValueError(f"{path.name}: over the {max_bytes}-byte cap")
+    return json.loads(data)
 
 
 def _rpc_urls(chain_id: int) -> list[str]:
@@ -148,6 +175,11 @@ class Supervisor:
         self._free_units = total_units
         self._free_ram_mb = total_ram_mb
         self._running: dict[int, asyncio.Task] = {}  # step_id -> task
+        # Dedicated executor for Move steps (Sui / Aptos): prevents them from exhausting the
+        # default thread pool shared with lightweight steps (09 UV9-8).
+        self._move_executor: ThreadPoolExecutor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="move-step"
+        )
 
     # ------------------------------------------------------------------
     # Public
@@ -170,6 +202,7 @@ class Supervisor:
             hb_task.cancel()
             if self._running:
                 await asyncio.gather(*self._running.values(), return_exceptions=True)
+            self._move_executor.shutdown(wait=False)
 
     # ------------------------------------------------------------------
     # Heartbeat (09 3.3: 15 s)
@@ -271,6 +304,8 @@ class Supervisor:
                 from . import starknet_steps
 
                 await starknet_steps.run_step(self, step, job)
+            elif job is not None and _move.job_chain(job) is not None:
+                await self._run_move_step(step, job)
             elif step_name == "chain_state" and step["seq"] == 0:
                 await self._run_chain_state_0(step)
             elif step_name == "fetch":
@@ -318,6 +353,97 @@ class Supervisor:
             self._free_ram_mb += step["ram_mb"]
             elapsed = time.monotonic() - t0
             logger.info("step %s/%s finished in %.1fs", step_name, step["seq"], elapsed)
+
+    # ------------------------------------------------------------------
+    # Sui and Aptos (07 4): same states and step rows, Move runners in worker/move_steps.py
+    # ------------------------------------------------------------------
+
+    async def _run_move_step(self, step: dict[str, Any], job: dict[str, Any]) -> None:
+        name, job_id, step_id = step["step"], step["job_id"], step["id"]
+        out_dir = self._job_dir(job_id)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        loop = asyncio.get_event_loop()
+
+        async def terminal_no_source() -> None:
+            async with self._pool.connection() as conn:
+                repo = JobRepo(conn)
+                async with conn.transaction():
+                    await repo.complete_step(step_id, "done")
+                    current = await repo.get(job_id)
+                    if current and current["state"] == "queued":
+                        # 03 state machine: queued -> fetching -> insufficient_source
+                        await repo.transition(job_id, "fetching")
+                    await repo.transition(job_id, "insufficient_source", error_code="E_SOURCE_NOT_FOUND")
+
+        if name == "chain_state":
+            if not (out_dir / "chain_state.json").exists():
+                state = await loop.run_in_executor(self._move_executor, lambda: _move.chain_state(job, out_dir))
+                if state == "no_package":
+                    await terminal_no_source()
+                    return
+            await self._mark_step(step_id, "done")
+            await self._after_chain_state(step, job)
+        elif name == "fetch":
+            if not (out_dir / "candidates.json").exists():
+                got = await loop.run_in_executor(self._move_executor, lambda: _move.fetch(job, out_dir, self._pin_root))
+                if got is None:
+                    await terminal_no_source()
+                    return
+                async with self._pool.connection() as conn:
+                    await JobRepo(conn).update_job_fields(job_id, source_pin=got["source_pin"])
+                await self._mark_step(step_id, "done", provenance={"provider": got["provider"], "sha256": got["sha256"]})
+            else:
+                await self._mark_step(step_id, "done")
+            await self._after_fetch(step, job)
+        elif name == "build":
+            path = out_dir / "build_result.json"
+            result = _load_build_result(path) if path.exists() else await loop.run_in_executor(
+                self._move_executor, lambda: _move.build(job, out_dir, self._pin_root))
+            # Supervisor-written provenance (dep.match per 07 9.1) is recorded on the step row.
+            await self._mark_step(step_id, "done", provenance=result.get("provenance"))
+            await self._after_build(step, result)
+        elif name == "analyze":
+            leads_out = self._pin_root / job_id / "leads.json"
+            degraded = False
+            if not leads_out.exists():
+                # Timeout is enforced at sandbox level (sandbox.run kills the container via
+                # docker rm -f on TimeoutExpired).  The step deadline is computed in
+                # move_steps.analyze and passed down to each analyzer container.
+                leads, degraded = await loop.run_in_executor(
+                    self._move_executor, lambda: _move.analyze(job, out_dir, self._pin_root)
+                )
+                leads_out.parent.mkdir(parents=True, exist_ok=True)
+                leads_out.write_text(json.dumps(leads, indent=2), encoding="utf-8")
+            await self._mark_step(step_id, "done")
+            await self._after_analyze(step, degraded=degraded)
+        elif name == "map":
+            # Build the lexical map.v1 layer for Move jobs (plan 04: map.v1 always present).
+            # Files are supervisor-written and never container-mounted; read with O_NOFOLLOW +
+            # size cap for defense in depth (09 3.5 principle applied to supervisor file reads).
+            build_path = out_dir / "build_result.json"
+            build = _read_json_nofollow(build_path) if build_path.exists() else {"status": "failed"}
+            build_ok = build.get("status") == "ok"
+            cs_path = out_dir / "chain_state.json"
+            chain_state = _read_json_nofollow(cs_path) if cs_path.exists() else None
+            cands_path = out_dir / "candidates.json"
+            cands = _read_json_nofollow(cands_path) if cands_path.exists() else []
+            detail = None if build_ok else (build.get("stderr_head") or build.get("reason"))
+            summary = await loop.run_in_executor(self._move_executor, lambda: _map_step.run_map_step(
+                self._pin_root, job_id,
+                family="move", chain=_move.job_chain(job),
+                solc_output_path=None, build_ok=build_ok, job=job,
+                chain_state=chain_state, candidate=cands[0] if cands else None,
+                nsloc=build.get("nsloc"), analyzers={}, build_detail=detail,
+            ))
+            async with self._pool.connection() as conn:
+                repo = JobRepo(conn)
+                async with conn.transaction():
+                    await repo.update_job_fields(job_id, map_status=summary["map_status"])
+                    await repo.complete_step(step_id, "done", provenance=summary)
+                    await repo.transition(job_id, "ready")
+            logger.info("move job %s map %s ready", job_id[-8:], summary.get("map_status"))
+        else:
+            await self._mark_step(step_id, "done")
 
     # ------------------------------------------------------------------
     # chain_state 0: read bytecode, pin block (09 3.1)
