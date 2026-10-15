@@ -415,9 +415,10 @@ def build(candidate: Candidate, cache_dir: Path | None = None, work_dir: Path | 
         forge_result, forge_fail_reason = forge_build_repo(candidate.src_tree_dir, _wdir, solc_bin, cache,
                                                            diag=forge_diag)
         if forge_result is not None:
+            gate_diag: dict = {}
             match_ok, reject_reason = _forge_sources_match_pin(
                 forge_result.std_input, candidate.files,
-                getattr(candidate, "_full_tree", None),
+                getattr(candidate, "_full_tree", None), diag=gate_diag,
             )
             if match_ok:
                 try:
@@ -440,6 +441,7 @@ def build(candidate: Candidate, cache_dir: Path | None = None, work_dir: Path | 
                     return br
             else:
                 b4_notes["b4_rejected"] = reject_reason
+                b4_notes.update(gate_diag)          # which source and why (diagnostic only)
                 # sources differ → mark untrusted (finding 3)
                 candidate.untrusted_inputs = True
         elif forge_fail_reason:
@@ -663,6 +665,7 @@ def _forge_sources_match_pin(
     forge_input: dict,
     pinned_files: dict[str, str],
     full_tree: dict[str, str] | None,
+    diag: dict | None = None,
 ) -> tuple[bool, str]:
     """Verify ALL forge sources are in the pinned full tree and match byte-for-byte.
 
@@ -685,36 +688,44 @@ def _forge_sources_match_pin(
     """
     # Fail closed when the full tree is not available (non-repo candidate or
     # a path that our O_NOFOLLOW reader refused).
-    if full_tree is None:
+    def reject(kind: str, path: str = "") -> tuple[bool, str]:
+        # `diag` gets "<kind>:<path>" for the first violation (missing_in_tree, content_differs,
+        # not_inline_content, scope_file_absent, no_tree); the reason code stays the single
+        # "sources_differ" the trust logic keys on.
+        if diag is not None:
+            diag["b4_detail"] = f"{kind}:{path}" if path else kind
         return False, "sources_differ"
+
+    if full_tree is None:
+        return reject("no_tree")
 
     sources = (forge_input.get("sources") or {})
 
     # Check EVERY entry forge provides — lib/ deps included — against the pinned tree.
     for path, src_entry in sources.items():
         if not isinstance(src_entry, dict):
-            return False, "sources_differ"
+            return reject("not_inline_content", path)
         # Reject entries that use "urls" instead of inline "content": forge may have
         # followed a symlink or resolved a network URL that the O_NOFOLLOW reader
         # refused.  Only "content" is the pinned text we can verify.
         if "urls" in src_entry or "content" not in src_entry:
-            return False, "sources_differ"
+            return reject("not_inline_content", path)
         # Every path forge includes must be present in the full pinned tree.
         tree_content = full_tree.get(path)
         if tree_content is None:
-            return False, "sources_differ"
+            return reject("missing_in_tree", path)
         forge_content = src_entry["content"]
         if not isinstance(forge_content, str):
-            return False, "sources_differ"
+            return reject("not_inline_content", path)
         # Exact-bytes sha256: encode both as UTF-8, no normalisation.
         if (hashlib.sha256(forge_content.encode()).hexdigest()
                 != hashlib.sha256(tree_content.encode()).hexdigest()):
-            return False, "sources_differ"
+            return reject("content_differs", path)
 
     # Forward check: every scope-pinned file must appear in forge's sources.
     for path in pinned_files:
         if path not in sources:
-            return False, "sources_differ"
+            return reject("scope_file_absent", path)
 
     return True, ""
 
@@ -815,6 +826,10 @@ def forge_build_repo(
         "--use", solc_container_path,  # our exact pinned solc; never repo-specified
         "--no-cache",         # do not use any cached state from the repo's cache/
         "--no-auto-detect",   # do not try to resolve solc from PATH; we supply --use
+        # forge >= 1.x preprocesses test helpers (dynamic test linking: rewritten test/*.sol plus
+        # synthetic foundry-pp/*.sol) into build-info; those are not repo files, so the source gate
+        # would reject the whole B4 input. We only want forge's import resolution of the real tree.
+        "--no-dynamic-test-linking",
         # Note: --no-dotenv does not exist in forge v1.8.5.  .env loading is suppressed
         # by HOME=/tmp (no user-level foundry config) and the lack of FOUNDRY_* in the
         # container env.  CLI --use overrides any FOUNDRY_SOLC from a repo .env file.
