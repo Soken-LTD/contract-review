@@ -4,7 +4,7 @@
     "aptos-build": {
       "repository": "ghcr.io/soken-ltd/aptos-build",
       "tag": "aptos-cli-v9.6.0",
-      "digest": "sha256:2b3668488d75941ad61299cc75f0912307550550b03460cb90de43fc2a518efd",
+      "digest": "sha256:afd599bde74996a5bb129c0ce79eadadfc983e414403a7f1f6fa4c67488460f2",
       "tools": {
         "aptos": "9.6.0",
         "aptos-framework": "07490157d3250932a385010878a3c5ae7c1338bb"
@@ -14,15 +14,15 @@
       ],
       "note": "docker/aptos-build (plan v4 07 3, 7.2). Release zip sha256-verified; framework at the tag commit. Licence U-21 (warning in development). Digest placeholder until the CI push.",
       "built": {
-        "commit": "32ba6c2fc60a5961971376f13360d1c7806a1a78",
-        "run_id": "38698530674",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 1
       }
     },
     "evm-analyze": {
       "repository": "ghcr.io/soken-ltd/evm-analyze",
       "tag": "0.1.0-dev",
-      "digest": "sha256:03d78c73fd47321e987d464067ace73adb4752d970712a480e477e650095ed25",
+      "digest": "sha256:8dd15010788bece35a784d6df26bf02c204aa341b630c9a3a284ed3b437b24f8",
       "tools": {
         "slither": "0.11.6",
         "aderyn": "0.6.8",
@@ -33,15 +33,15 @@
       ],
       "note": "Pre-CI digest (no forge). LOCAL arm64 build verified 2026-10-14: forge sha256 gate passes (foundry_v1.8.5_linux_arm64.tar.gz: OK, forge Version 1.8.5). Replace digest after CI push with: docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/soken-ltd/evm-analyze:<tag>. B4 enabled when CI digest is recorded.",
       "built": {
-        "commit": "32ba6c2fc60a5961971376f13360d1c7806a1a78",
-        "run_id": "38698530674",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 2
       }
     },
     "git-fetch": {
       "repository": "ghcr.io/soken-ltd/git-fetch",
       "tag": "0.1.0-dev",
-      "digest": "sha256:17dea1634516f14e33fc37336897ba778fc22a672880afb89f2e456b6f257afd",
+      "digest": "sha256:45ca26b35b528dce63b203054dad3aa770dd0a257fe2347f2aa1c70f403c51bb",
       "tools": {
         "git": "2.47.3",
         "python3": "3.13"
@@ -51,15 +51,15 @@
       ],
       "note": "soken-fetch: git materializer (09 5.2, sandbox/git_materializer.py) on Debian trixie (git 2.47, GIT_NO_LAZY_FETCH).",
       "built": {
-        "commit": "32ba6c2fc60a5961971376f13360d1c7806a1a78",
-        "run_id": "38698530674",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 0
       }
     },
     "hyperevm-analyze": {
       "repository": "ghcr.io/soken-ltd/hyperevm-analyze",
       "tag": "0.1.0-dev",
-      "digest": "sha256:e1875e3ecb974356c78d6c9d32764523e3ec8a390c5febb6622e30de497bfdd2",
+      "digest": "sha256:ff39cf97f8f65617bc291cc91ad01794ea040f01318742f6d69f4999061003fe",
       "tools": {
         "slither": "0.11.6",
         "aderyn": "0.6.8",
@@ -70,15 +70,15 @@
       ],
       "note": "Extends evm-analyze with HL-* Slither detectors (slither_plugins, plan-v4 05 8.2). Digest placeholder; replace after CI build.",
       "built": {
-        "commit": "32ba6c2fc60a5961971376f13360d1c7806a1a78",
-        "run_id": "38698530674",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 2
       }
     },
     "smokescreen": {
       "repository": "ghcr.io/soken-ltd/smokescreen",
       "tag": "0.1.0",
-      "digest": "sha256:c66cc5a1c8e8bc88c6ffcb31f58583ae18c09847f9003a20b310865951f36a23",
+      "digest": "sha256:094df2c659eb3ecaadd4e8bd28d7a8728200218e8549aaabc648c92005a19ee7",
       "tools": {
         "smokescreen": "v0.1.0 (609eb8931420453daf5893509be0b25b21bd9edb)"
       },
@@ -87,15 +87,15 @@
       ],
       "note": "Family egress proxy (09 4.3), runs under runc as infra, not a sandbox step. Config and ACL from soken_review.sandbox.egress (limits.yaml egress).",
       "built": {
-        "commit": "32ba6c2fc60a5961971376f13360d1c7806a1a78",
-        "run_id": "38698530674",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 0
       }
     },
     "soken-render": {
       "repository": "ghcr.io/soken-ltd/soken-render",
       "tag": "0.1.0-dev",
-      "digest": "sha256:085d47b20bc27a4fb733106c2776967cdb58631812a698a9244604920512e8cf",
+      "digest": "sha256:b9ea5773cacab95f1b1114dfd91d4887ae44d88b78b9fd4faf4728cc2c55985b",
       "tools": {
         "python": "3.12",
         "node": "22",
@@ -110,15 +110,15 @@
       ],
       "note": "08 3.2 render sandbox (docker/soken-render/Dockerfile, root context). Digest placeholder until the CI push; render_image() fails closed while unpinned (SOKEN_IMAGE_SOKEN_RENDER for local images). chrome-headless-shell zip sha256 39dcb8c4... pinned in the Dockerfile.",
       "built": {
-        "commit": "32ba6c2fc60a5961971376f13360d1c7806a1a78",
-        "run_id": "38698530674",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 3
       }
     },
     "solana-analyze": {
       "repository": "ghcr.io/soken-ltd/solana-build",
       "tag": "4.3.0",
-      "digest": "sha256:5e9a08de54c52c061aaf22dfda93d6a73a733638af83f0936638ed86dab03e08",
+      "digest": "sha256:ecc6d315f8c721851270d1eb688a6dd1b343c2a071bac27972a9746a8b721e32",
       "tools": {
         "cargo-build-sbf": "4.3.0",
         "platform-tools": "v1.57",
@@ -132,8 +132,8 @@
       ],
       "note": "Extended solana-build image (docker/solana-build/Dockerfile) with clippy + cargo-audit for analyze step. Digest placeholder; replace with real digest after CI build via: docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/soken-ltd/solana-build:4.3.0",
       "built": {
-        "commit": "598d9ed2814ad3573fa2b8a171d87d4613d921d6",
-        "run_id": "38052444791",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 16
       }
     },
@@ -155,21 +155,21 @@
     "starknet-build": {
       "repository": "ghcr.io/soken-ltd/starknet-build",
       "tag": "0.1.0-dev",
-      "digest": "sha256:9e3221a0358323f32be57966bd9d3f0a607d7eb84abf83c81d6b284ad0549b4a",
+      "digest": "sha256:192e90a0c1649eb0b2feb7b08c3742cd75b9763329e84bbf6c8f64c88fcab1fe",
       "platforms": [
         "linux/amd64"
       ],
       "tools": {},
       "built": {
-        "commit": "32ba6c2fc60a5961971376f13360d1c7806a1a78",
-        "run_id": "38698530674",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 2
       }
     },
     "sui-build": {
       "repository": "ghcr.io/soken-ltd/sui-build",
       "tag": "mainnet-v1.81.1",
-      "digest": "sha256:9b3370b1f1bded5d7af9432cbeadc2a27bdcea57f169f2cd9bf5b6680bd9384e",
+      "digest": "sha256:d4301f0f72c2922b059a8f91cdacbcb3431243cc865c01101818d89f0b97fa99",
       "tools": {
         "sui": "mainnet-v1.81.1",
         "sui-framework": "e04cf9aa915cb6c069092733bebc3648755998e2"
@@ -179,15 +179,15 @@
       ],
       "note": "docker/sui-build (plan v4 07 3, 3.1). Release tarball sha256-verified; framework at the tag commit. Runtime base Ubuntu 24.04 (binary needs glibc 2.38). Digest placeholder until the CI push.",
       "built": {
-        "commit": "32ba6c2fc60a5961971376f13360d1c7806a1a78",
-        "run_id": "38698530674",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 0
       }
     },
     "ton-build": {
       "repository": "ghcr.io/soken-ltd/ton-build",
       "tag": "0.1.0-dev",
-      "digest": "sha256:3c7f30dd7de908a1a898f144d7859ecdbcbaeb5aa67fb78abd79e29ce02201d4",
+      "digest": "sha256:32b03050733cb2f514254d63a8f31d180499c365a640864fd846c2b5ba7e2cd7",
       "tools": {
         "node": "22",
         "func-js": "0.10.0",
@@ -203,8 +203,8 @@
       ],
       "note": "Pushed by the ton-e2e workflow (branch feat/ton-tier-a, commit 4b0d5af, run 38029714298) after the x86 adapter and supervisor e2e passed; build is not reproducible, so pin this digest, not the tag. Base node:22-bookworm-slim pinned by its amd64 digest in docker/ton-build/Dockerfile. Plan v4 06 section 4.2.",
       "built": {
-        "commit": "32ba6c2fc60a5961971376f13360d1c7806a1a78",
-        "run_id": "38698530674",
+        "commit": "6494ad8ab8655f0f6ee5744c4c7d1cb34fecbfbb",
+        "run_id": "38701564609",
         "trivy_critical": 1
       }
     },
