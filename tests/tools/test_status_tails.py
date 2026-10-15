@@ -282,3 +282,27 @@ def test_status_error_keeps_detail_when_present():
         _errored_job("E_BUILD_FAILED", "solc: file not found"), "json", steps=[])
     assert body["error"] == {"code": "E_BUILD_FAILED", "detail": "solc: file not found"}
     assert list(STATUS_SCHEMA.iter_errors(body)) == []
+
+
+# ── error.detail: structured detail becomes one string (schema: detail is a string) ──
+
+
+def test_status_error_structured_detail_is_serialized_as_text():
+    # The supervisor stores structured details (missing_import packages, missing_dependency_path
+    # prefixes); the wire contract types detail as a string, so the object is serialized compactly
+    # with sorted keys (stable for the judge), never sent as an object.
+    body = start_status._build_status_response(
+        _errored_job("E_SOURCE_NOT_FOUND",
+                     {"reason": "missing_import", "packages": ["@openzeppelin/contracts", "solmate"]}),
+        "json", steps=[])
+    assert body["error"] == {"code": "E_SOURCE_NOT_FOUND",
+                             "detail": '{"packages":["@openzeppelin/contracts","solmate"],"reason":"missing_import"}'}
+    assert list(STATUS_SCHEMA.iter_errors(body)) == []
+
+
+def test_status_error_detail_list_and_cap():
+    body = start_status._build_status_response(_errored_job("E_BUILD_FAILED", ["a", "b"]), "json", steps=[])
+    assert body["error"]["detail"] == '["a","b"]'
+    long = start_status._build_status_response(_errored_job("E_BUILD_FAILED", "x" * 5000), "json", steps=[])
+    assert len(long["error"]["detail"]) == start_status._ERROR_DETAIL_MAX_CHARS
+    assert list(STATUS_SCHEMA.iter_errors(long)) == []
