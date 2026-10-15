@@ -298,7 +298,7 @@ class Supervisor:
             if job is not None and ton_pipeline.is_ton_job(job):
                 await ton_pipeline.run_step(self, step, job)
             elif job is not None and job.get("chain") == "starknet" and (
-                (step_name == "chain_state" and step["seq"] == 0) or step_name in ("fetch", "build", "analyze")
+                (step_name == "chain_state" and step["seq"] == 0) or step_name in ("fetch", "build", "analyze", "map")
             ):
                 # Starknet family (plan-v4 07): own runners for its steps; render etc. stay generic.
                 from . import starknet_steps
