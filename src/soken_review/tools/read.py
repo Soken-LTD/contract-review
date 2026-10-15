@@ -21,7 +21,6 @@ import hmac as _hmac
 import json
 import os
 import secrets
-from pathlib import Path
 from typing import Any
 
 # RE2 only: patterns are caller input, a backtracking engine would allow ReDoS (03 4.5).
@@ -35,17 +34,24 @@ from ..mapping.step import load_flags
 from ..pinning.store import PinnedSource
 from ..server import handler
 from . import map_view
-from .context import JobContext, MemoryJobContext
+from .context import JobContext
 
 # ── module-level context (injected by orchestrator or tests) ─────────────────
 
-_ctx: JobContext = MemoryJobContext(Path("/tmp/soken-pins-noop"))
+_ctx: JobContext | None = None
 
 
 def set_context(ctx: JobContext) -> None:
     """Bind a JobContext.  Called by tests and the production orchestrator."""
     global _ctx
     _ctx = ctx
+
+
+def _get_ctx() -> JobContext:
+    if _ctx is None:
+        from ..errors import ReviewError
+        raise ReviewError("E_INTERNAL", incident="read not wired (ctx is None)")
+    return _ctx
 
 
 # ── HMAC secret for cursor signing (03 section 5) ────────────────────────────
@@ -76,11 +82,11 @@ _TERMINAL_STATES = frozenset({"failed", "insufficient_source"})
 
 def _check_job_readable(job_id: str) -> None:
     """Raise the correct ReviewError when the job is not in a readable state."""
-    state = _ctx.get_job_state(job_id)
+    state = _get_ctx().get_job_state(job_id)
     if state is None or state == "deleted":
         raise ReviewError("E_JOB_NOT_FOUND")
     if state in _TERMINAL_STATES:
-        raise ReviewError("E_JOB_TERMINAL", state=state, code="")
+        raise ReviewError("E_JOB_TERMINAL", state=state, exit_code="")
     if state == "expired":
         raise ReviewError("E_JOB_EXPIRED", job=job_id, date="")
     if state not in _READABLE_STATES:
@@ -88,7 +94,7 @@ def _check_job_readable(job_id: str) -> None:
 
 
 def _load_pin(job_id: str) -> PinnedSource:
-    root = _ctx.get_pin_root()
+    root = _get_ctx().get_pin_root()
     pin_dir = root / job_id / "pin"
     if not pin_dir.exists():
         raise ReviewError("E_JOB_NOT_FOUND")
@@ -158,7 +164,7 @@ async def _read_code(args: dict[str, Any]) -> str:
     lines = pin.read_lines(path, start, end)
     sha_short = entry.sha256_lf[:8]
     meta = f"{path} sha256:{sha_short} lines {start}-{end} of {total}"
-    root = _ctx.get_pin_root()
+    root = _get_ctx().get_pin_root()
     job_flags = load_flags(root, job_id)
     if job_flags is None:
         # Flags are written at pin time with the map (04 12); a readable job without them is a fault.
@@ -196,7 +202,7 @@ async def _read_code(args: dict[str, Any]) -> str:
     if len(body.encode("utf-8")) > _CAP_READ_CODE:
         raise ReviewError("E_INTERNAL", incident=f"read-cap-{job_id[-8:]}")
 
-    _ctx.append_read(job_id, path, start, start + n - 1)
+    _get_ctx().append_read(job_id, path, start, start + n - 1)
     return body
 
 
@@ -456,7 +462,7 @@ def _load_leads(job_id: str) -> list[dict]:
     The analyze step always writes the file (empty list when degraded, 03 3.1), so a missing file
     is a server fault, never "no leads".
     """
-    root = _ctx.get_pin_root()
+    root = _get_ctx().get_pin_root()
     leads_path = root / job_id / "leads.json"
     if not leads_path.exists():
         raise ReviewError("E_INTERNAL", incident=f"leads-missing-{job_id[-8:]}")
@@ -479,7 +485,7 @@ async def _contract_map(args: dict[str, Any]) -> str:
     cursor: str | None = args.get("cursor")
     page_size: int = max(1, min(int(args.get("page_size", 10)), 30))
     _check_job_readable(job_id)
-    root = _ctx.get_pin_root()
+    root = _get_ctx().get_pin_root()
     doc, status = load_map(root, job_id)
     if doc is None:
         raise ReviewError("E_INTERNAL", incident=f"map-missing-{job_id[-8:]}")
@@ -521,7 +527,7 @@ async def _facts(args: dict[str, Any]) -> str:
     cursor: str | None = args.get("cursor")
     page_size: int = max(1, min(int(args.get("page_size", 100)), 200))
     _check_job_readable(job_id)
-    facts = load_facts(_ctx.get_pin_root(), job_id)
+    facts = load_facts(_get_ctx().get_pin_root(), job_id)
     if facts is None:
         raise ReviewError("E_INTERNAL", incident=f"facts-missing-{job_id[-8:]}")
     filters = {"filter": prefix, "page_size": page_size}

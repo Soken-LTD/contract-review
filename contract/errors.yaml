@@ -163,8 +163,8 @@ codes:
     channel: "rejection"
     class: "input"
     tools: "read, write, finalize, report"
-    what: "Job ended in {state}: {code}."
-    fix: "Apply the fix of {code} and start a new review."
+    what: "Job ended in {state}: {exit_code}."
+    fix: "Apply the fix of {exit_code} and start a new review."
   - code: E_JOB_FROZEN
     owner: "03"
     channel: "rejection"

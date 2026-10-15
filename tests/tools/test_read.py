@@ -565,3 +565,17 @@ async def test_leads_path_glob(server: SokenServer, leads_file: Path) -> None:
         )
     text = result.content[0].text
     assert "LEAD-" not in text
+
+
+@pytest.mark.parametrize("state", ["failed", "insufficient_source"])
+def test_read_on_terminal_job_rejects_with_e_job_terminal(ctx: MemoryJobContext, state: str) -> None:
+    """Regression: the E_JOB_TERMINAL field named `code` collided with ReviewError(code, ...)
+    and raised TypeError instead of the catalogued rejection."""
+    from soken_review.errors import ReviewError
+    from soken_review.tools import read as read_mod
+
+    ctx.set_state(JOB_ID, state)
+    with pytest.raises(ReviewError) as exc:
+        read_mod._check_job_readable(JOB_ID)
+    assert exc.value.code == "E_JOB_TERMINAL"
+    assert state in exc.value.envelope()["what"]

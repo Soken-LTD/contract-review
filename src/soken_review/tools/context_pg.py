@@ -115,23 +115,40 @@ class _LifespanWrapper:
         )
         await self._async_pool.open()
 
-        # Inject into start_status and db.pool
         from ..db import pool as _pool_mod
-        from ..tools import start_status as _ss_mod
-        _ss_mod.set_pool(self._async_pool)
-        from ..tools import report as _report_mod
-        _report_mod.set_pool(self._async_pool)
+        from ..tools import (
+            challenge,
+            dismiss,
+            finalize,
+            read,
+            report,
+            set_section,
+            start_status,
+            submit,
+            withdraw,
+        )
+
+        # Wire async pool into every module that needs it.
+        # One loop: adding a new tool module here is the only change needed.
+        _POOL_MODULES = [start_status, report, submit, finalize, challenge, dismiss, withdraw, set_section]
+        for mod in _POOL_MODULES:
+            if hasattr(mod, "set_pool"):
+                mod.set_pool(self._async_pool)
         _pool_mod.set_pool(self._async_pool)
 
-        # Sync pool (used by PgJobContext for read tool handlers)
+        # Sync pool (used by PgJobContext for read tool handlers and all write tools)
         self._sync_pool = psycopg_pool.ConnectionPool(
             self._dsn, min_size=1, max_size=5, open=False
         )
         self._sync_pool.open()
 
         ctx = PgJobContext(self._sync_pool, self._pin_root)
-        from ..tools import read as _read_mod
-        _read_mod.set_context(ctx)
+
+        # Wire context into every module that reads pins/maps.
+        _CTX_MODULES = [read, submit, finalize, challenge, dismiss, withdraw, set_section]
+        for mod in _CTX_MODULES:
+            if hasattr(mod, "set_context"):
+                mod.set_context(ctx)
 
     async def _shutdown(self) -> None:
         if self._async_pool:

@@ -497,8 +497,17 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
         repo = JobRepo(conn)
         drafts = await repo.list_drafts(job_id)
         medians = await repo.step_medians(job.get("chain")) if job["state"] in _ETA_STATES else {}
+        # Compute finalize_checks for interactive states (03 §4.2, §4.14)
+        finalize_checks: list[dict[str, Any]] = []
+        if job["state"] in ("ready", "finalized"):
+            try:
+                from .finalize import compute_finalize_checks
+                finalize_checks = await compute_finalize_checks(conn, job_id)
+            except Exception:  # noqa: BLE001
+                finalize_checks = []  # never fail status due to finalize_checks
 
-    return _build_status_response(job, args.get("response_format", "concise"), steps, drafts, medians)
+    return _build_status_response(job, args.get("response_format", "concise"), steps, drafts, medians,
+                                  finalize_checks=finalize_checks)
 
 
 # States where long-poll should return immediately (03 §4.2)
@@ -639,6 +648,7 @@ def _build_status_response(
     steps: list[dict[str, Any]] | None = None,
     drafts: list[dict[str, Any]] | None = None,
     medians: dict[str, float] | None = None,
+    finalize_checks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the review_status output object from the job row (03 §4.2)."""
     state: str = job["state"]
@@ -692,8 +702,7 @@ def _build_status_response(
     # Drafts: every draft (03 §4.2); server drafts carry flag and location while needs_text
     out["drafts"] = [_draft_row(d) for d in (drafts or [])][:60]
 
-    # Finalize checks (03 §4.2, F1-F6, F8)
-    # TODO(W0): compute from DB; return empty list for now
-    out["finalize_checks"] = []
+    # Finalize checks (03 §4.2, F1-F6, F8): shared with review_finalize
+    out["finalize_checks"] = finalize_checks or []
 
     return out
