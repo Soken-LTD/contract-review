@@ -21,6 +21,8 @@ upload:                        # S4 (03 signed URL; 09 5.3)
   url_ttl_s: 1800
   max_bytes: 52428800
   max_files: 20000
+build:                         # step wall for compiler sandbox (05 7, 09 4.1); used by forge_build_repo (B4) and _invoke_solc
+  evm: {timeout_s: 300}       # forge --offline + solc --standard-json; 300 s covers large repos
 chain_state:                   # 05 12.3; call ceiling = 09 step wall x outbound.<provider>.per_s; max_seconds is the EVM chain_state 1 wall
   max_seconds: 120
   max_calls_role: 200

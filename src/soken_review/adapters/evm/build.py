@@ -15,6 +15,12 @@ Security rules (09 4.1, reviewer note 2026-10-09):
 Compiler rules (05 6.1, 09 4.4):
   B2  explorer/user std_json candidate: solc --standard-json
   B3  synthetic project fallback when no std_json
+  B4  forge --offline --build-info (repo candidates): forge resolves remappings/sources,
+      returns only the Standard JSON `input`; our sandboxed solc recompiles it.
+      Settings from forge's build-info are rebuilt from an allow-list (finding 1);
+      build-info is read via sandbox.output.read_output_files (finding 2);
+      sources verified by sha256 exact-bytes comparison (finding 3);
+      forge runs in a named container; docker rm -f kills it on timeout (finding 4).
   X1  Sourcify cborAuxdata -> auxdata_ranges
   X2  recompile with trailing newlines to find differing ranges
   X3  appendCBOR=false or solc < 0.4.7 -> no auxdata ranges
@@ -22,21 +28,25 @@ Compiler rules (05 6.1, 09 4.4):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from soken_review.adapters.base import Artifact, BuildResult, Candidate
 from soken_review.adapters.evm.compiler import CompilerCacheError, SolcCache, get_cache
+from soken_review.sandbox.output import UnsafeOutput, read_output_files
 from soken_review.sandbox.profile import StepLimits, docker_argv, locked_image
 
 # Repo-relative .sbx dir (colima only shares $HOME)
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SBX_ROOT = _REPO_ROOT / ".sbx"
+_LIMITS_YAML = _REPO_ROOT / "contract" / "ops" / "limits.yaml"
 
 _BUILD_LIMITS = StepLimits(cpus=2, memory="4g", pids=256, max_file=256 * 1024 * 1024)
 
@@ -49,10 +59,75 @@ _DIRECT_SOLC = os.environ.get("SOKEN_SOLC_DIRECT", "0") == "1"
 # Minimum solc version that supports appendCBOR output (X3)
 _MIN_CBOR_VERSION = (0, 4, 7)
 
+# ---------------------------------------------------------------------------
+# B4 forge settings allowlist (finding 1: attacker-controlled compile settings)
+# Only these keys are accepted from forge's build-info `input.settings`.
+# Any unknown key → had_unknown_settings=True → untrusted_inputs on the candidate.
+# ---------------------------------------------------------------------------
+
+# Valid EVM version names solc accepts (canonical lower-case; solc is case-sensitive).
+_VALID_EVM_VERSIONS: frozenset[str] = frozenset({
+    "homestead", "tangerineWhistle", "spuriousDragon", "byzantium", "constantinople",
+    "petersburg", "istanbul", "berlin", "london", "paris", "shanghai", "cancun",
+    "prague", "osaka",
+})
+
+# Valid metadata.bytecodeHash values.
+_VALID_BYTECODE_HASH: frozenset[str] = frozenset({"ipfs", "bzzr1", "none"})
+
+# Optimizer.runs must be a positive int in [1, 2**32-1]; runs=0 is a valid solc value too.
+_OPT_RUNS_MAX: int = 2**32 - 1
+
+# forge build-info max size (single file)
+_FORGE_BUILD_INFO_MAX_BYTES: int = 50 * 1024 * 1024   # 50 MiB
+
+
+def _forge_build_timeout() -> int:
+    """Read build.evm.timeout_s from contract/ops/limits.yaml; default 300.
+
+    Loading is lazy and cached on first call. Falls back to 300 on any error so a
+    missing or malformed config never blocks the build path.
+    """
+    try:
+        import yaml
+        data = yaml.safe_load(_LIMITS_YAML.read_text())
+        t = data.get("build", {}).get("evm", {}).get("timeout_s", 300)
+        return int(t) if isinstance(t, (int, float)) and t > 0 else 300
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return 300
+
+
+class ForgeStdInput(NamedTuple):
+    """B4 forge build result: sanitized Standard JSON input plus trust flags."""
+    std_input: dict       # settings rebuilt from allow-list; our outputSelection replaces forge's
+    libraries_unverified: bool  # forge's settings had a 'libraries' key → tier B ceiling
+    had_unknown_settings: bool  # settings had unknown/forbidden keys → tier B ceiling
+    forge_version_mismatch: bool = False  # build-info version mismatches pinned compiler
+
 
 # ---------------------------------------------------------------------------
 # Input sanitizer
 # ---------------------------------------------------------------------------
+
+# Solc Standard JSON spec only accepts these three top-level keys.
+# Forge may inject allowPaths, basePath, etc. at the input top-level — strip them.
+_SOLC_STD_JSON_KEYS = frozenset({"language", "sources", "settings"})
+
+# Forge-specific top-level keys that are filesystem hints: they become irrelevant once
+# sources are inline in the Standard JSON.  Drop silently without flagging
+# had_unknown_settings — they carry no compilation-affecting information.
+# Any other extra top-level key (not in _SOLC_STD_JSON_KEYS and not here) still flags.
+# NOTE: "version" is NOT here — it is handled separately in forge_build_repo by
+# comparing it to the pinned compiler (see _check_forge_version).
+_FORGE_TOP_SILENT_DROP = frozenset({
+    "allowPaths",   # filesystem search paths; sources are inline
+    "basePath",     # project root on the build host; irrelevant in std-json
+    "includePaths", # additional include directories; irrelevant once inline
+})
+
+# Regex for parsing a semver triple and optional commit hash from a solc version string.
+# Matches "0.8.26+commit.8a97fa7e.Linux.g++" or "solc-0.8.26+commit.8a97fa7e".
+_FORGE_VERSION_RE = re.compile(r'(\d+\.\d+\.\d+)(?:\+commit\.([0-9a-f]+))?')
 
 _BAD_PATH_RE = re.compile(r"(^/|\\|\.\.(/|$))")
 
@@ -163,6 +238,133 @@ def sanitize_std_input(inp: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# B4 forge settings allowlist (finding 1)
+# ---------------------------------------------------------------------------
+
+
+def _sanitize_forge_settings(raw_settings: dict) -> tuple[dict, bool, bool]:
+    """Rebuild settings from forge's build-info using an allow-list.
+
+    Returns (clean_settings, libraries_unverified, had_unknown_settings).
+
+    Only the following keys are accepted:
+      optimizer.enabled (bool), optimizer.runs (int, 0..2^32-1),
+      optimizer.details.yul (bool, the only plan-05-recorded detail),
+      evmVersion (enum: _VALID_EVM_VERSIONS),
+      viaIR (bool),
+      metadata.bytecodeHash (enum: _VALID_BYTECODE_HASH),
+      metadata.appendCBOR (bool),
+      remappings (list[str], each sanitized by sanitize_remapping).
+
+    'libraries' → libraries_unverified=True, dropped from clean_settings (05 rule).
+    'outputSelection' → always dropped (our _OUTPUT_SELECTION replaces it).
+    Any other key → had_unknown_settings=True, dropped.
+
+    The returned clean_settings does NOT include outputSelection; callers must add it.
+    """
+    import copy
+    clean: dict[str, Any] = {}
+    libraries_unverified = False
+    had_unknown = False
+
+    for key, val in raw_settings.items():
+        if key == "outputSelection":
+            continue  # always replaced by caller
+        if key == "libraries":
+            if val:
+                libraries_unverified = True
+            continue  # dropped from clean settings
+        if key == "optimizer":
+            opt = val
+            if isinstance(opt, dict):
+                clean_opt: dict[str, Any] = {}
+                if isinstance(opt.get("enabled"), bool):
+                    clean_opt["enabled"] = opt["enabled"]
+                runs = opt.get("runs")
+                if isinstance(runs, int) and 0 <= runs <= _OPT_RUNS_MAX:
+                    clean_opt["runs"] = runs
+                elif runs is not None:
+                    had_unknown = True  # invalid runs value
+                # optimizer.details: only yul (bool) is recorded by plan 05
+                details = opt.get("details")
+                if isinstance(details, dict):
+                    clean_details: dict[str, Any] = {}
+                    if isinstance(details.get("yul"), bool):
+                        clean_details["yul"] = details["yul"]
+                    if len(details) > (1 if "yul" in details else 0):
+                        had_unknown = True  # unknown detail keys
+                    if clean_details:
+                        clean_opt["details"] = clean_details
+                elif details is not None:
+                    had_unknown = True
+                if clean_opt:
+                    clean["optimizer"] = clean_opt
+            else:
+                had_unknown = True
+        elif key == "evmVersion":
+            if isinstance(val, str) and val in _VALID_EVM_VERSIONS:
+                clean["evmVersion"] = val
+            else:
+                had_unknown = True
+        elif key == "viaIR":
+            if isinstance(val, bool):
+                clean["viaIR"] = val
+            else:
+                had_unknown = True
+        elif key == "metadata":
+            meta = val
+            if isinstance(meta, dict):
+                clean_meta: dict[str, Any] = {}
+                bch = meta.get("bytecodeHash")
+                if bch is not None:
+                    if isinstance(bch, str) and bch in _VALID_BYTECODE_HASH:
+                        clean_meta["bytecodeHash"] = bch
+                    else:
+                        had_unknown = True
+                acbor = meta.get("appendCBOR")
+                if acbor is not None:
+                    if isinstance(acbor, bool):
+                        clean_meta["appendCBOR"] = acbor
+                    else:
+                        had_unknown = True
+                # useLiteralContent: bool only; affects the CBOR metadata hash so must be
+                # kept exactly as forge emits it.
+                ulc = meta.get("useLiteralContent")
+                if ulc is not None:
+                    if isinstance(ulc, bool):
+                        clean_meta["useLiteralContent"] = ulc
+                    else:
+                        had_unknown = True
+                for mk in meta:
+                    if mk not in ("bytecodeHash", "appendCBOR", "useLiteralContent"):
+                        had_unknown = True
+                if clean_meta:
+                    clean["metadata"] = clean_meta
+            else:
+                had_unknown = True
+        elif key == "remappings":
+            raw_remaps = val
+            if isinstance(raw_remaps, list):
+                safe_remaps = []
+                for r in raw_remaps:
+                    validated = sanitize_remapping(r)
+                    if validated is not None:
+                        safe_remaps.append(validated)
+                    else:
+                        had_unknown = True  # unsafe remapping dropped
+                if safe_remaps:
+                    clean["remappings"] = safe_remaps
+            else:
+                had_unknown = True
+        else:
+            # Unknown key (stopAfter, modelChecker, debug, compilationTarget, etc.)
+            had_unknown = True
+
+    # Make a fresh copy to avoid mutating the input
+    return copy.deepcopy(clean), libraries_unverified, had_unknown
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -187,19 +389,67 @@ def build(candidate: Candidate, cache_dir: Path | None = None, work_dir: Path | 
     except CompilerCacheError as exc:
         return _fail(candidate, "not_checkable", exc.reason_detail)
 
-    # Build and sanitize std-json input
+    _SBX_ROOT.mkdir(exist_ok=True)
+
+    # B4: for repo candidates, try forge to resolve sources+remappings into a Standard JSON
+    # input; then compile that input with OUR sandboxed solc (same as B2/B3).
+    # Forge's compiled output is discarded; only the `input` key from build-info is used.
+    # Security: source tree is read-only; forge uses our pinned solc via --use flag;
+    # settings rebuilt from allow-list (finding 1); sources verified by sha256 (finding 3);
+    # named container killed on timeout (finding 4).
+    b4_notes: dict = {}
+    if candidate.src_tree_dir:
+        _wdir = Path(work_dir) if work_dir is not None else Path(tempfile.mkdtemp(dir=_SBX_ROOT))
+        forge_result, forge_fail_reason = forge_build_repo(candidate.src_tree_dir, _wdir, solc_bin, cache)
+        if forge_result is not None:
+            match_ok, reject_reason = _forge_sources_match_pin(
+                forge_result.std_input, candidate.files,
+                getattr(candidate, "_full_tree", None),
+            )
+            if match_ok:
+                try:
+                    sanitized_b4_input = sanitize_std_input(forge_result.std_input)
+                except InputSanitizationError:
+                    b4_notes["b4_rejected"] = "sanitize_error"
+                else:
+                    # Apply trust flags from forge settings before building
+                    if forge_result.libraries_unverified or forge_result.had_unknown_settings:
+                        candidate.untrusted_inputs = True
+                    b4_notes["b4_source"] = "forge_b4"
+                    if forge_result.libraries_unverified:
+                        b4_notes["libraries_unverified"] = True
+                    if forge_result.had_unknown_settings:
+                        b4_notes["had_unknown_settings"] = True
+                    if forge_result.forge_version_mismatch:
+                        b4_notes["forge_version_mismatch"] = True
+                    br = _run_build(candidate, sanitized_b4_input, solc_bin, _wdir, cache)
+                    br.build_notes.update(b4_notes)
+                    return br
+            else:
+                b4_notes["b4_rejected"] = reject_reason
+                # sources differ → mark untrusted (finding 3)
+                candidate.untrusted_inputs = True
+        elif forge_fail_reason:
+            # forge_build_repo returned None: record why so the fallback is visible
+            b4_notes["b4_rejected"] = forge_fail_reason
+
+    # Build and sanitize std-json input (B2/B3 path)
     try:
         std_input = sanitize_std_input(_prepare_std_input(candidate))
     except InputSanitizationError as exc:
         return _fail(candidate, "not_checkable", f"input_sanitization_error: {exc}")
 
-    _SBX_ROOT.mkdir(exist_ok=True)
-
     if work_dir is not None:
-        return _run_build(candidate, std_input, solc_bin, Path(work_dir), cache)
+        br = _run_build(candidate, std_input, solc_bin, Path(work_dir), cache)
+        if b4_notes:
+            br.build_notes.update(b4_notes)
+        return br
 
     with tempfile.TemporaryDirectory(dir=_SBX_ROOT) as tmp:
-        return _run_build(candidate, std_input, solc_bin, Path(tmp), cache)
+        br = _run_build(candidate, std_input, solc_bin, Path(tmp), cache)
+        if b4_notes:
+            br.build_notes.update(b4_notes)
+        return br
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +547,368 @@ def _invoke_solc(solc_bin: Path, stdin_data: bytes, work_dir: Path, cache: SolcC
         raise RuntimeError("sandbox_unavailable")
 
 
+
+# Well-known Foundry project-root directories.  A multi-segment missing-source path
+# whose first segment is in this set is classified as a project-relative dependency
+# (missing gitlink submodule, un-fetched lib, etc.).  Anything else is treated as an
+# npm/bare package name — npm packages can appear as "pkg/file.sol" (2-segment) but
+# their first segment does NOT match a typical project directory.
+_PROJECT_ROOT_DIRS = frozenset({
+    "lib", "src", "test", "tests", "script", "scripts",
+    "contracts", "interfaces", "dependencies", "node_modules",
+})
+
+
+def _missing_import_reason(fatal_errors: list[dict]) -> str | None:
+    """Classify solc 'Source ... not found' build failures (05 B4, 09 5.2).
+
+    When solc cannot resolve an import it emits either:
+      ParserError  — message: 'Source "@pkg/..." not found: File not found.'
+      IOError      — message: '@pkg/...: File not found.' (Standard JSON mode)
+
+    Classification (returned as prefix:value):
+      missing_import:{pkg,...}           — npm-style: @scope/pkg, bare single-segment name,
+                                           OR multi-segment where the first segment is NOT a
+                                           known project directory (e.g. "ds-test/test.sol").
+      missing_dependency_path:{first,..} — project-relative multi-segment path whose first
+                                           segment IS a known Foundry directory (lib/, test/,
+                                           src/, script/, …); a gitlink submodule that was NOT
+                                           fetched, or a scope file that imports a lib/ dep not
+                                           in the Standard JSON sources (B3 gap).
+
+    Both prefixes must trigger `insufficient_source` at the supervisor; neither is silently
+    swallowed.  Returns None when there are no not-found errors.
+
+    Note: does NOT parse Solidity source code — only the structured solc JSON output.
+    """
+    npm_pkgs: set[str] = set()
+    dep_paths: set[str] = set()
+
+    for err in fatal_errors:
+        if err.get("severity") not in ("error", "fatal", None, ""):
+            continue
+        msg = err.get("message", "")
+        # 'Source "@pkg/Foo.sol" not found' or '"@pkg/Foo.sol" not found'
+        # Also handles bare 'pkg/Foo.sol: File not found.' (IOError form)
+        for candidate_path in _extract_not_found_paths(msg):
+            if candidate_path.startswith(("./", "../", "/")):
+                continue
+            parts = candidate_path.split("/")
+            first = parts[0] if parts else ""
+            if not first:
+                continue
+            if candidate_path.startswith("@") and len(parts) >= 2:
+                # @scope/pkg — npm scoped package
+                npm_pkgs.add(parts[0] + "/" + parts[1])
+            elif len(parts) == 1:
+                # bare single-segment name (e.g. "ds-test") — npm or bare gitlink alias
+                npm_pkgs.add(first)
+            elif first in _PROJECT_ROOT_DIRS:
+                # multi-segment path starting with a known Foundry project dir (lib/xxx,
+                # test/utils/...) — project-relative dep, likely a missing gitlink submodule.
+                dep_paths.add(first)
+            else:
+                # multi-segment but first segment is NOT a project dir — treat as npm package
+                # (e.g. "ds-test/test.sol" where ds-test is an npm/gitlink alias).
+                npm_pkgs.add(first)
+
+    # npm packages take precedence when mixed; dep paths are separate signal.
+    if npm_pkgs:
+        return "missing_import:" + ",".join(sorted(npm_pkgs)[:5])
+    if dep_paths:
+        return "missing_dependency_path:" + ",".join(sorted(dep_paths)[:5])
+    return None
+
+
+def _extract_not_found_paths(message: str) -> list[str]:
+    """Extract import paths from a solc 'not found' error message."""
+    paths: list[str] = []
+    # Pattern: Source "path" not found
+    start = 0
+    while True:
+        idx = message.find('"', start)
+        if idx == -1:
+            break
+        end = message.find('"', idx + 1)
+        if end == -1:
+            break
+        fragment = message[idx + 1:end]
+        if "not found" in message[end:end + 30]:
+            paths.append(fragment)
+        start = end + 1
+    # Pattern: "path: File not found." (IOError — no surrounding quotes for path)
+    if not paths and ": File not found" in message:
+        path_part = message.split(": File not found")[0].strip()
+        if path_part:
+            paths.append(path_part)
+    return paths
+
+
+def _forge_sources_match_pin(
+    forge_input: dict,
+    pinned_files: dict[str, str],
+    full_tree: dict[str, str] | None,
+) -> tuple[bool, str]:
+    """Verify ALL forge sources are in the pinned full tree and match byte-for-byte.
+
+    Returns (True, "") on success, or (False, reason_code) on mismatch.
+
+    Rules (finding 3 + integrity gap fix):
+    - full_tree is the complete O_NOFOLLOW read of the repo (safe_files from
+      repo_candidate_from_manifest) — all files, including lib/ deps, not just scope.
+    - Every entry in forge_input["sources"] must:
+        (a) have a "content" key (not "urls" — symlink or network fetch attempt);
+        (b) exist in full_tree by exact path;
+        (c) match full_tree[path] by exact sha256 of UTF-8-encoded bytes.
+      Any violation → (False, "sources_differ").
+    - If full_tree is None (non-repo candidate, or tree read was unavailable) →
+      (False, "sources_differ") — fail closed.
+    - Forward check: every pinned scope file must appear in forge's sources.
+    - Comparison uses sha256 of UTF-8 encoded bytes; no LF-normalisation (parser
+      differentials can exploit normalisation to produce a different AST).
+    - On success the caller records b4_source="forge_b4" in build_notes.
+    """
+    # Fail closed when the full tree is not available (non-repo candidate or
+    # a path that our O_NOFOLLOW reader refused).
+    if full_tree is None:
+        return False, "sources_differ"
+
+    sources = (forge_input.get("sources") or {})
+
+    # Check EVERY entry forge provides — lib/ deps included — against the pinned tree.
+    for path, src_entry in sources.items():
+        if not isinstance(src_entry, dict):
+            return False, "sources_differ"
+        # Reject entries that use "urls" instead of inline "content": forge may have
+        # followed a symlink or resolved a network URL that the O_NOFOLLOW reader
+        # refused.  Only "content" is the pinned text we can verify.
+        if "urls" in src_entry or "content" not in src_entry:
+            return False, "sources_differ"
+        # Every path forge includes must be present in the full pinned tree.
+        tree_content = full_tree.get(path)
+        if tree_content is None:
+            return False, "sources_differ"
+        forge_content = src_entry["content"]
+        if not isinstance(forge_content, str):
+            return False, "sources_differ"
+        # Exact-bytes sha256: encode both as UTF-8, no normalisation.
+        if (hashlib.sha256(forge_content.encode()).hexdigest()
+                != hashlib.sha256(tree_content.encode()).hexdigest()):
+            return False, "sources_differ"
+
+    # Forward check: every scope-pinned file must appear in forge's sources.
+    for path in pinned_files:
+        if path not in sources:
+            return False, "sources_differ"
+
+    return True, ""
+
+
+def _check_forge_version(forge_version: Any, solc_bin: Path) -> bool:
+    """Return True when forge's reported solc version doesn't match the pinned compiler.
+
+    Comparison rules:
+      - Absent version (None)  → False (no flag; version key was not emitted).
+      - Non-string value       → True  (fail closed; unexpected type).
+      - Unparsable string      → True  (fail closed; cannot verify).
+      - Semver mismatch        → True  (different release).
+      - Commit hash mismatch   → True  (both sides carry a commit hash and they differ).
+      - Match or one side has  → False (semver equals; commit hashes absent or equal).
+        no commit hash
+
+    Both the forge string ("0.8.26+commit.8a97fa7e.Linux.g++") and the solc_bin name
+    ("solc-0.8.26+commit.8a97fa7e") are parsed by _FORGE_VERSION_RE; the match on
+    the solc_bin name tolerates the leading "solc-" prefix.
+    """
+    if forge_version is None:
+        return False
+    if not isinstance(forge_version, str):
+        return True
+    m_forge = _FORGE_VERSION_RE.search(forge_version)
+    m_pinned = _FORGE_VERSION_RE.search(solc_bin.name)
+    if m_forge is None or m_pinned is None:
+        return True  # unparsable
+    if m_forge.group(1) != m_pinned.group(1):
+        return True  # semver mismatch
+    # Both carry a commit hash: compare them
+    if m_forge.group(2) is not None and m_pinned.group(2) is not None:
+        return m_forge.group(2) != m_pinned.group(2)
+    return False  # semver matches; commit hash absent on at least one side
+
+
+def forge_build_repo(
+    src_tree_dir: str,
+    out_dir: Path,
+    solc_bin: Path,
+    cache: SolcCache,
+) -> tuple[ForgeStdInput | None, str]:
+    """B4: run forge to resolve sources+remappings into a Standard JSON input only.
+
+    Forge's compiled output is DISCARDED.  The returned ForgeStdInput is recompiled
+    by OUR sandboxed solc (_run_build) to prevent the repo from influencing compilation.
+
+    Returns (result, reason) where reason is "" on success, or a rejection code when
+    result is None:
+      "forge_unavailable"  – image not set, docker absent, or dev bypass active
+      "forge_timeout"      – forge container exceeded the configured timeout
+      "forge_failed"       – forge exited non-zero, no build-info, parse error, etc.
+
+    Security invariants (finding fixes 2026-10-13):
+    - Finding 1: settings rebuilt from allow-list (_sanitize_forge_settings).
+    - Finding 2: build-info read via sandbox.output.read_output_files (no-follow, capped).
+    - Finding 4: forge runs in a named container; docker rm -f kills it on timeout.
+      timeout taken from limits.yaml build.evm.timeout_s.
+    - Source tree mounted READ-ONLY at /work/src; forge cannot modify it.
+    - Forge writes to /work/out (fresh dir, separate from the source tree).
+    - Forge uses ONLY the solc binary at /cache/<platform>/<solc_filename> (--use).
+    - FOUNDRY_ env vars and .env loading are suppressed (clean env, --no-dotenv).
+    - rc != 0 → None/forge_failed (no build-info search on failure).
+    - Exactly one build-info file required; 0 or >1 → None/forge_failed.
+    - Forge output field is never used; only `input` key is returned.
+    """
+    if _BUILD_IMAGE is None:
+        return None, "forge_unavailable"
+    if _DIRECT_SOLC:
+        return None, "forge_unavailable"  # dev bypass: skip forge
+
+    import shutil
+    if not shutil.which("docker"):
+        return None, "forge_unavailable"
+
+    src = Path(src_tree_dir)
+    if not src.is_dir() or src.is_symlink():
+        return None, "forge_failed"
+
+    forge_out = out_dir / "forge_out"
+    forge_out.mkdir(parents=True, exist_ok=True)
+
+    # Solc inside container: /cache/<platform>/<filename>
+    solc_container_path = f"/cache/{solc_bin.parent.name}/{solc_bin.name}"
+
+    # Named container so we can docker rm -f on timeout (finding 4)
+    container_name = f"soken-forge-{uuid.uuid4().hex[:12]}"
+
+    command = [
+        "forge", "build",
+        "--offline",          # no network
+        "--build-info",       # emit out/build-info/<hash>.json with Standard JSON input
+        "--skip", "test", "script",
+        "--out", "/work/out",
+        "--cache-path", "/tmp/forge-cache",
+        "--use", solc_container_path,  # our exact pinned solc; never repo-specified
+        "--no-cache",         # do not use any cached state from the repo's cache/
+        "--no-auto-detect",   # do not try to resolve solc from PATH; we supply --use
+        # Note: --no-dotenv does not exist in forge v1.8.5.  .env loading is suppressed
+        # by HOME=/tmp (no user-level foundry config) and the lack of FOUNDRY_* in the
+        # container env.  CLI --use overrides any FOUNDRY_SOLC from a repo .env file.
+    ]
+
+    try:
+        argv = docker_argv(
+            step="build",
+            image=_BUILD_IMAGE,
+            work_dir=src,            # unused when mounts= is given
+            cache_dir=cache._root,   # /cache: read-only, contains our pinned solc
+            limits=_BUILD_LIMITS,
+            # Clean env: no FOUNDRY_* passed in; HOME=/tmp keeps foundry away from /root
+            env={"HOME": "/tmp"},
+            command=command,
+            workdir="/work/src",
+            runtime=os.environ.get("SOKEN_SANDBOX_RUNTIME"),
+            mounts=[
+                (src.resolve(), "/work/src", True),        # source: READ-ONLY
+                (forge_out.resolve(), "/work/out", False),  # output: writable
+            ],
+            name=container_name,
+        )
+    except (ValueError, TypeError):
+        return None, "forge_failed"
+
+    timeout_s = _forge_build_timeout()
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        _stdout, _stderr = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        # Finding 4: kill the named container, then clean up the process
+        try:
+            subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                capture_output=True, timeout=10, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        proc.kill()
+        proc.communicate()
+        return None, "forge_timeout"
+    except OSError:
+        return None, "forge_failed"
+
+    if proc.returncode != 0:
+        return None, "forge_failed"
+
+    build_info_dir = forge_out / "build-info"
+    if not build_info_dir.is_dir() or build_info_dir.is_symlink():
+        return None, "forge_failed"
+
+    # Finding 2: use the sandbox-safe reader (O_NOFOLLOW, size-capped, no direct open())
+    try:
+        files_map = read_output_files(
+            build_info_dir, "*.json",
+            max_files=1,
+            max_bytes=_FORGE_BUILD_INFO_MAX_BYTES,
+        )
+    except (UnsafeOutput, FileNotFoundError, OSError):
+        return None, "forge_failed"
+
+    if len(files_map) != 1:
+        return None, "forge_failed"
+
+    data = next(iter(files_map.values()))
+    try:
+        info = json.loads(data)
+    except (ValueError, RecursionError):
+        return None, "forge_failed"
+
+    # Return ONLY the input (Standard JSON that forge constructed from the source tree).
+    # Forge's output field is discarded; OUR solc recompiles the input.
+    raw_input = info.get("input")
+    if not raw_input or not isinstance(raw_input, dict):
+        return None, "forge_failed"
+
+    # Finding 1: rebuild settings from allow-list; drop unknown keys; record trust flags.
+    raw_settings = raw_input.get("settings") or {}
+    clean_settings, libraries_unverified, had_unknown = _sanitize_forge_settings(raw_settings)
+    # Always replace outputSelection with our own
+    clean_settings["outputSelection"] = _OUTPUT_SELECTION
+
+    # Version check: compare forge's reported solc version to the pinned compiler.
+    # "version" is excluded from _FORGE_TOP_SILENT_DROP so it must be consumed here.
+    # Absent → no flag.  Mismatch or unparsable → had_unknown=True + forge_version_mismatch.
+    version_mismatch = _check_forge_version(raw_input.get("version"), solc_bin)
+    if version_mismatch:
+        had_unknown = True
+
+    # Whitelist only the keys solc Standard JSON accepts (language, sources, settings).
+    # Forge injects top-level keys that fall into two categories:
+    #   (a) filesystem hints: allowPaths, basePath, includePaths — dropped silently via
+    #       _FORGE_TOP_SILENT_DROP; irrelevant once sources are inline, no compile effect.
+    #   (b) version — handled above by _check_forge_version; excluded from this check.
+    #   (c) anything else not in _SOLC_STD_JSON_KEYS — unknown, flag had_unknown.
+    extra_top_keys = set(raw_input) - _SOLC_STD_JSON_KEYS - {"version"}
+    unknown_top_keys = extra_top_keys - _FORGE_TOP_SILENT_DROP
+    if unknown_top_keys:
+        had_unknown = True  # unexpected non-standard top-level key
+    std_input = {k: v for k, v in raw_input.items() if k in _SOLC_STD_JSON_KEYS}
+    std_input["settings"] = clean_settings
+
+    return ForgeStdInput(
+        std_input=std_input,
+        libraries_unverified=libraries_unverified,
+        had_unknown_settings=had_unknown,
+        forge_version_mismatch=version_mismatch,
+    ), ""
+
+
 def _run_build(
     candidate: Candidate,
     std_input: dict,
@@ -332,7 +944,8 @@ def _run_build(
     fatal = [e for e in errors if e.get("severity") == "error"]
     if fatal:
         msg = "; ".join(e.get("formattedMessage", e.get("message", ""))[:200] for e in fatal[:5])
-        return BuildResult(candidate=candidate, status="failed", reason="failed",
+        reason = _missing_import_reason(fatal) or "failed"
+        return BuildResult(candidate=candidate, status="failed", reason=reason,
                            stderr_head=(msg + "\n" + stderr_head)[:2000])
 
     advisories = [e.get("message", "")[:200] for e in errors if e.get("severity") != "error"]

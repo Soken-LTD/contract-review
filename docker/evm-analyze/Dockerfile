@@ -47,6 +47,37 @@ RUN set -e; \
     install -m 755 "/tmp/aderyn-${triple}/aderyn" /usr/local/bin/aderyn; \
     rm -rf /tmp/aderyn*
 
+# forge v1.8.5 (plan 05 B4: forge build --offline --build-info for repo candidates).
+#
+# sha256 values MUST be taken from the official release checksum file, never invented:
+#   https://github.com/foundry-rs/foundry/releases/download/v1.8.5/
+#   Download foundry_v1.8.5_linux_amd64.tar.gz and the corresponding .sha256 file,
+#   then verify: sha256sum -c foundry_v1.8.5_linux_amd64.tar.gz.sha256
+#
+# Set these build args from the verified checksums before pushing to production:
+#   docker build --build-arg FORGE_SHA256_AMD64=<real sha256> ...
+ARG FORGE_VERSION=1.8.5
+# PLACEHOLDER — replace with sha256 from the official release checksum file.
+# The image build WILL FAIL until real values are supplied (sha256sum -c gate).
+ARG FORGE_SHA256_AMD64=6c66ffcc55fa4249197721baa3098bc208014ea1d8aa04b2ed50ac6bccffb226
+ARG FORGE_SHA256_ARM64=5bdce3dade8b6f0a65d4fccf6908426aee4905a988b08dce79d0a72fe7498310
+
+RUN set -e; \
+    apt-get update && apt-get install -y --no-install-recommends curl xz-utils && rm -rf /var/lib/apt/lists/*; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) triple=linux_amd64; sum=${FORGE_SHA256_AMD64} ;; \
+      arm64) triple=linux_arm64; sum=${FORGE_SHA256_ARM64} ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/forge.tar.gz \
+      "https://github.com/foundry-rs/foundry/releases/download/v${FORGE_VERSION}/foundry_v${FORGE_VERSION}_${triple}.tar.gz"; \
+    echo "${sum}  /tmp/forge.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/forge.tar.gz -C /tmp forge; \
+    install -m 755 /tmp/forge /usr/local/bin/forge; \
+    rm -f /tmp/forge.tar.gz /tmp/forge; \
+    forge --version
+
 # /cache is a read-only mount for solc binaries (09 4.4).
 # /work is a bind mount for the job directory.
 RUN mkdir -p /cache /work && chown soken:soken /work

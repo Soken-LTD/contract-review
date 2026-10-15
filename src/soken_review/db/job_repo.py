@@ -325,6 +325,25 @@ class JobRepo:
                 params,
             )
 
+    async def retry_step(self, step_id: int, delay_secs: float) -> None:
+        """Reset a step back to `queued` with a not_before delay (09 3.6 transient retry).
+
+        Clears finished_at and error_code so the step looks fresh for the claim query.
+        ``attempt`` is NOT reset: the claim query increments it again on the next claim,
+        so the supervisor can detect ``attempt >= max_attempts`` and stop retrying.
+        """
+        await self._conn.execute(
+            """
+            update job_steps
+            set status = 'queued',
+                not_before = now() + make_interval(secs => %s),
+                finished_at = null,
+                error_code = null
+            where id = %s
+            """,
+            (delay_secs, step_id),
+        )
+
     async def get_steps(self, job_id: str) -> list[dict[str, Any]]:
         """Return all job_steps rows for *job_id* ordered by enqueued_at (09 progress)."""
         async with self._conn.cursor(row_factory=dict_row) as cur:
@@ -345,7 +364,8 @@ class JobRepo:
         This is a low-level helper; state transitions still go through ``transition()``.
         """
         _ALLOWED = frozenset(
-            {"source_pin", "tier", "code_hash", "map_status", "analyzer_degraded", "upload_sha256"}
+            {"source_pin", "tier", "code_hash", "map_status", "analyzer_degraded",
+             "upload_sha256", "resolved_commit"}
         )
         bad = set(fields) - _ALLOWED
         if bad:

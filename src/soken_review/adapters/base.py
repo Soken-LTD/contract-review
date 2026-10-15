@@ -45,6 +45,14 @@ class Candidate:
     source_url: str | None = None
     fetched_at: str | None = None       # ISO 8601 UTC
     untrusted_inputs: bool = False      # 06 3.3.4: never tier A; set by the family trust scan
+    refused_paths: list[str] = field(default_factory=list)   # paths refused by safe reader; empty = none
+    # Runtime-only: path to the materialized source tree for B4 forge build; never serialised.
+    src_tree_dir: str | None = None
+    # Runtime-only: full O_NOFOLLOW tree read (all files, not just scope) for B4 source
+    # integrity check; never serialised into persisted/public payloads.  Populated only for
+    # repo candidates by repo_candidate_from_manifest.  Keys are repo-root-relative paths,
+    # values are UTF-8 decoded text (same encoding as safe_read_repo_tree output).
+    _full_tree: dict[str, str] | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -77,6 +85,7 @@ class BuildResult:
     reason: str | None = None           # not_checkable / failure reason code
     stderr_head: str | None = None      # at most 20 lines (09 4.2)
     work_dir: str | None = None         # job dir holding solc output for analyzers
+    build_notes: dict = field(default_factory=dict)  # B4 provenance notes: b4_source, b4_rejected, etc.
 
 
 @dataclass
