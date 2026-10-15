@@ -3,7 +3,9 @@
 # Extends evm-analyze (Slither 0.11.6) with the soken-slither-plugins package
 # which registers the TRON shim via the slither_analyzer.plugin entry point.
 # When Slither starts it calls make_plugin() -> apply_tron_shim(), patching
-# ElementaryTypeName and SOLIDITY_VARIABLES_COMPOSED before any source is parsed.
+# ElementaryTypeName (core.solidity_types.elementary_type) and
+# SOLIDITY_VARIABLES_COMPOSED (core.declarations.solidity_variables, the only
+# definition in 0.11.6; solc_parsing imports it by name) before any source is parsed.
 # This fixes F23: Slither crashes with NonElementaryType on trcToken, msg.tokenid,
 # msg.tokenvalue in TRON Solidity contracts.
 #
@@ -42,7 +44,11 @@ RUN /opt/slither-env/bin/python - <<'EOF'
 from slither_plugins import make_plugin
 make_plugin()
 from slither.core.solidity_types.elementary_type import ElementaryTypeName
-from slither.core.variables.state_variable import SOLIDITY_VARIABLES_COMPOSED
+from slither.core.declarations.solidity_variables import SOLIDITY_VARIABLES_COMPOSED
+# The parser's own binding must be the same object, or the patch is invisible to it.
+from slither.solc_parsing.expressions import expression_parsing
+assert expression_parsing.SOLIDITY_VARIABLES_COMPOSED is SOLIDITY_VARIABLES_COMPOSED, \
+    "TRON shim failed: solc_parsing holds a different SOLIDITY_VARIABLES_COMPOSED object"
 assert "trcToken" in ElementaryTypeName, \
     f"TRON shim failed: trcToken missing from ElementaryTypeName={ElementaryTypeName}"
 assert "msg.tokenid" in SOLIDITY_VARIABLES_COMPOSED, \

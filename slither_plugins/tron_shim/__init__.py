@@ -4,7 +4,7 @@
 Published under AGPL-3.0 per 05 8.2 (U13). Slither files are unchanged;
 the shim patches two in-memory lists at import time.
 
-Tested on Slither 0.11.5; 0.11.6 status is UV5-22.
+Verified against the pinned slither-analyzer 0.11.6 (docker/tron-analyze build step).
 """
 
 from slither_plugins.tron_shim.shim import apply_tron_shim
