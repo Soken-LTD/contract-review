@@ -20,6 +20,7 @@ ARG SCARB_SHA256_AMD64=c3354866901254d1868dcff7b56bb68822ca54f6a522cf8671685b244
 ARG SCARB_SHA256_ARM64=0a0a30e57d7255ac0ca5454d846758e5b5d2d4e15d9866d6095b71db95d21964
 
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/* \
     && chmod -R a+rX /usr/local/cargo /usr/local/rustup \
