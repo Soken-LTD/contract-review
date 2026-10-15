@@ -23,5 +23,8 @@
     "func-0.4.5": "npm:@ton-community/func-js-bin@0.4.5",
     "func-0.4.6": "npm:@ton-community/func-js-bin@0.4.6",
     "func-0.4.6-wasmfix.0": "npm:@ton-community/func-js-bin@0.4.6-wasmfix.0"
+  },
+  "overrides": {
+    "protobufjs": "7.5.5"
   }
 }
