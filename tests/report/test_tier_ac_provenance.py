@@ -109,8 +109,10 @@ class TestProvenanceTierA:
         assert prov["address"] == "0xC2181D975c05c8C724b334BcED0764C0b86B1D53"
         assert "code_hash" in prov
         assert "as_of" in prov
-        assert "upgrade_authority" in prov
-        assert "upgradeable" in prov
+        # No on-chain evidence about an upgrade path is read for EVM today, so no claim is made:
+        # the cover prints the kit text "Not checked in this review" instead of "Renounced".
+        assert prov["upgrade_authority"] == "NotChecked"
+        assert "upgradeable" not in prov
 
     def test_code_hash_is_sha256_of_bytecode(self):
         prov = provenance(_job("A"), _cands(), _chain_state(), _deployment())
@@ -225,7 +227,7 @@ class TestVerificationBlocks:
         assert not any("lib" in h.lower() for h in all_heads)
 
     def test_paragraph_for_reason(self):
-        dep = _deployment_c(reason="Bytecode differs: constructor arguments embedded differently")
+        dep = _deployment_c(reason="runtime_differs")   # a dep_match reason code, the only text a paragraph may carry
         cs = _chain_state()
         job = _job("C")
         from soken_review.report.assemble import _build_verification_blocks
@@ -247,7 +249,7 @@ class TestVerificationBlocks:
             elif "table" in blk:
                 for row in blk["table"]["rows"]:
                     for cell in row:
-                        assert isinstance(cell, (str, int)) or (isinstance(cell, dict) and "addr" in cell), \
+                        assert isinstance(cell, (str, int)) or (isinstance(cell, dict) and ("addr" in cell or "src" in cell)), \
                             f"Unexpected cell type: {cell!r}"
 
 
@@ -360,3 +362,30 @@ class TestKitBuildTierAC:
         html = result.html_path.read_text(encoding="utf-8")
         # Should not have a verification section (no verification key in report)
         assert "Deployment verification" not in html
+
+
+def test_cover_prints_not_checked_when_no_upgrade_evidence(tmp_path):
+    """A tier A cover without upgrade_authority shows the kit text, never a default claim."""
+    from soken_review.report.kit.build import build
+    from tests.report.fixtures import report as fixture_report
+
+    r = fixture_report(tier="A", label_key="tier_a")
+    prov = r["meta"]["provenance"]
+    prov["upgrade_authority"] = "NotChecked"
+    prov.pop("upgradeable", None)
+    html = build(r, tmp_path / "print", mode="print").html_path.read_text(encoding="utf-8")
+    assert kit_texts()["upgrade_authority_not_checked"] in html
+    assert "Renounced" not in html
+
+
+def test_verification_cells_keep_source_text_out_of_server_class():
+    """Contract and library names are src cells; only enum codes appear as server strings."""
+    from soken_review.report.assemble import _build_verification_blocks
+    dep = {"tier": "A", "block": 7, "dep": {"match": "metadata_only", "reason": "weird text; drop me", "contract": "src/Evil.sol:Totally<b>Safe</b>",
+           "comparison": {"outcome": "metadata_only", "local_len": 10, "onchain_len": 10, "auxdata_source": "x2",
+                          "linked_libraries": {"Lib<script>": "0x" + "ab" * 20}, "detail": "stderr junk", "masked_bytes": {}}}}
+    blocks = _build_verification_blocks(dep, {"address": "0x" + "cd" * 20, "block": 7, "bytecode": "0x60"}, {"chain_id": 1})
+    cells = [c for b in blocks if "table" in b for row in b["table"]["rows"] for c in row]
+    assert {"src": "Totally<b>Safe</b>"} in cells and {"src": "Lib<script>"} in cells
+    assert "Totally<b>Safe</b>" not in cells and "Lib<script>" not in cells
+    assert not [b for b in blocks if "p" in b]                      # free-text reason never a paragraph

@@ -151,6 +151,9 @@ def _pin_date_text(chain_state: dict[str, Any] | None, today: date) -> str:
 
 
 # ------------------------------------------------------------------ verification blocks (08 plan K3 part 08)
+_ENUM_TOKEN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")   # enum codes allowed as server text
+
+
 def _build_verification_blocks(
     deployment: dict[str, Any],
     chain_state: dict[str, Any] | None,
@@ -188,15 +191,16 @@ def _build_verification_blocks(
     if code_hash:
         dep_rows.append(["On-chain code hash", code_hash])
     if entry_contract:
-        dep_rows.append(["Entry contract", entry_contract])
+        # Contract names come from the source tree: a `src` cell, never server text (text classes).
+        dep_rows.append(["Entry contract", {"src": entry_contract[:300]}])
     if dep_rows:
         blocks.append({"table": {"head": ["Field", "Value"], "rows": dep_rows}})
 
     # Table 2: Runtime comparison — outcome, lengths, masked bytes, differing bytes, auxdata source
     cmp_rows: list[list[Any]] = []
     outcome = dep.get("match") or comparison.get("outcome") or ""
-    if outcome:
-        cmp_rows.append(["Outcome", outcome])
+    if outcome and _ENUM_TOKEN.fullmatch(str(outcome)):
+        cmp_rows.append(["Outcome", str(outcome)])
     local_len = comparison.get("local_len")
     if local_len is not None:
         cmp_rows.append(["Local length", int(local_len)])
@@ -214,21 +218,23 @@ def _build_verification_blocks(
     if differing_bytes is not None:
         cmp_rows.append(["Differing bytes", int(differing_bytes)])
     auxdata_source = comparison.get("auxdata_source")
-    if auxdata_source:
-        cmp_rows.append(["Auxdata source", auxdata_source])
+    if auxdata_source and _ENUM_TOKEN.fullmatch(str(auxdata_source)):
+        cmp_rows.append(["Auxdata source", str(auxdata_source)])
     if cmp_rows:
         blocks.append({"table": {"head": ["Field", "Value"], "rows": cmp_rows}})
 
     # Table 3: Linked libraries (only when present)
     libraries = comparison.get("linked_libraries") or {}
     if libraries:
-        lib_rows = [[name, {"addr": addr}] for name, addr in sorted(libraries.items())][:20]
+        # Library names are source identifiers (src cells); addresses are addr cells.
+        lib_rows = [[{"src": str(name)[:300]}, {"addr": addr}] for name, addr in sorted(libraries.items())][:20]
         blocks.append({"table": {"head": ["Library", "Address"], "rows": lib_rows}})
 
-    # Paragraph: reason / detail for mismatches (tier C and any informative note)
-    reason = dep.get("reason") or comparison.get("detail") or ""
-    if reason:
-        blocks.append({"p": str(reason)[:600]})
+    # Paragraph: the dep.match reason code (an enum from rubric/dep_match.yaml). The free-text
+    # comparison detail is build-influenced and never enters a server paragraph.
+    reason = dep.get("reason") or ""
+    if reason and _ENUM_TOKEN.fullmatch(str(reason)):
+        blocks.append({"p": str(reason)})
 
     return blocks[:6]
 
@@ -272,8 +278,9 @@ def provenance(
             "address": address,
             "code_hash": code_hash,
             "as_of": as_of,
-            "upgrade_authority": "Renounced",
-            "upgradeable": False,
+            # Stated only from on-chain evidence; the EVM artifacts carry none today, so the cover
+            # prints the kit "not checked" text rather than a claim the review did not make.
+            "upgrade_authority": "NotChecked",
         }
         if isinstance(args, dict) and args.get("repo"):
             prov["repo"] = str(args["repo"])[:200]

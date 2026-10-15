@@ -751,8 +751,11 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
             ("Source", "<br>".join(src_parts)), ("Scope", f"{len(files):,} file{"s" if len(files) != 1 else ""}, {nsloc:,} source lines"),
             ("Findings", esc(_counts_line(c))), ("Date", esc(m["date"]))]
     if prov["tier"] == "A":
-        ua = prov["upgrade_authority"]
-        grid.append(("Upgrade authority", addr_html(ua["addr"], ctx, addr_url=m.get("addr_url")) if isinstance(ua, dict) else esc(ua)))
+        ua = prov.get("upgrade_authority")
+        if ua is None or ua == "NotChecked":
+            grid.append(("Upgrade authority", esc(t["upgrade_authority_not_checked"])))
+        else:
+            grid.append(("Upgrade authority", addr_html(ua["addr"], ctx, addr_url=m.get("addr_url")) if isinstance(ua, dict) else esc(ua)))
     metagrid = "".join(f'<div class="c"><div class="k">{k}</div><div class="v">{v}</div></div>' for k, v in grid)
     cover = f"""
 <div class="cover">
