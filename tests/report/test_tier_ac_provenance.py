@@ -405,3 +405,29 @@ def test_coverage_section_starts_on_a_new_page(tmp_path):
     html = build(r, tmp_path / "print", mode="print").html_path.read_text(encoding="utf-8")
     i = html.find("Review coverage")
     assert i > 0 and html.rfind("<section", 0, i) == html.rfind('<section class="brk">', 0, i)
+
+
+class TestDeploymentSummaryRows:
+    """Page 2 must agree with the cover: the deployed-code KPI and the deployment method row are
+    derived from the tier and deployment.json (seen contradicting the cover on the first PDFs)."""
+
+    def test_tier_a_matched(self):
+        from soken_review.report.assemble import _deployed_code_kpi, _deployment_method_detail
+        dep = _deployment()
+        assert _deployed_code_kpi(_job("A"), dep) == "Matched"
+        detail = _deployment_method_detail(_job("A"), dep)
+        assert detail.startswith("The pinned source was rebuilt and compared") and "matched" in detail
+        assert "Not run" not in detail
+
+    def test_tier_c_does_not_match_with_differing_bytes(self):
+        from soken_review.report.assemble import _deployed_code_kpi, _deployment_method_detail
+        dep = _deployment_c(reason="runtime_differs")
+        dep["dep"]["comparison"]["differing_bytes"] = 1234
+        assert _deployed_code_kpi(_job("C"), dep) == "Does not match"
+        detail = _deployment_method_detail(_job("C"), dep)
+        assert "does not match" in detail and "1,234 differing bytes" in detail
+
+    def test_tier_b_not_checked(self):
+        from soken_review.report.assemble import _deployed_code_kpi, _deployment_method_detail
+        assert _deployed_code_kpi(_job("B"), None) == "Not checked"
+        assert _deployment_method_detail(_job("B"), None).startswith("Not run")

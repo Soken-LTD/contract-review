@@ -388,6 +388,35 @@ def _json(path: Path, default: Any) -> Any:
 
 
 # ------------------------------------------------------------------ main
+
+def _deployed_code_kpi(job: dict[str, Any], deployment: dict[str, Any] | None) -> str:
+    """Summary KPI (schema enum): Matched for tier A, Does not match for tier C, else Not checked."""
+    tier = job.get("tier")
+    if tier == "A" and deployment:
+        return "Matched"
+    if tier == "C" and deployment:
+        return "Does not match"
+    return "Not checked"
+
+
+def _deployment_method_detail(job: dict[str, Any], deployment: dict[str, Any] | None) -> str:
+    """Method row for the deployment check (05 13.1), consistent with the cover label and the
+    verification tables: what was compared and the outcome, numbers from deployment.json only."""
+    tier = job.get("tier")
+    dep = (deployment or {}).get("dep") or {}
+    cmp_ = dep.get("comparison") or {}
+    block = (deployment or {}).get("block")
+    where = f" at block {int(block):,}" if isinstance(block, int) else ""
+    if tier == "A" and deployment:
+        how = "byte for byte" if dep.get("match") == "exact" else "with immutables, library links and metadata masked"
+        return f"The pinned source was rebuilt and compared with the deployed runtime code{where}: matched {how}"
+    if tier == "C" and deployment:
+        n = cmp_.get("differing_bytes")
+        diff = f" ({int(n):,} differing bytes)" if isinstance(n, int) else ""
+        return f"The pinned source was rebuilt and compared with the deployed runtime code{where}: it does not match{diff}"
+    return "Not run: the deployed code was not compared with a rebuild of the source"
+
+
 async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date | None = None,
                           report_id_short: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return (report, extras). extras: subject candidates, profile, final ids, nsloc (reports row)."""
@@ -598,7 +627,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         {"key": "leads", "value": len(leads), "label": texts["kpi_labels"]["leads"]},
         {"key": "promoted", "value": len(promoted_ids), "label": texts["kpi_labels"]["promoted"]},
         {"key": "areas_returned", "value": f"{n_returned} of {len(areas)}", "label": texts["kpi_labels"]["areas_returned"]},
-        {"key": "deployed_code", "value": "Not checked", "label": texts["kpi_labels"]["deployed_code"]}]}
+        {"key": "deployed_code", "value": _deployed_code_kpi(job, deployment), "label": texts["kpi_labels"]["deployed_code"]}]}
     if c["Critical"] == 0 and c["High"] == 0 and dismissed:
         rows = sorted(dismissed, key=lambda x: (SEV_RANK[LEAD_SEV[x["severity_norm"]]], x["file"], x["start"]))
         summary["dismissed_leads"] = {"rows": [{"detector": x["rule_id"][:80], "severity_class": LEAD_SEV[x["severity_norm"]],
@@ -615,7 +644,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
                                            f"{sum(1 for d in drafts if d['status'] == 'withdrawn'):,} withdrawn"},
         {"step": m["checks"], "detail": "Every code quote matched to the pinned source; text and number rules on every "
                                         "finding; severity mapped from the classifications through the fixed matrix"},
-        {"step": m["deployment"], "detail": "Not run: the deployed code was not compared with a rebuild of the source"},
+        {"step": m["deployment"], "detail": _deployment_method_detail(job, deployment)},
     ]
     roles_notes = sections.get("roles_notes") or {}
     profile = "owner" if job["ownership_proven"] else "public_review"
