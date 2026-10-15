@@ -887,7 +887,10 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
         irows = "".join(f'<tr><td>{esc_src(x["file"], ctx)}</td><td class="num">{x["line"]:,}</td></tr>' for x in cov["injection_flags"])
         cov_html += (f'<div class="keep"><h3>Instruction-like comments</h3><table><tr><th>File</th><th class="num" style="width:12%">'
                      f"Line</th></tr>{irows}</table></div>")
-    coverage = f'<section>{h2("coverage", ctx)}{cov_html}</section>'
+    # The coverage section always starts on a fresh page: when it begins near the bottom of a page,
+    # paged.js fails to split its areas table at the page edge and lays the remainder out in
+    # overflow columns to the right (layout_overflow on tier A reports with verification tables).
+    coverage = f'<section class="brk">{h2("coverage", ctx)}{cov_html}</section>'
 
     disclaimer = (f'<section class="keep">{h2("disclaimer", ctx)}<p class="disc">{esc(t["disclaimer"].format(date=m["date"]))}</p>'
                   f'<p class="disc">{esc(t["responsible_disclosure"])}</p></section>')
