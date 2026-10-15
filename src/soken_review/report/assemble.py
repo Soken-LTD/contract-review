@@ -9,6 +9,7 @@ only place facts expand and withholding happens (08 2.4).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import UTC, date, datetime, timedelta
@@ -116,15 +117,191 @@ def pick_subject(candidates: list[dict[str, str]]) -> dict[str, str]:
     return candidates[-1]
 
 
+# ------------------------------------------------------------------ provenance helpers
+def _bytecode_hash(chain_state: dict[str, Any] | None) -> str | None:
+    """sha256 of the on-chain runtime bytes stored in chain_state['bytecode'].
+
+    Returns 'sha256:<hexdigest>' or None when bytecode is absent.
+    """
+    if chain_state is None:
+        return None
+    raw_hex = (chain_state.get("bytecode") or "").removeprefix("0x")
+    if not raw_hex:
+        return None
+    try:
+        raw_bytes = bytes.fromhex(raw_hex)
+    except ValueError:
+        return None
+    return "sha256:" + hashlib.sha256(raw_bytes).hexdigest()
+
+
+def _tier_a_unit(chain_state: dict[str, Any] | None, deployment: dict[str, Any] | None) -> str:
+    """Block-counting unit name for the tier A label: 'block' for all EVM families."""
+    # Solana uses 'slot'; for EVM variants (evm, hyperevm, tron) use 'block'.
+    # chain_state and deployment do not store family directly, so default to 'block'.
+    return "block"
+
+
+def _pin_date_text(chain_state: dict[str, Any] | None, today: date) -> str:
+    """Human date of the chain-state pin.  chain_state may carry a pre-formatted 'date_text'
+    (e.g. from a future supervisor version); otherwise fall back to the assembly date."""
+    if chain_state and chain_state.get("date_text"):
+        return chain_state["date_text"]
+    return build_date_text(today)
+
+
+# ------------------------------------------------------------------ verification blocks (08 plan K3 part 08)
+def _build_verification_blocks(
+    deployment: dict[str, Any],
+    chain_state: dict[str, Any] | None,
+    job: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build the list of server_block items for the report's 'verification' field.
+
+    Reads only from deployment.json (written by the supervisor) and chain_state.json.
+    All cells are server_cell form: strings, integers, or {'addr': ...} objects.
+    Returns at most 6 blocks as required by the schema.
+    """
+    dep = deployment.get("dep") or {}
+    comparison = dep.get("comparison") or {}
+    address = (chain_state or {}).get("address") or job.get("address") or ""
+    chain_id = (chain_state or {}).get("chain_id") or job.get("chain_id")
+    block = deployment.get("block") or (chain_state or {}).get("block")
+    code_hash = _bytecode_hash(chain_state) or ""
+    entry_contract_full = dep.get("contract") or ""
+    # Shorten "File.sol:ContractName" to just the contract name for display
+    entry_contract = entry_contract_full.rsplit(":", 1)[-1] if ":" in entry_contract_full else entry_contract_full
+
+    # Chain / network label
+    rec = get_chain(int(chain_id)) if chain_id is not None else None
+    network = f"{rec.name} ({chain_id})" if rec else (str(chain_id) if chain_id else "Not deployed")
+
+    blocks: list[dict[str, Any]] = []
+
+    # Table 1: Deployment — address, chain/network, block, on-chain code hash, entry contract
+    dep_rows: list[list[Any]] = []
+    if address:
+        dep_rows.append(["Address", {"addr": address}])
+    dep_rows.append(["Chain / network", network])
+    if block is not None:
+        dep_rows.append(["Block", int(block)])
+    if code_hash:
+        dep_rows.append(["On-chain code hash", code_hash])
+    if entry_contract:
+        dep_rows.append(["Entry contract", entry_contract])
+    if dep_rows:
+        blocks.append({"table": {"head": ["Field", "Value"], "rows": dep_rows}})
+
+    # Table 2: Runtime comparison — outcome, lengths, masked bytes, differing bytes, auxdata source
+    cmp_rows: list[list[Any]] = []
+    outcome = dep.get("match") or comparison.get("outcome") or ""
+    if outcome:
+        cmp_rows.append(["Outcome", outcome])
+    local_len = comparison.get("local_len")
+    if local_len is not None:
+        cmp_rows.append(["Local length", int(local_len)])
+    onchain_len = comparison.get("onchain_len")
+    if onchain_len is not None:
+        cmp_rows.append(["On-chain length", int(onchain_len)])
+    masked = comparison.get("masked_bytes") or {}
+    if masked.get("immutables") is not None:
+        cmp_rows.append(["Masked bytes (immutables)", int(masked["immutables"])])
+    if masked.get("links") is not None:
+        cmp_rows.append(["Masked bytes (links)", int(masked["links"])])
+    if masked.get("auxdata") is not None:
+        cmp_rows.append(["Masked bytes (auxdata)", int(masked["auxdata"])])
+    differing_bytes = comparison.get("differing_bytes")
+    if differing_bytes is not None:
+        cmp_rows.append(["Differing bytes", int(differing_bytes)])
+    auxdata_source = comparison.get("auxdata_source")
+    if auxdata_source:
+        cmp_rows.append(["Auxdata source", auxdata_source])
+    if cmp_rows:
+        blocks.append({"table": {"head": ["Field", "Value"], "rows": cmp_rows}})
+
+    # Table 3: Linked libraries (only when present)
+    libraries = comparison.get("linked_libraries") or {}
+    if libraries:
+        lib_rows = [[name, {"addr": addr}] for name, addr in sorted(libraries.items())][:20]
+        blocks.append({"table": {"head": ["Library", "Address"], "rows": lib_rows}})
+
+    # Paragraph: reason / detail for mismatches (tier C and any informative note)
+    reason = dep.get("reason") or comparison.get("detail") or ""
+    if reason:
+        blocks.append({"p": str(reason)[:600]})
+
+    return blocks[:6]
+
+
 # ------------------------------------------------------------------ provenance (08 1.4 label_key)
-def provenance(job: dict[str, Any], cands: list[dict[str, Any]], chain_state: dict[str, Any] | None) -> dict[str, Any]:
+def provenance(
+    job: dict[str, Any],
+    cands: list[dict[str, Any]],
+    chain_state: dict[str, Any] | None,
+    deployment: dict[str, Any] | None = None,
+    *,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Build the provenance sub-object for a finalized job.
+
+    For tier A and C the deployment dict (deployment.json written by the supervisor) is
+    required; for tier B it is ignored.  `today` defaults to UTC today and is used only
+    when chain_state has no pre-formatted date_text.
+    """
     t = kit_texts()["tier_labels"]
     tier = job.get("tier")
     address = job.get("address")
     args = job.get("source_args") or {}
     cand = cands[0] if cands else {}
-    if tier in ("A", "C"):
-        raise AssemblyError("schema", f"tier {tier} needs the deployment check rows (05 13.1), not built yet")
+    _today = today or datetime.now(UTC).date()
+
+    if tier == "A":
+        if deployment is None:
+            raise AssemblyError("schema", "tier A provenance requires deployment.json data")
+        block = deployment.get("block") or (chain_state or {}).get("block")
+        unit = _tier_a_unit(chain_state, deployment)
+        date_str = _pin_date_text(chain_state, _today)
+        label = t["tier_a"].format(unit=unit, n=block, date=date_str)
+        code_hash = _bytecode_hash(chain_state)
+        as_of = {"block_or_slot": int(block) if block is not None else 0, "date": date_str}
+        prov: dict[str, Any] = {
+            "tier": "A",
+            "label": label,
+            "label_key": "tier_a",
+            "source_hash": job["source_pin"],
+            "address": address,
+            "code_hash": code_hash,
+            "as_of": as_of,
+            "upgrade_authority": "Renounced",
+            "upgradeable": False,
+        }
+        if isinstance(args, dict) and args.get("repo"):
+            prov["repo"] = str(args["repo"])[:200]
+            if job.get("resolved_commit"):
+                prov["commit"] = job["resolved_commit"]
+        return prov
+
+    if tier == "C":
+        if deployment is None:
+            raise AssemblyError("schema", "tier C provenance requires deployment.json data")
+        code_hash = _bytecode_hash(chain_state)
+        prov = {
+            "tier": "C",
+            "label": t["tier_c"],
+            "label_key": "tier_c",
+            "source_hash": job["source_pin"],
+        }
+        if address:
+            prov["address"] = address
+        if code_hash:
+            prov["code_hash"] = code_hash
+        if isinstance(args, dict) and args.get("repo"):
+            prov["repo"] = str(args["repo"])[:200]
+            if job.get("resolved_commit"):
+                prov["commit"] = job["resolved_commit"]
+        return prov
+
+    # Tier B (default)
     if address:
         third = bool(cand.get("explorer_verified") or cand.get("sourcify_match"))
         key = "tier_b_third_party" if third else "tier_b_not_checked"
@@ -133,7 +310,7 @@ def provenance(job: dict[str, Any], cands: list[dict[str, Any]], chain_state: di
     else:
         key = "tier_b_files"
     label = t[key].format(commit=(job.get("resolved_commit") or "")[:12])
-    prov: dict[str, Any] = {"tier": "B", "label": label, "label_key": key, "source_hash": job["source_pin"]}
+    prov = {"tier": "B", "label": label, "label_key": key, "source_hash": job["source_pin"]}
     if address:
         prov["address"] = address
     if isinstance(args, dict) and args.get("repo"):
@@ -218,6 +395,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     pin = PinnedSource.load(pin_root, job_id)
     cands = _json(work / "candidates.json", [])
     chain_state = _json(work / "chain_state.json", None)
+    deployment = _json(work / "deployment.json", None)
     file_leads: list[dict[str, Any]] = _json(pin_root / job_id / "leads.json", [])
     db_leads = await _rows(conn, "select * from leads where job_id = %s", (job_id,))
     lead_state = {r["lead_id"]: r for r in db_leads}
@@ -445,7 +623,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         "addr_url": getattr(rec, "addr_url", None) if rec else None,
         "deployed_noun": "contract", "source_id_label": "Bytecode hash" if job.get("address") else
         ("Commit" if job.get("resolved_commit") else "Files sha256"),
-        "provenance": provenance(job, cands, chain_state), "report_id": rid, "report_id_short": short,
+        "provenance": provenance(job, cands, chain_state, deployment, today=today), "report_id": rid, "report_id_short": short,
         "ownership_proven": bool(job["ownership_proven"]), "profile": profile,
         "requested_by": {"role": job["requester_role"], "label": ROLE_LABELS[job["requester_role"]]},
         "date": date_text(today), "expires": (today + timedelta(days=days)).isoformat(),
@@ -467,6 +645,9 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
                             "leads": [{"analyzer": n[:40], "version": v[:40], **r} for (n, v), r in sorted(per_tool.items())],
                             "withdrawn": withdrawn[:60], "injection_flags": []},
     }
+    # Verification blocks: present only for tier A and C (schema: "present for tier A and C only")
+    if job.get("tier") in ("A", "C") and deployment is not None:
+        report["verification"] = _build_verification_blocks(deployment, chain_state, job)
     validate(report)
     check_strings(report)
     extras = {"subject_candidates": subj_cands, "profile": profile, "final_ids": sorted(keymap.values()),
