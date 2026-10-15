@@ -257,3 +257,28 @@ def test_status_provenance_source_never_echoes_input_kind(source_kind):
     body = start_status._build_status_response(_tiered_job(source_kind), "json", steps=[])
     assert body["provenance"]["source"] is None
     assert list(STATUS_SCHEMA.iter_errors(body)) == []
+
+
+# ── error.detail: omit when null (tools.v1.json error.detail is an optional string) ──
+
+
+def _errored_job(error_code: str, error_detail):
+    job = _tiered_job("repo")
+    job.update(state="insufficient_source", error_code=error_code, error_detail=error_detail)
+    return job
+
+
+def test_status_error_omits_detail_when_null():
+    # E_SOURCE_NOT_FOUND with no detail text: `detail: null` would fail the schema (type string),
+    # so the key must be omitted, not sent as null (a validating MCP client rejects the response).
+    body = start_status._build_status_response(_errored_job("E_SOURCE_NOT_FOUND", None), "json", steps=[])
+    assert body["error"] == {"code": "E_SOURCE_NOT_FOUND"}
+    assert "detail" not in body["error"]
+    assert list(STATUS_SCHEMA.iter_errors(body)) == []
+
+
+def test_status_error_keeps_detail_when_present():
+    body = start_status._build_status_response(
+        _errored_job("E_BUILD_FAILED", "solc: file not found"), "json", steps=[])
+    assert body["error"] == {"code": "E_BUILD_FAILED", "detail": "solc: file not found"}
+    assert list(STATUS_SCHEMA.iter_errors(body)) == []

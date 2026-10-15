@@ -60,7 +60,13 @@ async def run_migrations(dsn: str, migrations_dir: Path = MIGRATIONS_DIR) -> lis
 
 if __name__ == "__main__":  # pragma: no cover
     import asyncio
+    import os
     import sys
 
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(run_migrations(sys.argv[1]))
+    # `python -m soken_review.db.migrate [dsn]`; a service unit passes the DSN through the
+    # environment instead (SOKEN_DATABASE_URL), never on a command line visible in `ps`.
+    dsn = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("SOKEN_DATABASE_URL")
+    if not dsn:
+        sys.exit("usage: python -m soken_review.db.migrate [dsn]  (or set SOKEN_DATABASE_URL)")
+    asyncio.run(run_migrations(dsn))

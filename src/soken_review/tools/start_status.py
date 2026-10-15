@@ -692,12 +692,15 @@ def _build_status_response(
     out["map_status"] = job.get("map_status", "none")
     out["analyzer_degraded"] = job.get("analyzer_degraded", False)
 
-    # Error info for terminal states
+    # Error info for terminal states. `detail` is an optional schema string (tools.v1.json
+    # error object: all props `type: string`, additionalProperties false) — a terminal error
+    # with a code but no detail (e.g. E_SOURCE_NOT_FOUND) must OMIT detail, not send null, or
+    # a validating MCP client rejects the whole status response.
     if job.get("error_code"):
-        out["error"] = {
-            "code": job["error_code"],
-            "detail": job.get("error_detail"),
-        }
+        err = {"code": job["error_code"]}
+        if job.get("error_detail") is not None:
+            err["detail"] = job["error_detail"]
+        out["error"] = err
 
     # Drafts: every draft (03 §4.2); server drafts carry flag and location while needs_text
     out["drafts"] = [_draft_row(d) for d in (drafts or [])][:60]
