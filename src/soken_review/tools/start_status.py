@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -642,6 +643,23 @@ def _provenance_source(job: dict[str, Any], steps: list[dict[str, Any]]) -> str 
     return "bytecode_only" if job.get("tier") == "D" else None
 
 
+_ERROR_DETAIL_MAX_CHARS = 2000
+
+
+def _error_detail_text(detail: Any) -> str:
+    """`error.detail` on the wire is a string (tools.v1.json). The supervisor stores structured
+    details (e.g. {"reason": "missing_import", "packages": [...]}); they are serialized compactly
+    with sorted keys so a client sees one stable string, capped so a stderr dump cannot bloat
+    the status response."""
+    if isinstance(detail, str):
+        text = detail
+    elif isinstance(detail, (dict, list)):
+        text = json.dumps(detail, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    else:
+        text = str(detail)
+    return text[:_ERROR_DETAIL_MAX_CHARS]
+
+
 def _build_status_response(
     job: dict[str, Any],
     response_format: str,
@@ -699,7 +717,7 @@ def _build_status_response(
     if job.get("error_code"):
         err = {"code": job["error_code"]}
         if job.get("error_detail") is not None:
-            err["detail"] = job["error_detail"]
+            err["detail"] = _error_detail_text(job["error_detail"])
         out["error"] = err
 
     # Drafts: every draft (03 §4.2); server drafts carry flag and location while needs_text
