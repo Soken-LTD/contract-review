@@ -346,3 +346,35 @@ def test_dir_usage_counts_blocks_and_fails_closed(tmp_path):
             assert gm.dir_usage(str(tmp_path)) is None
     finally:
         locked.chmod(0o755)
+
+
+def test_dir_usage_skips_entries_that_vanish_during_the_walk(tmp_path, monkeypatch):
+    """git fetch renames tmp_pack_* and index-pack deletes files while the watcher polls; an
+    entry listed by os.walk and gone by lstat is simply absent (counts nothing). Only an entry
+    that exists but cannot be read keeps the fail-closed None (seen live 2026-10-15: a
+    30 MiB fetch ended EXIT_SIZE fetch_bytes on one run and passed on the next)."""
+    (tmp_path / "keep").write_bytes(b"x" * 4096)
+    (tmp_path / "gone").write_bytes(b"y" * 4096)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "gone_dir_file").write_bytes(b"z")
+    real_lstat = os.lstat
+
+    def flaky_lstat(p, *a, **kw):
+        if os.path.basename(p) == "gone":
+            raise FileNotFoundError(2, "No such file or directory", p)
+        return real_lstat(p, *a, **kw)
+    monkeypatch.setattr(os, "lstat", flaky_lstat)
+    used, inodes = gm.dir_usage(str(tmp_path))
+    assert inodes == 3 and used >= 4096           # keep, sub, sub/gone_dir_file; "gone" skipped
+
+    def vanished_dir_scandir(p, *a, **kw):
+        raise FileNotFoundError(2, "No such file or directory", p)
+    monkeypatch.setattr(os, "lstat", real_lstat)
+    real_scandir = os.scandir
+    monkeypatch.setattr(os, "scandir", lambda p=".", *a, **kw: vanished_dir_scandir(p) if str(p).endswith("sub") else real_scandir(p, *a, **kw))
+    used, inodes = gm.dir_usage(str(tmp_path))
+    assert inodes == 3                            # keep, gone, sub counted; the vanished subtree is not an error
+
+    monkeypatch.setattr(os, "scandir", real_scandir)
+    monkeypatch.setattr(os, "lstat", lambda p, *a, **kw: (_ for _ in ()).throw(PermissionError(13, "denied", p)))
+    assert gm.dir_usage(str(tmp_path)) is None     # unreadable but present: still over budget

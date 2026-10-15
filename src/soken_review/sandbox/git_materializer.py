@@ -158,14 +158,28 @@ def _raise(exc: OSError) -> None:
     raise exc
 
 
+def _raise_unless_vanished(exc: OSError) -> None:
+    """os.walk error hook: a directory that disappeared between listing and scandir counts as
+    nothing (git renames and deletes pack temp files while the watcher polls); anything else
+    (permissions, I/O) is a real error."""
+    if not isinstance(exc, FileNotFoundError):
+        raise exc
+
+
 def dir_usage(path: str) -> tuple[int, int] | None:
-    """(allocated bytes by st_blocks, inode count) under path; None if any entry is unreadable
-    (the caller treats None as over budget). Tiny files count their blocks, hardlinks count twice."""
+    """(allocated bytes by st_blocks, inode count) under path; None if any entry that exists is
+    unreadable (the caller treats None as over budget). An entry that vanishes between the
+    listing and its lstat counts nothing: git fetch renames tmp_pack_* and index-pack deletes
+    files while the watcher polls, so a vanished entry is the normal case, not an over-budget
+    signal. Tiny files count their blocks, hardlinks count twice."""
     total = inodes = 0
     try:
-        for root, dirs, files in os.walk(path, onerror=_raise, followlinks=False):
+        for root, dirs, files in os.walk(path, onerror=_raise_unless_vanished, followlinks=False):
             for name in (*dirs, *files):
-                st = os.lstat(os.path.join(root, name))
+                try:
+                    st = os.lstat(os.path.join(root, name))
+                except FileNotFoundError:
+                    continue
                 total += st.st_blocks * 512
                 inodes += 1
     except OSError:
