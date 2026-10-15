@@ -106,7 +106,7 @@ async function main() {
         if (el.tagName === 'DIV' && !el.className) continue;  // paged.js wrappers span the column box
         const r = el.getBoundingClientRect();
         if (r.width === 0 && r.height === 0) continue;
-        if (!out.overflow && r.right > box.right + 1) out.overflow = { page: i + 1, tag: el.tagName, cls: String(el.className).slice(0, 40), text: (el.textContent || '').slice(0, 60) };
+        if (!out.overflow && r.right > box.right + 1) out.overflow = { page: i + 1, tag: el.tagName, cls: String(el.className).slice(0, 40), text: (el.textContent || '').slice(0, 60), delta: Math.round((r.right - box.right) * 100) / 100, left: Math.round((r.left - box.left) * 100) / 100, width: Math.round(r.width), boxw: Math.round(box.width), split: el.getAttribute('data-split-from') ? 1 : 0 };
         if (r.bottom > bottom) bottom = r.bottom;
       }
       const used = (Math.min(bottom, box.bottom) - box.top) / box.height;
