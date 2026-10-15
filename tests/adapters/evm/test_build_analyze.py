@@ -1667,3 +1667,85 @@ class TestForgeB4LiveFailures:
         br = build_mod.build(cand, work_dir=tmp_path / "work")
         assert br.build_notes.get("b4_rejected") == "forge_unavailable"
         assert "forge_rc" not in br.build_notes and "forge_stderr_head" not in br.build_notes
+
+
+class TestForgeDynamicTestLinking:
+    """Live v4-core run (2026-10-15): forge 1.8.5 defaults `dynamic_test_linking = true`, which
+    rewrites test helpers (test/utils/Deployers.sol) and adds synthetic `foundry-pp/*.sol` sources
+    to build-info. The B4 gate rightly rejected them as sources_differ, but the reason was opaque
+    and the whole repo fell back to B3 (which cannot see lib/ deps)."""
+
+    def _run_forge_argv(self, monkeypatch, tmp_path) -> list[str]:
+        import subprocess
+
+        import soken_review.adapters.evm.build as build_mod
+        monkeypatch.setattr(build_mod, "_BUILD_IMAGE", "soken/evm-analyze:test")
+        monkeypatch.setattr(build_mod, "sandbox_writable_dir", lambda p: (p.mkdir(parents=True, exist_ok=True), p)[1])
+        captured: dict = {}
+
+        def fake_docker_argv(**kw):
+            captured.update(kw)
+            return ["true"]
+        monkeypatch.setattr(build_mod, "docker_argv", fake_docker_argv)
+        proc_mock = type("P", (), {"communicate": lambda self, timeout=None: (b"", b""), "returncode": 1})()
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc_mock)
+        (tmp_path / "src").mkdir()
+
+        class _FakeCache:
+            _root = tmp_path / "cache"
+        build_mod.forge_build_repo(str(tmp_path / "src"), tmp_path / "out",
+                                   tmp_path / "linux-amd64" / "solc-0.8.26", _FakeCache())  # type: ignore[arg-type]
+        return captured["command"]
+
+    def test_forge_runs_without_dynamic_test_linking(self, monkeypatch, tmp_path):
+        cmd = self._run_forge_argv(monkeypatch, tmp_path)
+        assert cmd[:2] == ["forge", "build"]
+        assert "--no-dynamic-test-linking" in cmd
+        assert "--offline" in cmd and "--no-cache" in cmd and "--no-auto-detect" in cmd    # unchanged
+
+    def test_gate_reports_which_source_failed_and_why(self):
+        content = "pragma solidity ^0.8.26;\n"
+        tree = {"src/Foo.sol": content, "test/utils/Deployers.sol": "original\n"}
+        cases = {
+            "synthetic": ({"src/Foo.sol": content, "foundry-pp/DeployHelper74.sol": "x\n"}, "missing_in_tree", "foundry-pp/DeployHelper74.sol"),
+            "rewritten": ({"src/Foo.sol": content, "test/utils/Deployers.sol": "preprocessed\n"}, "content_differs", "test/utils/Deployers.sol"),
+            "urls": ({"src/Foo.sol": {"urls": ["file:///etc/passwd"]}}, "not_inline_content", "src/Foo.sol"),
+            "forward": ({"test/utils/Deployers.sol": "original\n"}, "scope_file_absent", "src/Foo.sol"),
+        }
+        for name, (sources, kind, path) in cases.items():
+            forge_input = {"sources": {p: (v if isinstance(v, dict) else {"content": v}) for p, v in sources.items()}}
+            diag: dict = {}
+            ok, reason = _forge_sources_match_pin(forge_input, {"src/Foo.sol": content}, tree, diag=diag)
+            assert (ok, reason) == (False, "sources_differ"), name
+            assert diag == {"b4_detail": f"{kind}:{path}"}, name
+        diag = {}
+        ok, reason = _forge_sources_match_pin({"sources": {"src/Foo.sol": {"content": content}}},
+                                              {"src/Foo.sol": content}, tree, diag=diag)
+        assert (ok, reason, diag) == (True, "", {})
+
+    def test_gate_detail_reaches_build_notes(self, monkeypatch, tmp_path):
+        import soken_review.adapters.evm.build as build_mod
+        from soken_review.adapters.base import BuildResult, Candidate, Compiler
+        content = "pragma solidity ^0.8.26;\ncontract C {}\n"
+        (tmp_path / "src_tree").mkdir()
+        cand = Candidate(
+            provider="repo",  # type: ignore[arg-type]
+            files={"src/C.sol": content}, sha256="abc", language="solidity",
+            compiler=Compiler(version="0.8.26+commit.8a97fa7a", version_pinned_by="config"),
+            settings={}, std_json_input=None, entry_contract=None, src_tree_dir=str(tmp_path / "src_tree"),
+        )
+        cand._full_tree = {"src/C.sol": content}  # type: ignore[attr-defined]
+        forge_input = build_mod.ForgeStdInput(
+            std_input={"language": "Solidity", "settings": {},
+                       "sources": {"src/C.sol": {"content": content}, "foundry-pp/DeployHelper1.sol": {"content": "x"}}},
+            libraries_unverified=False, had_unknown_settings=False)
+        monkeypatch.setattr(build_mod, "forge_build_repo", lambda *a, **kw: (forge_input, ""))
+        monkeypatch.setattr(build_mod, "_DIRECT_SOLC", True)
+        monkeypatch.setattr(build_mod, "_run_build", lambda *a, **kw: BuildResult(candidate=cand, status="ok", nsloc=1))
+        monkeypatch.setattr(build_mod, "SolcCache", lambda *a, **kw: type("C", (), {"_root": tmp_path, "binary": lambda self, v: tmp_path / "linux-amd64" / "solc"})())
+
+        br = build_mod.build(cand, work_dir=tmp_path / "work")
+
+        assert br.build_notes["b4_rejected"] == "sources_differ"
+        assert br.build_notes["b4_detail"] == "missing_in_tree:foundry-pp/DeployHelper1.sol"
+        assert cand.untrusted_inputs is True
