@@ -51,6 +51,11 @@ jobs:
             --forbid HIGHSECRET --forbid "drift clock write" --keep out tests/report/live/gblin.report.json
           uv run python scripts/render_sandbox_check.py --image soken/soken-render:ci --keep out \
             tests/report/live/weth9.report.json
+          # Demo set (branch demo/render-*): every assembled report.json under tests/report/live/demo/.
+          if ls tests/report/live/demo/*.report.json >/dev/null 2>&1; then
+            uv run python scripts/render_sandbox_check.py --image soken/soken-render:ci --keep out \
+              tests/report/live/demo/*.report.json
+          fi
           for f in out/*.pdf; do pdffonts "$f" | tail -n +3; done | sort -u
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()

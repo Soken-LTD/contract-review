@@ -1,0 +1,381 @@
+{
+ "meta": {
+  "report_type": "automated",
+  "kind": "Smart contract security review",
+  "subject": "WMATIC",
+  "subject_source": "verified_name",
+  "chain": "evm",
+  "network": "Polygon Mainnet (137)",
+  "chain_id": 137,
+  "explorer": null,
+  "addr_url": null,
+  "deployed_noun": "contract",
+  "source_id_label": "Bytecode hash",
+  "provenance": {
+   "tier": "C",
+   "label": "Source does not match deployed code",
+   "label_key": "tier_c",
+   "source_hash": "809ef02c29b1955b815e3f35ad4f502ad34e3aad81fef53444137354ca94cdce",
+   "address": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+   "code_hash": "sha256:8fed8796bbfae1aaaead209063306112f355df34a9f6ba78d23c66e13fc19502"
+  },
+  "report_id": "sgwoqgyc2qqgcckqws62qucaea",
+  "report_id_short": "sgwoqgyc2q",
+  "ownership_proven": false,
+  "profile": "public_review",
+  "requested_by": {
+   "role": "third_party_public_code",
+   "label": "Third party reviewing public code"
+  },
+  "date": "15 October 2026",
+  "expires": "2026-11-14",
+  "out_name": "Automated_Review_sgwoqgyc2q.pdf"
+ },
+ "facts": {},
+ "summary": {
+  "kpis": [
+   {
+    "key": "files",
+    "value": 1,
+    "label": "Files in scope"
+   },
+   {
+    "key": "nsloc",
+    "value": 50,
+    "label": "Source lines in scope"
+   },
+   {
+    "key": "leads",
+    "value": 1,
+    "label": "Analyzer leads"
+   },
+   {
+    "key": "promoted",
+    "value": 0,
+    "label": "Leads promoted to findings"
+   },
+   {
+    "key": "areas_returned",
+    "value": "1 of 23",
+    "label": "Areas with code returned"
+   },
+   {
+    "key": "deployed_code",
+    "value": "Not checked",
+    "label": "Deployed code"
+   }
+  ]
+ },
+ "scope": {
+  "head": [
+   "Unit",
+   "File",
+   "nSLOC",
+   "Address"
+  ],
+  "files": [
+   {
+    "name": "WMATIC",
+    "file": "WMATIC.sol",
+    "nsloc": 50,
+    "addr": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"
+   }
+  ],
+  "out_of_scope": []
+ },
+ "architecture": {
+  "title": "Units in scope and their external dependencies",
+  "cols": 4,
+  "rows": 1,
+  "edges": [],
+  "nodes": [
+   {
+    "id": "no_map",
+    "label": "map",
+    "kind": "scope",
+    "col": 0,
+    "row": 0
+   }
+  ]
+ },
+ "roles": {
+  "rows": [],
+  "notes": []
+ },
+ "method": [
+  {
+   "step": "Source pinning",
+   "detail": "1 file pinned by sha256; source pin 809ef02c29b1955b"
+  },
+  {
+   "step": "Static analysis",
+   "detail": "slither 0.11.6: 1 leads."
+  },
+  {
+   "step": "Finding selection",
+   "detail": "0 findings accepted, 0 withdrawn"
+  },
+  {
+   "step": "Server checks",
+   "detail": "Every code quote matched to the pinned source; text and number rules on every finding; severity mapped from the classifications through the fixed matrix"
+  },
+  {
+   "step": "Deployment check",
+   "detail": "Not run: the deployed code was not compared with a rebuild of the source"
+  }
+ ],
+ "severity_scale": [
+  {
+   "severity": "Critical",
+   "text": "Loss or permanent freeze of holder funds with no unusual precondition"
+  },
+  {
+   "severity": "High",
+   "text": "Loss or freeze under realistic preconditions"
+  },
+  {
+   "severity": "Medium",
+   "text": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol"
+  },
+  {
+   "severity": "Low",
+   "text": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification"
+  },
+  {
+   "severity": "Informational",
+   "text": "Documentation, hardening and integration notes"
+  }
+ ],
+ "findings": [],
+ "review_coverage": {
+  "areas": [
+   {
+    "area_id": "evm.access_control",
+    "area": "Access control",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.selfdestruct",
+    "area": "Selfdestruct",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.centralization",
+    "area": "Centralization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.initialization",
+    "area": "Upgradeability initialization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.storage_authority",
+    "area": "Upgradeability storage authority",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.delegatecall_proxy",
+    "area": "Delegatecall proxy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.storage",
+    "area": "Storage",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.reentrancy",
+    "area": "Reentrancy",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "evm.ordering_mev",
+    "area": "Ordering MEV",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.unchecked_call",
+    "area": "Unchecked call",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.arithmetic_precision",
+    "area": "Arithmetic precision",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.accounting_logic",
+    "area": "Accounting logic",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.token_integration",
+    "area": "Token integration",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.oracle_manipulation",
+    "area": "Oracle manipulation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.randomness",
+    "area": "Randomness",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.timestamp",
+    "area": "Timestamp",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.signature_replay",
+    "area": "Signature replay",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.dos",
+    "area": "DoS",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.input_validation",
+    "area": "Input validation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.compiler_bug",
+    "area": "Compiler bug",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.other",
+    "area": "Other",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.events",
+    "area": "Events",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.best_practice",
+    "area": "Best practice",
+    "code_returned": "No",
+    "result": "Not covered"
+   }
+  ],
+  "leads": [
+   {
+    "analyzer": "slither",
+    "version": "0.11.6",
+    "leads": 1,
+    "promoted": 0,
+    "dismissed": 0
+   }
+  ],
+  "withdrawn": [],
+  "injection_flags": []
+ },
+ "verification": [
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Address",
+      {
+       "addr": "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270"
+      }
+     ],
+     [
+      "Chain / network",
+      "Polygon Mainnet (137)"
+     ],
+     [
+      "Block",
+      95580235
+     ],
+     [
+      "On-chain code hash",
+      "sha256:8fed8796bbfae1aaaead209063306112f355df34a9f6ba78d23c66e13fc19502"
+     ],
+     [
+      "Entry contract",
+      {
+       "src": "WMATIC"
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Outcome",
+      "mismatch"
+     ],
+     [
+      "Local length",
+      3204
+     ],
+     [
+      "On-chain length",
+      3000
+     ],
+     [
+      "Masked bytes (immutables)",
+      0
+     ],
+     [
+      "Masked bytes (links)",
+      0
+     ],
+     [
+      "Masked bytes (auxdata)",
+      43
+     ],
+     [
+      "Differing bytes",
+      204
+     ],
+     [
+      "Auxdata source",
+      "x2"
+     ]
+    ]
+   }
+  }
+ ]
+}

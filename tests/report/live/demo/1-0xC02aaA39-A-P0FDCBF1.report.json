@@ -1,0 +1,386 @@
+{
+ "meta": {
+  "report_type": "automated",
+  "kind": "Smart contract security review",
+  "subject": "WETH9",
+  "subject_source": "verified_name",
+  "chain": "evm",
+  "network": "Ethereum Mainnet (1)",
+  "chain_id": 1,
+  "explorer": null,
+  "addr_url": null,
+  "deployed_noun": "contract",
+  "source_id_label": "Bytecode hash",
+  "provenance": {
+   "tier": "A",
+   "label": "Source matched to deployed code at block 26198600 (15 October 2026)",
+   "label_key": "tier_a",
+   "source_hash": "385fbe25395c0a78c75f2cdbc985a9257ca11d15804bfe1022fc9763018c920e",
+   "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+   "code_hash": "sha256:5566bf50796faf93c9b6f6adacd3b32c70bfe16b48ffc59db6cd144cbdc89739",
+   "as_of": {
+    "block_or_slot": 26198600,
+    "date": "15 October 2026"
+   },
+   "upgrade_authority": "NotChecked"
+  },
+  "report_id": "6ec4a2cescy4iqeyieyyysyk6i",
+  "report_id_short": "6ec4a2cesc",
+  "ownership_proven": false,
+  "profile": "public_review",
+  "requested_by": {
+   "role": "third_party_public_code",
+   "label": "Third party reviewing public code"
+  },
+  "date": "15 October 2026",
+  "expires": "2026-11-14",
+  "out_name": "Automated_Review_6ec4a2cesc.pdf"
+ },
+ "facts": {},
+ "summary": {
+  "kpis": [
+   {
+    "key": "files",
+    "value": 1,
+    "label": "Files in scope"
+   },
+   {
+    "key": "nsloc",
+    "value": 50,
+    "label": "Source lines in scope"
+   },
+   {
+    "key": "leads",
+    "value": 1,
+    "label": "Analyzer leads"
+   },
+   {
+    "key": "promoted",
+    "value": 0,
+    "label": "Leads promoted to findings"
+   },
+   {
+    "key": "areas_returned",
+    "value": "1 of 23",
+    "label": "Areas with code returned"
+   },
+   {
+    "key": "deployed_code",
+    "value": "Not checked",
+    "label": "Deployed code"
+   }
+  ]
+ },
+ "scope": {
+  "head": [
+   "Unit",
+   "File",
+   "nSLOC",
+   "Address"
+  ],
+  "files": [
+   {
+    "name": "WETH9",
+    "file": "WETH9.sol",
+    "nsloc": 50,
+    "addr": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+   }
+  ],
+  "out_of_scope": []
+ },
+ "architecture": {
+  "title": "Units in scope and their external dependencies",
+  "cols": 4,
+  "rows": 1,
+  "edges": [],
+  "nodes": [
+   {
+    "id": "no_map",
+    "label": "map",
+    "kind": "scope",
+    "col": 0,
+    "row": 0
+   }
+  ]
+ },
+ "roles": {
+  "rows": [],
+  "notes": []
+ },
+ "method": [
+  {
+   "step": "Source pinning",
+   "detail": "1 file pinned by sha256; source pin 385fbe25395c0a78"
+  },
+  {
+   "step": "Static analysis",
+   "detail": "slither 0.11.6: 1 leads."
+  },
+  {
+   "step": "Finding selection",
+   "detail": "0 findings accepted, 0 withdrawn"
+  },
+  {
+   "step": "Server checks",
+   "detail": "Every code quote matched to the pinned source; text and number rules on every finding; severity mapped from the classifications through the fixed matrix"
+  },
+  {
+   "step": "Deployment check",
+   "detail": "Not run: the deployed code was not compared with a rebuild of the source"
+  }
+ ],
+ "severity_scale": [
+  {
+   "severity": "Critical",
+   "text": "Loss or permanent freeze of holder funds with no unusual precondition"
+  },
+  {
+   "severity": "High",
+   "text": "Loss or freeze under realistic preconditions"
+  },
+  {
+   "severity": "Medium",
+   "text": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol"
+  },
+  {
+   "severity": "Low",
+   "text": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification"
+  },
+  {
+   "severity": "Informational",
+   "text": "Documentation, hardening and integration notes"
+  }
+ ],
+ "findings": [],
+ "review_coverage": {
+  "areas": [
+   {
+    "area_id": "evm.access_control",
+    "area": "Access control",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.selfdestruct",
+    "area": "Selfdestruct",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.centralization",
+    "area": "Centralization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.initialization",
+    "area": "Upgradeability initialization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.storage_authority",
+    "area": "Upgradeability storage authority",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.delegatecall_proxy",
+    "area": "Delegatecall proxy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.storage",
+    "area": "Storage",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.reentrancy",
+    "area": "Reentrancy",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "evm.ordering_mev",
+    "area": "Ordering MEV",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.unchecked_call",
+    "area": "Unchecked call",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.arithmetic_precision",
+    "area": "Arithmetic precision",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.accounting_logic",
+    "area": "Accounting logic",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.token_integration",
+    "area": "Token integration",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.oracle_manipulation",
+    "area": "Oracle manipulation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.randomness",
+    "area": "Randomness",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.timestamp",
+    "area": "Timestamp",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.signature_replay",
+    "area": "Signature replay",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.dos",
+    "area": "DoS",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.input_validation",
+    "area": "Input validation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.compiler_bug",
+    "area": "Compiler bug",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.other",
+    "area": "Other",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.events",
+    "area": "Events",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.best_practice",
+    "area": "Best practice",
+    "code_returned": "No",
+    "result": "Not covered"
+   }
+  ],
+  "leads": [
+   {
+    "analyzer": "slither",
+    "version": "0.11.6",
+    "leads": 1,
+    "promoted": 0,
+    "dismissed": 0
+   }
+  ],
+  "withdrawn": [],
+  "injection_flags": []
+ },
+ "verification": [
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Address",
+      {
+       "addr": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+      }
+     ],
+     [
+      "Chain / network",
+      "Ethereum Mainnet (1)"
+     ],
+     [
+      "Block",
+      26198600
+     ],
+     [
+      "On-chain code hash",
+      "sha256:5566bf50796faf93c9b6f6adacd3b32c70bfe16b48ffc59db6cd144cbdc89739"
+     ],
+     [
+      "Entry contract",
+      {
+       "src": "WETH9"
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Outcome",
+      "metadata_only"
+     ],
+     [
+      "Local length",
+      3124
+     ],
+     [
+      "On-chain length",
+      3124
+     ],
+     [
+      "Masked bytes (immutables)",
+      0
+     ],
+     [
+      "Masked bytes (links)",
+      0
+     ],
+     [
+      "Masked bytes (auxdata)",
+      43
+     ],
+     [
+      "Differing bytes",
+      0
+     ],
+     [
+      "Auxdata source",
+      "x2"
+     ]
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,421 @@
+{
+ "meta": {
+  "report_type": "automated",
+  "kind": "Smart contract security review",
+  "subject": "TransparentUpgradeableProxy",
+  "subject_source": "verified_name",
+  "chain": "evm",
+  "network": "Arbitrum One Mainnet (42161)",
+  "chain_id": 42161,
+  "explorer": null,
+  "addr_url": null,
+  "deployed_noun": "contract",
+  "source_id_label": "Bytecode hash",
+  "provenance": {
+   "tier": "A",
+   "label": "Source matched to deployed code at block 515090737 (15 October 2026)",
+   "label_key": "tier_a",
+   "source_hash": "583097fa938ffd85954cb7549959ad38f2d5418126f23a1e0965506deff48e1a",
+   "address": "0x912CE59144191C1204E64559FE8253a0e49E6548",
+   "code_hash": "sha256:5673f7712b62a6106cbc2f1ce59b0894f537065ad84197f7b875cac051161ff7",
+   "as_of": {
+    "block_or_slot": 515090737,
+    "date": "15 October 2026"
+   },
+   "upgrade_authority": "NotChecked"
+  },
+  "report_id": "qaask4yykmqgwouqcgmaomuiaw",
+  "report_id_short": "qaask4yykm",
+  "ownership_proven": false,
+  "profile": "public_review",
+  "requested_by": {
+   "role": "third_party_public_code",
+   "label": "Third party reviewing public code"
+  },
+  "date": "15 October 2026",
+  "expires": "2026-11-14",
+  "out_name": "Automated_Review_qaask4yykm.pdf"
+ },
+ "facts": {},
+ "summary": {
+  "kpis": [
+   {
+    "key": "files",
+    "value": 8,
+    "label": "Files in scope"
+   },
+   {
+    "key": "nsloc",
+    "value": 288,
+    "label": "Source lines in scope"
+   },
+   {
+    "key": "leads",
+    "value": 15,
+    "label": "Analyzer leads"
+   },
+   {
+    "key": "promoted",
+    "value": 0,
+    "label": "Leads promoted to findings"
+   },
+   {
+    "key": "areas_returned",
+    "value": "2 of 23",
+    "label": "Areas with code returned"
+   },
+   {
+    "key": "deployed_code",
+    "value": "Not checked",
+    "label": "Deployed code"
+   }
+  ]
+ },
+ "scope": {
+  "head": [
+   "Unit",
+   "File",
+   "nSLOC",
+   "Address"
+  ],
+  "files": [
+   {
+    "name": "draft-IERC1822",
+    "file": "node_modules/@openzeppelin/contracts/interfaces/draft-IERC1822.sol",
+    "nsloc": 4
+   },
+   {
+    "name": "ERC1967Proxy",
+    "file": "node_modules/@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol",
+    "nsloc": 11
+   },
+   {
+    "name": "ERC1967Upgrade",
+    "file": "node_modules/@openzeppelin/contracts/proxy/ERC1967/ERC1967Upgrade.sol",
+    "nsloc": 84
+   },
+   {
+    "name": "Proxy",
+    "file": "node_modules/@openzeppelin/contracts/proxy/Proxy.sol",
+    "nsloc": 29
+   },
+   {
+    "name": "IBeacon",
+    "file": "node_modules/@openzeppelin/contracts/proxy/beacon/IBeacon.sol",
+    "nsloc": 4
+   },
+   {
+    "name": "TransparentUpgradeableProxy",
+    "file": "node_modules/@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol",
+    "nsloc": 40,
+    "addr": "0x912CE59144191C1204E64559FE8253a0e49E6548"
+   },
+   {
+    "name": "Address",
+    "file": "node_modules/@openzeppelin/contracts/utils/Address.sol",
+    "nsloc": 81
+   },
+   {
+    "name": "StorageSlot",
+    "file": "node_modules/@openzeppelin/contracts/utils/StorageSlot.sol",
+    "nsloc": 35
+   }
+  ],
+  "out_of_scope": []
+ },
+ "architecture": {
+  "title": "Units in scope and their external dependencies",
+  "cols": 4,
+  "rows": 1,
+  "edges": [],
+  "nodes": [
+   {
+    "id": "no_map",
+    "label": "map",
+    "kind": "scope",
+    "col": 0,
+    "row": 0
+   }
+  ]
+ },
+ "roles": {
+  "rows": [],
+  "notes": []
+ },
+ "method": [
+  {
+   "step": "Source pinning",
+   "detail": "8 files pinned by sha256; source pin 583097fa938ffd85"
+  },
+  {
+   "step": "Static analysis",
+   "detail": "slither 0.11.6: 15 leads."
+  },
+  {
+   "step": "Finding selection",
+   "detail": "0 findings accepted, 0 withdrawn"
+  },
+  {
+   "step": "Server checks",
+   "detail": "Every code quote matched to the pinned source; text and number rules on every finding; severity mapped from the classifications through the fixed matrix"
+  },
+  {
+   "step": "Deployment check",
+   "detail": "Not run: the deployed code was not compared with a rebuild of the source"
+  }
+ ],
+ "severity_scale": [
+  {
+   "severity": "Critical",
+   "text": "Loss or permanent freeze of holder funds with no unusual precondition"
+  },
+  {
+   "severity": "High",
+   "text": "Loss or freeze under realistic preconditions"
+  },
+  {
+   "severity": "Medium",
+   "text": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol"
+  },
+  {
+   "severity": "Low",
+   "text": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification"
+  },
+  {
+   "severity": "Informational",
+   "text": "Documentation, hardening and integration notes"
+  }
+ ],
+ "findings": [],
+ "review_coverage": {
+  "areas": [
+   {
+    "area_id": "evm.access_control",
+    "area": "Access control",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.selfdestruct",
+    "area": "Selfdestruct",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.centralization",
+    "area": "Centralization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.initialization",
+    "area": "Upgradeability initialization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.storage_authority",
+    "area": "Upgradeability storage authority",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.delegatecall_proxy",
+    "area": "Delegatecall proxy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.storage",
+    "area": "Storage",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.reentrancy",
+    "area": "Reentrancy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.ordering_mev",
+    "area": "Ordering MEV",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.unchecked_call",
+    "area": "Unchecked call",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.arithmetic_precision",
+    "area": "Arithmetic precision",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.accounting_logic",
+    "area": "Accounting logic",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.token_integration",
+    "area": "Token integration",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.oracle_manipulation",
+    "area": "Oracle manipulation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.randomness",
+    "area": "Randomness",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.timestamp",
+    "area": "Timestamp",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.signature_replay",
+    "area": "Signature replay",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.dos",
+    "area": "DoS",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.input_validation",
+    "area": "Input validation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.compiler_bug",
+    "area": "Compiler bug",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.other",
+    "area": "Other",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "evm.events",
+    "area": "Events",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.best_practice",
+    "area": "Best practice",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   }
+  ],
+  "leads": [
+   {
+    "analyzer": "slither",
+    "version": "0.11.6",
+    "leads": 15,
+    "promoted": 0,
+    "dismissed": 0
+   }
+  ],
+  "withdrawn": [],
+  "injection_flags": []
+ },
+ "verification": [
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Address",
+      {
+       "addr": "0x912ce59144191c1204e64559fe8253a0e49e6548"
+      }
+     ],
+     [
+      "Chain / network",
+      "Arbitrum One Mainnet (42161)"
+     ],
+     [
+      "Block",
+      515090737
+     ],
+     [
+      "On-chain code hash",
+      "sha256:5673f7712b62a6106cbc2f1ce59b0894f537065ad84197f7b875cac051161ff7"
+     ],
+     [
+      "Entry contract",
+      {
+       "src": "TransparentUpgradeableProxy"
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Outcome",
+      "metadata_only"
+     ],
+     [
+      "Local length",
+      2593
+     ],
+     [
+      "On-chain length",
+      2593
+     ],
+     [
+      "Masked bytes (immutables)",
+      0
+     ],
+     [
+      "Masked bytes (links)",
+      0
+     ],
+     [
+      "Masked bytes (auxdata)",
+      53
+     ],
+     [
+      "Differing bytes",
+      0
+     ],
+     [
+      "Auxdata source",
+      "x2"
+     ]
+    ]
+   }
+  }
+ ]
+}
