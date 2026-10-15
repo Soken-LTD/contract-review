@@ -137,6 +137,29 @@ def build_input(case: dict[str, Any], tree: Path) -> tuple[list[dict[str, str]] 
     return inline, f"{len(inline)} files, {total} chars"
 
 
+# ── repo route ──────────────────────────────────────────────────────────────
+
+
+def repo_source(case: dict[str, Any]) -> dict[str, Any]:
+    """`review_start` source.kind=repo payload from a case's pinned repo+commit (05 4.2 step 6).
+
+    The repo route clones + builds the whole project in the sandbox, so it carries the cases
+    whose import closure is over the files-mode inline caps (the ~11 big contest repos). A case
+    "passes the repo route" when it reaches ``ready`` with build_result.json
+    ``b4_source == "forge_b4"`` (forge resolved deps+remappings and our solc recompiled); a case
+    that reaches ready via the B3 fallback (no foundry.toml) is counted separately, and a
+    ``b4_rejected`` build is diagnosed from ``b4_detail``/``forge_rc``/``forge_stderr_head``.
+    The commit (40-hex sha, validated supervisor-side) pins the tree; subdir handles monorepos.
+    """
+    src = case["source"]
+    out: dict[str, Any] = {"kind": "repo", "repo_url": src["repo"]}
+    if src.get("commit"):
+        out["commit"] = src["commit"]
+    if src.get("subdir"):
+        out["subdir"] = src["subdir"]
+    return out
+
+
 # ── recall ────────────────────────────────────────────────────────────────────
 
 
@@ -189,7 +212,7 @@ def start_postgres() -> None:
     raise RuntimeError("postgres not ready")
 
 
-async def drive(cases: list[tuple[dict[str, Any], list[dict[str, str]]]], timeout_s: int) -> list[dict[str, Any]]:
+async def drive(cases: list[tuple[dict[str, Any], str, Any]], timeout_s: int) -> list[dict[str, Any]]:
     import psycopg_pool
     from mcp import Client
 
@@ -216,8 +239,8 @@ async def drive(cases: list[tuple[dict[str, Any], list[dict[str, str]]]], timeou
     results = []
     try:
         async with Client(SokenServer()) as client:
-            for case, inline in cases:
-                results.append(await run_case(client, case, inline, timeout_s, pin_root))
+            for case, mode, payload in cases:
+                results.append(await run_case(client, case, mode, payload, timeout_s, pin_root))
                 print(json.dumps(results[-1]), flush=True)
     finally:
         worker.cancel()
@@ -233,12 +256,13 @@ def _json(result: Any) -> dict[str, Any]:
     return json.loads(result.content[0].text)
 
 
-async def run_case(client: Any, case: dict[str, Any], inline: list[dict[str, str]], timeout_s: int,
+async def run_case(client: Any, case: dict[str, Any], mode: str, payload: Any, timeout_s: int,
                    pin_root: Path) -> dict[str, Any]:
     t0 = time.monotonic()
-    out: dict[str, Any] = {"case_id": case["case_id"], "gt": len(case["ground_truth"])}
+    out: dict[str, Any] = {"case_id": case["case_id"], "gt": len(case["ground_truth"]), "mode": mode}
+    source = payload if mode == "repo" else {"kind": "files", "language": "solidity", "files": payload}
     start = _json(await client.call_tool("review_start", {
-        "source": {"kind": "files", "language": "solidity", "files": inline},
+        "source": source,
         "requester_role": "third_party_public_code",
     }))
     if not start.get("accepted"):
@@ -256,6 +280,15 @@ async def run_case(client: Any, case: dict[str, Any], inline: list[dict[str, str
     out["build"] = build.get("status")
     if build.get("status") != "ok":
         out["build_reason"] = (build.get("reason"), (build.get("stderr_head") or "")[:240])
+    if mode == "repo":
+        # Repo-route grade (infra criteria): ready + b4_source == "forge_b4" is a forge (B4)
+        # build; ready without it is the B3 fallback (counted separately); b4_rejected is read
+        # from b4_detail/forge_rc/forge_stderr_head to tell sources_differ from forge_failed.
+        out["b4_source"] = build.get("b4_source")
+        out["repo_route_ok"] = state == "ready" and build.get("b4_source") == "forge_b4"
+        if build.get("b4_rejected"):
+            out["b4_rejected"] = (build.get("b4_rejected"), build.get("b4_detail"),
+                                  build.get("forge_rc"), (build.get("forge_stderr_head") or "")[:200])
     if state != "ready":
         return {**out, "outcome": "not_ready"}
     leads: list[dict[str, Any]] = []
@@ -291,6 +324,9 @@ def main() -> int:
     ap.add_argument("--cases", nargs="*", help="case ids (default: every dev EVM case that fits)")
     ap.add_argument("--max", type=int, default=10)
     ap.add_argument("--dry-run", action="store_true", help="only report which cases fit the files input")
+    ap.add_argument("--repo", choices=["off", "auto", "only"], default="off",
+                    help="off: inline files only (default); auto: repo route for cases over the "
+                         "inline limits; only: repo route (source.kind=repo) for every case")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--host-pg", action="store_true", help="Homebrew Postgres instead of a Docker container")
     ap.add_argument("--out", type=Path, default=REPO / ".sbx" / "evaldrv" / "results.json")
@@ -299,25 +335,47 @@ def main() -> int:
     sys.path.insert(0, str(REPO / "src"))
     from soken_review.evals.sources import TREES_DIR, case_tree
 
-    picked: list[tuple[dict[str, Any], list[dict[str, str]]]] = []
+    picked: list[tuple[dict[str, Any], str, Any]] = []
     for path in sorted((REPO / "evals" / "corpus" / "evm").glob("evm-*/case.yaml")):
         case = yaml.safe_load(path.read_text())
         if case["split"] != "dev" or (args.cases and case["case_id"] not in args.cases):
+            continue
+        if args.repo == "only":
+            # Repo route for every case: no local checkout needed, the sandbox clones + builds.
+            payload = repo_source(case)
+            print(f"{case['case_id']}: repo {payload['repo_url']}@{(payload.get('commit') or 'HEAD')[:10]}")
+            if len(picked) < args.max:
+                picked.append((case, "repo", payload))
             continue
         tree = case_tree(case, TREES_DIR)
         if not tree.exists():
             print(f"{case['case_id']}: skipped, no checkout (soken-eval corpus fetch)")
             continue
         inline, why = build_input(case, tree)
-        print(f"{case['case_id']}: {'fits' if inline else 'skipped'}, {why}")
-        if inline and len(picked) < args.max:
-            picked.append((case, inline))
+        if inline:
+            print(f"{case['case_id']}: fits, {why}")
+            mode, payload = "files", inline
+        elif args.repo == "auto":
+            # Over the inline caps but the repo route can carry it: clone + build the project.
+            payload = repo_source(case)
+            print(f"{case['case_id']}: repo ({why}) {payload['repo_url']}@{(payload.get('commit') or 'HEAD')[:10]}")
+            mode = "repo"
+        else:
+            print(f"{case['case_id']}: skipped, {why}")
+            continue
+        if len(picked) < args.max:
+            picked.append((case, mode, payload))
     if args.dry_run or not picked:
         return 0
     start_host_postgres() if args.host_pg else start_postgres()
     results = asyncio.run(drive(picked, args.timeout))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(results, indent=2))
+    repo_cases = [r for r in results if r.get("mode") == "repo"]
+    if repo_cases:
+        forge = sum(1 for r in repo_cases if r.get("repo_route_ok"))
+        ready_any = sum(1 for r in repo_cases if r.get("state") == "ready")
+        print(f"repo-route cases {len(repo_cases)}, ready via forge_b4 {forge}, ready (any) {ready_any}")
     ready = [r for r in results if r.get("outcome") == "ready"]
     gts = sum(r["gt"] for r in ready)
     found = sum(r["found"] for r in ready)
