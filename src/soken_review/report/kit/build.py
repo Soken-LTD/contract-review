@@ -640,7 +640,8 @@ def h2(key: str, ctx: BuildContext) -> str:
 def code_block(cb: dict[str, Any], ctx: BuildContext) -> str:
     ctx.uses_mono = True
     ref = cb["code"]["ref"]
-    lines = "".join(f'<span class="ln">{n}</span>{esc(show_hidden(t))}\n' for n, t in cb["code"]["lines"])
+    lines = "".join(f'<span class="cl"><span class="ln">{n}</span>{esc(show_hidden(t))}</span>'
+                    for n, t in cb["code"]["lines"])
     keep = " keep" if len(cb["code"]["lines"]) <= 15 else ""
     return (f'<div class="codegrp{keep}"><div class="codehead src mono">{esc(show_hidden(ref_text(ref)))}</div>'
             f'<pre class="code src{keep}">{lines}</pre></div>')
@@ -827,7 +828,7 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     # Architecture and roles
     arch = r["architecture"]
     if [n["id"] for n in arch["nodes"]] == ["no_map"]:
-        arch_html = f'<p class="nofind">{esc(t["no_map_line"])}</p>'
+        arch_html = f'<div class="emptynote"><p class="nofind">{esc(t["no_map_line"])}</p></div>'
     else:
         arch_html = figure(arch["title"], diagram(arch), ctx)
         roles = r["roles"]
