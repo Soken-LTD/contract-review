@@ -1009,15 +1009,21 @@ _PRIV_TOKEN_MUTATOR_RE = re.compile(
 def detect_token_review(semantic: dict | None) -> bool:
     """True when a deployable contract in the map is a retail token whose owner can move, seize,
     block or dilute holder balances. Deterministic over the semantic map; narrow by construction
-    (the ERC-20 declaration requirement excludes protocols that merely call tokens)."""
+    (the ERC-20 declaration requirement excludes protocols that merely call tokens).
+
+    Inheritance-aware: functions are stored under their DECLARING contract, so a standard
+    OpenZeppelin token inherits transfer/approve/... from base `ERC20` and declares only `mint`
+    itself. The ERC-20 surface and the owner-gated mutator are therefore aggregated across each
+    deployable unit and its linearized bases (`chain_extras.evm.units[id].bases`)."""
     if not semantic:
         return False
     owner_gated_spans: set[str] = set()
     for role in semantic.get("roles") or []:
         owner_gated_spans.update(role.get("gated_functions") or [])
 
-    declared_erc20: dict[str, set[str]] = {}       # contract -> declared public/external fn names
-    owner_controls_supply: set[str] = set()        # contracts with an owner-gated token mutator
+    # Index by DECLARING contract name; the per-unit check below unions across its base names.
+    declared_by_contract: dict[str, set[str]] = {}   # contract name -> declared entry fn names
+    mutator_contracts: set[str] = set()              # contracts declaring an owner-gated token mutator
     for fn in semantic.get("functions") or []:
         span = fn.get("span") or ""
         head = span.split("(", 1)[0]
@@ -1026,11 +1032,20 @@ def detect_token_review(semantic: dict | None) -> bool:
         contract, name = head.rsplit(".", 1)
         lname = name.lower()
         if fn.get("is_entry") and fn.get("visibility") in ("public", "external"):
-            declared_erc20.setdefault(contract, set()).add(lname)
+            declared_by_contract.setdefault(contract, set()).add(lname)
         if _PRIV_TOKEN_MUTATOR_RE.match(lname):
             caller_checked = any(g.get("class") == "caller_check" for g in fn.get("guards") or [])
             if caller_checked or span in owner_gated_spans:
-                owner_controls_supply.add(contract)
+                mutator_contracts.add(contract)
 
-    return any(_ERC20_REQUIRED <= names and contract in owner_controls_supply
-               for contract, names in declared_erc20.items())
+    extras = (((semantic.get("chain_extras") or {}).get("evm") or {}).get("units")) or {}
+    for unit in semantic.get("units") or []:
+        base_names = extras.get(unit.get("id"), {}).get("bases") or [unit.get("name")]
+        names: set[str] = set()
+        has_owner_mutator = False
+        for bn in base_names:
+            names |= declared_by_contract.get(bn, set())
+            has_owner_mutator = has_owner_mutator or bn in mutator_contracts
+        if _ERC20_REQUIRED <= names and has_owner_mutator:
+            return True
+    return False
