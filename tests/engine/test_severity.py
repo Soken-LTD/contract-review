@@ -403,3 +403,72 @@ class TestComputeSeverity:
         # K8 caps Critical → High; K4 caps High → Low
         assert "K4" in result.caps_applied
         assert result.severity == "Low"
+
+
+# ── token_review (retail-token) profile ──────────────────────────────────────
+
+class TestTokenReviewProfile:
+    """The retail-token profile (04 §7.4 token_review): the privileged owner IS the threat.
+
+    An owner-controlled path to a direct-loss impact is treated as reachable
+    (privileged_role_unprotected), so K1 does not discount it; and a finding that quotes the
+    deployed source carries its own evidence, so the K4 reasoning_only->Low gate does not
+    apply. Benign centralization notes are untouched (still pinned Low by K7).
+    """
+
+    _OWNER_THEFT: ClassVar[dict] = {
+        "impact_class": "theft_of_funds",
+        "magnitude": "unbounded",
+        "trigger": "privileged_role",
+        "precondition": "none",
+        "reversibility": "irreversible",
+    }
+
+    def test_owner_theft_capped_medium_without_profile(self):
+        # Baseline: I4 x L1 = Medium; K1 would cap to Medium (already there) -> Medium.
+        result = compute_severity(self._OWNER_THEFT, "submit", SeverityContext(phase="submit"))
+        assert result.severity == "Medium"
+
+    def test_owner_theft_escalates_to_critical_under_profile(self):
+        # token_review: trigger treated as privileged_role_unprotected (L3), K1 skipped.
+        # I4 x L3 = Critical, no cap.
+        ctx = SeverityContext(phase="submit", token_review=True)
+        result = compute_severity(self._OWNER_THEFT, "submit", ctx)
+        assert result.severity == "Critical"
+        assert "K1" not in result.caps_applied
+
+    def test_code_evidenced_finding_bypasses_k4_low_cap(self):
+        # theft_of_funds / anyone -> base Critical; finalize + reasoning_only.
+        matrix = {
+            "impact_class": "theft_of_funds",
+            "magnitude": "unbounded",
+            "trigger": "anyone",
+            "precondition": "none",
+            "reversibility": "irreversible",
+        }
+        plain = SeverityContext(phase="finalize", evidence_level="reasoning_only")
+        # K8 caps Critical -> High; K4 caps High -> Low.
+        assert compute_severity(matrix, "finalize", plain).severity == "Low"
+
+        # Quoting the deployed source is the finding's own evidence: K4 does not fire.
+        evidenced = SeverityContext(
+            phase="finalize", evidence_level="reasoning_only",
+            token_review=True, has_location_quote=True,
+        )
+        result = compute_severity(matrix, "finalize", evidenced)
+        assert result.severity == "High"
+        assert "K4" not in result.caps_applied
+
+    def test_benign_centralization_note_stays_low_under_profile(self):
+        # centralization_risk is NOT a direct-loss class, so token_review does not escalate it;
+        # K7 still pins it to Low. Guards against the profile over-escalating owner-power notes.
+        matrix = {
+            "impact_class": "centralization_risk",
+            "magnitude": "unbounded",
+            "trigger": "privileged_role",
+            "precondition": "none",
+            "reversibility": "irreversible",
+        }
+        ctx = SeverityContext(phase="submit", token_review=True)
+        result = compute_severity(matrix, "submit", ctx)
+        assert result.severity == "Low"

@@ -164,6 +164,8 @@ class SeverityContext:
     evidence_level: str | None = None           # E1/E2/E3, for K4 (finalize only)
     scope_not_covered: bool = False              # for K10: any item not_covered
     map_unavailable: bool = False               # for K10
+    token_review: bool = False                   # retail-token/scam profile: owner IS the threat
+    has_location_quote: bool = False             # finding quotes reviewed source (its own evidence)
 
 
 @dataclass
@@ -176,6 +178,11 @@ class SeverityResult:
     i_level: int
     l_level: int
     base: str
+
+
+# Impact classes that are a direct loss of or seizure of value; under the retail-token profile an
+# owner-controlled path to one of these is treated as reachable (owner = threat), not trusted.
+_DIRECT_LOSS = frozenset({"theft_of_funds", "permanent_freeze", "insolvency_or_bad_debt", "control_takeover"})
 
 
 def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -> SeverityResult:
@@ -193,15 +200,24 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
     precondition: str = matrix["precondition"]
     reversibility: str = matrix["reversibility"]
 
+    # Retail-token profile (token_review): the privileged owner is the threat, so an owner path to a
+    # direct-loss impact is as reachable as a permissionless one (treat as privileged_role_unprotected,
+    # skip the K1 trusted-role cap). And a finding that quotes the deployed code carries its own
+    # evidence, so the reasoning_only->Low gate (K4) does not apply to it. Benign centralization_risk
+    # notes are not direct-loss, so K7 still pins them to Low and nothing changes for them.
+    owner_is_threat = ctx.token_review and impact_class in _DIRECT_LOSS and trigger == "privileged_role"
+    eff_trigger = "privileged_role_unprotected" if owner_is_threat else trigger
+    code_evidenced = ctx.token_review and ctx.has_location_quote
+
     i = impact_level(impact_class, magnitude, reversibility)
-    l = likelihood(trigger, precondition)
+    l = likelihood(eff_trigger, precondition)
     base = base_severity(i, l)
 
     sev = base
     caps_applied: list[str] = []
 
     # --- K1: trigger privileged_role or upgrade_authority -> cap Medium ---
-    if trigger in ("privileged_role", "upgrade_authority"):
+    if trigger in ("privileged_role", "upgrade_authority") and not owner_is_threat:
         capped = _min_sev(sev, "Medium")
         if capped != sev:
             caps_applied.append("K1")
@@ -258,7 +274,7 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
         sev = capped
 
     # --- K4: finalize: evidence reasoning_only -> cap Low ---
-    if phase == "finalize" and ctx.evidence_level == "reasoning_only":
+    if phase == "finalize" and ctx.evidence_level == "reasoning_only" and not code_evidenced:
         capped = _min_sev(sev, "Low")
         if capped != sev:
             caps_applied.append("K4")
