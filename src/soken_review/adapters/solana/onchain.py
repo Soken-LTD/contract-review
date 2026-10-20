@@ -155,3 +155,117 @@ def owner_linked_verify_pdas(program_id: str, signer: str) -> list[VerifyPda]:
         if pda is not None and pda.signer == signer:
             out.append(pda)
     return out
+
+
+# ---------------------------------------------------------------------------
+# SPL token mint reads (token-safety for a deployed address that is a mint, not a program)
+# ---------------------------------------------------------------------------
+# A pump.fun / SPL token has no custom program to audit: it is an account owned by the SPL Token
+# (or Token-2022) program. The reviewable surface is the mint account's authorities and, for
+# Token-2022, its extensions. These are on-chain facts read here in the supervisor, never a
+# registry value, so a finding built from them carries analyzer evidence (not reasoning only).
+
+SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+SPL_TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+_MINT_BASE_LEN = 82
+# A Token-2022 mint is padded to the token-account size (165) then carries one account-type byte
+# (1 = mint) and, from byte 166, TLV extension entries (u16 type, u16 length, then `length` bytes).
+_T22_ACCOUNT_TYPE_OFFSET = 165
+
+# Token-2022 ExtensionType ids (u16). Only ids that bear on holder / fund safety are named here;
+# any other id is still reported by number so an unknown extension is never silently dropped.
+# Ids verified against spl-token-2022 ExtensionType; naming an id wrongly would mislead a finding,
+# so this map stays conservative and unverified ids fall through to name=None.
+_T22_EXTENSION_NAMES: dict[int, str] = {
+    1: "transfer_fee_config",
+    3: "mint_close_authority",
+    4: "confidential_transfer_mint",
+    6: "default_account_state",
+    9: "non_transferable",
+    10: "interest_bearing_config",
+    12: "permanent_delegate",
+    14: "transfer_hook",
+    18: "metadata_pointer",
+    19: "token_metadata",
+}
+
+
+@dataclass
+class SplMint:
+    mint: str
+    program: str = ""                 # owning token program (SPL_TOKEN_PROGRAM / SPL_TOKEN_2022_PROGRAM)
+    is_token_2022: bool = False
+    slot: int | None = None
+    decimals: int | None = None
+    supply: int | None = None
+    is_initialized: bool = False
+    mint_authority: str | None = None     # None: minting is permanently disabled (safe)
+    freeze_authority: str | None = None   # None: no account can be frozen (safe)
+    extensions: list[dict[str, Any]] = field(default_factory=list)  # [{type_id, name, length}]
+    why: str | None = None                # None: a valid mint. else read_failed / absent / not_a_mint
+
+
+def _coption_pubkey(data: bytes, tag_off: int) -> str | None:
+    """COption<Pubkey>: a 4-byte LE discriminant (0 = None, 1 = Some) then a 32-byte pubkey."""
+    if struct.unpack_from("<I", data, tag_off)[0] == 0:
+        return None
+    return b58encode(data[tag_off + 4:tag_off + 36])
+
+
+def _parse_t22_extensions(data: bytes) -> list[dict[str, Any]]:
+    """Walk the Token-2022 TLV extension region. Each entry is u16 type, u16 length, then data."""
+    pos = _T22_ACCOUNT_TYPE_OFFSET + 1   # skip the one account-type byte
+    out: list[dict[str, Any]] = []
+    while pos + 4 <= len(data):
+        type_id, length = struct.unpack_from("<HH", data, pos)
+        pos += 4
+        if type_id == 0:                 # Uninitialized: trailing padding, end of the TLV region
+            break
+        out.append({"type_id": type_id, "name": _T22_EXTENSION_NAMES.get(type_id), "length": length})
+        pos += length
+    return out
+
+
+def parse_mint(data: bytes, program: str) -> SplMint | None:
+    """Parse an SPL Token / Token-2022 mint account. None when shorter than the 82-byte base layout.
+
+    Base layout: COption<Pubkey> mint_authority (36), u64 supply (8), u8 decimals, bool is_initialized,
+    COption<Pubkey> freeze_authority (36) = 82 bytes.
+    """
+    if len(data) < _MINT_BASE_LEN:
+        return None
+    is_t22 = program == SPL_TOKEN_2022_PROGRAM
+    return SplMint(
+        mint="",
+        program=program,
+        is_token_2022=is_t22,
+        decimals=data[44],
+        supply=struct.unpack_from("<Q", data, 36)[0],
+        is_initialized=data[45] != 0,
+        mint_authority=_coption_pubkey(data, 0),
+        freeze_authority=_coption_pubkey(data, 46),
+        extensions=_parse_t22_extensions(data) if is_t22 and len(data) > _T22_ACCOUNT_TYPE_OFFSET else [],
+    )
+
+
+def spl_mint(mint_address: str) -> SplMint:
+    """Read a deployed address as an SPL mint. `why` is None only for a real, initialized mint;
+    for a program-owned account it returns program=<loader> so the caller can route to the source
+    flow, and absent / not_a_mint / read_failed otherwise (a read failure never looks like a safe
+    mint)."""
+    try:
+        slot, acc = _account(mint_address)
+    except Exception as exc:  # noqa: BLE001 - read failures are reported, never a safe default
+        return SplMint(mint_address, why=f"read_failed:{str(exc)[:120]}")
+    if acc is None:
+        return SplMint(mint_address, slot=slot, why="absent")
+    owner = acc.get("owner") or ""
+    if owner not in (SPL_TOKEN_PROGRAM, SPL_TOKEN_2022_PROGRAM):
+        return SplMint(mint_address, program=owner, slot=slot, why="not_a_mint")
+    parsed = parse_mint(base64.b64decode(acc["data"][0]), owner)
+    if parsed is None or not parsed.is_initialized:
+        return SplMint(mint_address, program=owner, slot=slot,
+                       is_token_2022=(owner == SPL_TOKEN_2022_PROGRAM), why="not_a_mint")
+    parsed.mint = mint_address
+    parsed.slot = slot
+    return parsed
