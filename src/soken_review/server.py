@@ -67,13 +67,14 @@ class SokenServer(MCPServer):
             return _error_result(ReviewError("E_INVALID_ARGUMENT", field="name", rule="known tool", value80=name[:80]))
         violation = next(iter(sorted(self.validators[name].iter_errors(arguments), key=lambda e: e.path)), None)
         if violation is not None:
-            field = ".".join(str(p) for p in violation.absolute_path) or "(root)"
+            field, example = _violation_hint(violation)
             return _error_result(
                 ReviewError(
                     "E_INVALID_ARGUMENT",
                     field=field,
                     rule=violation.validator,
                     value80=json.dumps(violation.instance, ensure_ascii=False)[:80],
+                    example=example,
                 )
             )
         fn = HANDLERS.get(name)
@@ -101,6 +102,35 @@ def _error_result(err: ReviewError, structured: bool = True) -> CallToolResult:
             return CallToolResult(content=[TextContent(type="text", text=text)])
         return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=body)
     return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
+
+
+def _violation_hint(violation: Any) -> tuple[str, str]:
+    """Turn a jsonschema error into (field, example) that name the exact problem, so a caller can
+    self-correct (03 7.1). `required` and `additionalProperties` attach at the parent object, so
+    `absolute_path` is empty and the bare field would read "(root)"; derive the specific property
+    instead, and give a concrete example for the common keyword failures."""
+    path = ".".join(str(p) for p in violation.absolute_path)
+    rule = violation.validator
+    inst = violation.instance if isinstance(violation.instance, dict) else {}
+    if rule == "required":
+        missing = [k for k in (violation.validator_value or []) if k not in inst]
+        f = missing[0] if missing else (path or "(root)")
+        return f, f"add the required field '{f}'"
+    if rule == "additionalProperties":
+        allowed = sorted((violation.schema.get("properties") or {}).keys())
+        extra = [k for k in inst if k not in set(allowed)]
+        f = extra[0] if extra else (path or "(root)")
+        return f, f"remove the unexpected field '{f}'; allowed fields: {allowed}"
+    field = path or "(root)"
+    if rule == "enum":
+        return field, f"one of {violation.validator_value}"
+    if rule == "pattern":
+        return field, f"a string matching {violation.validator_value!r}"
+    if rule == "type":
+        return field, f"a value of type {violation.validator_value}"
+    if rule in ("minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"):
+        return field, f"{rule} is {violation.validator_value}"
+    return field, ""
 
 
 def _snake(annotations: dict[str, Any]) -> dict[str, Any]:
