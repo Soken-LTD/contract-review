@@ -990,3 +990,47 @@ def build_semantic(output: dict, texts: dict[str, str], categories: list[str]) -
     if not builder.ctx.asts:
         return None
     return builder.build()
+
+
+# ── retail-token profile (04 7.4 token_review) ────────────────────────────────────────────────
+# A contract gets the token_review profile only when it DECLARES the ERC-20 external surface AND
+# holds an owner-gated supply/transfer control. Requiring the declaration (not merely a token_call
+# to some other token) keeps the profile off protocols that transact in tokens but are not one.
+_ERC20_REQUIRED = frozenset({"transfer", "transferfrom", "approve", "balanceof", "totalsupply"})
+# Owner-gated mutators that let a privileged role move, seize, block or dilute holder balances.
+_PRIV_TOKEN_MUTATOR_RE = re.compile(
+    r"^(mint|burn|burnfrom|pause|unpause|freeze|unfreeze|blacklist|blocklist|unblacklist|ban|unban"
+    r"|setfee|setfees|settax|settaxes|updatefee|updatefees|setbuytax|setselltax|setmaxtx|setmaxwallet"
+    r"|setlimit|setlimits|removelimit|removelimits|excludefromfee|includeinfee|setfeewallet|settaxwallet"
+    r"|enabletrading|settradingenabled|settradingstatus)$"
+)
+
+
+def detect_token_review(semantic: dict | None) -> bool:
+    """True when a deployable contract in the map is a retail token whose owner can move, seize,
+    block or dilute holder balances. Deterministic over the semantic map; narrow by construction
+    (the ERC-20 declaration requirement excludes protocols that merely call tokens)."""
+    if not semantic:
+        return False
+    owner_gated_spans: set[str] = set()
+    for role in semantic.get("roles") or []:
+        owner_gated_spans.update(role.get("gated_functions") or [])
+
+    declared_erc20: dict[str, set[str]] = {}       # contract -> declared public/external fn names
+    owner_controls_supply: set[str] = set()        # contracts with an owner-gated token mutator
+    for fn in semantic.get("functions") or []:
+        span = fn.get("span") or ""
+        head = span.split("(", 1)[0]
+        if "." not in head:
+            continue
+        contract, name = head.rsplit(".", 1)
+        lname = name.lower()
+        if fn.get("is_entry") and fn.get("visibility") in ("public", "external"):
+            declared_erc20.setdefault(contract, set()).add(lname)
+        if _PRIV_TOKEN_MUTATOR_RE.match(lname):
+            caller_checked = any(g.get("class") == "caller_check" for g in fn.get("guards") or [])
+            if caller_checked or span in owner_gated_spans:
+                owner_controls_supply.add(contract)
+
+    return any(_ERC20_REQUIRED <= names and contract in owner_controls_supply
+               for contract, names in declared_erc20.items())

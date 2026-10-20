@@ -28,6 +28,7 @@ from ..db.pool import get_pool
 from ..engine.severity import SeverityContext, compute_severity
 from ..errors import ReviewError
 from ..mapping.build import load_map
+from ..mapping.semantic_evm import detect_token_review
 from ..report.render import queue_render
 from ..server import handler
 from .context import JobContext
@@ -270,6 +271,10 @@ async def _assign_final_ids(
     # K4 (reasoning_only → Low), K8 (Critical without E3+attack_steps+no open downgrade → High),
     # K10 (map_unavailable → High), K11 (generic + no analyzer lead → High).
     # W0 defaults: downgrade_items_present=0, open_downgrade_item=False, scope_not_covered=False.
+    # Retail-token profile (04 §7.4): computed once from the persisted semantic map; applies to
+    # every draft of this job. per-draft `has_location_quote` comes from finding_quote_ranges.
+    f_map_doc, _ = load_map(_get_ctx().get_pin_root(), job_id)
+    token_review = detect_token_review(f_map_doc.get("semantic") if f_map_doc else None)
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """select d.draft_key, d.finding_no, d.severity, d.evidence_level,
@@ -279,6 +284,10 @@ async def _assign_final_ids(
                       r.map_unavailable,
                       jsonb_array_length(coalesce(r.content->'attack_steps', '[]'::jsonb)) > 0
                           as has_attack_steps,
+                      exists (select 1 from finding_quote_ranges q
+                              where q.job_id = d.job_id and q.draft_key = d.draft_key
+                                and q.revision = d.current_revision and q.role = 'location')
+                          as has_location_quote,
                       d.status
                from finding_drafts d
                join finding_revisions r on r.job_id = d.job_id and r.draft_key = d.draft_key
@@ -370,6 +379,8 @@ async def _assign_final_ids(
             category_generic=bool(cat_info.get("generic", False)) if cat_info else False,
             category_max_severity=cat_info.get("max_severity") if cat_info else None,
             linked_lead_same_cat=d["draft_key"] in analyzer_lead_draft_keys,
+            token_review=token_review,
+            has_location_quote=bool(d["has_location_quote"]),
         )
 
         if matrix:

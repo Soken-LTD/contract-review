@@ -44,6 +44,7 @@ from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
 from ..mapping.build import load_map
+from ..mapping.semantic_evm import detect_token_review
 from ..mapping.step import load_flags
 from ..pinning.quote_match import QuoteMatchError, quote_match
 from ..pinning.store import PinnedSource
@@ -694,6 +695,8 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                     linked_lead_same_cat=linked_same_cat,
                     has_attack_steps=bool(args.get("attack_steps")),
                     map_unavailable=map_unavailable,
+                    token_review=detect_token_review(map_doc.get("semantic") if map_doc else None),
+                    has_location_quote=bool(location_quotes),
                 )
                 try:
                     sev_result = compute_severity(matrix, "submit", sev_ctx)
