@@ -92,7 +92,14 @@ def mint_safety_leads(m: SplMint) -> list[Lead]:
     Risks (live authorities, risky Token-2022 extensions) each become a lead. A mint with no
     privileged authority and no risky extension still gets one informational lead recording the
     safe posture, so a clean token is never a zero-lead (apparently empty) review.
+
+    Fail-closed: a mint we could not read (``why`` set: read_failed / absent / not_a_mint) has
+    empty authorities and would otherwise fall through to the "safe posture" branch below,
+    reporting a token we never actually inspected as safe. Refuse it loudly instead; the caller
+    routes such a read to a failed / insufficient_source terminal, never to this function.
     """
+    if m.why is not None:
+        raise ValueError(f"mint_safety_leads requires a parsed mint, got why={m.why!r}")
     _filename, _text, index = mint_source(m)
     leads: list[Lead] = []
     n = 1

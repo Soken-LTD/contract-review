@@ -171,6 +171,8 @@ _MINT_BASE_LEN = 82
 # A Token-2022 mint is padded to the token-account size (165) then carries one account-type byte
 # (1 = mint) and, from byte 166, TLV extension entries (u16 type, u16 length, then `length` bytes).
 _T22_ACCOUNT_TYPE_OFFSET = 165
+# spl-token account-type discriminator at _T22_ACCOUNT_TYPE_OFFSET (Uninitialized=0, Mint=1, Account=2).
+_ACCOUNT_TYPE_MINT = 1
 
 # Token-2022 ExtensionType ids (u16). Only ids that bear on holder / fund safety are named here;
 # any other id is still reported by number so an unknown extension is never silently dropped.
@@ -221,13 +223,36 @@ def _parse_t22_extensions(data: bytes) -> list[dict[str, Any]]:
         pos += 4
         if type_id == 0:                 # Uninitialized: trailing padding, end of the TLV region
             break
-        out.append({"type_id": type_id, "name": _T22_EXTENSION_NAMES.get(type_id), "length": length})
+        # Record the entry first so a risky extension is never dropped, then detect a declared
+        # length that overruns the buffer: that is a truncated/malformed region, so mark it and
+        # stop rather than silently presenting the list as a complete (and apparently clean) walk.
+        truncated = pos + length > len(data)
+        out.append({"type_id": type_id, "name": _T22_EXTENSION_NAMES.get(type_id),
+                    "length": length, **({"truncated": True} if truncated else {})})
+        if truncated:
+            break
         pos += length
     return out
 
 
+def _is_mint_account(data: bytes, is_t22: bool) -> bool:
+    """Confirm `data` is a Mint account, not a token (holder) account or multisig of the same
+    program. A classic SPL mint is exactly 82 bytes (Account=165, Multisig=355). A Token-2022
+    mint is either exactly 82 bytes (no extensions) or padded past 165 with the account-type
+    discriminator byte == Mint. Without this, a holder account (same owner program) would be
+    misread as a mint and yield bogus authorities."""
+    if not is_t22:
+        return len(data) == _MINT_BASE_LEN
+    if len(data) == _MINT_BASE_LEN:
+        return True
+    if len(data) <= _T22_ACCOUNT_TYPE_OFFSET:
+        return False
+    return data[_T22_ACCOUNT_TYPE_OFFSET] == _ACCOUNT_TYPE_MINT
+
+
 def parse_mint(data: bytes, program: str) -> SplMint | None:
-    """Parse an SPL Token / Token-2022 mint account. None when shorter than the 82-byte base layout.
+    """Parse an SPL Token / Token-2022 mint account. None when the bytes are not a Mint account
+    (too short, or a token/holder account or multisig of the same program).
 
     Base layout: COption<Pubkey> mint_authority (36), u64 supply (8), u8 decimals, bool is_initialized,
     COption<Pubkey> freeze_authority (36) = 82 bytes.
@@ -235,6 +260,8 @@ def parse_mint(data: bytes, program: str) -> SplMint | None:
     if len(data) < _MINT_BASE_LEN:
         return None
     is_t22 = program == SPL_TOKEN_2022_PROGRAM
+    if not _is_mint_account(data, is_t22):
+        return None
     return SplMint(
         mint="",
         program=program,

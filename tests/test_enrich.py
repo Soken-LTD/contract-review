@@ -135,3 +135,16 @@ def test_distilled_candidate_repo_mode_carries_commit(tmp_path):
     path = tmp_path / "case.yaml"
     path.write_text(yaml.safe_dump(case))
     assert check_case(path).ok
+
+
+def test_gate_per_record_drops_private_in_mixed_batch():
+    # job=None -> each record is gated against its OWN job; a public record alongside a private
+    # one must not drag the private finding through (the consent-bypass this guards against).
+    public_rec = _record(job=_job(consent_public=True))
+    private_rec = _record(job=_job(consent_public=False), draft_key="theft-in-foo")
+    assert gate([public_rec, private_rec]) == [public_rec]
+
+
+def test_gate_per_record_fail_closed_on_unknown_job_consent():
+    unknown_rec = _record(job=_job(consent_public=None, requester_role="owner"))
+    assert gate([unknown_rec]) == []

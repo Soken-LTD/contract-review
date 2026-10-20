@@ -131,3 +131,53 @@ def test_mint_source_is_line_stable(program):
     lines = text.splitlines()
     assert lines[index["mint_authority"] - 1].startswith("mint_authority:")
     assert lines[index["freeze_authority"] - 1].startswith("freeze_authority:")
+
+
+# ── parser-differential: a non-mint account of the same program must not read as a mint ──────
+
+def test_parse_mint_rejects_classic_token_account_sized_blob():
+    # A classic SPL token (holder) account is 165 bytes and owned by the SAME program as a mint.
+    # Reading its 82-byte prefix as a mint would invent authorities, so parse_mint must reject it.
+    blob = bytes(_mint_bytes(mint_auth=True, freeze_auth=True)) + bytes(165 - 82)
+    assert parse_mint(blob, SPL_TOKEN_PROGRAM) is None
+
+
+def test_parse_mint_rejects_classic_multisig_sized_blob():
+    assert parse_mint(bytes(355), SPL_TOKEN_PROGRAM) is None
+
+
+def test_parse_mint_accepts_exact_82_byte_classic_mint():
+    assert parse_mint(_mint_bytes(mint_auth=False, freeze_auth=False), SPL_TOKEN_PROGRAM) is not None
+
+
+def test_parse_mint_token2022_rejects_account_type_byte():
+    # Same bytes as a valid t22 mint but account-type discriminator = 2 (Account), not 1 (Mint).
+    buf = bytearray(_t22_mint_with_extensions([12]))
+    buf[165] = 2
+    assert parse_mint(bytes(buf), SPL_TOKEN_2022_PROGRAM) is None
+
+
+def test_parse_mint_token2022_base_82_is_valid_mint():
+    base = _mint_bytes(mint_auth=False, freeze_auth=False)
+    m = parse_mint(base, SPL_TOKEN_2022_PROGRAM)
+    assert m is not None and m.is_token_2022 and m.extensions == []
+
+
+def test_t22_extension_length_overrun_is_marked_truncated():
+    import struct as _struct
+    base = _mint_bytes(mint_auth=False, freeze_auth=False)
+    buf = bytearray(base) + bytearray(165 - len(base)) + bytearray([1])
+    # permanent_delegate header with a length that runs past the buffer end.
+    buf += _struct.pack("<HH", 12, 9999)
+    m = parse_mint(bytes(buf), SPL_TOKEN_2022_PROGRAM)
+    assert m is not None
+    assert m.extensions[-1]["type_id"] == 12 and m.extensions[-1].get("truncated") is True
+
+
+# ── fail-closed: a mint we could not read never reports a "safe posture" ─────────────────────
+
+@pytest.mark.parametrize("why", ["read_failed:timeout", "absent", "not_a_mint"])
+def test_mint_safety_leads_refuses_unread_mint(why):
+    from soken_review.adapters.solana.onchain import SplMint as _SplMint
+    with pytest.raises(ValueError, match="requires a parsed mint"):
+        mint_safety_leads(_SplMint(mint="x", why=why))

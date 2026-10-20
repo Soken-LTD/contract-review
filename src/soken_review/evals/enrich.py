@@ -177,8 +177,17 @@ def _job_is_public(job: JobContext | Mapping[str, Any]) -> bool:
     return job.get("requester_role") == _PUBLIC_ROLE
 
 
-def gate(records: list[HarvestRecord], job: JobContext | Mapping[str, Any]) -> list[HarvestRecord]:
-    """Consent gate: keep records only when the job's reviewed code is public; else drop all."""
+def gate(records: list[HarvestRecord],
+         job: JobContext | Mapping[str, Any] | None = None) -> list[HarvestRecord]:
+    """Consent gate: keep a record only when its reviewed code is public; else drop it.
+
+    With an explicit ``job`` the whole batch is gated against that one context (for a caller that
+    already knows the batch is single-job). With ``job=None`` each record is gated against its OWN
+    ``job`` context, so a mixed-job batch can never leak a private job's findings because some
+    other record in the batch happened to be public. ``run`` uses the per-record form.
+    """
+    if job is None:
+        return [r for r in records if _job_is_public(r.job)]
     return list(records) if _job_is_public(job) else []
 
 
@@ -303,7 +312,10 @@ def run(conn: Any, job_id: str, *, dry_run: bool = False) -> list[dict[str, Any]
     records = harvest(conn, job_id)
     if not records:
         return []
-    gated = gate(records, records[0].job)
+    # Per-record consent (job=None): gate each record against its own job context rather than
+    # trusting records[0] to represent the batch, so the gate holds even if harvest is ever
+    # changed to return records from more than one job.
+    gated = gate(records)
     kept = [r for r in gated if is_analyzer_miss(r)]
     cases: list[dict[str, Any]] = []
     for record in kept:
