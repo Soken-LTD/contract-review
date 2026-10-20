@@ -42,6 +42,10 @@ section{margin-bottom:12px;}
 .snum{font-size:9pt;font-weight:700;margin-right:8px;display:inline-block;}
 h2{font-size:15pt;margin:14px 0 8px;padding-top:2px;break-after:avoid;}
 h3{font-size:10.8pt;color:#7ac4f4;margin:12px 0 5px;break-after:avoid;}
+/* paged.js honors break-after:avoid on a heading inconsistently when the next block is a tall
+   table, so the heading can be left alone at a page bottom. Also forbid a break right BEFORE the
+   element that follows a heading, which reliably pulls the heading onto the next page with it. */
+h2 + *,h3 + *{break-before:avoid;}
 p{margin:0 0 7px;orphans:3;widows:3;}
 ul{margin:0 0 8px 16px;}
 li{margin-bottom:4px;}
