@@ -95,3 +95,24 @@ def test_rubric_contracts_parse():
         yaml.safe_load(path.read_text())
     for path in CONTRACT_DIR.rglob("*.json"):
         Draft202012Validator.check_schema(json.loads(path.read_text()))
+
+
+def test_answer_challenge_schema_accepts_fresh_finding_revision_zero():
+    """review_submit_finding returns a draft at revision 0 (tests/tools/test_submit_finalize.py),
+    and a High/Critical finding goes straight to needs_challenge at that same revision 0. The model
+    must then answer the challenge AT revision 0. The input schema used to pin revision to
+    minimum 1, so review_answer_challenge rejected revision 0 with E_INVALID_ARGUMENT before the
+    handler ran, forcing a pointless re-submit just to bump the revision. revision 0 must validate
+    (the handler already checks revision == the draft's real current_revision). Negatives stay out.
+    """
+    schema = {t["name"]: t for t in TOOLS}["review_answer_challenge"]["inputSchema"]
+    v = Draft202012Validator(schema)
+    base = {
+        "job_id": "job_" + "0" * 26,
+        "draft_key": "f-001",
+        "answers": [{"item_id": "K1", "value": "absent", "note": "x" * 25}],
+    }
+    assert list(v.iter_errors({**base, "revision": 0})) == []  # fresh finding's current revision
+    assert list(v.iter_errors({**base, "revision": 1})) == []  # a later revision still fine
+    neg = [e.message for e in v.iter_errors({**base, "revision": -1})]
+    assert any("minimum" in m for m in neg)  # negatives are still rejected

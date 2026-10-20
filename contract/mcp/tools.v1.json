@@ -1663,7 +1663,7 @@
      },
      "revision": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 0
      },
      "answers": {
       "type": "array",
