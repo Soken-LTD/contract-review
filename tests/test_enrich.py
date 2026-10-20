@@ -1,7 +1,8 @@
 """Unit tests for deterministic self-enrichment (evals/enrich.py).
 
-Pure functions only: no live DB, no docker. harvest() reads Postgres and is exercised by the
-live stack, not here; gate/distill/record_to_case are covered with hand-built records.
+Pure functions only: no live DB, no docker. gate/distill/record_to_case are covered here with
+hand-built records; harvest() and the full run() path against a real schema (incl. migration 005)
+are covered in tests/evals/test_enrich_db.py.
 """
 
 from __future__ import annotations
