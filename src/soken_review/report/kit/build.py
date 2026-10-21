@@ -845,10 +845,16 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
         arch_html += blocks(roles["notes"], ctx, m) + figures_table(roles.get("figures", []), ctx, m)
     architecture = f'<section>{h2("architecture", ctx)}{arch_html}</section>'
 
-    # Method
+    # Method. The heading and its method table are wrapped together in one keep-together block: the
+    # method table is a short fixed set of steps, so paged.js can always place the pair on a page, and
+    # the wrapper stops the heading being left alone at a page bottom when its table would start on the
+    # next page (break-after:avoid on the heading alone is honored inconsistently when the next block
+    # is a table; the x86 render reproduced the orphan, the Mac render did not). The severity scale is
+    # already a keep block of its own.
     mrows = "".join(f'<tr><td>{esc(x["step"])}</td><td>{esc(x["detail"])}</td></tr>' for x in r["method"])
     srows2 = "".join(f'<tr><td>{chip(x["severity"])}</td><td>{esc(x["text"])}</td></tr>' for x in r["severity_scale"])
-    method = (f'<section>{h2("method", ctx)}<table><tr><th style="width:24%">Step</th><th>Detail</th></tr>{mrows}</table>'
+    method = (f'<section><div class="keep">{h2("method", ctx)}'
+              f'<table><tr><th style="width:24%">Step</th><th>Detail</th></tr>{mrows}</table></div>'
               f'<div class="keep"><h3>Severity scale</h3><table><tr><th style="width:21%">Severity</th><th>Meaning</th></tr>'
               f"{srows2}</table></div></section>")
 
