@@ -379,6 +379,63 @@ class TestSolcCache:
 
 
 # ---------------------------------------------------------------------------
+# Aderyn offline resolution (no docker/solc): seed the cached solc + pin the version
+# ---------------------------------------------------------------------------
+
+class TestAderynOffline:
+    """Aderyn (foundry-compilers/svm-rs) resolves solc online by default and so degrades in the
+    no-network sandbox. The analyze step makes it run offline by pinning FOUNDRY_SOLC_VERSION to the
+    exact build solc (skips the online release-list lookup) and copying that cached solc, already
+    mounted read-only at /cache, to where svm-rs reads an installed release."""
+
+    def test_offline_sandbox_command_seeds_cache_and_pins_version(self, monkeypatch):
+        from soken_review.adapters.evm import analyze as az
+
+        monkeypatch.setattr(az, "_solc_cache_root", lambda: Path("/srv/solc-cache"))
+        cmd, env = az._aderyn_offline_sandbox(
+            "/work/analyze/proj/src", "/work/analyze/sbx/aderyn_out.json",
+            "0.8.37+commit.f401782d", "/srv/solc-cache/linux-amd64/solc-0.8.37+commit.f401782d",
+            ["solady/=lib/solady/src/", "@openzeppelin/=lib/openzeppelin-contracts/"],
+        )
+        # the version pin is what lets svm-rs skip the online release list, and it must be the bare
+        # semver: svm-rs keys its store by it and FOUNDRY_SOLC_VERSION must parse as one
+        assert env["FOUNDRY_SOLC_VERSION"] == "0.8.37"
+        # the source keeps the real cache filename; the store path uses the bare version
+        assert env["ADERYN_SOLC_SRC"] == "/cache/linux-amd64/solc-0.8.37+commit.f401782d"
+        assert env["ADERYN_SOLC_DST"] == env["XDG_DATA_HOME"] + "/svm/0.8.37/solc-0.8.37"
+        # store and scratch sit in the writable, executable sbx mount (/tmp is noexec, /work read-only)
+        assert env["XDG_DATA_HOME"].startswith("/work/analyze/sbx/") and env["ADERYN_ROOT"].startswith("/work/analyze/sbx/")
+        # Aderyn's root is the materialized repo root; the build remappings resolve dependency imports
+        assert env["ADERYN_SRC_RO"] == "/work/analyze/proj/src"
+        assert "solady/=lib/solady/src/" in env["ADERYN_REMAPS"]
+        # the script is a fixed string: every derived path flows through the environment, never the
+        # script text, so a crafted version, path or remapping can never reshape the command
+        assert cmd[0] == "sh" and cmd[1] == "-c"
+        assert "exec aderyn" in cmd[2] and "$ADERYN_SOLC_SRC" in cmd[2] and "$ADERYN_REMAPS" in cmd[2]
+        assert "0.8.37" not in cmd[2] and "/cache/" not in cmd[2] and "/srv/" not in cmd[2] and "solady" not in cmd[2]
+
+    def test_no_version_runs_aderyn_unchanged(self, monkeypatch):
+        """Without a known build solc, the sandbox command is the plain aderyn invocation (it will
+        degrade offline exactly as before — no seed, no pin, no shell wrapper)."""
+        from soken_review.adapters.evm import analyze as az
+
+        calls = {}
+
+        def fake_sandboxed(work_dir, command, **kw):
+            calls["command"] = command
+            calls["extra_env"] = kw.get("extra_env")
+            return False  # pretend aderyn produced nothing
+
+        monkeypatch.setattr(az, "_run_sandboxed", fake_sandboxed)
+        monkeypatch.setattr(az, "_DIRECT_TOOLS", False)
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "analyze"
+            (out_dir / "sbx").mkdir(parents=True)
+            assert az._run_aderyn(out_dir / "proj", out_dir, None, None) is None
+        assert calls["command"][0] == "aderyn" and calls["extra_env"] is None
+
+
+# ---------------------------------------------------------------------------
 # Build sandbox fail-closed tests (no docker/solc)
 # ---------------------------------------------------------------------------
 

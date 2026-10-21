@@ -171,7 +171,8 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
         return [], {"status": "not_run", "reason": reason}, {}
     all_raw.extend(slither_raw)
 
-    aderyn_raw = _run_aderyn(proj_dir, out_dir)
+    solc_version = result.candidate.compiler.version if result.candidate.compiler else None
+    aderyn_raw = _run_aderyn(proj_dir, out_dir, solc_version, solc_path, settings.get("remappings"))
     if aderyn_raw is not None:
         all_raw.extend(aderyn_raw)
 
@@ -419,12 +420,14 @@ def _solc_cache_root() -> Path:
 
 
 def _run_sandboxed(
-    work_dir: Path, command: list[str], timeout: int = 180, workdir: str | None = None, image: str | None = None
+    work_dir: Path, command: list[str], timeout: int = 180, workdir: str | None = None,
+    image: str | None = None, extra_env: dict[str, str] | None = None,
 ) -> bool:
     """Run *command* in the analyze sandbox.  Returns True if completed."""
     if _DIRECT_TOOLS:
         try:
-            subprocess.run(command, capture_output=True, timeout=timeout, check=False)
+            env = {**os.environ, **extra_env} if extra_env else None
+            subprocess.run(command, capture_output=True, timeout=timeout, check=False, env=env)
             return True
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
@@ -433,13 +436,16 @@ def _run_sandboxed(
     if not shutil.which("docker") or image is None:
         raise RuntimeError("sandbox_unavailable")
 
+    env = {"HOME": "/tmp"}  # solc-select writes ~/.solc-select; root fs is read-only (09 4.2)
+    if extra_env:
+        env.update(extra_env)
     argv = docker_argv(
         step="analyze",
         image=image,
         work_dir=work_dir,
         cache_dir=_solc_cache_root(),  # Slither calls the exact solc from /cache (read-only)
         limits=_ANALYZE_LIMITS,
-        env={"HOME": "/tmp"},  # solc-select writes ~/.solc-select; root fs is read-only (09 4.2)
+        env=env,
         command=command,
         runtime=os.environ.get("SOKEN_SANDBOX_RUNTIME"),
         workdir=workdir,
@@ -555,27 +561,107 @@ def _run_slither(
 # Aderyn
 # ---------------------------------------------------------------------------
 
-def _run_aderyn(proj_dir: Path, out_dir: Path) -> list[dict] | None:
-    """Run Aderyn (optional).  Returns raw list or None when absent/failed."""
+def _aderyn_offline_sandbox(
+    container_src: str, container_out: str, version: str, solc_path: str, remaps: list[str]
+) -> tuple[list[str], dict[str, str]]:
+    """Command + env that make Aderyn compile offline inside the analyze container.
+
+    Pin FOUNDRY_SOLC_VERSION to the exact build solc so Aderyn/svm-rs skip the online release-list
+    lookup, and copy that cached solc (already mounted read-only at /cache) to where svm-rs reads an
+    installed release (XDG data dir -> `<data>/svm/<version>/solc-<version>`); svm then finds it
+    installed and never reaches the network. The store and a copy of the materialized repo root must
+    live in the writable, EXECUTABLE sbx bind mount: /tmp is mounted noexec (svm could not exec the
+    solc there) and /work is read-only (foundry-compilers writes build artifacts next to the sources).
+    Aderyn's root is the repo root (`container_src`, which holds `src/` and `lib/`), so it auto-detects
+    `src`, auto-excludes `lib`, and emits `src/<file>` lead paths matching Slither's filename_relative;
+    a remappings.txt written at the root (the same remappings Slither gets) resolves dependency imports.
+    All variable data flows through the environment, so the script text is fixed."""
+    # svm-rs keys its store by the bare semver and FOUNDRY_SOLC_VERSION must parse as one, so drop the
+    # `+commit.<hash>` build metadata the cache carries (e.g. 0.8.37+commit.f401782d -> 0.8.37).
+    short = version.split("+", 1)[0]
+    rel = Path(solc_path).relative_to(_solc_cache_root()).as_posix()
+    scratch = f"{SBX_MOUNT}/aderyn"
+    xdg = f"{scratch}/xdg"
+    env = {
+        "HOME": "/tmp",
+        "XDG_DATA_HOME": xdg,
+        "FOUNDRY_SOLC_VERSION": short,
+        "ADERYN_SOLC_SRC": f"/cache/{rel}",
+        "ADERYN_SOLC_DST": f"{xdg}/svm/{short}/solc-{short}",
+        "ADERYN_SRC_RO": container_src,
+        "ADERYN_ROOT": f"{scratch}/repo",
+        "ADERYN_REMAPS": "\n".join(remaps),
+        "ADERYN_OUT": container_out,
+    }
+    script = (
+        'mkdir -p "$(dirname "$ADERYN_SOLC_DST")" "$ADERYN_ROOT" '
+        '&& cp "$ADERYN_SOLC_SRC" "$ADERYN_SOLC_DST" && chmod 0755 "$ADERYN_SOLC_DST" '
+        '&& cp -R "$ADERYN_SRC_RO/." "$ADERYN_ROOT/" '
+        '&& if [ -n "$ADERYN_REMAPS" ]; then printf "%s\\n" "$ADERYN_REMAPS" > "$ADERYN_ROOT/remappings.txt"; fi '
+        '&& cd "$ADERYN_ROOT" && exec aderyn "$ADERYN_ROOT" -o "$ADERYN_OUT"'
+    )
+    return ["sh", "-c", script], env
+
+
+def _aderyn_offline_direct(out_dir: Path, version: str, solc_path: str) -> dict[str, str]:
+    """Seed a private svm store with the cached solc and pin the version, for _DIRECT_TOOLS runs.
+
+    Mirrors the sandbox path without a container: svm-rs reads an installed release from the OS data
+    dir (`dirs::data_dir()`), so seed the platform-correct subpath under a throwaway HOME and point
+    HOME/XDG_DATA_HOME at it. Keeps Aderyn hermetic and offline on the dev host too."""
+    import sys
+
+    short = version.split("+", 1)[0]  # svm keys by bare semver; drop `+commit.<hash>` (see sandbox helper)
+    store = (out_dir / "sbx" / "svm-home").resolve()
+    sub = "Library/Application Support/svm" if sys.platform == "darwin" else ".local/share/svm"
+    bindir = store / sub / short
+    bindir.mkdir(parents=True, exist_ok=True)
+    dst = bindir / f"solc-{short}"
+    shutil.copy2(solc_path, dst)
+    dst.chmod(0o755)
+    return {"HOME": str(store), "XDG_DATA_HOME": str(store / ".local" / "share"),
+            "FOUNDRY_SOLC_VERSION": short}
+
+
+def _run_aderyn(
+    proj_dir: Path, out_dir: Path, solc_version: str | None = None, solc_path: str | None = None,
+    remappings: list[str] | None = None,
+) -> list[dict] | None:
+    """Run Aderyn (optional).  Returns raw list or None when absent/failed.
+
+    Aderyn (0.6.8, via foundry-compilers/svm-rs) resolves solc online by default and downloads it;
+    the no-network analyze sandbox blocks both, so it fails on every contract (Slither, primary,
+    still carries the full lead set). When the exact build solc is known we run it offline via the
+    seed+pin recipe in `_aderyn_offline_sandbox`/`_aderyn_offline_direct`; otherwise unchanged. Aderyn
+    runs with the materialized repo root (`src_dir`, which holds `src/` and `lib/`) as its root, so its
+    lead paths are `src/<file>` like Slither's; the build remappings are written as remappings.txt so
+    dependency imports resolve."""
     out_json = out_dir / "sbx" / "aderyn_out.json"
-    src_dir = proj_dir / "src"
+    src_dir = proj_dir / "src"  # the materialized repo root (contains src/ and lib/)
     work_dir = out_dir.parent
 
     rel_src = src_dir.relative_to(work_dir)
     rel_out = out_json.relative_to(work_dir)
-    container_src = "/" + "work" + "/" + "/".join(rel_src.parts)
-    container_out = "/" + "work" + "/" + "/".join(rel_out.parts)
+    container_src = "/work/" + "/".join(rel_src.parts)
+    container_out = "/work/" + "/".join(rel_out.parts)
+    remaps = remappings or []
 
+    have_solc = bool(solc_version and solc_path)
     if _DIRECT_TOOLS:
         aderyn_bin = shutil.which("aderyn")
         if not aderyn_bin:
             return None
+        if remaps:
+            (src_dir / "remappings.txt").write_text("\n".join(remaps) + "\n", encoding="utf-8")
         cmd = [aderyn_bin, str(src_dir), "-o", str(out_json)]
+        extra_env = _aderyn_offline_direct(out_dir, solc_version, solc_path) if have_solc else None
+    elif have_solc:
+        cmd, extra_env = _aderyn_offline_sandbox(container_src, container_out, solc_version, solc_path, remaps)
     else:
-        cmd = ["aderyn", container_src, "-o", container_out]
+        cmd, extra_env = ["aderyn", container_src, "-o", container_out], None
 
     try:
-        ok = _run_sandboxed(work_dir, cmd)
+        ok = _run_sandboxed(work_dir, cmd, extra_env=extra_env)
     except RuntimeError:
         return None
 
