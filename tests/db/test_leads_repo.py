@@ -15,7 +15,7 @@ import pytest
 from soken_review.db.job_repo import JobRepo, new_job_id
 from soken_review.db.leads_repo import lead_row, lead_states, load_leads_json, persist_leads, persist_leads_from_pin
 
-pytestmark = pytest.mark.anyio
+ASYNC = pytest.mark.asyncio(loop_scope="session")   # same runner as test_submit_finalize (session pool)
 
 LEADS = [
     {"id": "LEAD-0001", "rule_id": "unprotected-upgrade", "tools": ["slither@0.11.6"],
@@ -62,6 +62,7 @@ def test_load_leads_json_accepts_both_shapes(tmp_path: Path):
     assert load_leads_json(tmp_path, "missing") == []
 
 
+@ASYNC
 async def test_persist_leads_inserts_open_rows_and_is_idempotent(db_pool):
     jid = await _job(db_pool)
     async with db_pool.connection() as conn, conn.transaction():
@@ -79,6 +80,7 @@ async def test_persist_leads_inserts_open_rows_and_is_idempotent(db_pool):
     assert (sev, rank, fam) == ("High", 4, "evm")
 
 
+@ASYNC
 async def test_persist_keeps_existing_state(db_pool):
     """A re-run before `ready` never resets a lead a reviewer already promoted or dismissed."""
     jid = await _job(db_pool)
@@ -90,6 +92,7 @@ async def test_persist_keeps_existing_state(db_pool):
     assert states["LEAD-0001"]["state"] == "dismissed"
 
 
+@ASYNC
 async def test_persist_from_pin_reads_the_job_file(db_pool, tmp_path: Path):
     jid = await _job(db_pool)
     (tmp_path / jid).mkdir()
