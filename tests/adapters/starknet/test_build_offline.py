@@ -170,3 +170,45 @@ def test_skipped_files_counts_lines() -> None:
     assert C.skipped_files(CARACAL_ALL_SKIPPED) == 2
     assert C.skipped_files("") == 0
     assert C.skipped_files("\x1b[33mSkipping analysing file x.json. Debug info not found.\x1b[0m\n") == 1
+
+
+# ─── a run that hits its wall is removed, not left running behind a dead client ─────────────────
+
+def test_offline_run_names_its_container_and_removes_it_on_the_wall(tmp_path: Path, monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kw):
+        calls.append(list(argv))
+        if argv[:2] == ["docker", "run"]:
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+        return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(B.subprocess, "run", fake_run)
+    monkeypatch.setenv("SOKEN_SANDBOX_RUNTIME", "runc")
+    rc, log = B.run_offline(BUILD_IMG, tmp_path, "/work/tree", ["scarb", "--offline", "build"], 1)
+    assert (rc, log) == (124, "build_timeout")
+    run_argv, rm_argv = calls
+    name = run_argv[run_argv.index("--name") + 1]
+    assert name.startswith("soken-stk-run-")
+    assert rm_argv == ["docker", "rm", "-f", name]
+
+
+def test_metadata_probe_removes_its_container_on_the_wall(tmp_path: Path, monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kw):
+        calls.append(list(argv))
+        if argv[:2] == ["docker", "run"]:
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+        return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(B.subprocess, "run", fake_run)
+    monkeypatch.setenv("SOKEN_SANDBOX_RUNTIME", "runc")
+    rc, _ = B.run_metadata(BUILD_IMG, tmp_path, "/work/tree")
+    assert rc == 1
+    run_argv, rm_argv = calls
+    assert rm_argv == ["docker", "rm", "-f", run_argv[run_argv.index("--name") + 1]]
+
+
+def test_caracal_wall_is_a_build_wall() -> None:
+    assert A._CARACAL_WALL_S >= B._BUILD_WALL_S

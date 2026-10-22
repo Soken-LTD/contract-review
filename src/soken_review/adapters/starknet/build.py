@@ -292,7 +292,7 @@ def run_deps(image: str, work_dir: Path, workdir: str) -> str | None:
             time.sleep(1)
     finally:
         if proc.poll() is None:
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False, timeout=60)
+            _remove_container(name)
             try:
                 proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
@@ -311,13 +311,19 @@ def run_offline(image: str, work_dir: Path, workdir: str, command: list[str], wa
     `SCARB_TARGET_DIR`); the cache, home and offline variables stay.
     """
     mounts = [*_mounts(work_dir), (work_dir / "output", "/work/output", False)]
+    name = f"soken-stk-run-{secrets.token_hex(6)}"
     argv = docker_argv(step="build", image=image, work_dir=work_dir, cache_dir=None, limits=limits,
-                       env=_offline_env(env), command=command, workdir=workdir, mounts=mounts)
+                       env=_offline_env(env), command=command, workdir=workdir, mounts=mounts, name=name)
     try:
         proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=wall_s, check=False)
     except subprocess.TimeoutExpired:
+        _remove_container(name)   # killing the `docker run` client alone leaves the container running
         return 124, "build_timeout"
     return proc.returncode, proc.stdout.decode(errors="replace")
+
+
+def _remove_container(name: str) -> None:
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False, timeout=60)
 
 
 def run_metadata(image: str, work_dir: Path, workdir: str) -> tuple[int, str]:
@@ -328,13 +334,17 @@ def run_metadata(image: str, work_dir: Path, workdir: str) -> tuple[int, str]:
     container never writes to host/, so this output cannot be spoofed after the fact. Runs under
     _METADATA_LIMITS: the registry index in scarb-cache must stay writable (see the constant).
     """
+    name = f"soken-stk-meta-{secrets.token_hex(6)}"
     argv = docker_argv(step="build", image=image, work_dir=work_dir, cache_dir=None,
                        limits=_METADATA_LIMITS, env=_offline_env(),
                        command=["scarb", "--offline", "metadata", "--format-version", "1"],
-                       workdir=workdir, mounts=_mounts(work_dir))
+                       workdir=workdir, mounts=_mounts(work_dir), name=name)
     try:
         proc = subprocess.run(argv, capture_output=True, timeout=120, check=False)
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        _remove_container(name)
+        return 1, str(exc)
+    except FileNotFoundError as exc:
         return 1, str(exc)
     return proc.returncode, proc.stdout.decode(errors="replace")
 

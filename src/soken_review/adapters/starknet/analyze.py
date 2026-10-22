@@ -29,7 +29,10 @@ _RUBRIC = Path(__file__).resolve().parents[4] / "contract" / "rubric"
 _LINT_MAP = Path(__file__).parent / "lint_map.yaml"
 LINT_TOOL = "scarb-lint"
 CARACAL_TOOL = caracal_mod.CARACAL_TOOL
-_CARACAL_WALL_S = 900
+# Caracal's Scarb mode rebuilds the whole workspace itself (`scarb build --workspace`, dev profile),
+# so its wall is the build wall, not the lint wall: OZ cairo-contracts (15 members and one
+# procedural macro compiled by cargo) needs about 13 minutes cold on the 2-CPU stand.
+_CARACAL_WALL_S = 1500
 _DIAG_RE = re.compile(r"^(warn|warning|error): Plugin diagnostic: (.*)$")
 _LOC_RE = re.compile(r"^\s*--> /work/tree/([A-Za-z0-9_./-]{1,200}):(\d+):(\d+)\s*$")
 _SEV_RANK = {"High": 0, "Medium": 1, "Low": 2, "Info": 3}
