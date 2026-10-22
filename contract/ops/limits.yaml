@@ -41,6 +41,8 @@ build:                         # per-step build wall for compiled families; env 
   move: {wall_s: 900}          # BUILD_WALL_S; env SOKEN_MOVE_BUILD_WALL_S; includes pre-fetch containers
 analyze:                       # per-step analyze wall; each container gets min(per_container_wall_s, remaining)
   move: {wall_s: 600, per_container_wall_s: 180}  # step total 600 s; per container ≤ 180 s; env SOKEN_MOVE_ANALYZE_WALL_S
+prove:                         # per-step Move Prover wall; Boogie+Z3 can be slow per function
+  move: {wall_s: 1800, per_container_wall_s: 300}  # step total 30 min; per container ≤ 5 min; env SOKEN_MOVE_PROVE_WALL_S
 deps:                          # P0-DEPS results (09 UV9-3)
   evm: {p95_wall_s: null, p95_bytes: null}
   solana: {p95_wall_s: null, p95_bytes: null}

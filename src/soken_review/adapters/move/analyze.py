@@ -24,6 +24,7 @@ import yaml
 
 from soken_review.adapters.base import BuildResult, Lead
 from soken_review.adapters.move import lints, rules, sandbox
+from soken_review.adapters.move import prover as prover_mod
 from soken_review.adapters.move.facts import LinkedSet
 from soken_review.adapters.move.source import index_sources
 
@@ -86,6 +87,8 @@ def analyze(
     chain: str,
     lint_runs: list[tuple[list[str], Callable[[str], str | None]]],
     lint_version: str,
+    prove_runs: list[tuple[list[str], Callable[[str], str | None]]] | None = None,
+    prover_version: str = "",
     chain_extras: dict[str, Any],
     upgrade: dict[str, Any] | None,
     in_scope: Callable[[str], bool],
@@ -94,7 +97,14 @@ def analyze(
     dep_modules: dict[str, bytes],
     step_deadline: float | None = None,
 ) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
-    """lint_runs: (argv, printed-path -> pin path) per unit package."""
+    """lint_runs: (argv, printed-path -> pin path) per unit package.
+
+    prove_runs: optional list of (argv, printed-path -> pin path) for Move Prover,
+        one entry per unit.  ``None`` or empty → prover step is skipped entirely
+        (no entry in the ``tools`` dict and no contribution to ``not_run``).
+    prover_version: version string for the ``move-prover@<version>`` tool label.
+        Defaults to the chain CLI version (e.g. ``"9.6.0"`` for Aptos).
+    """
     if r.status != "ok" or not r.work_dir:
         return [], {"status": "not_run", "reason": "build_failed", "not_run": [
             {"tool": f"{chain}-lint", "reason": "build_failed"}, {"tool": rules.TOOL, "reason": "build_failed"}]}, {}
@@ -176,6 +186,106 @@ def analyze(
     if any(st == "partial" for st in source.files.values()):
         degraded.append({"tool": rule_tool, "reason": "source_layer_partial",
                          "detail": ", ".join(p for p, st in source.files.items() if st == "partial")})
+
+    # 4. Move Prover (optional; only when prove_runs is provided and the prove image is pinned)
+    if prove_runs:
+        prove_tool = f"move-prover@{prover_version}" if prover_version else "move-prover@unknown"
+        # Resolve the prove image once; SandboxUnavailable → skip all prove_runs without error.
+        try:
+            prove_img = sandbox.prove_image_for(chain)
+        except sandbox.SandboxUnavailable as exc:
+            not_run.append({"tool": prove_tool, "reason": "sandbox_unavailable", "detail": str(exc)})
+            tools[prove_tool] = {"status": "not_run"}
+            prove_img = None  # type: ignore[assignment]
+
+        if prove_img is not None:
+            # Check for spec blocks across all in-scope source files.  no_specs is a
+            # deliberate skip, not an error — it does NOT contribute to not_run list.
+            if not prover_mod.has_specs(r.candidate.files, in_scope):
+                tools[prove_tool] = {"status": "not_run", "reason": "no_specs"}
+            else:
+                prove_ok = True
+                for argv, path_map in prove_runs:
+                    if step_deadline is not None:
+                        remaining = step_deadline - time.monotonic()
+                        if remaining <= 0:
+                            not_run.append({
+                                "tool": prove_tool,
+                                "reason": "step_deadline",
+                                "detail": "step wall exceeded",
+                            })
+                            prove_ok = False
+                            break
+                        container_timeout = min(sandbox.PROVE_WALL_S, int(remaining) + 1)
+                    else:
+                        container_timeout = sandbox.PROVE_WALL_S
+                    # Prove runs on a scratch copy so the prover can write temp files
+                    # next to the package (same pattern as lint_runs).
+                    argv_scratch = [
+                        a.replace("/work/src", "/work/scratch/src", 1)
+                        if a.startswith("/work/src") else a
+                        for a in argv
+                    ]
+                    try:
+                        run = sandbox.run(
+                            chain, "analyze",
+                            sandbox.scratch_copy(dirs, f"prove-{len(tools)}"),
+                            argv_scratch,
+                            timeout=container_timeout,
+                            workdir="/work/scratch/src",
+                            image=prove_img,
+                        )
+                    except sandbox.SandboxUnavailable as exc:
+                        not_run.append({
+                            "tool": prove_tool,
+                            "reason": "sandbox_unavailable",
+                            "detail": str(exc),
+                        })
+                        prove_ok = False
+                        break
+                    sandbox.write_host(
+                        dirs["host"] / f"prove-{len(tools)}.log",
+                        run.stdout + "\n" + run.stderr,
+                    )
+                    if run.timed_out:
+                        not_run.append({
+                            "tool": prove_tool,
+                            "reason": "prover_timeout",
+                            "detail": "container killed",
+                        })
+                        prove_ok = False
+                        continue
+                    # Exit code 0 = all specs proved.
+                    # Exit code 1 = prover ran but found verification failures (expected).
+                    # Exit code > 1 = tool/toolchain error → analyzer_failed.
+                    if run.returncode not in (0, 1):
+                        reason = (
+                            "prover_toolchain_missing"
+                            if any(kw in (run.stderr + run.stdout).lower()
+                                   for kw in ("boogie", "z3", "not found", "cannot find"))
+                            else "analyzer_failed"
+                        )
+                        not_run.append({
+                            "tool": prove_tool,
+                            "reason": reason,
+                            "detail": f"exit {run.returncode}",
+                        })
+                        prove_ok = False
+                        continue
+                    got, unlocated = prover_mod.to_raw(
+                        chain,
+                        prover_mod.parse_prover(chain, run.stdout + "\n" + run.stderr),
+                        prove_tool,
+                        path_map,
+                    )
+                    items += got
+                    if unlocated:
+                        degraded.append({
+                            "tool": prove_tool,
+                            "reason": "diagnostic_without_location",
+                            "detail": str(unlocated),
+                        })
+                tools[prove_tool] = {"status": "ok" if prove_ok else "not_run"}
 
     leads = build_leads([i for i in items if in_scope(i["file"])])
     ran = [t for t, v in tools.items() if v.get("status") == "ok"]

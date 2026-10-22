@@ -69,6 +69,18 @@ ANALYZE_STEP_WALL_S: int = _load_wall_s(("analyze", "move", "wall_s"), 600, "SOK
 DEPS_WALL_S = 300
 EGRESS_NETWORK = os.environ.get("SOKEN_MOVE_NETWORK", "soken-move-egress")
 IMAGES = {"sui": "sui-build", "aptos": "aptos-build"}
+# Separate prove images carry Boogie + Z3; prove step never uses the build image.
+PROVE_IMAGES = {"sui": "sui-prove", "aptos": "aptos-prove"}
+
+# Per-container prove wall (env var tightens only; yaml is authoritative).
+PROVE_WALL_S: int = _load_wall_s(
+    ("prove", "move", "per_container_wall_s"), 300, "SOKEN_MOVE_PROVE_WALL_S"
+)
+# Per-step (all prove containers for one analyze call) wall.
+PROVE_STEP_WALL_S: int = _load_wall_s(
+    ("prove", "move", "wall_s"), 1800, "SOKEN_MOVE_PROVE_STEP_WALL_S"
+)
+
 MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
 MAX_ARTIFACTS = 4000
 
@@ -95,6 +107,21 @@ def image_for(chain: str) -> str:
     return image
 
 
+def prove_image_for(chain: str) -> str:
+    """Pinned prove image (images.lock.json ``sui-prove`` / ``aptos-prove`` entry).
+
+    Raises SandboxUnavailable if the image is not pinned or docker is absent.
+    A zero-digest entry in images.lock.json (image not yet built) counts as not
+    pinned — fail-closed until the stand builds and registers the digest.
+    """
+    image = locked_image(PROVE_IMAGES[chain])
+    if image is None:
+        raise SandboxUnavailable(f"image {PROVE_IMAGES[chain]} not pinned")
+    if not shutil.which("docker"):
+        raise SandboxUnavailable("docker not found")
+    return image
+
+
 def prepare_dirs(work: Path) -> dict[str, Path]:
     """Fresh layout under work. src is written by the caller, then never mounted writable."""
     work.mkdir(parents=True, exist_ok=True)
@@ -115,9 +142,15 @@ def run(
     timeout: int,
     workdir: str = "/work/src",
     extra_env: dict[str, str] | None = None,
+    image: str | None = None,
 ) -> RunResult:
-    """One CLI run. step = deps (egress, MOVE_HOME writable) | build | analyze (no network)."""
-    image = image_for(chain)
+    """One CLI run. step = deps (egress, MOVE_HOME writable) | build | analyze (no network).
+
+    image: optional pre-resolved image string (repository@digest).  When given the
+    caller is responsible for having checked availability via ``image_for`` or
+    ``prove_image_for``; ``image_for(chain)`` is called only when ``image`` is None.
+    """
+    image = image if image is not None else image_for(chain)
     if any(".." in tok.split("/") for tok in command):
         raise ValueError("path token with ..")
     deps = step == "deps"

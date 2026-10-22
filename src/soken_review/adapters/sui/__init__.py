@@ -55,6 +55,7 @@ class SuiAdapter:
         return build(c, work_dir)
 
     def analyze(self, r: BuildResult, *, step_deadline: float | None = None) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
+        from soken_review.adapters.move import prover as prover_mod
         from soken_review.adapters.move.analyze import analyze, printed_to_pin
         from soken_review.adapters.sui.build import LINT_VERSION, in_scope_for, lint_argv, load_chain_state
 
@@ -62,7 +63,11 @@ class SuiAdapter:
         extras = chain_extras(cs)
         pkg_dir = r.candidate.settings.get("package_dir") or "."
         runs = [(lint_argv(pkg_dir), printed_to_pin(r.candidate.files, pkg_dir))]
-        return analyze(r, chain="sui", lint_runs=runs, lint_version=LINT_VERSION, chain_extras=extras,
+        # One prove entry for the single Sui package; argv uses /work/src paths.
+        prove_runs = [(prover_mod.prove_argv("sui", pkg_dir), printed_to_pin(r.candidate.files, pkg_dir))]
+        return analyze(r, chain="sui", lint_runs=runs, lint_version=LINT_VERSION,
+                       prove_runs=prove_runs, prover_version=LINT_VERSION,
+                       chain_extras=extras,
                        upgrade=extras.get("upgrade"), in_scope=in_scope_for(r.candidate), rules_dir=_HERE / "rules",
                        lint_map_path=_HERE / "lint_map.yaml", dep_modules=onchain_dependencies(cs),
                        step_deadline=step_deadline)

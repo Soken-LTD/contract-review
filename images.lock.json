@@ -1,6 +1,21 @@
 {
   "$comment": "Sandbox images pinned by digest (09 4.4). Written by .github/workflows/images.yml through scripts/images.py lock: every docker/<dir>/Dockerfile is built for linux/amd64, scanned (Trivy Critical blocks), pushed to private ghcr.io/soken-ltd/<dir>; entries match by repository, so aliases get the same digest. Runtime pulls repository@digest only (sandbox.profile.locked_image). A zero digest = not built yet: callers fail closed.",
   "images": {
+    "aptos-prove": {
+      "repository": "ghcr.io/soken-ltd/aptos-prove",
+      "tag": "aptos-cli-v9.6.0-prove",
+      "digest": "",
+      "tools": {
+        "aptos": "9.6.0",
+        "aptos-framework": "07490157d3250932a385010878a3c5ae7c1338bb",
+        "z3": "4.8.17",
+        "boogie": "3.4.3"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "docker/aptos-prove (plan v4 07 prover integration). Extends aptos-build with z3 (apt, Debian bookworm 4.8.17) and Boogie 3.4.3 (dotnet global tool). Zero digest = not built; prove_image_for('aptos') fails closed until the x86 stand builds and pins the digest. Build: docker build -f docker/aptos-prove/Dockerfile -t ghcr.io/soken-ltd/aptos-prove:aptos-cli-v9.6.0-prove ."
+    },
     "aptos-build": {
       "repository": "ghcr.io/soken-ltd/aptos-build",
       "tag": "aptos-cli-v9.6.0",
@@ -165,6 +180,21 @@
         "run_id": "38738741180",
         "trivy_critical": 2
       }
+    },
+    "sui-prove": {
+      "repository": "ghcr.io/soken-ltd/sui-prove",
+      "tag": "mainnet-v1.81.1-prove",
+      "digest": "",
+      "tools": {
+        "sui": "mainnet-v1.81.1",
+        "sui-framework": "e04cf9aa915cb6c069092733bebc3648755998e2",
+        "z3": "4.8.17",
+        "boogie": "3.4.3"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "docker/sui-prove (plan v4 07 prover integration). Extends sui-build with z3 (apt) and Boogie 3.4.3. NOTE: `sui move prove` availability in mainnet-v1.81.1 must be verified on x86 stand (`sui move prove --help`). If the subcommand is absent the prover step will produce not_run reason=prover_toolchain_missing for all Sui packages. Zero digest = not built; prove_image_for('sui') fails closed until pinned."
     },
     "sui-build": {
       "repository": "ghcr.io/soken-ltd/sui-build",
