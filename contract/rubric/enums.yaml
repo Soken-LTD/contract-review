@@ -170,7 +170,7 @@ evidence_level: [analyzer_and_reasoning, reasoning_challenged, reasoning_only]
 lead_state: [open, promoted, merged, dismissed, not_reviewed]
 lead_origin: [analyzer, previous_report]
 dismissal_reason:
-  model: [fp_guarded, fp_unreachable, duplicate_of, fixed]   # fixed: previous_report leads only (03)
+  model: [fp_guarded, fp_unreachable, not_a_vulnerability, duplicate_of, fixed]   # fixed: previous_report leads only (03); not_a_vulnerability: analyzer leads only, quote in the lead's function + note >= 40 chars (04 10)
   server: [out_of_scope, disproved_by_challenge, not_reviewed]   # out_of_scope: analyzer leads only (04 10)
 absence_kind: [no_reads, no_writes, no_calls, no_guard, all_paths_unguarded]
 absence_scope: [in_scope_files, unit, entry_function]

@@ -8,14 +8,21 @@ If a lead passes all checks, it goes to `dismissed[]`.
 Rejected items go to `rejected[]` with their errors.
 
 Reasons (04 §10):
-  fp_guarded       – quoted code line guards against the attack; non-comment required
-  fp_unreachable   – caller never reaches the location (requires semantic map)
-  duplicate_of     – same category/family as a promoted or accepted draft (04 §10 D1-D4)
-  fixed            – previous_report lead only; item_id confirms the fix
+  fp_guarded           – quoted code line guards against the attack; non-comment required
+  fp_unreachable       – caller never reaches the location (requires semantic map)
+  not_a_vulnerability  – the detector pattern matched but the code at the location has no such
+                         weakness (analyzer leads only); a non-comment code quote inside the
+                         lead's function plus a note of at least 40 characters stating why.
+                         The server cannot prove a negative here, so this is the reviewer's
+                         recorded triage call: quote, note and lead land in lead_dismissals.
+  duplicate_of         – same category/family as a promoted or accepted draft (04 §10 D1-D4)
+  fixed                – previous_report lead only; item_id confirms the fix
 
 Design choices (fail-closed):
   - fp_unreachable without a map → E_DISMISS_UNCHECKABLE (cannot verify claim)
   - fp_guarded with comment-only quote → E_DISMISS_COMMENT_ONLY
+  - not_a_vulnerability without a quote inside the lead's function or without a note →
+    E_DISMISS_UNCHECKABLE / E_INVALID_ARGUMENT (a bare dismissal is not a triage record)
   - fixed for origin != previous_report → E_FIX_NOT_EVIDENT
   - duplicate_of: each rule failure is a separate check; fail on first
   - TOCTOU: per-lead UPDATE with rowcount check
@@ -30,7 +37,6 @@ import psycopg_pool
 from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
-from ..engine.numbers import lex_numbers
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
 from ..pinning.quote_match import QuoteMatchError, normalize_lines, quote_match
@@ -84,9 +90,13 @@ def _is_comment_only_text(text: str) -> bool:
 
 
 def _check_note(note: str, lead_id: str) -> list[dict[str, Any]]:
-    """Run V5+V6 on a dismissal note. Returns list of error envelopes."""
+    """Gate a dismissal note. Returns list of error envelopes.
+
+    The note lands in `lead_dismissals` (audit log), never in the report, so only the `note`
+    scope applies (control characters and scripts); the prose rules and the number provenance
+    check are report-text rules and only burned attempts here."""
     errors: list[dict[str, Any]] = []
-    for v in check_text(note, "model", CheckContext(field=f"dismiss.{lead_id}.note")):
+    for v in check_text(note, "note", CheckContext(field=f"dismiss.{lead_id}.note")):
         errors.append(ReviewError(
             v.code, rule=v.rule_id,
             match=v.match[:80] if v.match else "",
@@ -94,16 +104,24 @@ def _check_note(note: str, lead_id: str) -> list[dict[str, Any]]:
             pos=v.span[0],
             token=(v.match[:40] if v.match else ""),
         ).envelope())
-    for v in lex_numbers(note):
-        errors.append(ReviewError(
-            v.code, rule=v.rule_id,
-            match=v.match[:80] if v.match else "",
-            token=v.match[:40] if v.match else "",
-            field=f"dismiss.{lead_id}.note",
-            cp=(v.match[:5] if v.match else ""),
-            pos=v.span[0],
-        ).envelope())
     return errors
+
+
+_NAV_MIN_NOTE_CHARS = 40
+
+
+def _lead_function_ranges(map_doc: dict | None, lead: dict[str, Any]) -> list[tuple[str, int, int]]:
+    """Line ranges a `not_a_vulnerability` quote must touch: the lexical spans enclosing the
+    lead location (function, modifier or contract-level span), else the lead's own lines."""
+    path, start, end = lead["path"], int(lead["start_line"]), int(lead["end_line"])
+    out: list[tuple[str, int, int]] = []
+    for sp in (map_doc or {}).get("spans", []) or []:
+        if sp.get("file") != path:
+            continue
+        s, e = int(sp.get("start", 0)), int(sp.get("end", 0))
+        if s and e and not (e < start or s > end):
+            out.append((path, s, e))
+    return out or [(path, start, end)]
 
 
 # ── Duplicate-of checks (04 §10 D1–D4) ───────────────────────────────────────
@@ -445,6 +463,55 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                     ),
                 ).envelope())
 
+        elif reason == "not_a_vulnerability":
+            # The reviewer's triage call on analyzer noise (best-practice detectors rated High by
+            # the analyzer, patterns that do not apply at this location). Not provable by the
+            # server, so the record must carry evidence: a real code quote inside the lead's
+            # function (quote-matched against the pin) and a stated reason. Carried leads keep
+            # their own rule (`fixed`).
+            if lead.get("origin") != "analyzer":
+                item_errors.append(ReviewError(
+                    "E_DISMISS_UNCHECKABLE", lead=lead_id,
+                    reason="not_a_vulnerability applies to analyzer leads only; carried leads close as fixed",
+                ).envelope())
+            elif len(note.strip()) < _NAV_MIN_NOTE_CHARS:
+                item_errors.append(ReviewError(
+                    "E_INVALID_ARGUMENT", field=f"dismiss.{lead_id}.note",
+                    rule=f"not_a_vulnerability needs a note of at least {_NAV_MIN_NOTE_CHARS} characters "
+                         "stating why the detector pattern is not a weakness at this location",
+                    value80=note[:80],
+                ).envelope())
+            elif not quotes:
+                item_errors.append(ReviewError(
+                    "E_DISMISS_UNCHECKABLE", lead=lead_id,
+                    reason="not_a_vulnerability requires a code quote inside the lead's function",
+                ).envelope())
+            else:
+                allowed = _lead_function_ranges(map_doc, lead)
+                for q in quotes[:3]:
+                    qt = q.get("text")
+                    q_file, q_start, q_end = q.get("file"), q.get("start"), q.get("end")
+                    if qt is None or q_file is None or q_start is None or q_end is None:
+                        item_errors.append(ReviewError(
+                            "E_INVALID_ARGUMENT", field="dismiss.quotes",
+                            rule="file, start, end, text are required", value80="",
+                        ).envelope())
+                        break
+                    if _is_comment_only_text(qt):
+                        item_errors.append(ReviewError("E_DISMISS_COMMENT_ONLY").envelope())
+                        break
+                    try:
+                        quote_match(pin, q_file, q_start, q_end, qt)
+                    except QuoteMatchError as e:
+                        item_errors.append(ReviewError(e.code, **e.detail).envelope())
+                        continue
+                    if not any(q_file == p and not (q_end < s or q_start > e) for p, s, e in allowed):
+                        item_errors.append(ReviewError(
+                            "E_DISMISS_UNCHECKABLE", lead=lead_id,
+                            reason="quote lies outside the function that holds the lead location "
+                                   + ", ".join(f"{p}:{s}-{e}" for p, s, e in allowed[:3]),
+                        ).envelope())
+
         elif reason == "duplicate_of":
             if not duplicate_of:
                 item_errors.append(ReviewError(
@@ -497,7 +564,7 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
             item_errors.append(ReviewError(
                 "E_INVALID_ARGUMENT",
                 field="reason",
-                rule="must be fp_guarded, fp_unreachable, duplicate_of, or fixed",
+                rule="must be fp_guarded, fp_unreachable, not_a_vulnerability, duplicate_of, or fixed",
                 value80=str(reason)[:80],
             ).envelope())
 

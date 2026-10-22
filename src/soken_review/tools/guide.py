@@ -127,7 +127,13 @@ def _topic_challenge_rules() -> list[str]:
                " marks the item not covered and caps the finding at High (K10).")
     out.append("Revision: pass the revision review_challenge reports; a stale revision is rejected.")
     out.append("Lead dismissal (review_dismiss_lead) reasons: " + ", ".join(enums.get("dismissal_reason", {}).get("model", []))
-               + "; every open High or Medium analyzer lead must be promoted or dismissed before review_finalize (F2).")
+               + "; every open High or Medium analyzer lead must be promoted or dismissed before review_finalize (F2)."
+               " fp_guarded: reentrancy and access-control leads, quote the guard line inside the entry function."
+               " fp_unreachable: the map must prove no entry reaches the location."
+               " not_a_vulnerability: analyzer leads only; quote a code line inside the function that holds the"
+               " lead and give a note of at least 40 characters stating why the detector pattern is not a"
+               " weakness there. duplicate_of: an accepted or needs_challenge draft of the same family."
+               " Notes are audit-log text: no prose or number rules apply to them.")
     out.append("Text rules on every model string: no second person, no questions, no severity words or"
                " completeness claims in prose, no analyzer or model names, no URLs, no raw LEAD or finding ids,"
                " paragraphs at most 90 words, titles 10 to 110 characters in one sentence.")
