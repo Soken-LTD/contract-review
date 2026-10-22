@@ -14,7 +14,7 @@ TOOL_ORDER = [
     "review_contract_map", "review_leads", "review_facts", "review_dismiss_lead",
     "review_submit_finding", "review_withdraw_finding", "review_challenge",
     "review_answer_challenge", "review_set_section", "review_finalize", "review_report",
-    "review_delete_job",
+    "review_delete_job", "review_publish",
 ]
 
 # 03 section 2: (readOnly, destructive, idempotent, openWorld)
@@ -27,6 +27,7 @@ HINTS = {
     "review_set_section": (False, True, True, False),
     "review_finalize": (False, True, True, False),
     "review_delete_job": (False, True, True, False),
+    "review_publish": (False, False, True, False),
 }
 READ_ONLY = (True, False, True, False)
 
