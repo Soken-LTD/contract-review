@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -27,6 +28,7 @@ from .lexers import LexResult, fold_constant, lex_file
 from .semantic_evm import build_semantic
 
 _SCHEMA = Path(__file__).resolve().parents[3] / "contract" / "rubric" / "schemas" / "map.v1.json"
+logger = logging.getLogger(__name__)
 
 
 # 04 2.1: names are validated against the identifier grammar, so free text from code never enters
@@ -70,8 +72,13 @@ def validate_map(doc: dict[str, Any]) -> None:
 
 
 def build_map(files: dict[str, str], solc_output: dict | None, categories: list[str],
-              build_ok: bool = True) -> MapArtifacts:
-    """Lexical layer for every file; semantic layer from the solc AST when the build succeeded."""
+              build_ok: bool = True, compiled_texts: dict[str, str] | None = None) -> MapArtifacts:
+    """Lexical layer for every file; semantic layer from the solc AST when the build succeeded.
+
+    `compiled_texts` are the exact source strings the compiler received (per path). The build step
+    compiles the fetched Standard JSON byte for byte, so these may keep CRLF while `files` is the
+    LF-normalised pin; AST byte offsets are resolved against them so every semantic function lands
+    on its own lexical span."""
     lex: dict[str, LexResult] = {p: lex_file(p, t) for p, t in sorted(files.items())}
     file_rows = []
     spans: list[dict[str, Any]] = []
@@ -116,7 +123,7 @@ def build_map(files: dict[str, str], solc_output: dict | None, categories: list[
     }
     semantic = None
     if build_ok and solc_output:
-        built = build_semantic(solc_output, files, categories)
+        built = build_semantic(solc_output, files, categories, compiled_texts)
         if built is not None:
             semantic, span_ids = built
             known = set()
@@ -126,6 +133,12 @@ def build_map(files: dict[str, str], solc_output: dict | None, categories: list[
                     sp["id"], sp["unit"] = hit
                     known.add(hit[0])
             # every semantic function must point at a span (V0 integrity)
+            dropped = [f["span"] for f in semantic["functions"] if f["span"] not in known]
+            if dropped:
+                # A semantic function whose start line is not a lexical span start means the AST
+                # offsets and the text disagree (line endings, stale output). Loud, never silent.
+                logger.warning("map: %d semantic function(s) have no lexical span and are dropped: %s",
+                               len(dropped), ", ".join(dropped[:8]))
             semantic["functions"] = [f for f in semantic["functions"] if f["span"] in known]
             _dedup_span_ids(spans)
             doc["semantic"] = semantic

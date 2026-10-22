@@ -1275,6 +1275,7 @@ class Supervisor:
             self._pin_root, job_id,
             family="evm", chain=(job or {}).get("chain"),
             solc_output_path=_solc_output_copy(out_dir, build),
+            std_input_path=_compiled_input_path(out_dir, build),
             build_ok=build_ok, job=job, chain_state=chain_state,
             candidate=cands[0] if cands else None,
             nsloc=int(build["nsloc"]) if build.get("nsloc") is not None else None,
@@ -1439,6 +1440,29 @@ def _solc_output_copy(out_dir: Path, result: dict[str, Any]) -> Path | None:
         logger.warning("solc output copy for %s does not match the recorded hash", out_dir.name)
         return None
     return path
+
+
+def _compiled_input_path(out_dir: Path, result: dict[str, Any]) -> Path | None:
+    """The Standard JSON input the build step actually compiled, for the map step.
+
+    Every EVM solc build (std-json, forge-derived and synthetic alike) goes through `_run_build`,
+    which writes the input it sent to solc into the host-only build dir (`<work>.host/build/
+    input.json`, written from this process's memory, never container-mounted). That file is the
+    byte stream the AST `src` offsets refer to. Fallback: the fetched `std_input_0.json` when the
+    build recorded that it used it (`std_json`). None when neither exists (the pin text was
+    compiled, and the map step then resolves offsets against the pin)."""
+    if result.get("status") != "ok":
+        return None
+    work_dir = result.get("work_dir")
+    if work_dir:
+        host = _build_mod.host_build_dir(Path(work_dir)) / "input.json"
+        if host.is_file():
+            return host
+    if result.get("std_json"):
+        fetched = out_dir / "std_input_0.json"
+        if fetched.is_file():
+            return fetched
+    return None
 
 
 def _std_input_for_build(out_dir: Path, pinned: dict[str, str]) -> dict[str, Any] | None:
