@@ -299,9 +299,18 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
     if _SEV_RANK[sev] < 0:
         sev = "Informational"
 
-    # --- evidence_level ---
+    # --- evidence_level (04 §9 table) ---
+    # E3 analyzer_and_reasoning: a same-category analyzer lead is linked.
+    # E2 reasoning_challenged: no qualifying lead, challenge passed or downgraded. post_challenge
+    #    is reached only by answering the checklist, so a reasoning_only draft is promoted here;
+    #    before 2026-10-22 it stayed reasoning_only and K4 printed every challenged High as Low.
+    # E1 reasoning_only: neither (submit, and finalize of drafts that never took a challenge).
     if phase == "submit":
         ev = "reasoning_only" if not ctx.linked_lead_same_cat else "analyzer_and_reasoning"
+    elif phase == "post_challenge":
+        prior = ctx.evidence_level or "reasoning_only"
+        ev = "analyzer_and_reasoning" if (prior == "analyzer_and_reasoning" or ctx.linked_lead_same_cat) \
+            else "reasoning_challenged"
     else:
         ev = ctx.evidence_level or "reasoning_only"
 

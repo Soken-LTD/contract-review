@@ -1261,7 +1261,7 @@
         },
         "item_id": {
          "type": "string",
-         "maxLength": 12,
+         "maxLength": 40,
          "description": "reason fixed only: kill item of the lead's category checklist answered present by the quotes, at least one on a line whose code (comments and whitespace removed) differs from the re-review snapshot (04 section 10). Carried leads take no other reason."
         },
         "note": {
@@ -1673,7 +1673,7 @@
        "properties": {
         "item_id": {
          "type": "string",
-         "maxLength": 12
+         "maxLength": 40
         },
         "value": {
          "type": "string",

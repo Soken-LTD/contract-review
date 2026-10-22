@@ -31,6 +31,7 @@ from ..adapters.base import ChainValue
 from ..adapters.solana import onchain
 from ..adapters.solana.mint import mint_safety_leads, mint_source
 from ..db.job_repo import JobRepo
+from ..db.leads_repo import persist_leads_from_pin
 from ..mapping import step as _map_step
 from ..pinning.store import PinnedSource
 
@@ -316,5 +317,6 @@ async def _map(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
         async with conn.transaction():
             await repo.update_job_fields(job_id, map_status=summary["map_status"])
             await repo.complete_step(step["id"], "done", provenance=summary)
+            n_leads = await persist_leads_from_pin(conn, sup._pin_root, job_id)
             await repo.transition(job_id, "ready")
-    logger.info("solana job %s map %s ready", job_id[-8:], summary.get("map_status"))
+    logger.info("solana job %s map %s ready (%d leads persisted)", job_id[-8:], summary.get("map_status"), n_leads)

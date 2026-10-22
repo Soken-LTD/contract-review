@@ -4,6 +4,7 @@ from . import (  # noqa: F401
     challenge,
     dismiss,
     finalize,
+    guide,
     publish,
     read,
     report,

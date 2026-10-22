@@ -41,6 +41,7 @@ from ..adapters.evm import files as _files_mod
 from ..adapters.evm.repo_candidate import repo_candidate_from_manifest, safe_read_repo_tree
 from ..adapters.evm.rpc import RpcAllEndpointsFailed, RpcClientPool
 from ..db.job_repo import JobRepo
+from ..db.leads_repo import persist_leads_from_pin
 from ..engine.injection import server_draft_flags
 from ..engine.provenance import DepResult, evm_deployment_check, resolve_provenance
 from ..errors import ReviewError
@@ -349,7 +350,7 @@ class Supervisor:
                     repo = JobRepo(conn)
                     async with conn.transaction():
                         await repo.complete_step(step_id, "done", error_code="E_INTERNAL")
-                        await repo.transition(job_id, "failed", error_code="E_INTERNAL")
+                        await _fail_job(repo, job_id, "E_INTERNAL", {"stage": step_name, "reason": "rpc_all_endpoints_failed"})
         except Exception:
             logger.exception("step %s/%s failed for job %s", step_name, step["seq"], job_id[-8:])
             await self._mark_step(step_id, "failed", error_code="E_INTERNAL")
@@ -445,8 +446,9 @@ class Supervisor:
                 async with conn.transaction():
                     await repo.update_job_fields(job_id, map_status=summary["map_status"])
                     await repo.complete_step(step_id, "done", provenance=summary)
+                    n_leads = await persist_leads_from_pin(conn, self._pin_root, job_id)
                     await repo.transition(job_id, "ready")
-            logger.info("move job %s map %s ready", job_id[-8:], summary.get("map_status"))
+            logger.info("move job %s map %s ready (%d leads persisted)", job_id[-8:], summary.get("map_status"), n_leads)
         else:
             await self._mark_step(step_id, "done")
 
@@ -487,12 +489,15 @@ class Supervisor:
         if not rpc_urls:
             # Fail closed: an address job without a pinned chain read would review unpinned code
             # with no deployment check (03 3.1: provider fault = failed, internal step error).
+            # review_start rejects chains without an RPC (E_CHAIN_DISABLED), so this is reached only
+            # when the registry changed under a queued job.
             logger.error("no RPC for chain_id %s; job %s failed", chain_id, job_id[-8:])
             async with self._pool.connection() as conn:
                 repo = JobRepo(conn)
                 async with conn.transaction():
                     await repo.complete_step(step_id, "done", error_code="E_INTERNAL")
-                    await repo.transition(job_id, "failed", error_code="E_INTERNAL")
+                    await _fail_job(repo, job_id, "E_INTERNAL",
+                                    {"stage": "chain_state", "reason": f"no RPC for chain_id {chain_id}"})
             return
 
         # RpcClientPool tries endpoints in order; raises RpcAllEndpointsFailed if all fail.
@@ -1321,9 +1326,11 @@ class Supervisor:
             repo = JobRepo(conn)
             async with conn.transaction():
                 await repo.complete_step(step_id, "done", provenance={"onchain_facts": added})
+                n_leads = await persist_leads_from_pin(conn, self._pin_root, job_id)
                 await repo.transition(job_id, "ready")
                 drafts = await repo.create_server_drafts(job_id, "evm", server_draft_flags(flags))
-        logger.info("job %s ready (onchain facts %d, server drafts %d)", job_id[-8:], added, drafts)
+        logger.info("job %s ready (onchain facts %d, server drafts %d, leads persisted %d)",
+                    job_id[-8:], added, drafts, n_leads)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1353,6 +1360,40 @@ class Supervisor:
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+
+# 03 3.1: `failed` is reachable only from fetching, building and analyzing. A job that dies while
+# still `queued` (no RPC for its chain, a provider fault before fetch) walks queued -> fetching ->
+# failed; a direct jump raised JobStateError and left the job `queued` forever (2026-10-22, Sepolia).
+_FAIL_PATH: dict[str, list[str]] = {
+    "awaiting_upload": ["queued", "fetching", "failed"],
+    "queued": ["fetching", "failed"],
+    "fetching": ["failed"],
+    "building": ["failed"],
+    "analyzing": ["failed"],
+}
+
+
+def fail_path(state: str) -> list[str]:
+    """States to walk so that a job in `state` legally ends in `failed` ([] when it cannot)."""
+    return list(_FAIL_PATH.get(state, []))
+
+
+async def _fail_job(repo: JobRepo, job_id: str, error_code: str, error_detail: dict[str, Any] | None = None) -> bool:
+    """Move the job to `failed` along the legal path; False when its state has no path there."""
+    job = await repo.get(job_id)
+    state = job.get("state") if isinstance(job, dict) else None
+    # Unknown or already-advanced state: attempt the direct edge (the pre-fix behaviour); the
+    # repo raises JobStateError if the graph forbids it, which the caller logs.
+    path = fail_path(state) if state else []
+    if not path:
+        path = ["failed"]
+    for to_state in path:
+        if to_state == "failed":
+            await repo.transition(job_id, "failed", error_code=error_code, error_detail=error_detail)
+        else:
+            await repo.transition(job_id, to_state)
+    return True
 
 
 def _load_build_result(path: Path) -> dict[str, Any]:

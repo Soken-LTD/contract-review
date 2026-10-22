@@ -1,0 +1,67 @@
+"""review_get_guide (03 4.3): every topic answers, first line is the header, content is rubric data.
+
+Until 2026-10-22 the tool had no handler and every call raised NotImplementedError through the MCP
+layer; a web session then guessed matrix enums and burned its submit attempts.
+"""
+
+from __future__ import annotations
+
+import pytest
+import pytest_asyncio
+from mcp import Client
+
+import soken_review.tools  # noqa: F401
+from soken_review.server import SokenServer
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest_asyncio.fixture()
+async def client():
+    async with Client(SokenServer()) as c:
+        yield c
+
+
+async def _guide(client, **args) -> str:
+    result = await client.call_tool("review_get_guide", args)
+    assert not result.is_error, result.content[0].text
+    return result.content[0].text
+
+
+@pytest.mark.parametrize("topic", ["checklist", "categories", "severity_inputs", "challenge_rules"])
+async def test_every_topic_answers_with_header(client, topic):
+    text = await _guide(client, topic=topic)
+    first = text.splitlines()[0]
+    assert first == f"guide_version v0 topic {topic} chain evm"
+    assert 200 < len(text) <= 12_000
+
+
+async def test_categories_follow_chain_family(client):
+    evm = await _guide(client, topic="categories", chain="evm")
+    assert "evm.access_control" in evm and "solana." not in evm
+    sol = await _guide(client, topic="categories", chain="solana")
+    assert "solana." in sol and "evm.access_control" not in sol
+    assert sol.splitlines()[0].endswith("chain solana")
+
+
+async def test_severity_inputs_list_exact_enum_values(client):
+    text = await _guide(client, topic="severity_inputs")
+    # the values a client must send; the ones the web session guessed wrong are not there
+    for value in ("privileged_role", "privileged_role_unprotected", "theft_of_funds", "permanent_freeze",
+                  "incorrect_accounting_no_fund_effect", "self_recovering", "admin_reversible"):
+        assert value in text
+    for guessed in ("governance", "accounting_error", "freeze_of_funds"):
+        assert guessed not in text
+    assert "K4" in text and "reasoning_challenged" in text and "analyzer_and_reasoning" in text
+
+
+async def test_checklist_renders_family_items(client):
+    text = await _guide(client, topic="checklist", chain="starknet")
+    assert text.splitlines()[0].endswith("chain starknet")
+    assert "cairo." in text and "kill" in text
+
+
+async def test_challenge_rules_name_answer_values(client):
+    text = await _guide(client, topic="challenge_rules")
+    for value in ("present", "absent", "not_applicable", "review_dismiss_lead", "F2"):
+        assert value in text
