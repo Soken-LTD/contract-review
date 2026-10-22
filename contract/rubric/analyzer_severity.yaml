@@ -31,6 +31,11 @@ analyzers:
   scarb-lint:        {high: High, medium: Medium, low: Low, info: Info}
   soken-move-rules:  {high: High, medium: Medium, low: Low, info: Info}
   soken-cairo-rules: {high: High, medium: Medium, low: Low, info: Info}
+  # depth: Caracal (crytic/caracal) SIERRA static analyzer, second Starknet engine beside
+  # scarb lint. Raw values are the detector Impact strings printed by `caracal detect`
+  # (detectors/detector.rs Impact Display): High, Medium, Low, Informational. Fail-closed
+  # default: any unlisted raw -> High.
+  caracal:           {High: High, Medium: Medium, Low: Low, Informational: Info}
   # part 07 prover: raw values are defined in adapters/move/prover.py (_E_CODE_SEVERITY).
   # verification_failure: function spec disproved (postcondition, invariant, assertion) → High.
   # prover_timeout: E5 Boogie/Z3 timeout per function → Medium (inconclusive; merits manual review).
