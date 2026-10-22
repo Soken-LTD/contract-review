@@ -131,6 +131,29 @@ class TestReviewStartValidation:
         schema_errors = [e for e in errors if e["code"] == "E_INVALID_ARGUMENT"]
         assert not schema_errors, "upload kind should pass schema validation"
 
+    async def test_chain_without_rpc_rejected(self, client_no_db):
+        """A deployed address on a chain the worker cannot read is refused at start with
+        E_CHAIN_DISABLED instead of a job that fails minutes later (2026-10-22, Sepolia)."""
+        result = await client_no_db.call_tool(
+            "review_start",
+            {"source": {"kind": "deployed", "chain": "evm", "chain_id": 11155111, "address": "0x" + "a" * 40}},
+        )
+        body = json.loads(result.content[0].text)
+        assert body["accepted"] is False
+        err = body["errors"][0]
+        assert err["code"] == "E_CHAIN_DISABLED"
+        assert "11155111" in err["what"] and "1" in err["fix"]
+
+    async def test_repo_deployment_on_chain_without_rpc_rejected(self, client_no_db):
+        result = await client_no_db.call_tool(
+            "review_start",
+            {"source": {"kind": "repo", "repo_url": "https://github.com/a/b", "commit": "a" * 40,
+                        "deployment": {"chain": "evm", "chain_id": 11155111, "address": "0x" + "a" * 40}}},
+        )
+        body = json.loads(result.content[0].text)
+        assert body.get("accepted") is False
+        assert body["errors"][0]["code"] == "E_CHAIN_DISABLED"
+
     async def test_hyperevm_chain_normalised(self, client_no_db):
         """evm with chain_id 999 is normalised to hyperevm (03 §4.1) — no DB needed."""
         # Without DB the job creation will fail, but chain normalization is checked first.

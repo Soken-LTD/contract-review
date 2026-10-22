@@ -37,6 +37,7 @@ from ..adapters.ton.detect import parse_ton_address
 from ..adapters.ton.fetch import TonReadError, fetch_ton_sources, read_ton_chain_state
 from ..adapters.ton.provenance import Attempt, Dep, Out, resolve_provenance
 from ..db.job_repo import JobRepo
+from ..db.leads_repo import persist_leads_from_pin
 from ..mapping import step as _map_step
 from ..pinning.store import PinnedSource
 
@@ -368,5 +369,6 @@ async def _map(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> No
         async with conn.transaction():
             await repo.update_job_fields(job_id, map_status=summary["map_status"])
             await repo.complete_step(step["id"], "done", provenance=summary)
+            n_leads = await persist_leads_from_pin(conn, sup._pin_root, job_id)
             await repo.transition(job_id, "ready")
-    logger.info("ton job %s map %s ready", job_id[-8:], summary.get("map_status"))
+    logger.info("ton job %s map %s ready (%d leads persisted)", job_id[-8:], summary.get("map_status"), n_leads)

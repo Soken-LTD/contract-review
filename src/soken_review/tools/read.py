@@ -26,6 +26,8 @@ from typing import Any
 # RE2 only: patterns are caller input, a backtracking engine would allow ReDoS (03 4.5).
 import re2 as _re2  # type: ignore[import-untyped]
 
+from ..db.leads_repo import lead_states
+from ..db.pool import get_pool
 from ..engine.injection import escape_invisible
 from ..errors import ReviewError
 from ..mapping.build import load_map, load_map_status
@@ -371,6 +373,7 @@ async def _leads(args: dict[str, Any]) -> str:
     offset = _parse_cursor(cursor, job_id, "review_leads", filters) if cursor else 0
 
     leads = _load_leads(job_id)
+    await _overlay_lead_states(job_id, leads)
 
     # Stats over all leads (before filtering)
     all_open = [l for l in leads if l.get("state") == "open"]
@@ -454,6 +457,29 @@ def _format_lead(lead: dict, fmt: str) -> str:
             line += f' "{msg}"'
 
     return line
+
+
+async def _overlay_lead_states(job_id: str, leads: list[dict]) -> None:
+    """Replace each lead's `state` with the ``leads`` table row when a database is configured.
+
+    leads.json is written once by the analyze step and never updated; promotions and dismissals
+    live in the table (03 3.6), so without this overlay a promoted lead kept showing as `open`.
+    Without a pool (unit tests, MemoryJobContext) the file's own states are used unchanged.
+    """
+    try:
+        pool = get_pool()
+    except RuntimeError:
+        return
+    async with pool.connection() as conn:
+        states = await lead_states(conn, job_id)
+    for lead in leads:
+        row = states.get(lead.get("id", ""))
+        if row is not None:
+            lead["state"] = row["state"]
+            if row.get("reason"):
+                lead["reason"] = row["reason"]
+            if row.get("state_ref"):
+                lead["state_ref"] = row["state_ref"]
 
 
 def _load_leads(job_id: str) -> list[dict]:

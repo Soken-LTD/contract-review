@@ -111,6 +111,31 @@ def _normalise_chain(chain: str, chain_id: int | None) -> tuple[str, int | None,
     return chain, chain_id, None
 
 
+def _rpc_backed_chain_ids() -> list[int]:
+    """EVM-family chain ids the worker can read: enabled in chains.json with a usable RPC, or an
+    ``SOKEN_RPC_<chain_id>`` override."""
+    from ..adapters.evm.registry import enabled_chains
+
+    ids = {c.chain_id for c in enabled_chains() if any(not r.disabled for r in c.rpc)}
+    for key in os.environ:
+        if key.startswith("SOKEN_RPC_") and key[len("SOKEN_RPC_"):].isdigit() and os.environ[key]:
+            ids.add(int(key[len("SOKEN_RPC_"):]))
+    return sorted(ids)
+
+
+def _require_rpc_chain(chain: str, chain_id: int | None) -> None:
+    """Reject an EVM-family deployment on a chain the worker cannot read (E_CHAIN_DISABLED).
+
+    The worker's chain_state step fails closed without an RPC (supervisor), so admitting such a job
+    only produced a `failed` job minutes later (2026-10-22: Sepolia, no RPC row, job stuck).
+    """
+    if chain not in ("evm", "hyperevm", "tron") or chain_id is None:
+        return
+    backed = _rpc_backed_chain_ids()
+    if int(chain_id) not in backed:
+        raise ReviewError("E_CHAIN_DISABLED", value=str(chain_id), enabled=", ".join(str(i) for i in backed))
+
+
 def _validate_address(address: str, chain: str) -> None:
     """Raise ``ReviewError(E_ADDRESS_INVALID)`` if the address does not match the chain format."""
     if chain in ("evm", "hyperevm"):
@@ -226,6 +251,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
 
             chain, chain_id, detected_chain = _normalise_chain(chain, chain_id)
             _validate_address(address, chain)
+            _require_rpc_chain(chain, chain_id)
             has_deployment = True
 
         elif kind in ("repo", "upload"):
@@ -236,6 +262,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
                 dep_address = dep["address"]
                 dep_chain, dep_chain_id, _ = _normalise_chain(dep_chain, dep_chain_id)
                 _validate_address(dep_address, dep_chain)
+                _require_rpc_chain(dep_chain, dep_chain_id)
                 chain = dep_chain
                 chain_id = dep_chain_id
                 address = dep_address
@@ -280,6 +307,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
                 dep_address = dep["address"]
                 dep_chain, dep_chain_id, _ = _normalise_chain(dep_chain, dep_chain_id)
                 _validate_address(dep_address, dep_chain)
+                _require_rpc_chain(dep_chain, dep_chain_id)
                 chain = dep_chain
                 chain_id = dep_chain_id
                 address = dep_address

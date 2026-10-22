@@ -472,3 +472,32 @@ class TestTokenReviewProfile:
         ctx = SeverityContext(phase="submit", token_review=True)
         result = compute_severity(matrix, "submit", ctx)
         assert result.severity == "Low"
+
+
+class TestEvidenceLevelPhases:
+    """04 §9: E2 reasoning_challenged is earned by answering the checklist (2026-10-22 fix).
+
+    Before the fix post_challenge returned the prior level, so a High that passed its challenge
+    stayed reasoning_only and K4 printed it as Low at finalize.
+    """
+
+    def test_post_challenge_promotes_reasoning_only_to_challenged(self):
+        ctx = SeverityContext(phase="post_challenge", evidence_level="reasoning_only")
+        result = compute_severity(_MATRIX_THEFT_ANYONE_NONE_IRREVERSIBLE, "post_challenge", ctx)
+        assert result.evidence_level == "reasoning_challenged"
+
+    def test_post_challenge_keeps_analyzer_evidence(self):
+        ctx = SeverityContext(phase="post_challenge", evidence_level="analyzer_and_reasoning")
+        result = compute_severity(_MATRIX_THEFT_ANYONE_NONE_IRREVERSIBLE, "post_challenge", ctx)
+        assert result.evidence_level == "analyzer_and_reasoning"
+
+    def test_finalize_after_challenge_is_not_capped_by_k4(self):
+        ctx = SeverityContext(phase="finalize", evidence_level="reasoning_challenged")
+        result = compute_severity(_MATRIX_THEFT_ANYONE_NONE_IRREVERSIBLE, "finalize", ctx)
+        assert "K4" not in result.caps_applied
+        assert result.severity in ("High", "Critical")
+
+    def test_finalize_without_challenge_still_capped(self):
+        ctx = SeverityContext(phase="finalize", evidence_level="reasoning_only")
+        result = compute_severity(_MATRIX_THEFT_ANYONE_NONE_IRREVERSIBLE, "finalize", ctx)
+        assert "K4" in result.caps_applied and result.severity == "Low"

@@ -20,6 +20,7 @@ from typing import Any
 
 from ..adapters.base import BuildResult, Candidate, Compiler
 from ..db.job_repo import JobRepo
+from ..db.leads_repo import persist_leads_from_pin
 from ..mapping import step as _map_step
 from ..pinning.store import PinnedSource
 
@@ -47,6 +48,8 @@ async def _finish(sup: Any, step: dict[str, Any], *, step_status: str, to_state:
                                      provenance=provenance)
             if fields:
                 await repo.update_job_fields(step["job_id"], **fields)
+            if to_state == "ready":
+                await persist_leads_from_pin(conn, sup._pin_root, step["job_id"])
             if to_state:
                 await repo.transition(step["job_id"], to_state, error_code=error_code, error_detail=detail)
             if next_step:
