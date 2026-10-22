@@ -492,8 +492,8 @@ codes:
     channel: "rejection"
     class: "input"
     tools: "dismiss"
-    what: "The server cannot check this dismissal (reachability unknown, guard class not checkable, or no contract map)."
-    fix: "Promote the lead and challenge it."
+    what: "The server cannot check this dismissal: {reason}."
+    fix: "Give the evidence the reason names (a quote in the right scope, the map, a different reason), or promote the lead and challenge it."
   - code: E_DUPLICATE_TARGET
     owner: "04"
     channel: "rejection"

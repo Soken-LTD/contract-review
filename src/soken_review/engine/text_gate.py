@@ -97,6 +97,7 @@ def _load_tlds() -> frozenset[str]:
 #   server:  [step0, T1-T12, T25_brand_soken_dev_only, T28]
 #   public:  [T1-T4, T6-T8, T10, T11, T14, T15, T25_brand_soken_dev_only, T27, T28, P1, P2, P3, P4]
 #   subject: [subject_words]
+#   note:    [step0]
 #
 # "T25_brand_soken_dev_only" = T25 variant that permits the literal string "soken.dev"
 
@@ -114,12 +115,18 @@ _PUBLIC_RULES = frozenset(
     + ["T25_brand_only", "T27", "T28", "P1", "P2", "P3", "P4"]
 )
 _SUBJECT_RULES = frozenset(["subject_words"])
+# Internal notes (dismissal note, challenge answer note, withdrawal note) go to the audit log,
+# never to the report. Only step0 (control characters, bidi controls, foreign scripts) applies:
+# the prose rules T1-T31 and the number provenance check are report-text rules and only cost
+# the reviewer attempts here ("Number two in note has no source", 2026-10-22).
+_NOTE_RULES = frozenset(["step0"])
 
 _SCOPE_RULES: dict[str, frozenset[str]] = {
     "model": _MODEL_RULES,
     "server": _SERVER_RULES,
     "public": _PUBLIC_RULES,
     "subject": _SUBJECT_RULES,
+    "note": _NOTE_RULES,
 }
 
 # Rules that are EXEMPT inside a valid code span (text_gate.yaml code_span_exempt)

@@ -48,7 +48,6 @@ import yaml
 from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
-from ..engine.numbers import lex_numbers
 from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
@@ -511,12 +510,28 @@ def _resolve_scope(
     return [], True, "not_covered"
 
 
+_SCOPE_LINE_CAP = 400       # scopes.yaml: above this the item is NOT_COVERED
+_SCOPE_CALL_DEPTH = 2       # scopes.yaml evm/solana/move/cairo: callees (and callers) to depth 2
+
+
 def _resolve_entry_function_scope(
     family: str,
     map_doc: dict,
     location_quotes: list[dict[str, Any]],
 ) -> tuple[list[str], bool]:
-    """Resolve entry_function scope: entry body + modifiers + callees depth 2."""
+    """Resolve entry_function scope (scopes.yaml): the functions holding the location, the entry
+    functions that reach them, their modifiers, and internal callees to call-graph depth 2.
+
+    When the location sits in an internal function the evidence for reachability (L1) and for
+    the guards lives in the external caller, not in the internal body. Until 2026-10-22 the
+    scope was the location's own function only, so every quote from the caller was rejected
+    with E_CHALLENGE_SCOPE (65 rejections on one review). Callers are found by walking the
+    internal call edges backwards up to depth 2 from the location's functions; every function on
+    those paths is in scope, whether or not it is itself an entry.
+
+    Line cap: the location functions, their callers and the modifiers are mandatory; above
+    `_SCOPE_LINE_CAP` lines the scope is NOT_COVERED. Callees are added only while the cap holds.
+    """
     if not location_quotes:
         return [], True
     loc = location_quotes[0]
@@ -524,43 +539,139 @@ def _resolve_entry_function_scope(
     loc_start = loc.get("start", 0)
     loc_end = loc.get("end", 0)
 
-    # Build span lookup: span_id -> {file, start, end, kind} from spans[] (not functions[]).
-    # semantic.functions[].span is a reference to spans[].id; functions themselves carry NO
-    # file/start/end — those live on the span record (map.v1 schema §spans).
-    spans = map_doc.get("spans", [])
-    span_meta_local: dict[str, dict[str, Any]] = {}
-    for sp in spans:
-        sid = sp.get("id", "")
-        if sid:
-            span_meta_local[sid] = sp
+    # spans[] carries file/start/end/kind; semantic.functions[].span references spans[].id.
+    spans = map_doc.get("spans", []) or []
+    span_meta: dict[str, dict[str, Any]] = {sp["id"]: sp for sp in spans if sp.get("id")}
+    functions = (map_doc.get("semantic") or {}).get("functions", []) or []
+    fn_by_span, fn_by_name = _function_indexes(functions, span_meta)
+    callers = _caller_index(functions, fn_by_name)
 
-    # Find functions whose span overlaps the location (via span_meta join)
-    functions = map_doc.get("semantic", {}).get("functions", [])
-    ranges: list[str] = []
-    total_lines = 0
+    def overlaps(sid: str) -> bool:
+        sp = span_meta.get(sid)
+        return bool(sp) and sp.get("file") == loc_path \
+            and not (sp.get("end", 0) < loc_start or sp.get("start", 0) > loc_end)
 
+    covering = [sid for sid in fn_by_span if overlaps(sid)]
+    if not covering:
+        return [], True
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def add(sid: str) -> None:
+        if sid not in seen and sid in span_meta:
+            seen.add(sid)
+            ordered.append(sid)
+
+    for sid in covering:
+        add(sid)
+    # callers: reverse BFS over internal edges, depth-limited
+    frontier = list(covering)
+    for _ in range(_SCOPE_CALL_DEPTH):
+        nxt: list[str] = []
+        for sid in frontier:
+            for caller in sorted(callers.get(sid, ())):
+                if caller not in seen:
+                    add(caller)
+                    nxt.append(caller)
+        frontier = nxt
+    # modifiers of every function collected so far (modifier spans are not in functions[]; a
+    # modifier is usually inherited, so the name is matched across units)
+    mod_by_name = _modifier_spans(spans)
+    collected = ordered[:]          # snapshot: add() appends while this loop runs
+    for sid in collected:
+        for mname in (fn_by_span.get(sid) or {}).get("modifiers", []) or []:
+            for msid in mod_by_name.get(mname, ()):
+                add(msid)
+
+    def total(sids: list[str]) -> int:
+        return sum(span_meta[s].get("end", 0) - span_meta[s].get("start", 0) + 1 for s in sids)
+
+    if total(ordered) > _SCOPE_LINE_CAP:
+        return [], True
+
+    # callees depth 2 from the location functions, same unit only, while the cap holds.
+    # `using X for` library helpers and base-contract helpers arrive as `internal` edges too;
+    # pulling SafeMath into every scope would only grow the read requirement of an `absent`
+    # answer without holding evidence for the item, so callees stay inside the unit.
+    frontier = list(covering)
+    for _ in range(_SCOPE_CALL_DEPTH):
+        nxt = []
+        for sid in frontier:
+            unit = _span_unit(span_meta.get(sid) or {}, sid)
+            for call in (fn_by_span.get(sid) or {}).get("calls", []) or []:
+                if call.get("kind") not in _TRAVERSABLE_CALL_KINDS:
+                    continue
+                for callee in fn_by_name.get(call.get("target", ""), []):
+                    csid = callee.get("span", "")
+                    if not csid or csid in seen or _span_unit(span_meta.get(csid) or {}, csid) != unit:
+                        continue
+                    if total(ordered + [csid]) > _SCOPE_LINE_CAP:
+                        continue
+                    add(csid)
+                    nxt.append(csid)
+        frontier = nxt
+
+    ranges = sorted(
+        (f"{span_meta[s]['file']}:{span_meta[s]['start']}-{span_meta[s]['end']}" for s in ordered),
+        key=lambda r: (_parse_range_ref(r) or ("", 0, 0))[:2],
+    )
+    return ranges, False
+
+
+def _function_indexes(functions: list[dict], span_meta: dict[str, dict[str, Any]]
+                      ) -> tuple[dict[str, dict], dict[str, list[dict]]]:
+    """(span id -> function, callee name -> functions) for call-edge resolution.
+
+    Names come from `_callee_names`, so both span-id shapes resolve bare, qualified and
+    `name`-field call targets."""
+    fn_by_span: dict[str, dict] = {}
+    fn_by_name: dict[str, list[dict]] = {}
     for fn in functions:
         sid = fn.get("span", "")
-        sp = span_meta_local.get(sid)
-        if sp is None:
+        if not sid:
             continue
-        fn_file = sp.get("file", "")
-        fn_start = sp.get("start", 0)
-        fn_end = sp.get("end", 0)
-        if fn_file != loc_path:
-            continue
-        # Check overlap
-        if fn_end < loc_start or fn_start > loc_end:
-            continue
-        span_len = fn_end - fn_start + 1
-        total_lines += span_len
-        if total_lines > 400:
-            return [], True  # NOT_COVERED (scope over 400 lines)
-        ranges.append(f"{loc_path}:{fn_start}-{fn_end}")
+        fn_by_span[sid] = fn
+        for name in _callee_names(sid, span_meta.get(sid)):
+            fn_by_name.setdefault(name, []).append(fn)
+    return fn_by_span, fn_by_name
 
-    if not ranges:
-        return [], True
-    return ranges, False
+
+def _caller_index(functions: list[dict], fn_by_name: dict[str, list[dict]]) -> dict[str, set[str]]:
+    """callee span id -> span ids of functions that call it over a traversable edge."""
+    callers: dict[str, set[str]] = {}
+    for fn in functions:
+        sid = fn.get("span", "")
+        for call in fn.get("calls", []) or []:
+            if call.get("kind") not in _TRAVERSABLE_CALL_KINDS:
+                continue
+            for callee in fn_by_name.get(call.get("target", ""), []):
+                csid = callee.get("span", "")
+                if csid and sid and csid != sid:
+                    callers.setdefault(csid, set()).add(sid)
+    return callers
+
+
+def _span_unit(span: dict[str, Any], sid: str) -> str:
+    """The unit (contract) a span belongs to: the span's `unit` field, else the `Contract.` prefix
+    of a semantic id, else the `path:Contract` prefix of a lexical id."""
+    if span.get("unit"):
+        return str(span["unit"])
+    head = sid.split("(", 1)[0]
+    if ":" in head:
+        return head.rsplit(":", 1)[0]
+    return head.rsplit(".", 1)[0] if "." in head else head
+
+
+def _modifier_spans(spans: list[dict]) -> dict[str, list[str]]:
+    """modifier name -> span ids (modifier bodies are spans of kind `modifier`, not functions)."""
+    out: dict[str, list[str]] = {}
+    for sp in spans:
+        if sp.get("kind") != "modifier" or not sp.get("id"):
+            continue
+        for name in _callee_names(sp["id"], sp):
+            out.setdefault(name, []).append(sp["id"])
+    return out
 
 
 def _resolve_call_site_scope(location_quotes: list[dict[str, Any]]) -> tuple[list[str], bool]:
@@ -1076,25 +1187,17 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         value = answer.get("value") or ""
         note = answer.get("note") or ""
 
-        # V5: text gate on note
-        for v in check_text(note, "model", CheckContext(field=f"answer.{item_id}.note")):
+        # Note gate: the answer note is stored with the challenge record and never rendered, so
+        # only the `note` scope (control characters, scripts) applies. The prose rules T1-T31
+        # and the number provenance check are report-text rules; on notes they only cost
+        # attempts ("Number two in note has no source", 2026-10-22).
+        for v in check_text(note, "note", CheckContext(field=f"answer.{item_id}.note")):
             violations.append(ReviewError(
                 v.code, rule=v.rule_id,
                 match=v.match[:80] if v.match else "",
                 cp=(v.match[:5] if v.match else ""),
                 pos=v.span[0],
                 token=(v.match[:40] if v.match else ""),
-            ).envelope())
-
-        # V6: number check on note
-        for v in lex_numbers(note):
-            violations.append(ReviewError(
-                v.code, rule=v.rule_id,
-                match=v.match[:80] if v.match else "",
-                token=v.match[:40] if v.match else "",
-                field=f"answer.{item_id}.note",
-                cp=(v.match[:5] if v.match else ""),
-                pos=v.span[0],
             ).envelope())
 
         # Check auto contradiction

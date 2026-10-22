@@ -6,6 +6,7 @@ scopes:
   server:  [step0, T1-T12, T25_brand_soken_dev_only, T28]
   public:  [T1-T4, T6-T8, T10, T11, T14, T15, T25_brand_soken_dev_only, T27, T28, P1, P2, P3, P4]  # not T5, T9, T12: install and legal text address the reader, name Claude, may ask questions (04 11.1)
   subject: [subject_words]
+  note:    [step0]   # internal notes (dismiss, answer, withdraw): audit log only, never report text; no prose or number rules
 step0:
   reject: ['Cc except LF', 'Cf', 'U+00AD', 'bidi controls U+202A-U+202E U+2066-U+2069 U+200E U+200F U+061C']
   script: 'outside valid code spans, letters whose Unicode Script is not Latin, Common or Inherited -> E_TEXT_SCRIPT'

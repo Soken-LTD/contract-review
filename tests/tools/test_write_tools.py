@@ -10,6 +10,7 @@ E2e negative: submit → challenge → answer kill item present → withdrawn, l
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -2258,3 +2259,92 @@ async def test_duplicate_of_chain_intact_closes_f2(db_pool):
     assert f2["open"] == 0, (
         f"F2 should be closed: duplicate chain intact + LEAD-0501 promoted. Got open={f2['open']}"
     )
+
+
+# ── not_a_vulnerability (04 §10, added 2026-10-23) ───────────────────────────
+
+_NAV_NOTE = ("Slither rates reentrancy-eth High here, but the 2 state writes precede the call and "
+             "no balance is read after it; what remains? Nothing exploitable, detector noise.")
+
+
+async def _dismiss_nav(db_pool, job_id, pin_root, lead_id: str, quote: dict | None, note: str):
+    from soken_review.tools import dismiss as dismiss_mod
+    from soken_review.tools.context import MemoryJobContext
+
+    dismiss_mod.set_pool(db_pool)
+    dismiss_mod.set_context(MemoryJobContext(pin_root))
+    item: dict[str, Any] = {"lead_id": lead_id, "reason": "not_a_vulnerability", "note": note}
+    if quote is not None:
+        item["quotes"] = [quote]
+    return await dismiss_mod.handle_review_dismiss_lead({"job_id": job_id, "items": [item]})
+
+
+@ASYNC
+async def test_not_a_vulnerability_with_quote_in_function_and_note_dismisses_and_closes_f2(db_pool):
+    """Quote inside the lead's function + note >= 40 chars: dismissed, audit row written, F2 closed.
+    The note carries numbers, a tool name and a question mark: no prose or number gate on notes."""
+    from soken_review.tools.finalize import compute_finalize_checks
+
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    await _insert_lead(db_pool, job_id, "LEAD-0601", severity_norm="High", start=5, end=8)
+    res = await _dismiss_nav(db_pool, job_id, pin_root, "LEAD-0601",
+                             {"file": "src/Vault.sol", "start": 6, "end": 6,
+                              "text": '        (bool ok, ) = msg.sender.call{value: a}("");'},
+                             _NAV_NOTE)
+    assert res["accepted"] is True and res["dismissed"] == ["LEAD-0601"], res
+    async with db_pool.connection() as conn:
+        row = await (await conn.execute(
+            "select reason, note, quotes from lead_dismissals where job_id = %s and lead_id = %s",
+            (job_id, "LEAD-0601"))).fetchone()
+        checks = await compute_finalize_checks(conn, job_id)
+    assert row is not None and row[0] == "not_a_vulnerability" and row[1] == _NAV_NOTE and row[2]
+    f2 = next(c for c in checks if c["id"] == "F2")
+    assert f2["open"] == 0, checks
+
+
+@ASYNC
+async def test_not_a_vulnerability_requires_a_note_of_forty_characters(db_pool):
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    await _insert_lead(db_pool, job_id, "LEAD-0602")
+    res = await _dismiss_nav(db_pool, job_id, pin_root, "LEAD-0602",
+                             {"file": "src/Vault.sol", "start": 6, "end": 6,
+                              "text": '        (bool ok, ) = msg.sender.call{value: a}("");'},
+                             "not a bug")
+    assert res["rejected"] and res["rejected"][0]["lead_id"] == "LEAD-0602"
+    errs = res["rejected"][0]["errors"]
+    assert [e["code"] for e in errs] == ["E_INVALID_ARGUMENT"], errs
+    assert "40" in json.dumps(errs)
+
+
+@ASYNC
+async def test_not_a_vulnerability_requires_a_quote(db_pool):
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    await _insert_lead(db_pool, job_id, "LEAD-0603")
+    res = await _dismiss_nav(db_pool, job_id, pin_root, "LEAD-0603", None, _NAV_NOTE)
+    codes = [e["code"] for e in res["rejected"][0]["errors"]]
+    assert codes == ["E_DISMISS_UNCHECKABLE"], res
+
+
+@ASYNC
+async def test_not_a_vulnerability_quote_outside_the_lead_function_is_rejected(db_pool):
+    """Without a map the allowed range is the lead's own lines (5-8); line 3 is the contract header."""
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    await _insert_lead(db_pool, job_id, "LEAD-0604")
+    res = await _dismiss_nav(db_pool, job_id, pin_root, "LEAD-0604",
+                             {"file": "src/Vault.sol", "start": 3, "end": 3, "text": "contract Vault {"},
+                             _NAV_NOTE)
+    errs = res["rejected"][0]["errors"]
+    assert [e["code"] for e in errs] == ["E_DISMISS_UNCHECKABLE"], errs
+    assert "outside the function" in json.dumps(errs)
+
+
+@ASYNC
+async def test_not_a_vulnerability_comment_only_quote_is_rejected(db_pool):
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    await _insert_lead(db_pool, job_id, "LEAD-0605")
+    res = await _dismiss_nav(db_pool, job_id, pin_root, "LEAD-0605",
+                             {"file": "src/Vault.sol", "start": 1, "end": 1,
+                              "text": "// SPDX-License-Identifier: MIT"},
+                             _NAV_NOTE)
+    codes = [e["code"] for e in res["rejected"][0]["errors"]]
+    assert codes == ["E_DISMISS_COMMENT_ONLY"], res

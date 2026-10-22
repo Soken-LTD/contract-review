@@ -25,7 +25,6 @@ import psycopg_pool
 from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
-from ..engine.numbers import lex_numbers
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
 from ..pinning.quote_match import QuoteMatchError, normalize_lines, quote_match
@@ -149,23 +148,15 @@ async def handle_review_withdraw_finding(args: dict[str, Any]) -> dict[str, Any]
         # ── Reason-specific validation ────────────────────────────────────────
         violations: list[dict[str, Any]] = []
 
-        # V5/V6 on note
-        for v in check_text(note, "model", CheckContext(field="withdraw.note")):
+        # Note gate (`note` scope): the withdrawal note is an audit-log string, never report
+        # text, so only step0 applies (see engine/text_gate._NOTE_RULES).
+        for v in check_text(note, "note", CheckContext(field="withdraw.note")):
             violations.append(ReviewError(
                 v.code, rule=v.rule_id,
                 match=v.match[:80] if v.match else "",
                 cp=(v.match[:5] if v.match else ""),
                 pos=v.span[0],
                 token=(v.match[:40] if v.match else ""),
-            ).envelope())
-        for v in lex_numbers(note):
-            violations.append(ReviewError(
-                v.code, rule=v.rule_id,
-                match=v.match[:80] if v.match else "",
-                token=v.match[:40] if v.match else "",
-                field="withdraw.note",
-                cp=(v.match[:5] if v.match else ""),
-                pos=v.span[0],
             ).envelope())
 
         if violations:
