@@ -266,6 +266,26 @@ _TRAVERSABLE_CALL_KINDS: frozenset[str] = frozenset({
 })
 
 
+def _callee_names(span_id: str, span: dict | None) -> set[str]:
+    """Every name a call edge may use for the function behind `span_id`.
+
+    Map span ids come in two shapes: `path:Contract:name@suffix` (lexical layer) and
+    `Contract.name(type,...)` (semantic layer, solc AST). Call targets are bare names (`_claim`),
+    sometimes qualified (`Lib.mulDiv`) and sometimes the span's own `name` field. Index all of them.
+    """
+    names: set[str] = {span_id}
+    if span and span.get("name"):
+        names.add(str(span["name"]))
+    head = span_id.split("(", 1)[0]                 # drop the parameter list
+    head = head.split("@", 1)[0]                     # drop override / inherited suffix
+    last_colon = head.rsplit(":", 1)[-1]             # lexical: path:Contract:name -> name
+    names.add(last_colon)
+    if "." in last_colon:
+        names.add(last_colon.rsplit(".", 1)[-1])     # semantic: Contract.name -> name
+        names.add(last_colon)                        # keep Contract.name for qualified calls
+    return {n for n in names if n}
+
+
 @_reg("map.unreachable", "present")
 
 
@@ -318,8 +338,8 @@ def _auto_unreachable(category: str, map_doc: dict | None, location_quotes: list
         if not sid:
             continue
         fn_by_span[sid] = fn
-        name = sid.rsplit(":", 1)[-1].split("@")[0]
-        fn_by_name.setdefault(name, []).append(fn)
+        for name in _callee_names(sid, span_meta.get(sid)):
+            fn_by_name.setdefault(name, []).append(fn)
 
     def _span_overlaps_loc(sid: str) -> bool:
         sp = span_meta.get(sid)
@@ -380,6 +400,15 @@ def _auto_unreachable(category: str, map_doc: dict | None, location_quotes: list
                 continue
             callees = fn_by_name.get(target_name, [])
             if call_kind in _TRAVERSABLE_CALL_KINDS:
+                if not callees:
+                    # An internal call whose target is not a modelled function (library,
+                    # inherited helper the map did not attribute, a name this resolver does
+                    # not know): the edge may lead to the location. Never claim proof here.
+                    # 2026-10-22: every `_claim` edge was dropped this way because span ids
+                    # (`C._claim(bytes)`) never matched the bare call target `_claim`, so an
+                    # externally reachable internal function was "proven" unreachable and the
+                    # auto kill removed true findings.
+                    return "unknown"
                 for callee in callees:
                     callee_sid = callee.get("span", "")
                     if not callee_sid or callee_sid in visited:
