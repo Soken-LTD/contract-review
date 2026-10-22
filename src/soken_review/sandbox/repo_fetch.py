@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 from soken_review.sandbox.egress import network_name
 from soken_review.sandbox.git_materializer import dir_usage
@@ -51,6 +52,7 @@ class FetchResult:
     src_dir: Path
     manifest: dict = field(default_factory=dict)
     killed_by: str | None = None   # "wall" or "disk" when the supervisor stopped the container
+    stderr_tail: str = ""          # last bytes of the container's stderr (diagnostics only, untrusted)
 
     @property
     def ok(self) -> bool:
@@ -59,9 +61,13 @@ class FetchResult:
 
 def run_watched(argv: list[str], job_dir: Path, wall_s: float, kill: Callable[[], None],
                 max_bytes: int = FETCH_MAX_BYTES, max_inodes: int = FETCH_MAX_INODES,
-                poll_s: float = 0.5) -> tuple[int | None, str | None]:
+                poll_s: float = 0.5, stderr: BinaryIO | None = None) -> tuple[int | None, str | None]:
     """Run argv; every poll, check the wall and the job dir. Returns (returncode, killed_by)."""
-    proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    # stderr: the fetch container's diagnostics. Callers pass an open file so a failure keeps a
+    # bounded tail for `error_detail` instead of vanishing into DEVNULL (2026-10-22: a missing
+    # egress network surfaced as a bare E_INTERNAL with no reason).
+    proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                            stderr=stderr if stderr is not None else subprocess.DEVNULL,
                             start_new_session=True)
     deadline = time.monotonic() + wall_s
     killed_by = None
@@ -130,14 +136,32 @@ def materialize_repo(
     def kill() -> None:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False, timeout=60)
 
-    code, killed_by = run_watched(argv, job_dir, wall_s, kill)
+    stderr_path = out / "fetch.stderr"
+    with open(stderr_path, "wb") as err_fh:
+        code, killed_by = run_watched(argv, job_dir, wall_s, kill, stderr=err_fh)
+    tail = _stderr_tail(stderr_path)
     manifest = _read_manifest(out / "manifest.json")
     if killed_by == "disk":
-        return FetchResult(22, "E_SIZE_LIMIT", False, src, manifest, killed_by)
+        return FetchResult(22, "E_SIZE_LIMIT", False, src, manifest, killed_by, tail)
     if killed_by == "wall":
-        return FetchResult(20, "E_REPO_UNREACHABLE", True, src, manifest, killed_by)  # 09 3.6 timeout
+        return FetchResult(20, "E_REPO_UNREACHABLE", True, src, manifest, killed_by, tail)  # 09 3.6 timeout
     code = code if code is not None else 26
     error_code, retryable = EXIT_CODES.get(code, ("E_INTERNAL", False))
     if code == 0 and not manifest.get("resolved_commit"):
         code, error_code, retryable = 26, "E_INTERNAL", False
-    return FetchResult(code, error_code, retryable, src, manifest)
+    return FetchResult(code, error_code, retryable, src, manifest, None, tail)
+
+
+STDERR_TAIL_BYTES = 2048
+
+
+def _stderr_tail(path: Path, limit: int = STDERR_TAIL_BYTES) -> str:
+    """Last `limit` bytes of the fetch container's stderr, decoded leniently; "" if absent."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as fh:
+            if size > limit:
+                fh.seek(size - limit)
+            return fh.read().decode("utf-8", "replace").strip()
+    except OSError:
+        return ""

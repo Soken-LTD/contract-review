@@ -817,10 +817,19 @@ class Supervisor:
                     async with conn.transaction():
                         await repo.complete_step(step_id, "done",
                                                  error_code=fetch_result.error_code)
+                        # Persist WHY (exit code, kill reason, stderr tail) — a bare error code
+                        # left a missing egress network undiagnosable (2026-10-22).
                         await repo.transition(job_id, "failed",
-                                              error_code=fetch_result.error_code)
-                logger.info("job %s: repo fetch failed (%s), terminal",
-                            job_id[-8:], fetch_result.error_code)
+                                              error_code=fetch_result.error_code,
+                                              error_detail={
+                                                  "stage": "repo_fetch",
+                                                  "exit_code": fetch_result.exit_code,
+                                                  "killed_by": fetch_result.killed_by,
+                                                  "stderr_tail": fetch_result.stderr_tail[:2048],
+                                              })
+                logger.warning("job %s: repo fetch failed (%s, exit %s, killed_by=%s): %s",
+                               job_id[-8:], fetch_result.error_code, fetch_result.exit_code,
+                               fetch_result.killed_by, fetch_result.stderr_tail[-400:] or "<no stderr>")
             return None
 
         # Get the explorer candidate for this address (if any) for compiler/settings (13.3)
