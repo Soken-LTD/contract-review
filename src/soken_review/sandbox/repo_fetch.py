@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import stat
 import subprocess
 import time
 from collections.abc import Callable
@@ -136,10 +137,14 @@ def materialize_repo(
     def kill() -> None:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False, timeout=60)
 
-    stderr_path = out / "fetch.stderr"
-    with open(stderr_path, "wb") as err_fh:
+    # stderr goes to a HOST-ONLY file in the job root: only src/out/tmp are bind-mounted into the
+    # untrusted container, so it can neither see nor replace this file. The tail is read back from
+    # the SAME descriptor — never re-opened by path — so a compromised fetch cannot swap in a
+    # symlink (host-file disclosure into error_detail) or a FIFO (supervisor hang).
+    stderr_path = job_dir / "fetch.stderr"
+    with open(stderr_path, "w+b") as err_fh:
         code, killed_by = run_watched(argv, job_dir, wall_s, kill, stderr=err_fh)
-    tail = _stderr_tail(stderr_path)
+        tail = _tail_from_fh(err_fh)
     manifest = _read_manifest(out / "manifest.json")
     if killed_by == "disk":
         return FetchResult(22, "E_SIZE_LIMIT", False, src, manifest, killed_by, tail)
@@ -155,13 +160,19 @@ def materialize_repo(
 STDERR_TAIL_BYTES = 2048
 
 
-def _stderr_tail(path: Path, limit: int = STDERR_TAIL_BYTES) -> str:
-    """Last `limit` bytes of the fetch container's stderr, decoded leniently; "" if absent."""
+def _tail_from_fh(fh: BinaryIO, limit: int = STDERR_TAIL_BYTES) -> str:
+    """Last `limit` bytes of an already-open stderr file, read from its own descriptor.
+
+    Deliberately never re-opens by path: a path re-open is the classic symlink/FIFO TOCTOU, so it
+    is avoided on principle even though the file lives outside every container mount. Refuses
+    anything but a regular file as defence in depth. Returns "" on any problem.
+    """
     try:
-        size = path.stat().st_size
-        with open(path, "rb") as fh:
-            if size > limit:
-                fh.seek(size - limit)
-            return fh.read().decode("utf-8", "replace").strip()
-    except OSError:
+        fh.flush()
+        st = os.fstat(fh.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            return ""
+        fh.seek(max(0, st.st_size - limit))
+        return fh.read(limit).decode("utf-8", "replace").strip()
+    except (OSError, ValueError):
         return ""
