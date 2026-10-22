@@ -79,24 +79,49 @@ class _Fn:
     role_names: set[str] = field(default_factory=set)
 
 
+def _line_starts(text: str) -> list[int]:
+    """Byte offsets at which lines start, counting CRLF, lone CR and LF as one line break each.
+
+    This is the same line rule the pin applies (`_lf_normalize`: CRLF and lone CR -> LF), so a
+    line number computed from the compiled bytes names the same line in the LF-normalised text.
+    """
+    data = text.encode("utf-8")
+    starts = [0]
+    i, n = 0, len(data)
+    while i < n:
+        b = data[i]
+        if b == 0x0A:
+            starts.append(i + 1)
+        elif b == 0x0D:
+            if i + 1 < n and data[i + 1] == 0x0A:
+                i += 1
+            starts.append(i + 1)
+        i += 1
+    return starts
+
+
 class _Ctx:
-    def __init__(self, output: dict, texts: dict[str, str]) -> None:
+    def __init__(self, output: dict, texts: dict[str, str], compiled_texts: dict[str, str] | None = None) -> None:
+        """`texts` are the pinned (LF) files; `compiled_texts` the bytes the compiler actually saw
+        for the same paths (the fetched Standard JSON keeps CRLF so the rebuild can be exact).
+        solc `src` offsets are byte offsets into the compiled text, so lines must be resolved
+        against it: resolving them against the LF text shifts every function after a CR down by
+        the number of CRs before it (MasterChef 2026-10-22). Paths without a compiled text fall
+        back to the pinned text."""
         self.paths: dict[int, str] = {}
         self.line_starts: dict[str, list[int]] = {}
         self.nodes: dict[int, dict] = {}
         self.parent_contract: dict[int, dict] = {}
         self.node_path: dict[int, str] = {}
         self.asts: dict[str, dict] = {}
+        compiled_texts = compiled_texts or {}
         for path, src in (output.get("sources") or {}).items():
             ast = src.get("ast")
             if not isinstance(ast, dict) or path not in texts:
                 continue
             self.paths[int(src.get("id", ast.get("src", "0:0:0").split(":")[2]))] = path
             self.asts[path] = ast
-            starts = [0]
-            data = texts[path].encode("utf-8")
-            starts.extend(i + 1 for i, b in enumerate(data) if b == 0x0A)
-            self.line_starts[path] = starts
+            self.line_starts[path] = _line_starts(compiled_texts.get(path) or texts[path])
         for path, ast in self.asts.items():
             self._index(ast, path, None)
 
@@ -239,8 +264,9 @@ def _is_revert_body(node: Any) -> bool:
 
 
 class SemanticBuilder:
-    def __init__(self, output: dict, texts: dict[str, str], categories: list[str]) -> None:
-        self.ctx = _Ctx(output, texts)
+    def __init__(self, output: dict, texts: dict[str, str], categories: list[str],
+                 compiled_texts: dict[str, str] | None = None) -> None:
+        self.ctx = _Ctx(output, texts, compiled_texts)
         self.categories = categories
         self.fns: dict[int, _Fn] = {}
         self.span_ids: dict[tuple[str, int], str] = {}
@@ -984,9 +1010,13 @@ def _dedup_dicts(items: list[dict]) -> list[dict]:
     return out
 
 
-def build_semantic(output: dict, texts: dict[str, str], categories: list[str]) -> tuple[dict, dict[tuple[str, int], tuple[str, str]]] | None:
-    """Semantic layer, or None when the output carries no AST for any pinned file (04 1.3: map partial)."""
-    builder = SemanticBuilder(output, texts, categories)
+def build_semantic(output: dict, texts: dict[str, str], categories: list[str],
+                   compiled_texts: dict[str, str] | None = None) -> tuple[dict, dict[tuple[str, int], tuple[str, str]]] | None:
+    """Semantic layer, or None when the output carries no AST for any pinned file (04 1.3: map partial).
+
+    `compiled_texts`: the per-path source text the compiler was given (may differ from the pinned
+    text in line endings); AST offsets are resolved against it, see `_Ctx`."""
+    builder = SemanticBuilder(output, texts, categories, compiled_texts)
     if not builder.ctx.asts:
         return None
     return builder.build()

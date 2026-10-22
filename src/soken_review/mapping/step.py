@@ -47,6 +47,7 @@ def run_map_step(
     chain: str | None = None,
     solc_output_path: Path | None,
     build_ok: bool,
+    std_input_path: Path | None = None,
     job: dict[str, Any] | None = None,
     chain_state: dict[str, Any] | None = None,
     candidate: dict[str, Any] | None = None,
@@ -54,13 +55,21 @@ def run_map_step(
     analyzers: dict[str, str] | None = None,
     build_detail: str | None = None,
 ) -> dict[str, Any]:
-    """Build and store map, flags and static facts. Returns a summary for the step provenance."""
+    """Build and store map, flags and static facts. Returns a summary for the step provenance.
+
+    `std_input_path`: the Standard JSON input the compiler received (supervisor shape
+    `{"std_json_input": {...}}` or the plain std-json of the host build copy). Its `content`
+    strings are the bytes the AST offsets refer to (CRLF kept for an exact rebuild), so the
+    semantic layer resolves lines against them, not against the LF pin."""
     pin = PinnedSource.load(pin_root, job_id)
     files = {p: "\n".join(pin.read_all(p)) + ("\n" if pin.line_count(p) else "") for p in pin.entries}
     output = None
+    compiled_texts: dict[str, str] | None = None
     if build_ok and solc_output_path is not None and solc_output_path.exists():
         output = json.loads(solc_output_path.read_text(encoding="utf-8"))
-    art = build_map(files, output, list(family_categories(family, chain)), build_ok=build_ok)
+        compiled_texts = compiled_texts_from_std_input(std_input_path)
+    art = build_map(files, output, list(family_categories(family, chain)), build_ok=build_ok,
+                    compiled_texts=compiled_texts)
     write_map(pin_root, job_id, art, build_detail=build_detail)
 
     # The scan reads the lexer's own tokens (comment and string text intact) and the raw text; the
@@ -93,6 +102,30 @@ def run_map_step(
         "flags": {r: sum(1 for f in flags if f["rule"] == r) for r in ("J1", "J2", "J3", "J4", "J5")},
         "facts": len(facts),
     }
+
+
+def compiled_texts_from_std_input(path: Path | None) -> dict[str, str] | None:
+    """Per-path `content` of a Standard JSON input file, or None when there is none to read.
+
+    Accepts both on-disk shapes: the supervisor's `std_input_0.json`
+    (`{"std_json_input": <std json>, "constructor_args_hex": ...}`) and the build adapter's
+    host copy `input.json` (the std json itself). Only string `content` entries count; `urls`
+    sources carry no text."""
+    if path is None or not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    std = data.get("std_json_input") if "std_json_input" in data else data
+    sources = (std or {}).get("sources") if isinstance(std, dict) else None
+    if not isinstance(sources, dict):
+        return None
+    out = {p: s["content"] for p, s in sources.items()
+           if isinstance(s, dict) and isinstance(s.get("content"), str)}
+    return out or None
 
 
 def write_flags(root: Path, job_id: str, flags: list[dict[str, Any]]) -> None:
