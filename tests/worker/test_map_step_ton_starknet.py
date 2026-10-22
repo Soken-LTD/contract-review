@@ -181,7 +181,8 @@ async def test_starknet_analyze_queues_map_instead_of_ready(tmp_path, monkeypatc
     _write(out / "provenance.json", {"tier": "B", "match": None, "reason": "no_class"})
     import soken_review.adapters.starknet.analyze as an
     import soken_review.adapters.starknet.map as mp
-    monkeypatch.setattr(an, "analyze", lambda br, facts, cairo, run_stock_lint: ([], {"status": "ok"}, {}))
+    monkeypatch.setattr(an, "analyze",
+                        lambda br, facts, cairo, run_stock_lint, run_caracal: ([], {"status": "ok"}, {}))
     monkeypatch.setattr(mp, "chain_extras", lambda cs, facts, sm, prov: {"facts": "complete"})
 
     await starknet_steps.run_step(sup, {"id": 12, "job_id": "job_SN2", "step": "analyze", "seq": 0}, job)
