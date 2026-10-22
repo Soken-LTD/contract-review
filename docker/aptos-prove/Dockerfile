@@ -56,9 +56,12 @@ RUN set -eu; \
 # 3. Boogie via dotnet global tool (nuget, content-addressed by version).
 #    HOME=/root here (root user); boogie lands in /root/.dotnet/tools.
 #    Symlink to /usr/local/bin so all users can find it in PATH.
-RUN DOTNET_CLI_HOME=/root dotnet tool install --global Boogie --version ${BOOGIE_VERSION} \
-    && ln -sf /root/.dotnet/tools/boogie /usr/local/bin/boogie \
-    && test -x /root/.dotnet/tools/boogie \
+# Install to a world-accessible tool-path (NOT /root, which is 0700) so the sandbox
+# user 10001 can execute boogie at runtime; chmod a+rX makes the tool + its DLLs readable.
+RUN DOTNET_CLI_HOME=/opt/dotnet dotnet tool install --tool-path /opt/boogie Boogie --version ${BOOGIE_VERSION} \
+    && ln -sf /opt/boogie/boogie /usr/local/bin/boogie \
+    && chmod -R a+rX /opt/boogie /opt/dotnet \
+    && test -x /opt/boogie/boogie \
     && { boogie --version || true; }
 
 # Smoke-tests: both tools must respond before we commit the image layer.
