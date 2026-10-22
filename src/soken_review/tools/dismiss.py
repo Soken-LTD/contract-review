@@ -110,18 +110,27 @@ def _check_note(note: str, lead_id: str) -> list[dict[str, Any]]:
 _NAV_MIN_NOTE_CHARS = 40
 
 
-def _lead_function_ranges(map_doc: dict | None, lead: dict[str, Any]) -> list[tuple[str, int, int]]:
-    """Line ranges a `not_a_vulnerability` quote must touch: the lexical spans enclosing the
-    lead location (function, modifier or contract-level span), else the lead's own lines."""
+def _lead_function_ranges(map_doc: dict | None, lead: dict[str, Any], file_lines: int = 0) -> list[tuple[str, int, int]]:
+    """Line ranges a `not_a_vulnerability` quote must touch.
+
+    The lexical spans enclosing the lead location (function, modifier or contract span). A lead
+    that no span covers while the map exists is file-level code (pragma, license, import, a
+    state variable outside any function: `solc-version` and `pragma` detectors report `1-1`); the
+    holding "function" is then the whole file, otherwise no non-comment code line could ever be
+    quoted and the lead could never be closed (c4 re-run, 2026-10-23). Without a map the lead's own
+    lines are the only known structure (fail closed)."""
     path, start, end = lead["path"], int(lead["start_line"]), int(lead["end_line"])
+    spans = [sp for sp in ((map_doc or {}).get("spans", []) or []) if sp.get("file") == path]
     out: list[tuple[str, int, int]] = []
-    for sp in (map_doc or {}).get("spans", []) or []:
-        if sp.get("file") != path:
-            continue
+    for sp in spans:
         s, e = int(sp.get("start", 0)), int(sp.get("end", 0))
         if s and e and not (e < start or s > end):
             out.append((path, s, e))
-    return out or [(path, start, end)]
+    if out:
+        return out
+    if map_doc is not None and file_lines > 0:
+        return [(path, 1, file_lines)]
+    return [(path, start, end)]
 
 
 # ── Duplicate-of checks (04 §10 D1–D4) ───────────────────────────────────────
@@ -487,7 +496,11 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                     reason="not_a_vulnerability requires a code quote inside the lead's function",
                 ).envelope())
             else:
-                allowed = _lead_function_ranges(map_doc, lead)
+                try:
+                    n_lines = pin.line_count(lead["path"])
+                except (KeyError, ValueError):
+                    n_lines = 0
+                allowed = _lead_function_ranges(map_doc, lead, n_lines)
                 for q in quotes[:3]:
                     qt = q.get("text")
                     q_file, q_start, q_end = q.get("file"), q.get("start"), q.get("end")
