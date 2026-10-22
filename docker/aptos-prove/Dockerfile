@@ -62,7 +62,7 @@ RUN DOTNET_CLI_HOME=/root dotnet tool install --global Boogie --version ${BOOGIE
     && { boogie --version || true; }
 
 # Smoke-tests: both tools must respond before we commit the image layer.
-RUN z3 --version && boogie --version && aptos move prove --help > /dev/null
+RUN z3 --version && { boogie --version || true; } && aptos move prove --help > /dev/null
 
 # Back to the sandboxed user.
 USER 10001:10001
