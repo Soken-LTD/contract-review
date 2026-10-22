@@ -58,7 +58,8 @@ RUN set -eu; \
 # 3. Boogie via dotnet global tool (nuget, content-addressed by version).
 RUN DOTNET_CLI_HOME=/root dotnet tool install --global Boogie --version ${BOOGIE_VERSION} \
     && ln -sf /root/.dotnet/tools/boogie /usr/local/bin/boogie \
-    && boogie --version
+    && test -x /root/.dotnet/tools/boogie \
+    && { boogie --version || true; }
 
 # Smoke-tests.
 RUN z3 --version && boogie --version
