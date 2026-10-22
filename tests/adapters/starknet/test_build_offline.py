@@ -239,3 +239,20 @@ def test_analyze_skips_caracal_when_asked(tmp_path: Path, monkeypatch) -> None:
     _leads, static_map, _plan = A.analyze(_build_result(tmp_path), None, "2.13.1", run_stock_lint=False,
                                           with_caracal=False)
     assert static_map["tools"]["caracal"] == {"status": "not_run", "reason": "build_not_ok"}
+
+
+def test_caracal_failure_keeps_its_log_and_exit_code(tmp_path: Path, monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **_kw):
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 101, stdout=b"Compiling with Scarb. Found Scarb.toml.\nthread 'main' panicked at x\n", stderr=b"")
+
+    monkeypatch.setattr(B.subprocess, "run", fake_run)
+    monkeypatch.setenv("SOKEN_SANDBOX_RUNTIME", "runc")
+    monkeypatch.setenv("SOKEN_IMAGE_STARKNET_CARACAL", CARACAL_IMG)
+    monkeypatch.setattr("shutil.which", lambda _n: "/usr/bin/docker")
+    status, findings, reason = A.run_caracal(_build_result(tmp_path))
+    assert (status, findings) == ("not_run", [])
+    assert reason.splitlines()[0] == "analyzer_failed: exit 101" and "panicked" in reason
+    assert (tmp_path / "host" / "caracal.log").read_text().startswith("Compiling with Scarb")

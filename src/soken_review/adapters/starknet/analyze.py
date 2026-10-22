@@ -148,7 +148,7 @@ def run_caracal(result: BuildResult) -> tuple[str, list[dict[str, Any]], str | N
     """
     import shutil
 
-    from soken_review.adapters.starknet.build import _container_workdir, run_offline
+    from soken_review.adapters.starknet.build import _container_workdir, _write_host, run_offline
     from soken_review.sandbox.profile import locked_image
 
     if result.status != "ok" or not result.work_dir:
@@ -167,10 +167,13 @@ def run_caracal(result: BuildResult) -> tuple[str, list[dict[str, Any]], str | N
     # caracal finds what its own scarb wrote and the build step's /work/output stays untouched.
     rc, log = run_offline(image, Path(result.work_dir), workdir, caracal_mod.detect_argv(), _CARACAL_WALL_S,
                           env={"SCARB_TARGET_DIR": caracal_mod.target_dir(workdir)})
+    # Supervisor-only copy of the container output (never mounted), so a failed run is diagnosable
+    # from the job dir; build.log and lint already have this.
+    _write_host(Path(result.work_dir) / "host" / "caracal.log", log.encode())
     if rc == 124:
         return "not_run", [], "analyze_timeout"
     if rc != 0:
-        return "not_run", [], "analyzer_failed"
+        return "not_run", [], "\n".join([f"analyzer_failed: exit {rc}", *log.splitlines()[-10:]])
     findings = caracal_mod.parse_caracal(log)
     if not findings and caracal_mod.skipped_files(log):
         # Caracal skips every class without SIERRA debug names (`[cairo] sierra-replace-ids = true`)
