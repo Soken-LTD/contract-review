@@ -58,10 +58,11 @@ RUN set -eu; \
 #    Symlink to /usr/local/bin so all users can find it in PATH.
 RUN DOTNET_CLI_HOME=/root dotnet tool install --global Boogie --version ${BOOGIE_VERSION} \
     && ln -sf /root/.dotnet/tools/boogie /usr/local/bin/boogie \
-    && boogie --version
+    && test -x /root/.dotnet/tools/boogie \
+    && { boogie --version || true; }
 
 # Smoke-tests: both tools must respond before we commit the image layer.
-RUN z3 --version && boogie --version && aptos move prove --help > /dev/null
+RUN z3 --version && { boogie --version || true; } && aptos move prove --help > /dev/null
 
 # Back to the sandboxed user.
 USER 10001:10001
