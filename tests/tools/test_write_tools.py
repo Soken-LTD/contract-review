@@ -2368,3 +2368,18 @@ async def test_not_a_vulnerability_file_level_lead_accepts_any_code_line_of_the_
                               "text": '        (bool ok, ) = msg.sender.call{value: a}("");'},
                              _NAV_NOTE)
     assert res["dismissed"] == ["LEAD-0606"], res
+
+
+def test_lead_function_ranges_narrowest_structure_first():
+    """Pure: function span > semantic unit > whole file > own lines (no map)."""
+    from soken_review.tools.dismiss import _lead_function_ranges
+
+    lead = {"path": "a.sol", "start_line": 20, "end_line": 20}
+    doc = {"spans": [{"id": "a.sol:f", "kind": "function", "file": "a.sol", "start": 18, "end": 25}],
+           "semantic": {"units": [{"id": "a.sol:C", "file": "a.sol", "start": 5, "end": 60}]}}
+    assert _lead_function_ranges(doc, lead, 80) == [("a.sol", 18, 25)]
+    state_var = {"path": "a.sol", "start_line": 7, "end_line": 7}
+    assert _lead_function_ranges(doc, state_var, 80) == [("a.sol", 5, 60)]
+    pragma = {"path": "a.sol", "start_line": 1, "end_line": 1}
+    assert _lead_function_ranges(doc, pragma, 80) == [("a.sol", 1, 80)]
+    assert _lead_function_ranges(None, pragma, 80) == [("a.sol", 1, 1)]
