@@ -53,6 +53,7 @@ from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
 from ..mapping.build import load_map
+from ..mapping.semantic_evm import detect_token_review
 from ..pinning.quote_match import QuoteMatchError, normalize_lines, quote_match
 from ..pinning.store import PinnedSource
 from ..server import handler
@@ -1317,6 +1318,8 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 category_generic=is_generic,
                 category_max_severity=cat_info.get("max_severity"),
                 linked_lead_same_cat=draft_locked.get("evidence_level") == "analyzer_and_reasoning",
+                token_review=detect_token_review(map_doc.get("semantic") if map_doc else None),
+                has_location_quote=bool(location_quotes),
             )
 
             try:

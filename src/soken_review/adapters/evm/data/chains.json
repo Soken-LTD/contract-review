@@ -490,6 +490,74 @@
       },
       "source_url": "https://developers.tron.network/docs/tvm-vs-evm",
       "checked_at": "2026-10-09"
+    },
+    {
+      "chain_id": 4663,
+      "family": "evm",
+      "name": "Robinhood Chain Mainnet",
+      "address_format": "evm_checksum",
+      "enabled": true,
+      "native_symbol": "ETH",
+      "native_decimals": 18,
+      "addr_url": null,
+      "inactive_opcodes": [],
+      "selfdestruct_semantics": {
+        "value": "eip6780",
+        "source_url": "https://eips.ethereum.org/EIPS/eip-6780",
+        "checked_at": "2026-10-20"
+      },
+      "rpc": [
+        {
+          "url": "https://rpc.mainnet.chain.robinhood.com",
+          "log_window": 2000,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/4663",
+          "checked_at": "2026-10-20",
+          "note": "official public endpoint, rate limited; ETH gas; Blockscout explorer robinhoodchain.blockscout.com"
+        }
+      ],
+      "sourcify_supported": {
+        "value": false,
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-20",
+        "note": "unverified for this chain; deployed-mode source fetch may fail, use repo/files"
+      },
+      "source_url": "https://chainlist.org/chain/4663",
+      "checked_at": "2026-10-20"
+    },
+    {
+      "chain_id": 5042,
+      "family": "evm",
+      "name": "Arc Mainnet",
+      "address_format": "evm_checksum",
+      "enabled": true,
+      "native_symbol": "USDC",
+      "native_decimals": 6,
+      "addr_url": null,
+      "inactive_opcodes": [],
+      "selfdestruct_semantics": {
+        "value": "eip6780",
+        "source_url": "https://eips.ethereum.org/EIPS/eip-6780",
+        "checked_at": "2026-10-20"
+      },
+      "rpc": [
+        {
+          "url": "https://rpc.mainnet.arc.io",
+          "log_window": 2000,
+          "archive": false,
+          "source_url": "https://chainlist.org/chain/5042",
+          "checked_at": "2026-10-20",
+          "note": "Circle Arc L1; USDC gas (6 decimals); endpoint may be permissioned, confirm access before relying"
+        }
+      ],
+      "sourcify_supported": {
+        "value": false,
+        "source_url": "https://sourcify.dev/server/chains",
+        "checked_at": "2026-10-20",
+        "note": "unverified for this chain; deployed-mode source fetch may fail, use repo/files"
+      },
+      "source_url": "https://chainlist.org/chain/5042",
+      "checked_at": "2026-10-20"
     }
   ]
 }

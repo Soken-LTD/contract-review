@@ -1663,7 +1663,7 @@
      },
      "revision": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 0
      },
      "answers": {
       "type": "array",
@@ -2385,6 +2385,156 @@
         "pdf"
        ]
       }
+     }
+    }
+   }
+  },
+  {
+   "name": "review_publish",
+   "title": "Publish review report",
+   "description": "Offers to publish a rendered review report on our public showcase, then enqueues publication on explicit consent. Phase 1 (no consent): returns what will be published and the future public URL. Phase 2 (consent provided): logs consent and queues the publish job. Idempotent: a second call with the same report_id returns the current status. The report PDF is taken from our object store; no client content is published.",
+   "annotations": {
+    "title": "Publish review report",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   },
+   "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "job_id": {
+      "$ref": "#/$defs/job_id"
+     },
+     "manage_key": {
+      "type": "string",
+      "description": "The report owner's manage key (the #k= fragment of the report's manage_url). Required: proves ownership before the report can be published to the public site."
+     },
+     "consent": {
+      "type": "object",
+      "description": "Explicit consent to public disclosure. Omit to receive the offer first.",
+      "additionalProperties": false,
+      "properties": {
+       "party": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "Name of the organisation authorising disclosure."
+       },
+       "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100,
+        "description": "Name of the person authorising."
+       },
+       "statement": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500,
+        "description": "Explicit consent statement, e.g. 'I consent to the public disclosure of this review report.'"
+       },
+       "timestamp": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 50,
+        "description": "ISO-8601 timestamp of consent, e.g. '2026-10-22T10:00:00Z'."
+       }
+      },
+      "required": [
+       "party",
+       "name",
+       "statement",
+       "timestamp"
+      ]
+     }
+    },
+    "required": [
+     "job_id",
+     "manage_key"
+    ]
+   },
+   "outputSchema": {
+    "type": "object",
+    "required": [
+     "accepted"
+    ],
+    "properties": {
+     "accepted": {
+      "type": "boolean"
+     },
+     "errors": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/error"
+      },
+      "maxItems": 20
+     },
+     "errors_more": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "phase": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "enum": [
+       "offer",
+       "queued",
+       "publishing",
+       "published",
+       "failed",
+       null
+      ]
+     },
+     "report_id": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "pattern": "^[a-z2-7]{26}$"
+     },
+     "sanitized_filename": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "PDF filename that will be (or was) committed to the public repo."
+     },
+     "future_public_url": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "GitHub URL where the PDF will be published."
+     },
+     "disclaimer": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Human-readable disclaimer shown in the offer phase."
+     },
+     "status": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "enum": [
+       "queued",
+       "publishing",
+       "published",
+       "failed",
+       null
+      ]
+     },
+     "public_url": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Permanent public URL once published; null until then."
      }
     }
    }

@@ -25,7 +25,7 @@ a{color:inherit;text-decoration:none;}
 .mono{font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-size:8.1pt;color:#cdd9ea;word-break:normal;overflow-wrap:anywhere;}
 td .mono{font-size:7.9pt;}
 a.lnk{color:#7ac4f4;}
-.grad{background:linear-gradient(135deg,#273dd2,#6bb9ec,#7ac4f4);-webkit-background-clip:text;background-clip:text;color:transparent;}
+.grad{background:linear-gradient(135deg,#273dd2,#6bb9ec,#7ac4f4);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;}
 .rule{height:3px;background:linear-gradient(135deg,#273dd2,#6bb9ec,#7ac4f4);border:0;margin:0;}
 .cover{min-height:244mm;display:flex;flex-direction:column;justify-content:space-between;padding:0 4mm;break-after:page;}
 .cover .top{display:flex;justify-content:space-between;align-items:flex-start;}
@@ -39,9 +39,13 @@ a.lnk{color:#7ac4f4;}
 .metagrid .k{font-size:7.4pt;letter-spacing:.12em;text-transform:uppercase;color:#8397b4;}
 .metagrid .v{font-size:9.4pt;color:#fff;margin-top:2px;}
 section{margin-bottom:12px;}
-.snum{font-size:9pt;font-weight:700;letter-spacing:.05em;margin-right:8px;}
+.snum{font-size:9pt;font-weight:700;margin-right:8px;display:inline-block;}
 h2{font-size:15pt;margin:14px 0 8px;padding-top:2px;break-after:avoid;}
 h3{font-size:10.8pt;color:#7ac4f4;margin:12px 0 5px;break-after:avoid;}
+/* paged.js honors break-after:avoid on a heading inconsistently when the next block is a tall
+   table, so the heading can be left alone at a page bottom. Also forbid a break right BEFORE the
+   element that follows a heading, which reliably pulls the heading onto the next page with it. */
+h2 + *,h3 + *{break-before:avoid;}
 p{margin:0 0 7px;orphans:3;widows:3;}
 ul{margin:0 0 8px 16px;}
 li{margin-bottom:4px;}
@@ -49,6 +53,7 @@ table{width:100%;border-collapse:collapse;margin:8px 0;font-size:8.6pt;}
 th{background:#17273f;color:#fff;font-weight:700;text-align:left;padding:6px 8px;border:1px solid #2c3f5b;font-size:7.9pt;letter-spacing:.03em;text-transform:uppercase;}
 td{padding:5px 8px;border:1px solid #2c3f5b;vertical-align:top;color:#cdd9ea;}
 tr{break-inside:avoid;}
+tr:first-child{break-after:avoid;}
 tr:nth-child(even) td{background:#101d31;}
 td.num,th.num{text-align:right;white-space:nowrap;}
 td.id{white-space:nowrap;}
@@ -76,6 +81,8 @@ td.id{white-space:nowrap;}
 .fig .figtitle{font-size:9.4pt;font-weight:700;color:#fff;margin-bottom:8px;}
 figcaption{font-size:8pt;color:#8397b4;margin-top:6px;}
 .disc{font-size:8.2pt;color:#8397b4;}
+.emptynote{border:1px solid #26374f;border-radius:5px;background:#101d31;padding:11px 14px;margin:6px 0 0;color:#8397b4;font-size:8.8pt;break-inside:avoid;}
+.emptynote p{margin:0;}
 .brk{break-before:page;}
 .keep{break-inside:avoid;page-break-inside:avoid;}
 .runfoot{position:running(runfoot);font-size:6.4pt;line-height:1.55;color:#8397b4;white-space:nowrap;}

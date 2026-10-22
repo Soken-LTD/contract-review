@@ -56,13 +56,22 @@ class AptosAdapter:
 
     def analyze(self, r: BuildResult, *, step_deadline: float | None = None) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
         from soken_review.adapters.aptos.build import _argv, in_scope_for, load_chain_state
+        from soken_review.adapters.move import prover as prover_mod
         from soken_review.adapters.move.analyze import analyze, printed_to_pin
 
         cs = load_chain_state(r.candidate)
         extras = chain_extras(r.candidate, cs)
+        units = r.candidate.settings.get("units", [])
         runs = [(_argv(u["dir"], f"lint-{u['name']}", None, lint=True), printed_to_pin(r.candidate.files, ""))
-                for u in r.candidate.settings.get("units", [])]
-        return analyze(r, chain="aptos", lint_runs=runs, lint_version=LINT_VERSION, chain_extras=extras,
+                for u in units]
+        # One prove entry per unit package; argv uses /work/src paths (replaced in analyze).
+        prove_runs = [
+            (prover_mod.prove_argv("aptos", u["dir"]), printed_to_pin(r.candidate.files, ""))
+            for u in units
+        ]
+        return analyze(r, chain="aptos", lint_runs=runs, lint_version=LINT_VERSION,
+                       prove_runs=prove_runs, prover_version=LINT_VERSION,
+                       chain_extras=extras,
                        upgrade=extras.get("upgrade"), in_scope=in_scope_for(r.candidate), rules_dir=_HERE / "rules",
                        lint_map_path=_HERE / "lint_map.yaml", dep_modules=onchain_dependencies(r.candidate, cs),
                        step_deadline=step_deadline)

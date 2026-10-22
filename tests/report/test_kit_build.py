@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -162,6 +163,21 @@ def test_no_high_line_and_empty_findings(tmp_path):
 
 def test_no_map_line(tmp_path):
     assert kb.kit_texts()["no_map_line"] in _html(report(1), tmp_path)
+
+
+def test_method_heading_and_table_kept_together(tmp_path):
+    # The method heading and its Step/Detail table must share one break-inside:avoid block so paged.js
+    # never leaves the heading alone at a page bottom when the table would start on the next page
+    # (break-after:avoid on the heading alone is honored inconsistently across render hosts).
+    html = _html(report(3), tmp_path)
+    assert re.search(
+        r'<section><div class="keep"><h2>.*?Method and severity scale</h2>'
+        r'<table><tr><th style="width:24%">Step</th>.*?</table></div>',
+        html, re.DOTALL,
+    ), "method heading and its table are not wrapped together in a keep block"
+    # The wrapper closes right after the method table; the severity scale stays its own keep block
+    # (the heading keep must not swallow the whole, unbounded-height section).
+    assert '</table></div><div class="keep"><h3>Severity scale' in html
 
 
 def test_kit_texts_pass_public_scope_with_named_exemptions():

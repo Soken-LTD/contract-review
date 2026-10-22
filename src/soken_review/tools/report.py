@@ -27,7 +27,10 @@ from ..report.kit.build import SEVS, counts, kit_texts, project
 from ..report.render import KEY_VERSION, store_root
 from ..server import handler
 
-SITE = "https://soken.dev"
+# Base URL for the signed report links. Production serves them at soken.dev/r/<id>; a test or
+# staging deployment overrides this with SOKEN_REPORT_SITE so the links point at a host that
+# actually serves the rendered reports.
+SITE = os.environ.get("SOKEN_REPORT_SITE") or "https://soken.dev"
 VIEW_TTL_S = 3600
 ROWS_PER_PAGE = 20
 _MAX_WAIT = 45

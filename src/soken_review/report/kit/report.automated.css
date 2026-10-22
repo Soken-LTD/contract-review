@@ -3,7 +3,8 @@
 .mono{font-size:7.9pt;}
 pre.code{white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;background:#0b1424;border:1px solid #26374f;border-radius:4px;padding:6px 8px;margin:0 0 8px;font-size:7.6pt;line-height:1.45;color:#cdd9ea;}
 pre.code.keep{break-inside:avoid;}
-pre.code .ln{display:inline-block;min-width:34px;color:#5b6f8f;}
+pre.code .cl{display:block;padding-left:34px;text-indent:-34px;}
+pre.code .ln{display:inline-block;min-width:34px;color:#5b6f8f;text-indent:0;}
 .codehead{font-size:7.4pt;color:#8397b4;margin:6px 0 2px;overflow-wrap:anywhere;break-after:avoid;}
 .codegrp.keep{break-inside:avoid;}
 td,th,p,li{overflow-wrap:anywhere;}

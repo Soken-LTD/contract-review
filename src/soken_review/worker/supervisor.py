@@ -52,6 +52,7 @@ from ..sandbox.output import UnsafeOutput, read_output_files
 from ..tools.git_probe import _SHA1_RE as _COMMIT_SHA1_RE
 from ..tools.git_probe import resolve_ref as _resolve_ref
 from . import move_steps as _move
+from . import solana_steps as _solana_steps
 from . import ton_pipeline
 
 logger = logging.getLogger(__name__)
@@ -306,6 +307,10 @@ class Supervisor:
                 await starknet_steps.run_step(self, step, job)
             elif job is not None and _move.job_chain(job) is not None:
                 await self._run_move_step(step, job)
+            elif job is not None and _solana_steps.is_solana_job(job):
+                # Solana (06): own runners for every step. Without this branch a Solana job falls
+                # through to the EVM handlers below and orphans in `analyzing`.
+                await _solana_steps.run_step(self, step, job)
             elif step_name == "chain_state" and step["seq"] == 0:
                 await self._run_chain_state_0(step)
             elif step_name == "fetch":

@@ -335,6 +335,13 @@ def _megabyte(unit: str) -> str:
     return unit * (1_000_000 // len(unit))
 
 
+# ReDoS guard budget. The point is to catch catastrophic regex backtracking, which takes tens
+# of seconds to minutes on 1 MB of pathological input — not to assert a tight wall-clock number.
+# A generous bound keeps the test meaningful while tolerating loaded/variable CI runners (a
+# healthy parse is ~2 s; the old 2.0 s bound flaked at 2.03 s under load).
+_REDOS_BUDGET_S = 10.0
+
+
 @pytest.mark.parametrize("src", ids=["parens", "deep", "decorators", "internal", "raw_call", "range", "concat"], argvalues=[
     _megabyte("("),                                             # unbalanced, no tokens
     "x = " + "(" * 400_000 + "1" + ")" * 400_000 + "\n",       # deep balanced nesting
@@ -344,10 +351,10 @@ def _megabyte(unit: str) -> str:
     _megabyte("z = range(x, x + 1)\n"),
     _megabyte("w = concat(concat(concat(b'a', b'b'), b'c'), b'd')\n"),
 ])
-def test_one_megabyte_sources_finish_under_two_seconds(src):
+def test_one_megabyte_sources_do_not_backtrack(src):
     t0 = time.perf_counter()
     rep = va.vyper_report("0.3.0", "sourcify", {"sources": {"Big.vy": {"content": src}}})
-    assert time.perf_counter() - t0 < 2.0
+    assert time.perf_counter() - t0 < _REDOS_BUDGET_S
     assert rep.status == "ok"
 
 
