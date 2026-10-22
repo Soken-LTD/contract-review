@@ -348,25 +348,187 @@ def check_ton_mode_04(files: dict[str, str]) -> list[dict[str, Any]]:
     return leads
 
 
+# ── Depth rules: classic TON smart-contract risk patterns ──────────────────
+#
+# The five checks below raise analysis depth for the recurring fund-safety and
+# correctness mistakes seen in FunC/Tact/Tolk contracts. Each is high-confidence
+# and language-aware: patterns that only make sense for manual-c4 languages
+# (recv_internal / set_data) are gated away from Tact, whose state is persisted
+# by the compiler and whose receivers dispatch by message type.
+
+# FunC/Tolk manage the c4 persistent cell by hand; Tact auto-persists contract state.
+_MANUAL_STORAGE_EXTS = (".fc", ".func", ".tolk")
+
+# recv_internal / onInternalMessage are FunC/Tolk entrypoints; Tact uses receive(...).
+_FUNC_RECV_INTERNAL_RE = re.compile(r"\brecv_internal\b|\bonInternalMessage\b", re.IGNORECASE)
+_RECV_INTERNAL_ANY_RE = re.compile(r"\brecv_internal\b|\bonInternalMessage\b|\breceive\s*\(", re.IGNORECASE)
+_SEND_MSG_RE = re.compile(r"send_raw_message|sendMessage|nativeSendMessage|\bself\.forward\b|\bsend\s*\(\s*SendParameters", re.IGNORECASE)
+
+# Any evidence the contract handles a bounced message: a Tact `bounced(...)` receiver,
+# the FunC `flags & 1` guard, the 0xffffffff bounced op, or a recv_bounced hook. The bounce
+# word is matched only as a handler (followed by `(` or `{`), never as prose in a comment.
+_BOUNCE_HANDLING_ANY_RE = re.compile(
+    r"\bonBounce\s*\(|\bbounced\s*[\(\{]|recv_bounced|0xffffffff|flags\s*&\s*1\b",
+    re.IGNORECASE,
+)
+
+
+def _is_manual_storage_file(path: str) -> bool:
+    return path.lower().endswith(_MANUAL_STORAGE_EXTS)
+
+
+def check_ton_bnc_02(files: dict[str, str]) -> list[dict[str, Any]]:
+    """TON-BNC-02: a handler sends messages but the contract has no bounced-message handling.
+
+    Value sent in a bounceable message can be returned by the network if the destination
+    rejects it; a contract that never inspects the bounced flag silently drops that value
+    (and leaves state it updated before the send inconsistent). Reported once per file when
+    no bounce handling is present anywhere in the candidate (a handler may live in an include).
+    """
+    leads = []
+    if any(_BOUNCE_HANDLING_ANY_RE.search(src) for src in files.values()):
+        return leads
+    for path, source in files.items():
+        if not _RECV_INTERNAL_ANY_RE.search(source):
+            continue
+        for lineno, text in _lines_with_numbers(source):
+            if _SEND_MSG_RE.search(text):
+                leads.append(_raw_lead("TON-BNC-02", path, lineno, lineno, "warning"))
+                break  # one per file
+    return leads
+
+
+_OP_PARSE_RE = re.compile(r"load_uint\s*\(\s*32\s*\)|\bop\b\s*==|==\s*\bop\b|\bop::", re.IGNORECASE)
+_SENDER_READ_RE = re.compile(r"sender_address|load_msg_addr|src_addr|cs~load_msg_addr|\.loadAddress", re.IGNORECASE)
+_MUTATE_RE = re.compile(r"send_raw_message|nativeSendMessage|set_data\s*\(|save_data\s*\(|set_code\s*\(", re.IGNORECASE)
+
+
+def check_ton_auth_03(files: dict[str, str]) -> list[dict[str, Any]]:
+    """TON-AUTH-03: recv_internal mutates state or sends with no op dispatch and no sender check.
+
+    A FunC/Tolk internal handler that neither reads the op code nor reads/compares the message
+    sender, yet performs a privileged action (send, set_data, set_code), acts on any message from
+    anyone. Tact is excluded: its receive(...) handlers already dispatch by message type.
+    """
+    leads = []
+    for path, source in files.items():
+        if not _FUNC_RECV_INTERNAL_RE.search(source):
+            continue
+        if _OP_PARSE_RE.search(source) or _SENDER_AUTH_RE.search(source) or _SENDER_READ_RE.search(source):
+            continue
+        for lineno, text in _lines_with_numbers(source):
+            if _MUTATE_RE.search(text):
+                leads.append(_raw_lead("TON-AUTH-03", path, lineno, lineno, "warning"))
+                break  # one per file
+    return leads
+
+
+_LOAD_DATA_RE = re.compile(r"\bload_data\s*\(|\bget_data\s*\(", re.IGNORECASE)
+_STORE_DATA_RE = re.compile(r"\bset_data\s*\(|\bsave_data\s*\(|\bcommit\s*\(", re.IGNORECASE)
+
+
+def check_ton_sto_01(files: dict[str, str]) -> list[dict[str, Any]]:
+    """TON-STO-01 (FunC/Tolk): an internal handler reads c4 via load_data() but never persists it.
+
+    Persistent state lives in the c4 cell; a FunC/Tolk handler that reads it (load_data/get_data)
+    and updates values but never writes it back with set_data() loses every change when the
+    transaction ends. Tact is excluded (the compiler persists contract fields automatically).
+    """
+    leads = []
+    for path, source in files.items():
+        if not _is_manual_storage_file(path):
+            continue
+        if not _FUNC_RECV_INTERNAL_RE.search(source):
+            continue
+        if _STORE_DATA_RE.search(source):
+            continue
+        for lineno, text in _lines_with_numbers(source):
+            if _LOAD_DATA_RE.search(text):
+                leads.append(_raw_lead("TON-STO-01", path, lineno, lineno, "warning"))
+                break  # one per file
+    return leads
+
+
+_BALANCE_SUB_RE = re.compile(
+    r"(balance|amount|value|funds|supply|total|jetton_amount|bal)\s*-(?!-|=|>)"
+    r"|-=\s*"
+    r"|-\s*(msg_value|amount|value|balance|jetton_amount)\b",
+    re.IGNORECASE,
+)
+_ARITH_GUARD_RE = re.compile(
+    r"throw_unless|throw_if|\brequire\b|\brequire_|\bassert\b|>=|<=|[<>]\s|\bifnot\b|\bmin\b|\bmax\b",
+    re.IGNORECASE,
+)
+
+
+def check_ton_int_02(files: dict[str, str]) -> list[dict[str, Any]]:
+    """TON-INT-02: amount/balance subtraction with no nearby bound or underflow guard.
+
+    TVM integers are 257-bit signed, so subtracting more than is held does not wrap: it produces
+    a negative balance that later serialization or comparisons mishandle, draining or bricking the
+    contract. Fires when a subtraction touches a value field and no comparison/throw guard sits in
+    the surrounding window.
+    """
+    leads = []
+    for path, source in files.items():
+        lines = _lines_with_numbers(source)
+        for lineno, text in lines:
+            if not _BALANCE_SUB_RE.search(text):
+                continue
+            window_start = max(0, lineno - 7)
+            window_end = min(len(lines), lineno + 1)
+            ctx = " ".join(t for _, t in lines[window_start:window_end])
+            if not _ARITH_GUARD_RE.search(ctx):
+                leads.append(_raw_lead("TON-INT-02", path, lineno, lineno, "warning"))
+    return leads
+
+
+def check_ton_rpl_03(files: dict[str, str]) -> list[dict[str, Any]]:
+    """TON-RPL-03: recv_external verifies a signature but never checks seqno (replay).
+
+    Signing a payload stops forgery, not replay: without comparing an incrementing seqno (or an
+    equivalent nonce) a captured signed external message can be re-sent any number of times. Fires
+    when an external handler checks a signature yet no seqno comparison appears in the file.
+    """
+    leads = []
+    for path, source in files.items():
+        if not _EXTERNAL_HANDLER_RE.search(source):
+            continue
+        if not _SIGNATURE_CHECK_RE.search(source):
+            continue
+        if _SEQNO_CHECK_RE.search(source):
+            continue
+        for lineno, text in _lines_with_numbers(source):
+            if _SIGNATURE_CHECK_RE.search(text):
+                leads.append(_raw_lead("TON-RPL-03", path, lineno, lineno, "warning"))
+                break  # one per file
+    return leads
+
+
 # ── Public API ────────────────────────────────────────────────────────────
 
 # All rule checkers in one list for easy iteration
 ALL_RULES = [
     check_ton_rpl_01,
     check_ton_rpl_02,
+    check_ton_rpl_03,
     check_ton_auth_01,
+    check_ton_auth_03,
     check_ton_mode_01,
     check_ton_gas_03,
     check_ton_mode_03,
     check_ton_bnc_01,
+    check_ton_bnc_02,
     check_ton_gas_01,
     check_ton_gas_02,
     check_ton_upg_01,
     check_ton_rnd_01,
     check_ton_int_01,
+    check_ton_int_02,
     check_ton_auth_02,
     check_ton_jet_01,
     check_ton_mode_04,
+    check_ton_sto_01,
 ]
 
 

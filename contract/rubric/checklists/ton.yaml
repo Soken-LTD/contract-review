@@ -64,6 +64,9 @@ categories:
   ton.signed_integer:
     items:
       - {id: I2, kind: kill, condition: "The field is loaded unsigned or checked non-negative."}
+  ton.storage_persistence:
+    items:
+      - {id: T1, kind: kill, condition: "Every state field read from c4 and changed on the quoted path is written back with set_data before the handler returns."}
   ton.randomness:
     items:
       - {id: N1, kind: downgrade, condition: "randomize_lt (or randomize with an external seed) runs before random()."}
