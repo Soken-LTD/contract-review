@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from soken_review.adapters.base import BuildResult, Lead
+from soken_review.adapters.starknet import caracal as caracal_mod
 from soken_review.adapters.starknet.rules import TOOL as RULES_TOOL
 from soken_review.adapters.starknet.rules import load_rules, run_rules
 from soken_review.adapters.starknet.sierra import ClassFacts
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 _RUBRIC = Path(__file__).resolve().parents[4] / "contract" / "rubric"
 _LINT_MAP = Path(__file__).parent / "lint_map.yaml"
 LINT_TOOL = "scarb-lint"
+CARACAL_TOOL = caracal_mod.CARACAL_TOOL
+_CARACAL_WALL_S = 900
 _DIAG_RE = re.compile(r"^(warn|warning|error): Plugin diagnostic: (.*)$")
 _LOC_RE = re.compile(r"^\s*--> /work/tree/([A-Za-z0-9_./-]{1,200}):(\d+):(\d+)\s*$")
 _SEV_RANK = {"High": 0, "Medium": 1, "Low": 2, "Info": 3}
@@ -132,8 +135,41 @@ def run_lint(result: BuildResult, cairo_version: str) -> tuple[str, list[dict[st
     return "ok", parse_lint_output(log), None
 
 
+def run_caracal(result: BuildResult) -> tuple[str, list[dict[str, Any]], str | None]:
+    """(status, findings, reason): `caracal detect` inside the pinned starknet-caracal image.
+
+    Fail-closed: the image unpinned (empty digest in images.lock.json) -> not_run with
+    ``caracal_toolchain_missing``; no docker -> ``sandbox_unavailable``; a kill on the wall ->
+    ``analyze_timeout``; any non-zero exit -> ``analyzer_failed``. A run never yields a silent
+    "no findings": only a clean exit 0 reports findings.
+    """
+    import shutil
+
+    from soken_review.adapters.starknet.build import _container_workdir, run_offline
+    from soken_review.sandbox.profile import locked_image
+
+    if result.status != "ok" or not result.work_dir:
+        return "not_run", [], "build_not_ok"
+    image = locked_image("starknet-caracal")
+    if image is None:
+        return "not_run", [], "caracal_toolchain_missing"
+    if not shutil.which("docker"):
+        return "not_run", [], "sandbox_unavailable"
+    package_dir = str((result.candidate.settings or {}).get("package_dir") or "")
+    workdir = _container_workdir(package_dir)
+    if workdir is None:
+        return "not_run", [], "unsafe_package_dir"
+    rc, log = run_offline(image, Path(result.work_dir), workdir, caracal_mod.detect_argv(), _CARACAL_WALL_S)
+    if rc == 124:
+        return "not_run", [], "analyze_timeout"
+    if rc != 0:
+        return "not_run", [], "analyzer_failed"
+    return "ok", caracal_mod.parse_caracal(log), None
+
+
 def analyze(result: BuildResult, facts: ClassFacts | None, cairo_version: str | None,
-            run_stock_lint: bool = True) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
+            run_stock_lint: bool = True,
+            run_caracal: bool = True) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
     files = result.candidate.files
     package_dir = str((result.candidate.settings or {}).get("package_dir") or "")
     in_scope = {p: files[p] for p in in_scope_paths(files, package_dir)}
@@ -156,7 +192,23 @@ def analyze(result: BuildResult, facts: ClassFacts | None, cairo_version: str | 
     else:
         tools[LINT_TOOL] = {"status": "not_run", "reason": "no_toolchain"}
         not_run.append(LINT_TOOL)
-    versions = {RULES_TOOL: rules["version"], LINT_TOOL: cairo_version or "unknown"}
+    # Second engine: Caracal (SIERRA static analysis), beside scarb lint + soken-cairo-rules.
+    if run_caracal and result.status == "ok":
+        status, findings, reason = run_caracal(result)
+        tools[CARACAL_TOOL] = {"status": status, "reason": reason,
+                               "version": caracal_mod.CARACAL_VERSION, "findings": len(findings)}
+        if status == "ok":
+            crows, unlocated = caracal_mod.to_rows(findings, parsed, set(in_scope))
+            rows += crows
+            if unlocated:
+                tools[CARACAL_TOOL]["unlocated"] = unlocated
+        else:
+            not_run.append(CARACAL_TOOL)
+    else:
+        tools[CARACAL_TOOL] = {"status": "not_run", "reason": "build_not_ok"}
+        not_run.append(CARACAL_TOOL)
+    versions = {RULES_TOOL: rules["version"], LINT_TOOL: cairo_version or "unknown",
+                CARACAL_TOOL: caracal_mod.CARACAL_VERSION}
     leads = build_leads(rows, versions)
     static_map = {
         "status": "degraded" if not_run else "ok",

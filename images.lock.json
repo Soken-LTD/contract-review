@@ -181,6 +181,18 @@
         "trivy_critical": 5
       }
     },
+    "starknet-caracal": {
+      "repository": "ghcr.io/soken-ltd/starknet-caracal",
+      "tag": "0.1.0-dev",
+      "digest": "",
+      "tools": {
+        "caracal": "0.2.3"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "docker/starknet-caracal (depth: Starknet second engine). Extends starknet-build with Caracal 0.2.3 (crytic/caracal), a SIERRA static analyzer run beside scarb lint + soken-cairo-rules in the analyze step. Pinned release binary caracal-v0.2.3-linux.tar.gz sha256 50d1b2b011313866ef6bc195c053cbcc7e182cf7821aa8d27aa135569e8c0c65; linux/amd64 only. Zero digest = not built; locked_image('starknet-caracal') fails closed (analyze marks caracal not_run: caracal_toolchain_missing) until the x86 stand builds and pins the digest. Build: docker build --platform linux/amd64 -f docker/starknet-caracal/Dockerfile -t ghcr.io/soken-ltd/starknet-caracal:0.1.0-dev ."
+    },
     "sui-build": {
       "repository": "ghcr.io/soken-ltd/sui-build",
       "tag": "mainnet-v1.81.1",

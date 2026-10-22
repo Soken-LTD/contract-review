@@ -327,7 +327,8 @@ async def _analyze(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
         facts = class_facts(json.loads(art.read_text())) if art.exists() else None
     cairo = cand.compiler.version if cand.compiler else None
     leads, static_map, _plan = await asyncio.get_running_loop().run_in_executor(
-        None, lambda: analyze(br, facts, cairo, run_stock_lint=br.status == "ok"))
+        None, lambda: analyze(br, facts, cairo, run_stock_lint=br.status == "ok",
+                              run_caracal=br.status == "ok"))
     cs = json.loads((out / "chain_state.json").read_text()) if (out / "chain_state.json").exists() else None
     extras = chain_extras(cs, facts, static_map, prov)
     (out / "map.json").write_text(json.dumps({"chain_extras": {"starknet": extras}, "static": static_map}, indent=1),

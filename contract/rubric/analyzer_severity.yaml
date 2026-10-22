@@ -19,6 +19,9 @@ analyzers:
   misti:             {error: High, warning: Medium, note: Low, none: Info}
   acton:             {error: High, warning: Medium, note: Low, none: Info}
   soken-solana-rules: {error: High, warning: Medium, note: Low, none: Info}
+  # SARIF-level raws emitted by adapters/ton/rules.py (keyed on the level, not the rule id).
+  # Depth rules TON-BNC-02, TON-AUTH-03, TON-STO-01, TON-INT-02, TON-RPL-03 emit warning (-> Medium);
+  # any raw not listed here falls through to the fail-closed default (High).
   soken-ton-rules:   {error: High, warning: Medium, note: Low, none: Info}
   clippy:            {error: Medium, warning: Low}   # UNVERIFIED: part 06 U-S10
   cargo-audit:       {critical: High, high: High, medium: Medium, low: Low, none: Medium}  # CVSS band; no score = none
@@ -28,6 +31,11 @@ analyzers:
   scarb-lint:        {high: High, medium: Medium, low: Low, info: Info}
   soken-move-rules:  {high: High, medium: Medium, low: Low, info: Info}
   soken-cairo-rules: {high: High, medium: Medium, low: Low, info: Info}
+  # depth: Caracal (crytic/caracal) SIERRA static analyzer, second Starknet engine beside
+  # scarb lint. Raw values are the detector Impact strings printed by `caracal detect`
+  # (detectors/detector.rs Impact Display): High, Medium, Low, Informational. Fail-closed
+  # default: any unlisted raw -> High.
+  caracal:           {High: High, Medium: Medium, Low: Low, Informational: Info}
   # part 07 prover: raw values are defined in adapters/move/prover.py (_E_CODE_SEVERITY).
   # verification_failure: function spec disproved (postcondition, invariant, assertion) → High.
   # prover_timeout: E5 Boogie/Z3 timeout per function → Medium (inconclusive; merits manual review).
