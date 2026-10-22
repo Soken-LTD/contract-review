@@ -21,7 +21,7 @@ _RULES_PATH = Path(__file__).parent / "soken_solana_rules.yaml"
 # Severity (SARIF level) -> lead.v1 severity_norm mapping per analyzer_severity.yaml
 _SEVERITY_MAP = {"error": "High", "warning": "Medium", "note": "Low", "none": "Info"}
 _TOOL_NAME = "soken-solana-rules"
-_TOOL_VERSION = "0.1.0"
+_TOOL_VERSION = "0.2.0"
 
 
 def _load_rules() -> list[dict]:
@@ -63,6 +63,33 @@ _CHECKED_ARITH = re.compile(r'\b(?:checked_add|checked_sub|checked_mul|saturatin
 _RAW_ARITH_RE = re.compile(r'(?<![a-z_])(?:amount|balance|lamports|tokens|supply)[^;{}\n]*[+\-\*](?!=)')
 _ABSOLUTE_IX_INDEX = re.compile(r'load_instruction_at\s*\(\s*[0-9]')
 _LOADABLE_PROGRAM = re.compile(r'get_stack_height|current_index')
+
+# Account confusion / type+owner: manual (unchecked) deserialization of account bytes.
+# Anchor's Account<'info, T> enforces owner + 8-byte discriminator automatically; these
+# raw paths do not. try_deserialize (no _unchecked) DOES check the discriminator, so it
+# is deliberately excluded.
+_MANUAL_DESERIALIZE = re.compile(r'\b(?:try_from_slice|try_deserialize_unchecked)\s*\(')
+# A borrow/account-data context near the deserialize separates account bytes from plain
+# instruction-data decoding (fail-closed: no account context -> no finding).
+_ACCOUNT_DATA_CTX = re.compile(r'borrow|account_info|accountinfo', re.IGNORECASE)
+
+# Non-canonical PDA bump: create_program_address accepts a caller-supplied bump and does
+# NOT guarantee the canonical bump, unlike find_program_address.
+_CREATE_PROGRAM_ADDRESS = re.compile(r'\bcreate_program_address\s*\(')
+_FIND_PROGRAM_ADDRESS = re.compile(r'find_program_address')
+
+# invoke_signed with a program target taken from an unchecked account (arbitrary CPI).
+_INVOKE_SIGNED_CALL = re.compile(r'\binvoke_signed\s*\(')
+
+# Manual account close: lamports drained to zero. Revival-safe only when the data is also
+# zeroed / the account is reassigned to the system program in the same handler.
+_LAMPORTS_DRAIN = re.compile(
+    r'(?:lamports\s*\.\s*borrow_mut|try_borrow_mut_lamports)\s*\(\s*\)\s*\??\s*=\s*0\b'
+)
+_CLOSE_SAFE = re.compile(
+    r'fill\(\s*0|sol_memset|\.assign\(|realloc\(|close_account|'
+    r'set_discriminator|CLOSED_ACCOUNT_DISCRIMINATOR',
+)
 
 
 def _line_of(content: str, pos: int) -> int:
@@ -191,6 +218,22 @@ def _check_native_files(files: dict[str, str], overflow_checks: str) -> list[Fin
                     end=line,
                 ))
 
+        # SOL-CPI-01: invoke_signed with an unchecked program target (arbitrary CPI).
+        # Anchor programs run the native checks too, so this covers both frameworks.
+        for m in _INVOKE_SIGNED_CALL.finditer(content):
+            line = _line_of(content, m.start())
+            nearby = content[max(0, m.start() - 200):m.start() + 200].lower()
+            if ("program_id" not in nearby and "key()" not in nearby
+                    and "::id()" not in nearby and "allowlist" not in nearby):
+                findings.append(Finding(
+                    rule_id="SOL-CPI-01",
+                    category="solana.arbitrary_cpi",
+                    severity_raw="error",
+                    file=path,
+                    start=line,
+                    end=line,
+                ))
+
         # SOL-INIT-02: account initialization without guard
         # Look for write to account data without a discriminator check
         if re.search(r'\.try_borrow_mut_data|account_data\.copy_from_slice', content):  # noqa: SIM102
@@ -228,6 +271,82 @@ def _check_native_files(files: dict[str, str], overflow_checks: str) -> list[Fin
 
 
 # ---------------------------------------------------------------------------
+# Framework-agnostic detectors (Anchor and native share these patterns)
+# ---------------------------------------------------------------------------
+
+def _check_common_files(files: dict[str, str]) -> list[Finding]:
+    """Detectors that apply regardless of framework.
+
+    Runs exactly once per analysis (not once per framework pass) so Anchor programs,
+    which also run the native checks, do not double-count these findings.
+    """
+    findings: list[Finding] = []
+
+    for path, content in files.items():
+        if not path.endswith(".rs") or not isinstance(content, str):
+            continue
+
+        # SOL-ACC-02 / SOL-ACC-03: manual (unchecked) account-byte deserialization.
+        # Only when the deserialize sits in an account-data context (borrow/AccountInfo),
+        # which separates account confusion from plain instruction-data decoding.
+        for m in _MANUAL_DESERIALIZE.finditer(content):
+            line = _line_of(content, m.start())
+            ctx_window = content[max(0, m.start() - 150):m.start() + 150]
+            if not _ACCOUNT_DATA_CTX.search(ctx_window):
+                continue  # fail-closed: not an account read
+            scope = content[max(0, m.start() - 400):m.start() + 400].lower()
+            if "owner" not in scope:
+                findings.append(Finding(
+                    rule_id="SOL-ACC-02",
+                    category="solana.missing_owner_check",
+                    severity_raw="error",
+                    file=path,
+                    start=line,
+                    end=line,
+                ))
+            if "discriminator" not in scope:
+                findings.append(Finding(
+                    rule_id="SOL-ACC-03",
+                    category="solana.type_confusion",
+                    severity_raw="error",
+                    file=path,
+                    start=line,
+                    end=line,
+                ))
+
+        # SOL-PDA-01: non-canonical PDA bump. create_program_address trusts a caller
+        # bump; without find_program_address in the file the canonical bump is never
+        # derived/compared.
+        if not _FIND_PROGRAM_ADDRESS.search(content):
+            for m in _CREATE_PROGRAM_ADDRESS.finditer(content):
+                line = _line_of(content, m.start())
+                findings.append(Finding(
+                    rule_id="SOL-PDA-01",
+                    category="solana.pda_seeds",
+                    severity_raw="error",
+                    file=path,
+                    start=line,
+                    end=line,
+                ))
+
+        # SOL-CLOSE-01: manual close drains lamports to zero without zeroing the data
+        # or reassigning the account -> the account can be revived in a later tx.
+        if not _CLOSE_SAFE.search(content):
+            for m in _LAMPORTS_DRAIN.finditer(content):
+                line = _line_of(content, m.start())
+                findings.append(Finding(
+                    rule_id="SOL-CLOSE-01",
+                    category="solana.close_revival",
+                    severity_raw="error",
+                    file=path,
+                    start=line,
+                    end=line,
+                ))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -254,6 +373,9 @@ def run_rules(
     else:
         # native or pinocchio
         findings.extend(_check_native_files(files, overflow_checks))
+
+    # Framework-agnostic detectors run once (never per framework pass).
+    findings.extend(_check_common_files(files))
 
     # Convert to raw finding dicts (same format as analyze.py uses)
     tool_tag = f"{_TOOL_NAME}@{_TOOL_VERSION}"

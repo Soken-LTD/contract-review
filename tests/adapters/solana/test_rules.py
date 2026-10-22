@@ -114,6 +114,142 @@ pub fn process(_program_id: &Pubkey, _accounts: &[AccountInfo], _data: &[u8]) ->
         assert len(high_findings) == 0, f"Unexpected high findings in clean code: {high_findings}"
 
 
+def _rule_ids(findings):
+    return [f["rule_id"] for f in findings]
+
+
+class TestAccountConfusion:
+    """SOL-ACC-02 (missing owner check) / SOL-ACC-03 (type confusion)."""
+
+    def test_manual_deserialize_without_owner_or_discriminator(self):
+        files = {
+            "src/lib.rs": """
+pub fn read_config(ctx: Context<ReadConfig>) -> Result<()> {
+    let data = ctx.accounts.config.try_borrow_data()?;
+    let config = ConfigState::try_from_slice(&data)?;
+    msg!("admin {}", config.admin);
+    Ok(())
+}
+""",
+        }
+        rules = _rule_ids(run_rules(files, "anchor"))
+        assert any("SOL-ACC-02" in r for r in rules), rules
+        assert any("SOL-ACC-03" in r for r in rules), rules
+
+    def test_owner_and_discriminator_checked_clean(self):
+        files = {
+            "src/lib.rs": """
+pub fn read_config(ctx: Context<ReadConfig>) -> Result<()> {
+    let acc = &ctx.accounts.config;
+    require_keys_eq!(*acc.owner, crate::ID);
+    let data = acc.try_borrow_data()?;
+    require!(&data[0..8] == ConfigState::DISCRIMINATOR, ErrorCode::Bad);
+    let config = ConfigState::try_from_slice(&data[8..])?;
+    msg!("admin {}", config.admin);
+    Ok(())
+}
+""",
+        }
+        rules = _rule_ids(run_rules(files, "anchor"))
+        assert not any("SOL-ACC-02" in r for r in rules), rules
+        assert not any("SOL-ACC-03" in r for r in rules), rules
+
+    def test_instruction_data_decode_not_flagged(self):
+        # Plain instruction-data decoding (no account/borrow context) must not fire.
+        files = {
+            "src/lib.rs": "let args = MyArgs::try_from_slice(instruction_input)?;",
+        }
+        rules = _rule_ids(run_rules(files, "native"))
+        assert not any("SOL-ACC-02" in r for r in rules), rules
+        assert not any("SOL-ACC-03" in r for r in rules), rules
+
+
+class TestNonCanonicalPda:
+    """SOL-PDA-01 non-canonical bump."""
+
+    def test_create_program_address_flagged(self):
+        files = {
+            "src/lib.rs": """
+let vault = Pubkey::create_program_address(&[b"vault", &[bump]], program_id)?;
+""",
+        }
+        rules = _rule_ids(run_rules(files, "native"))
+        assert any("SOL-PDA-01" in r for r in rules), rules
+
+    def test_find_program_address_clean(self):
+        files = {
+            "src/lib.rs": """
+let (vault, bump) = Pubkey::find_program_address(&[b"vault"], program_id);
+""",
+        }
+        rules = _rule_ids(run_rules(files, "native"))
+        assert not any("SOL-PDA-01" in r for r in rules), rules
+
+
+class TestInvokeSignedCpi:
+    """SOL-CPI-01 arbitrary CPI via invoke_signed."""
+
+    def test_invoke_signed_unchecked_program_flagged(self):
+        files = {
+            "src/lib.rs": """
+pub fn forward(accounts: &[AccountInfo], seeds: &[&[u8]]) -> ProgramResult {
+    invoke_signed(&ix, accounts, &[seeds])?;
+    Ok(())
+}
+""",
+        }
+        rules = _rule_ids(run_rules(files, "native"))
+        assert any("SOL-CPI-01" in r for r in rules), rules
+
+    def test_invoke_signed_checked_program_clean(self):
+        files = {
+            "src/lib.rs": """
+pub fn forward(accounts: &[AccountInfo], seeds: &[&[u8]]) -> ProgramResult {
+    require!(token_program.key() == spl_token::id(), Err);
+    invoke_signed(&ix, accounts, &[seeds])?;
+    Ok(())
+}
+""",
+        }
+        rules = _rule_ids(run_rules(files, "native"))
+        assert not any("SOL-CPI-01" in r for r in rules), rules
+
+
+class TestCloseRevival:
+    """SOL-CLOSE-01 manual close without zeroing data."""
+
+    def test_lamports_drained_without_zeroing_flagged(self):
+        files = {
+            "src/lib.rs": """
+pub fn close(ctx: Context<Close>) -> Result<()> {
+    let target = &ctx.accounts.target;
+    let dest = &ctx.accounts.dest;
+    **dest.lamports.borrow_mut() = dest.lamports().checked_add(target.lamports()).unwrap();
+    **target.lamports.borrow_mut() = 0;
+    Ok(())
+}
+""",
+        }
+        rules = _rule_ids(run_rules(files, "anchor"))
+        assert any("SOL-CLOSE-01" in r for r in rules), rules
+
+    def test_close_with_data_zeroed_clean(self):
+        files = {
+            "src/lib.rs": """
+pub fn close(ctx: Context<Close>) -> Result<()> {
+    let target = &ctx.accounts.target;
+    let mut data = target.try_borrow_mut_data()?;
+    data.fill(0);
+    **ctx.accounts.dest.lamports.borrow_mut() = ctx.accounts.dest.lamports();
+    **target.lamports.borrow_mut() = 0;
+    Ok(())
+}
+""",
+        }
+        rules = _rule_ids(run_rules(files, "anchor"))
+        assert not any("SOL-CLOSE-01" in r for r in rules), rules
+
+
 class TestFindingFormat:
     def test_finding_has_required_fields(self):
         files = {
