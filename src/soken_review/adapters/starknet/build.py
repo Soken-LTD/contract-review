@@ -40,7 +40,16 @@ logger = logging.getLogger(__name__)
 _IMAGE_MAP = Path(__file__).parent / "data" / "image_map.json"
 _BUILD_LIMITS = StepLimits(cpus=4, memory="8g", pids=1024, max_file=512 * 1024 * 1024)
 _DEPS_LIMITS = StepLimits(cpus=2, memory="2g", pids=256, max_file=256 * 1024 * 1024)
+# `scarb --version` only. No cache is mounted, so the 1 MiB file cap cannot reach Scarb state.
 _PROBE_LIMITS = StepLimits(cpus=1, memory="512m", pids=64, max_file=1024 * 1024)
+# `scarb metadata` resolves the workspace against the fetched cache: the deps work class without the
+# network. It must never run under _PROBE_LIMITS. Scarb keeps the registry index in a redb file
+# (`registry/cache/<source>.v1.redb`, 3.5 MiB for one registry) that every run reopens read-write;
+# under a 1 MiB fsize cap redb cannot write its clean-shutdown state and leaves the file marked
+# "recovery required", and the next Scarb process (the build) aborts the repair, deletes and
+# recreates the index. Offline resolution then has no cached record for any registry package and
+# fails with "cannot access the network in offline mode" (stand, oz-account-v3, 2026-10-22).
+_METADATA_LIMITS = _DEPS_LIMITS
 _DEPS_WALL_S = 300
 _DEPS_MAX_BYTES = 4 * 1024**3        # limits.yaml deps.starknet once measured (P0-DEPS)
 _BUILD_WALL_S = 1500                 # 07 U-12: Scarb cold release build; 09 sets the wall
@@ -248,6 +257,14 @@ def _env() -> dict[str, str]:
             "SCARB_TARGET_DIR": "/work/output", "CARGO_TERM_COLOR": "never", "NO_COLOR": "1"}
 
 
+def _offline_env(overrides: dict[str, str] | None = None) -> dict[str, str]:
+    """Env of a no-network Scarb run. `SCARB_OFFLINE` (Scarb's env form of `--offline`) also reaches
+    every nested `scarb` a tool starts without the flag (caracal runs `scarb clean` and
+    `scarb build --workspace`), so it resolves from the fetched cache instead of trying the
+    registry on a network that does not exist."""
+    return {**_env(), "SCARB_OFFLINE": "true", **(overrides or {})}
+
+
 def _container_workdir(package_dir: str) -> str | None:
     if not package_dir:
         return "/work/tree"
@@ -287,11 +304,15 @@ def run_deps(image: str, work_dir: Path, workdir: str) -> str | None:
 
 
 def run_offline(image: str, work_dir: Path, workdir: str, command: list[str], wall_s: int,
-                limits: StepLimits = _BUILD_LIMITS) -> tuple[int, str]:
-    """Run a Scarb command with no network; output dir mounted read-write. Returns (rc, log)."""
+                limits: StepLimits = _BUILD_LIMITS, env: dict[str, str] | None = None) -> tuple[int, str]:
+    """Run a Scarb command with no network; output dir mounted read-write. Returns (rc, log).
+
+    `env` overrides single variables of the offline environment (a tool that needs its own
+    `SCARB_TARGET_DIR`); the cache, home and offline variables stay.
+    """
     mounts = [*_mounts(work_dir), (work_dir / "output", "/work/output", False)]
     argv = docker_argv(step="build", image=image, work_dir=work_dir, cache_dir=None, limits=limits,
-                       env=_env(), command=command, workdir=workdir, mounts=mounts)
+                       env=_offline_env(env), command=command, workdir=workdir, mounts=mounts)
     try:
         proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=wall_s, check=False)
     except subprocess.TimeoutExpired:
@@ -304,10 +325,11 @@ def run_metadata(image: str, work_dir: Path, workdir: str) -> tuple[int, str]:
 
     No network; only the tree and the already-fetched scarb-cache are mounted. stdout is the
     metadata JSON; stderr carries scarb diagnostics (discarded by the supervisor). The build
-    container never writes to host/, so this output cannot be spoofed after the fact.
+    container never writes to host/, so this output cannot be spoofed after the fact. Runs under
+    _METADATA_LIMITS: the registry index in scarb-cache must stay writable (see the constant).
     """
     argv = docker_argv(step="build", image=image, work_dir=work_dir, cache_dir=None,
-                       limits=_PROBE_LIMITS, env=_env(),
+                       limits=_METADATA_LIMITS, env=_offline_env(),
                        command=["scarb", "--offline", "metadata", "--format-version", "1"],
                        workdir=workdir, mounts=_mounts(work_dir))
     try:
