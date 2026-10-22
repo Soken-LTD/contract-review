@@ -173,7 +173,7 @@ def test_method_heading_and_table_kept_together(tmp_path):
     assert re.search(
         r'<section><div class="keep"><h2>.*?Method and severity scale</h2>'
         r'<table><tr><th style="width:24%">Step</th>.*?</table></div>',
-        html, re.S,
+        html, re.DOTALL,
     ), "method heading and its table are not wrapped together in a keep block"
     # The wrapper closes right after the method table; the severity scale stays its own keep block
     # (the heading keep must not swallow the whole, unbounded-height section).
