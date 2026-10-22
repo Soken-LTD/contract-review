@@ -56,19 +56,29 @@ RUN set -eu; \
 # 3. Boogie via dotnet global tool (nuget, content-addressed by version).
 #    HOME=/root here (root user); boogie lands in /root/.dotnet/tools.
 #    Symlink to /usr/local/bin so all users can find it in PATH.
+# Boogie 3.4.3 targets .NET 6; only the 8.0 runtime is installed. Roll forward across the
+# major so the net6 apphost runs on 8.0 (supported .NET behaviour). Without this boogie dies
+# with "You must install or update .NET" for every user. Set early so the probes below use it.
+ENV DOTNET_ROLL_FORWARD=Major
+
 # Install to a world-accessible tool-path (NOT /root, which is 0700) so the sandbox
 # user 10001 can execute boogie at runtime; chmod a+rX makes the tool + its DLLs readable.
 RUN DOTNET_CLI_HOME=/opt/dotnet dotnet tool install --tool-path /opt/boogie Boogie --version ${BOOGIE_VERSION} \
     && ln -sf /opt/boogie/boogie /usr/local/bin/boogie \
     && chmod -R a+rX /opt/boogie /opt/dotnet \
     && test -x /opt/boogie/boogie \
-    && { boogie --version || true; }
+    && boogie /help > /dev/null
 
 # Smoke-tests: both tools must respond before we commit the image layer.
-RUN z3 --version && { boogie --version || true; } && aptos move prove --help > /dev/null
+# Boogie has no --version; `/help` exits 0 only when the tool actually runs.
+RUN z3 --version && boogie /help > /dev/null && aptos move prove --help > /dev/null
 
 # Back to the sandboxed user.
 USER 10001:10001
+
+# Runtime-user smoke: the build-time probes above run as root and cannot catch install-location,
+# permission or runtime-resolution bugs that only bite uid 10001 (both happened). Fail the build here.
+RUN boogie /help > /dev/null && z3 --version > /dev/null
 
 # Inherit ENV from aptos-build: HOME=/tmp, GIT_TERMINAL_PROMPT=0, APTOS_DISABLE_TELEMETRY=true
 # Boogie needs DOTNET_* env at runtime; the aptos CLI resolves boogie via PATH (/usr/local/bin).

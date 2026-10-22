@@ -56,16 +56,27 @@ RUN set -eu; \
     && rm -rf /var/lib/apt/lists/*
 
 # 3. Boogie via dotnet global tool (nuget, content-addressed by version).
+# Boogie 3.4.3 targets .NET 6; only the 8.0 runtime is installed. Roll forward across the
+# major so the net6 apphost runs on 8.0 (supported .NET behaviour). Without this boogie dies
+# with "You must install or update .NET" for every user. Set early so the probes below use it.
+ENV DOTNET_ROLL_FORWARD=Major
+
 # Install to a world-accessible tool-path (NOT /root, which is 0700) so the sandbox
 # user 10001 can execute boogie at runtime; chmod a+rX makes the tool + its DLLs readable.
 RUN DOTNET_CLI_HOME=/opt/dotnet dotnet tool install --tool-path /opt/boogie Boogie --version ${BOOGIE_VERSION} \
     && ln -sf /opt/boogie/boogie /usr/local/bin/boogie \
     && chmod -R a+rX /opt/boogie /opt/dotnet \
     && test -x /opt/boogie/boogie \
-    && { boogie --version || true; }
+    && boogie /help > /dev/null
 
 # Smoke-tests.
-RUN z3 --version && { boogie --version || true; }
+# Boogie has no --version; `/help` exits 0 only when the tool actually runs.
+RUN z3 --version && boogie /help > /dev/null
 
 USER 10001:10001
+
+# Runtime-user smoke: build-time probes run as root and cannot catch install-location, permission
+# or runtime-resolution bugs that only bite uid 10001 (both happened). Fail the build here.
+RUN boogie /help > /dev/null && z3 --version > /dev/null
+
 ENV DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
