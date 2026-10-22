@@ -152,3 +152,139 @@ class TestEmptyFilesReturnNoLeads:
         leads = run_all_rules({"lib.fc": ";; just a comment\n"})
         # Should not raise
         assert isinstance(leads, list)
+
+
+# ── Depth rules: vulnerable sample fires, clean sample does not ─────────────
+
+
+class TestTonBnc02MissingBounceHandling:
+    VULN = """
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    ;; sends value but never inspects the bounced flag
+    send_raw_message(begin_cell().store_coins(msg_value).end_cell(), 64);
+}
+"""
+    CLEAN = """
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) { return (); }  ;; bounced message handled
+    send_raw_message(begin_cell().store_coins(msg_value).end_cell(), 64);
+}
+"""
+
+    def test_vulnerable_fires(self):
+        leads = _leads_for({"vault.fc": self.VULN}, "TON-BNC-02")
+        assert len(leads) == 1
+        assert leads[0]["severity_raw"] == "warning"
+
+    def test_clean_does_not_fire(self):
+        assert _leads_for({"vault.fc": self.CLEAN}, "TON-BNC-02") == []
+
+
+class TestTonAuth03UncheckedSenderOp:
+    VULN = """
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    ;; no op dispatch, no sender check, yet mutates and sends
+    set_data(begin_cell().store_uint(1, 32).end_cell());
+    send_raw_message(begin_cell().end_cell(), 64);
+}
+"""
+    CLEAN = """
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    int op = in_msg_body~load_uint(32);
+    set_data(begin_cell().store_uint(op, 32).end_cell());
+}
+"""
+
+    def test_vulnerable_fires(self):
+        leads = _leads_for({"admin.fc": self.VULN}, "TON-AUTH-03")
+        assert len(leads) == 1
+
+    def test_clean_does_not_fire(self):
+        assert _leads_for({"admin.fc": self.CLEAN}, "TON-AUTH-03") == []
+
+
+class TestTonSto01StorageNotPersisted:
+    VULN = """
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    (int counter) = load_data();
+    counter += 1;  ;; change is never written back
+}
+"""
+    CLEAN = """
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    (int counter) = load_data();
+    counter += 1;
+    set_data(begin_cell().store_uint(counter, 64).end_cell());
+}
+"""
+    TACT = """
+contract Counter {
+    counter: Int as uint64 = 0;
+    receive("inc") { self.counter += 1; }
+}
+"""
+
+    def test_vulnerable_fires(self):
+        leads = _leads_for({"counter.fc": self.VULN}, "TON-STO-01")
+        assert len(leads) == 1
+
+    def test_clean_does_not_fire(self):
+        assert _leads_for({"counter.fc": self.CLEAN}, "TON-STO-01") == []
+
+    def test_tact_is_language_gated(self):
+        # Tact auto-persists contract fields; the rule must not fire on .tact files.
+        assert _leads_for({"counter.tact": self.TACT}, "TON-STO-01") == []
+
+
+class TestTonInt02UncheckedArithmetic:
+    VULN = """
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    int amount = in_msg_body~load_coins();
+    int rest = my_balance - amount;
+    send_raw_message(begin_cell().store_coins(rest).end_cell(), 0);
+}
+"""
+    CLEAN = """
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    int amount = in_msg_body~load_coins();
+    throw_unless(100, my_balance >= amount);
+    int rest = my_balance - amount;
+    send_raw_message(begin_cell().store_coins(rest).end_cell(), 0);
+}
+"""
+
+    def test_vulnerable_fires(self):
+        leads = _leads_for({"pay.fc": self.VULN}, "TON-INT-02")
+        assert len(leads) >= 1
+
+    def test_clean_does_not_fire(self):
+        assert _leads_for({"pay.fc": self.CLEAN}, "TON-INT-02") == []
+
+
+class TestTonRpl03SignedNoSeqno:
+    VULN = """
+() recv_external(slice in_msg) impure {
+    var signature = in_msg~load_bits(512);
+    throw_unless(35, check_signature(hash, signature, public_key));
+    accept_message();
+}
+"""
+    CLEAN = """
+() recv_external(slice in_msg) impure {
+    var signature = in_msg~load_bits(512);
+    int msg_seqno = in_msg~load_uint(32);
+    (int stored_seqno) = load_data();
+    throw_unless(33, msg_seqno == stored_seqno);
+    throw_unless(35, check_signature(hash, signature, public_key));
+    accept_message();
+}
+"""
+
+    def test_vulnerable_fires(self):
+        leads = _leads_for({"wallet.fc": self.VULN}, "TON-RPL-03")
+        assert len(leads) == 1
+
+    def test_clean_does_not_fire(self):
+        assert _leads_for({"wallet.fc": self.CLEAN}, "TON-RPL-03") == []

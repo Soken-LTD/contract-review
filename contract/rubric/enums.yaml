@@ -77,6 +77,7 @@ categories:
   - {id: ton.signature_binding, family: ton, match_group: signature_replay, legacy: "none"}
   - {id: ton.upgrade_migration, family: ton, match_group: upgrade_init, legacy: "none"}
   - {id: ton.signed_integer, family: ton, match_group: arithmetic, legacy: "none"}
+  - {id: ton.storage_persistence, family: ton, match_group: logic, legacy: "none"}
   - {id: ton.replay, family: ton, match_group: signature_replay, legacy: "replay"}
   - {id: ton.async_race, family: ton, match_group: reentrancy_ordering, legacy: "async"}
   - {id: ton.code_update, family: ton, match_group: upgrade_init, legacy: "set_code"}

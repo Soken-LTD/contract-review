@@ -14,6 +14,7 @@
     "TON-GAS-04": "ton.excess_return",
     "TON-AUTH-01": "ton.sender_auth",
     "TON-AUTH-02": "ton.address_parsing",
+    "TON-AUTH-03": "ton.sender_auth",
     "TON-RPL-01": "ton.external_accept_early",
     "TON-RPL-02": "ton.replay",
     "TON-RPL-03": "ton.replay",
@@ -21,6 +22,8 @@
     "TON-UPG-01": "ton.code_update",
     "TON-UPG-02": "ton.upgrade_migration",
     "TON-INT-01": "ton.signed_integer",
+    "TON-INT-02": "ton.arithmetic",
+    "TON-STO-01": "ton.storage_persistence",
     "TON-RND-01": "ton.randomness",
     "TON-RACE-01": "ton.async_race",
     "TON-JET-01": "ton.jetton_standard"
