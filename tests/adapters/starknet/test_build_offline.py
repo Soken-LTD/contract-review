@@ -212,3 +212,30 @@ def test_metadata_probe_removes_its_container_on_the_wall(tmp_path: Path, monkey
 
 def test_caracal_wall_is_a_build_wall() -> None:
     assert A._CARACAL_WALL_S >= B._BUILD_WALL_S
+
+
+# ─── analyze() must reach the caracal runner (a parameter once shadowed the function) ───────────
+
+def test_analyze_runs_the_caracal_engine_when_the_build_is_ok(tmp_path: Path, monkeypatch) -> None:
+    seen: list[BuildResult] = []
+
+    def fake_caracal(result: BuildResult):
+        seen.append(result)
+        return "ok", [{"detector": "dead-code", "impact": "Low", "confidence": "Medium",
+                       "message": "Function helper defined in erc20::ERC20 is never used",
+                       "refs": ["erc20::ERC20::helper"]}], None
+
+    monkeypatch.setattr(A, "run_caracal", fake_caracal)
+    result = _build_result(tmp_path)
+    _leads, static_map, _plan = A.analyze(result, None, "2.13.1", run_stock_lint=False, with_caracal=True)
+    assert seen == [result]
+    assert static_map["tools"]["caracal"]["status"] == "ok"
+    assert static_map["tools"]["caracal"]["findings"] == 1
+    assert "caracal" not in static_map["not_run"]
+
+
+def test_analyze_skips_caracal_when_asked(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(A, "run_caracal", lambda _r: pytest.fail("caracal must not run"))
+    _leads, static_map, _plan = A.analyze(_build_result(tmp_path), None, "2.13.1", run_stock_lint=False,
+                                          with_caracal=False)
+    assert static_map["tools"]["caracal"] == {"status": "not_run", "reason": "build_not_ok"}

@@ -181,7 +181,10 @@ def run_caracal(result: BuildResult) -> tuple[str, list[dict[str, Any]], str | N
 
 def analyze(result: BuildResult, facts: ClassFacts | None, cairo_version: str | None,
             run_stock_lint: bool = True,
-            run_caracal: bool = True) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
+            with_caracal: bool = True) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
+    """Leads, static map and read plan for one build. `with_caracal` is a flag, not the runner:
+    a parameter named like the function shadowed `run_caracal` and made the first real caracal
+    step die with "'bool' object is not callable" (stand, 2026-10-23)."""
     files = result.candidate.files
     package_dir = str((result.candidate.settings or {}).get("package_dir") or "")
     in_scope = {p: files[p] for p in in_scope_paths(files, package_dir)}
@@ -205,7 +208,7 @@ def analyze(result: BuildResult, facts: ClassFacts | None, cairo_version: str | 
         tools[LINT_TOOL] = {"status": "not_run", "reason": "no_toolchain"}
         not_run.append(LINT_TOOL)
     # Second engine: Caracal (SIERRA static analysis), beside scarb lint + soken-cairo-rules.
-    if run_caracal and result.status == "ok":
+    if with_caracal and result.status == "ok":
         status, findings, reason = run_caracal(result)
         tools[CARACAL_TOOL] = {"status": status, "reason": reason,
                                "version": caracal_mod.CARACAL_VERSION, "findings": len(findings)}
