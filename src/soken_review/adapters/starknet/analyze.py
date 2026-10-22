@@ -159,12 +159,21 @@ def run_caracal(result: BuildResult) -> tuple[str, list[dict[str, Any]], str | N
     workdir = _container_workdir(package_dir)
     if workdir is None:
         return "not_run", [], "unsafe_package_dir"
-    rc, log = run_offline(image, Path(result.work_dir), workdir, caracal_mod.detect_argv(), _CARACAL_WALL_S)
+    # Caracal (compilation/scarb.rs) runs `scarb clean` then `scarb build --workspace` in the project
+    # dir and reads `<project>/target/dev/*.contract_class.json`. SCARB_TARGET_DIR points there so
+    # caracal finds what its own scarb wrote and the build step's /work/output stays untouched.
+    rc, log = run_offline(image, Path(result.work_dir), workdir, caracal_mod.detect_argv(), _CARACAL_WALL_S,
+                          env={"SCARB_TARGET_DIR": caracal_mod.target_dir(workdir)})
     if rc == 124:
         return "not_run", [], "analyze_timeout"
     if rc != 0:
         return "not_run", [], "analyzer_failed"
-    return "ok", caracal_mod.parse_caracal(log), None
+    findings = caracal_mod.parse_caracal(log)
+    if not findings and caracal_mod.skipped_files(log):
+        # Caracal skips every class without SIERRA debug names (`[cairo] sierra-replace-ids = true`)
+        # and still exits 0 with no output: that is "nothing analysed", not "no findings".
+        return "not_run", [], "sierra_debug_info_missing"
+    return "ok", findings, None
 
 
 def analyze(result: BuildResult, facts: ClassFacts | None, cairo_version: str | None,
