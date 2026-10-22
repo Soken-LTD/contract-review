@@ -56,7 +56,7 @@ egress:                        # 09 4.3: sandbox outbound allowlist, one smokesc
   evm: [registry.npmjs.org, api.soldeer.xyz]   # soldeer host UNVERIFIED (UV9-6, smokescreen report mode)
   solana: [index.crates.io, static.crates.io]  # cargo sparse index and crate downloads
   move: []
-  starknet: [scarbs.xyz]                       # UNVERIFIED (UV9-6)
+  starknet: [scarbs.xyz, storage.googleapis.com]   # verified 2026-10-22: index on scarbs.xyz, package blobs are signed GCS URLs; without the GCS host `scarb fetch` fails deps_unreachable
   ton: []
 outbound:                      # politeness, supervisor only; rate_buckets out:s:<provider>; a provider without a row is not callable
   quicknode: {per_s: 40}
