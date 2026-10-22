@@ -1382,12 +1382,12 @@ def fail_path(state: str) -> list[str]:
 async def _fail_job(repo: JobRepo, job_id: str, error_code: str, error_detail: dict[str, Any] | None = None) -> bool:
     """Move the job to `failed` along the legal path; False when its state has no path there."""
     job = await repo.get(job_id)
-    if job is None:
-        return False
-    path = fail_path(job["state"])
+    state = job.get("state") if isinstance(job, dict) else None
+    # Unknown or already-advanced state: attempt the direct edge (the pre-fix behaviour); the
+    # repo raises JobStateError if the graph forbids it, which the caller logs.
+    path = fail_path(state) if state else []
     if not path:
-        logger.error("job %s in state %s has no path to failed", job_id[-8:], job["state"])
-        return False
+        path = ["failed"]
     for to_state in path:
         if to_state == "failed":
             await repo.transition(job_id, "failed", error_code=error_code, error_detail=error_detail)

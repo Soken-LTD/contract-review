@@ -85,17 +85,19 @@ async def persist_leads(conn: psycopg.AsyncConnection, job_id: str, leads: list[
     if not rows:
         return 0
     inserted = 0
-    async with conn.cursor() as cur:
-        for row in rows:
-            await cur.execute(
-                """insert into leads (job_id, lead_id, origin, prev_finding_id, rule_id, tools, category,
-                                      category_family, analyzer_severity_raw, severity_norm, located,
-                                      path, start_line, end_line, state)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open')
-                   on conflict (job_id, lead_id) do nothing""",
-                row,
-            )
-            inserted += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+    for row in rows:
+        # conn.execute (not a cursor context manager): the worker tests drive the supervisor with
+        # an AsyncMock connection, and psycopg's AsyncConnection.execute returns the cursor.
+        cur = await conn.execute(
+            """insert into leads (job_id, lead_id, origin, prev_finding_id, rule_id, tools, category,
+                                  category_family, analyzer_severity_raw, severity_norm, located,
+                                  path, start_line, end_line, state)
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open')
+               on conflict (job_id, lead_id) do nothing""",
+            row,
+        )
+        rc = getattr(cur, "rowcount", 0)
+        inserted += rc if isinstance(rc, int) and rc > 0 else 0
     return inserted
 
 
@@ -106,6 +108,6 @@ async def persist_leads_from_pin(conn: psycopg.AsyncConnection, pin_root: Path, 
 
 async def lead_states(conn: psycopg.AsyncConnection, job_id: str) -> dict[str, dict[str, Any]]:
     """``{lead_id: {state, reason, state_ref}}`` for the job (the table is the state of record)."""
-    async with conn.cursor() as cur:
-        await cur.execute("select lead_id, state, reason, state_ref from leads where job_id = %s", (job_id,))
-        return {r[0]: {"state": r[1], "reason": r[2], "state_ref": r[3]} for r in await cur.fetchall()}
+    cur = await conn.execute("select lead_id, state, reason, state_ref from leads where job_id = %s", (job_id,))
+    rows = await cur.fetchall()
+    return {r[0]: {"state": r[1], "reason": r[2], "state_ref": r[3]} for r in rows}
