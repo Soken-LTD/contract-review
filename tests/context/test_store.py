@@ -136,3 +136,18 @@ def test_path_helpers() -> None:
     assert is_context_path("context/docs-1.md") and not is_context_path("src/Vault.sol")
     assert parse_path("context/privacy-3.md") == ("privacy", 3)
     assert parse_path("context/privacy-0.md") is None and parse_path("context/../x") is None
+
+
+def test_titles_and_text_drop_pictographs_the_report_font_cannot_render(tmp_path):
+    from soken_review.context.store import ContextStore, _clean_line, _lf
+
+    assert _clean_line("Swap | Sushi \U0001f363") == "Swap | Sushi"
+    assert _clean_line("Café – résumé 50% © 2026") == "Café – résumé 50% © 2026"   # letters, dash, percent, copyright kept
+    assert _lf("- [\U0001f3db️ Governance](/dao)\r\n") == "- [ Governance](/dao)\n"
+    store = ContextStore(tmp_path, "job_glyph")
+    [entry] = store.add([{"kind": "website", "url": "https://x.example/", "final_url": "https://x.example/", "status": "ok",
+                          "content_type": "text/html", "bytes": 5, "sha256_raw": "cd" * 32,
+                          "fetched_at": "2026-10-23T00:00:00+00:00", "title": "Swap | Sushi \U0001f363",
+                          "text": "Hello \U0001f44b world\n", "bundle_hits": {}}])
+    assert entry.title == "Swap | Sushi"
+    assert "\U0001f44b" not in store.read_text(entry.path)
