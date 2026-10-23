@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sandbox image build plan and digest lock (09 4.4).
 
-    python scripts/images.py plan [--only name,name]   # JSON build plan on stdout
+    python scripts/images.py plan [--only name,name] [--changed paths.txt]   # JSON build plan
     python scripts/images.py lock <results_dir>         # write pushed digests into images.lock.json
     python scripts/images.py check                      # lock entries well-formed (CI)
     python scripts/images.py argv '<plan entry>' [deps]  # build options, one per line
@@ -16,6 +16,12 @@ by `soken_review.adapters.solana.images plan` in this same entry shape (solana-i
 A Dockerfile `FROM ghcr.io/soken-ltd/<other>:<tag>` makes `<other>` a dependency: it is built in
 an earlier level and the dependant is built against its pushed digest (build context override),
 never a floating tag. Two levels at most.
+
+An image's build inputs are its `docker/<dir>` tree, `.dockerignore` and every repo path a
+`COPY`/`ADD` reads from the build context (not `--from=` stages): `plan --changed paths.txt`
+(one path per line, as `git diff --name-only` prints them) keeps only the images with a changed
+input, then adds their dependants (rebuilt on the fresh base) and dependencies. An empty plan is
+a valid answer: nothing to build.
 
 Lock entries are matched by repository, so aliases (`solana-analyze` = the `solana-build` image)
 receive the same digest. `lock` only touches `digest`, `platforms` and `built`; it never removes
@@ -40,6 +46,39 @@ _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _FROM_RE = re.compile(r"^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)", re.IGNORECASE | re.MULTILINE)
 _ARG_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 _TARGET_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_COPY_RE = re.compile(r"^\s*(?:COPY|ADD)\s+(.*)$", re.IGNORECASE | re.MULTILINE)
+_ALWAYS_INPUTS = (".dockerignore",)
+
+
+def _norm_path(path: str) -> str:
+    return path.strip().removeprefix("./").rstrip("/")
+
+
+def inputs_for(image_dir: str, dockerfile_text: str) -> list[str]:
+    """Repo paths (files or directories, relative to the root) whose change means a rebuild:
+    the image directory, `.dockerignore`, and the sources of every COPY/ADD that reads the build
+    context. `--from=` copies read another stage or image, never the context; other `--flags`
+    are skipped; the last operand is the destination."""
+    inputs = {_norm_path(image_dir), *_ALWAYS_INPUTS}
+    for line in _COPY_RE.findall(dockerfile_text):
+        words = line.split()
+        if any(w.startswith("--from=") for w in words):
+            continue
+        operands = [w for w in words if not w.startswith("--")]
+        for src in operands[:-1]:
+            src = _norm_path(src)
+            if src and not src.startswith("/"):
+                inputs.add(src)
+    return sorted(inputs)
+
+
+def _touches(inputs: list[str], changed: list[str]) -> bool:
+    """A changed path matches an input when it is that path or lies under it (by component)."""
+    for path in changed:
+        for inp in inputs:
+            if path == inp or path.startswith(inp + "/"):
+                return True
+    return False
 
 
 def _load_lock() -> dict:
@@ -83,6 +122,7 @@ def discover(lock: dict) -> list[dict]:
                 **({"target": target} if target else {}),
                 # the FROM refs a dependant names, overridden at build time by the dep's digest
                 "dep_refs": sorted({f for f in froms if f.startswith(REGISTRY + "/")}),
+                "inputs": inputs_for(d.relative_to(ROOT).as_posix(), text),
             })
     names = {i["name"] for i in images}
     for i in images:
@@ -92,7 +132,10 @@ def discover(lock: dict) -> list[dict]:
     return images
 
 
-def plan(only: set[str] | None) -> dict:
+def plan(only: set[str] | None, changed: list[str] | None = None) -> dict:
+    """`only` names images (their dependencies are added); `changed` lists repo paths and keeps
+    the images whose inputs they touch plus every dependant of those (a fresh base means a fresh
+    dependant). Both given: the intersection, then dependencies."""
     images = discover(_load_lock())
     by_name = {i["name"]: i for i in images}
     level = {}
@@ -101,12 +144,18 @@ def plan(only: set[str] | None) -> dict:
     for i in images:
         if any(level[d] != 0 for d in i["deps"]):
             raise SystemExit(f"{i['name']}: dependency chains deeper than two levels are not supported")
+    wanted: set[str] | None = None
+    if changed is not None:
+        paths = [_norm_path(p) for p in changed if p.strip()]
+        wanted = {i["name"] for i in images if _touches(i["inputs"], paths)}
+        wanted |= {i["name"] for i in images if set(i["deps"]) & wanted}
     if only:
         unknown = only - set(by_name)
         if unknown:
             raise SystemExit(f"unknown images {sorted(unknown)}")
-        wanted = set(only)
-        for n in only:
+        wanted = set(only) if wanted is None else wanted & set(only)
+    if wanted is not None:
+        for n in list(wanted):
             wanted.update(by_name[n]["deps"])  # a dependant is always built on a fresh dep
         images = [i for i in images if i["name"] in wanted]
     return {
@@ -189,9 +238,17 @@ def main(argv: list[str]) -> int:
         return 2
     if argv[0] == "plan":
         only = None
-        if len(argv) > 2 and argv[1] == "--only" and argv[2].strip():
-            only = {s.strip() for s in argv[2].split(",") if s.strip()}
-        print(json.dumps(plan(only)))
+        changed = None
+        rest = argv[1:]
+        while rest:
+            flag, value, rest = rest[0], (rest[1] if len(rest) > 1 else ""), rest[2:]
+            if flag == "--only":
+                only = {s.strip() for s in value.split(",") if s.strip()} or None
+            elif flag == "--changed":
+                changed = [line.strip() for line in Path(value).read_text().splitlines() if line.strip()]
+            else:
+                raise SystemExit(f"unknown plan option {flag}")
+        print(json.dumps(plan(only, changed)))
         return 0
     if argv[0] == "lock":
         return lock(Path(argv[1]))
