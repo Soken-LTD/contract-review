@@ -1,5 +1,5 @@
 """Holder facts for the roles table `type` column (08 2.2): `eth_getCode` on every holder address found
-at the pinned block, kind probes for Safe and timelock; fail-closed on every RPC error (04 1.3)."""
+at the pinned block, Safe recognised by its singleton in storage slot 0; fail-closed on every RPC error (04 1.3)."""
 
 from __future__ import annotations
 
@@ -24,8 +24,16 @@ def _rpc(*, code: dict[str, str], calls: dict[str, str] | None = None, admin: st
     """owner() returns OWNER; `code` maps address -> eth_getCode; `calls` maps selector -> eth_call answer."""
     rpc = AsyncMock(spec=["get_balance", "eth_call", "get_storage_at", "get_code"])
     rpc.get_balance = AsyncMock(return_value="0x0")
-    rpc.get_storage_at = AsyncMock(side_effect=lambda a, slot, block: _word(admin) if admin and slot == facts._EIP1967_ADMIN
-                                   else WORD)
+    slot0 = {k: v for k, v in (calls or {}).items() if k.startswith("slot0:")}
+
+    def storage(a: str, slot: str, block=None) -> str:
+        if admin and slot == facts._EIP1967_ADMIN:
+            return _word(admin)
+        if int(slot, 16) == 0 and f"slot0:{a}" in slot0:
+            return slot0[f"slot0:{a}"]
+        return WORD
+
+    rpc.get_storage_at = AsyncMock(side_effect=storage)
 
     async def eth_call(to: str, data: str, block: int | None = None) -> str:
         if data == facts._SEL["owner"]:
@@ -69,25 +77,34 @@ async def test_plain_contract_owner_when_no_probe_answers():
     assert out["onchain.owner.holder_kind"]["value"] == "contract"
 
 
+SAFE_SINGLETON = "0xd9db270c1b5e3bd161e8c8503c55ceabee709552"   # GnosisSafe 1.3.0 canonical
+
+
 @pytest.mark.asyncio
-async def test_safe_owner_is_multisig_when_threshold_and_owners_answer():
-    rpc = _rpc(code={OWNER: "0x60"}, calls={facts._PROBE["getThreshold"]: ONE, facts._PROBE["getOwners"]: OWNERS_ARRAY})
+async def test_safe_proxy_owner_is_multisig_by_singleton_in_slot_zero():
+    rpc = _rpc(code={OWNER: "0x60"}, calls={f"slot0:{OWNER}": _word(SAFE_SINGLETON)})
     out = _by_key(await facts.onchain_facts(rpc, "0xdead", 1, MAP, None))
     assert out["onchain.owner.holder_kind"]["value"] == "multisig"
+    assert out["onchain.owner.holder_singleton"]["value"] == SAFE_SINGLETON
+    assert "slot 0" in out["onchain.owner.holder_singleton"]["source"]
 
 
 @pytest.mark.asyncio
-async def test_zero_threshold_is_not_a_multisig():
-    rpc = _rpc(code={OWNER: "0x60"}, calls={facts._PROBE["getThreshold"]: WORD, facts._PROBE["getOwners"]: OWNERS_ARRAY})
+async def test_getter_probes_do_not_make_a_multisig():
+    """A contract answering getThreshold()/getOwners()/getMinDelay() is still `contract`: getters
+    are attacker-controlled, the singleton slot against the published Safe list is not."""
+    rpc = _rpc(code={OWNER: "0x60"}, calls={"0xe75235b8": ONE, "0xa0e67e2b": OWNERS_ARRAY,
+                                             "0xf27a0c92": "0x" + "15180".rjust(64, "0")})
     out = _by_key(await facts.onchain_facts(rpc, "0xdead", 1, MAP, None))
     assert out["onchain.owner.holder_kind"]["value"] == "contract"
+    assert "onchain.owner.holder_singleton" not in out
 
 
 @pytest.mark.asyncio
-async def test_timelock_owner_when_get_min_delay_answers():
-    rpc = _rpc(code={OWNER: "0x60"}, calls={facts._PROBE["getMinDelay"]: "0x" + "15180".rjust(64, "0")})
+async def test_unknown_singleton_in_slot_zero_is_a_plain_contract():
+    rpc = _rpc(code={OWNER: "0x60"}, calls={f"slot0:{OWNER}": _word("0x" + "ab" * 20)})
     out = _by_key(await facts.onchain_facts(rpc, "0xdead", 1, MAP, None))
-    assert out["onchain.owner.holder_kind"]["value"] == "timelock"
+    assert out["onchain.owner.holder_kind"]["value"] == "contract"
 
 
 @pytest.mark.asyncio
@@ -120,10 +137,9 @@ async def test_rpc_without_get_code_yields_no_holder_fact():
 
 
 @pytest.mark.asyncio
-async def test_failed_probe_is_the_generic_contract_kind():
+async def test_failed_storage_read_is_the_generic_contract_kind():
     rpc = _rpc(code={OWNER: "0x60"})
-    rpc.eth_call = AsyncMock(side_effect=lambda to, data, block=None: _word(OWNER) if data == facts._SEL["owner"]
-                             else (_ for _ in ()).throw(RuntimeError("revert")))
+    rpc.get_storage_at = AsyncMock(side_effect=RuntimeError("timeout"))
     out = _by_key(await facts.onchain_facts(rpc, "0xdead", 1, MAP, None))
     assert out["onchain.owner.holder_kind"]["value"] == "contract"
     assert out["onchain.owner.holder_is_contract"]["value"] == "true"

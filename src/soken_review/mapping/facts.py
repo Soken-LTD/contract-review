@@ -132,17 +132,27 @@ async def onchain_facts(rpc: Any, address: str, block: int, map_doc: dict[str, A
     return out
 
 
-# Probes for the kind of a holder contract (08 2.2 roles table `type`), all read-only eth_call selectors:
-# Safe `getThreshold()` and `getOwners()`, OpenZeppelin TimelockController `getMinDelay()`.
-_PROBE = {"getThreshold": "0xe75235b8", "getOwners": "0xa0e67e2b", "getMinDelay": "0xf27a0c92"}
+# Kind of a holder contract (08 2.2 roles table `type`). Getter probes (`getThreshold()`,
+# `getMinDelay()`) are not evidence: any contract can answer them, and the report would print
+# "Multisig" for an attacker-chosen holder (security review, 2026-10-23). A Safe is recognised
+# structurally instead: a Safe proxy keeps its singleton in storage slot 0, and the singleton
+# addresses are the published deployments (adapters/evm/data/safe_singletons.json). A timelock
+# has no canonical bytecode, so it stays the generic `contract`.
+_SAFE_SINGLETONS_PATH = Path(__file__).resolve().parents[1] / "adapters" / "evm" / "data" / "safe_singletons.json"
+
+
+@lru_cache(maxsize=1)
+def _safe_singletons() -> frozenset[str]:
+    data = json.loads(_SAFE_SINGLETONS_PATH.read_text(encoding="utf-8"))
+    return frozenset(str(a).lower() for a in data.get("singletons") or [])
 
 
 async def holder_facts(rpc: Any, role: str, holder: str, block: int, unit_id: str | None) -> list[dict[str, Any]]:
     """`onchain.<role>.holder_code_size`, `.holder_is_contract` and `.holder_kind` for one holder address.
 
     Fail-closed: a failed `eth_getCode` yields no fact at all (never a false). `holder_kind` is
-    `eoa` for empty code, `multisig` when `getThreshold()` returns a positive word and `getOwners()`
-    answers, `timelock` when `getMinDelay()` returns a word, else `contract`; a failed probe only
+    `eoa` for empty code, `multisig` when storage slot 0 holds a published Safe singleton address
+    (`onchain.<role>.holder_singleton` records it), else `contract`; a failed storage read only
     means the generic `contract`."""
     try:
         code = await rpc.get_code(holder, block=block)
@@ -160,20 +170,16 @@ async def holder_facts(rpc: Any, role: str, holder: str, block: int, unit_id: st
            fact(f"onchain.{role}.holder_is_contract", "true" if size else "false", unit_id=unit_id, source=source)]
     kind = "contract" if size else "eoa"
     if size:
-        probes: dict[str, int | None] = {}
-        for name, sel in _PROBE.items():
-            try:
-                raw = await rpc.eth_call(holder, sel, block=block)
-            except Exception as exc:  # noqa: BLE001  # a failed probe is the generic kind, not an error
-                logger.info("eth_call %s on %s failed: %s", name, holder, exc)
-                probes[name] = None
-                continue
-            word = _decode_word(raw, "uint")
-            probes[name] = int(word) if word is not None else None
-        if (probes.get("getThreshold") or 0) > 0 and probes.get("getOwners") is not None:
+        try:
+            raw = await rpc.get_storage_at(holder, "0x" + "0" * 64, block=block)
+        except Exception as exc:  # noqa: BLE001  # a failed read is the generic kind, not an error
+            logger.info("eth_getStorageAt slot 0 on %s failed: %s", holder, exc)
+            raw = None
+        singleton = _decode_word(raw, "address") if isinstance(raw, str) else None
+        if singleton and singleton.lower() in _safe_singletons():
             kind = "multisig"
-        elif probes.get("getMinDelay") is not None:
-            kind = "timelock"
+            out.append(fact(f"onchain.{role}.holder_singleton", singleton.lower(), unit_id=unit_id,
+                            source=f"eth_getStorageAt slot 0 at block {block}"))
     out.append(fact(f"onchain.{role}.holder_kind", kind, unit_id=unit_id, source=source))
     return out
 
