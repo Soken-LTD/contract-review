@@ -34,7 +34,8 @@ async def test_009_applies_on_a_db_that_already_ran_008(pg_dsn, tmp_path: Path) 
         first = await run_migrations(dsn, upto8)
         assert first[-1] == "008_sections_context_notes.sql" and "009_context.sql" not in first
         second = await run_migrations(dsn)                 # the full directory on the 008 database
-        assert second == ["009_context.sql"]
+        later = sorted(p.name for p in MIGRATIONS_DIR.glob("*.sql") if p.name >= "009")
+        assert second == later and second[0] == "009_context.sql"
         assert await run_migrations(dsn) == []             # idempotent
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             cols = await (await conn.execute(
