@@ -29,7 +29,10 @@ _RUBRIC = Path(__file__).resolve().parents[4] / "contract" / "rubric"
 _LINT_MAP = Path(__file__).parent / "lint_map.yaml"
 LINT_TOOL = "scarb-lint"
 CARACAL_TOOL = caracal_mod.CARACAL_TOOL
-_CARACAL_WALL_S = 900
+# Caracal's Scarb mode rebuilds the whole workspace itself (`scarb build --workspace`, dev profile),
+# so its wall is the build wall, not the lint wall: OZ cairo-contracts (15 members and one
+# procedural macro compiled by cargo) needs about 13 minutes cold on the 2-CPU stand.
+_CARACAL_WALL_S = 1500
 _DIAG_RE = re.compile(r"^(warn|warning|error): Plugin diagnostic: (.*)$")
 _LOC_RE = re.compile(r"^\s*--> /work/tree/([A-Za-z0-9_./-]{1,200}):(\d+):(\d+)\s*$")
 _SEV_RANK = {"High": 0, "Medium": 1, "Low": 2, "Info": 3}
@@ -145,7 +148,7 @@ def run_caracal(result: BuildResult) -> tuple[str, list[dict[str, Any]], str | N
     """
     import shutil
 
-    from soken_review.adapters.starknet.build import _container_workdir, run_offline
+    from soken_review.adapters.starknet.build import _container_workdir, _write_host, run_offline
     from soken_review.sandbox.profile import locked_image
 
     if result.status != "ok" or not result.work_dir:
@@ -159,17 +162,32 @@ def run_caracal(result: BuildResult) -> tuple[str, list[dict[str, Any]], str | N
     workdir = _container_workdir(package_dir)
     if workdir is None:
         return "not_run", [], "unsafe_package_dir"
-    rc, log = run_offline(image, Path(result.work_dir), workdir, caracal_mod.detect_argv(), _CARACAL_WALL_S)
+    # Caracal (compilation/scarb.rs) runs `scarb clean` then `scarb build --workspace` in the project
+    # dir and reads `<project>/target/dev/*.contract_class.json`. SCARB_TARGET_DIR points there so
+    # caracal finds what its own scarb wrote and the build step's /work/output stays untouched.
+    rc, log = run_offline(image, Path(result.work_dir), workdir, caracal_mod.detect_argv(), _CARACAL_WALL_S,
+                          env={"SCARB_TARGET_DIR": caracal_mod.target_dir(workdir)})
+    # Supervisor-only copy of the container output (never mounted), so a failed run is diagnosable
+    # from the job dir; build.log and lint already have this.
+    _write_host(Path(result.work_dir) / "host" / "caracal.log", log.encode())
     if rc == 124:
         return "not_run", [], "analyze_timeout"
     if rc != 0:
-        return "not_run", [], "analyzer_failed"
-    return "ok", caracal_mod.parse_caracal(log), None
+        return "not_run", [], "\n".join([f"analyzer_failed: exit {rc}", *log.splitlines()[-10:]])
+    findings = caracal_mod.parse_caracal(log)
+    if not findings and caracal_mod.skipped_files(log):
+        # Caracal skips every class without SIERRA debug names (`[cairo] sierra-replace-ids = true`)
+        # and still exits 0 with no output: that is "nothing analysed", not "no findings".
+        return "not_run", [], "sierra_debug_info_missing"
+    return "ok", findings, None
 
 
 def analyze(result: BuildResult, facts: ClassFacts | None, cairo_version: str | None,
             run_stock_lint: bool = True,
-            run_caracal: bool = True) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
+            with_caracal: bool = True) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
+    """Leads, static map and read plan for one build. `with_caracal` is a flag, not the runner:
+    a parameter named like the function shadowed `run_caracal` and made the first real caracal
+    step die with "'bool' object is not callable" (stand, 2026-10-23)."""
     files = result.candidate.files
     package_dir = str((result.candidate.settings or {}).get("package_dir") or "")
     in_scope = {p: files[p] for p in in_scope_paths(files, package_dir)}
@@ -193,7 +211,7 @@ def analyze(result: BuildResult, facts: ClassFacts | None, cairo_version: str | 
         tools[LINT_TOOL] = {"status": "not_run", "reason": "no_toolchain"}
         not_run.append(LINT_TOOL)
     # Second engine: Caracal (SIERRA static analysis), beside scarb lint + soken-cairo-rules.
-    if run_caracal and result.status == "ok":
+    if with_caracal and result.status == "ok":
         status, findings, reason = run_caracal(result)
         tools[CARACAL_TOOL] = {"status": status, "reason": reason,
                                "version": caracal_mod.CARACAL_VERSION, "findings": len(findings)}
