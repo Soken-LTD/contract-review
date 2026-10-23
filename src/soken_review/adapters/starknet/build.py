@@ -45,6 +45,8 @@ from soken_review.sandbox.profile import (
     StepLimits,
     docker_argv,
     host_capacity,
+    locked_image,
+    locked_tools,
     sandbox_writable_dir,
 )
 
@@ -81,7 +83,11 @@ _CAIRO_LINE_RE = re.compile(r"^cairo:\s*(\d+\.\d+\.\d+)", re.MULTILINE)
 # --------------------------------------------------------------------------------------------
 
 def image_for(cairo_version: str) -> str | None:
-    """Image whose bundled Cairo is `cairo_version`: per-version override, then images map."""
+    """Image whose bundled Cairo is `cairo_version`: per-version override, then the images map,
+    then the images.lock.json `starknet-build` entry when the Scarb it records (`tools.scarb`,
+    the Dockerfile's SCARB_VERSION) is this version. CI rewrites the lock digest on every images
+    run while the map is hand-kept, so the lock is the pin that cannot go stale; a placeholder in
+    both is None (fail closed)."""
     if not _VERSION_RE.match(cairo_version or ""):
         return None
     override = os.environ.get("SOKEN_IMAGE_STARKNET_BUILD_" + cairo_version.replace(".", "_"))
@@ -90,10 +96,12 @@ def image_for(cairo_version: str) -> str | None:
     try:
         entry = json.loads(_IMAGE_MAP.read_text())["images"].get(cairo_version)
     except (OSError, ValueError, KeyError):
-        return None
-    if not entry or set(entry["digest"].removeprefix("sha256:")) <= {"0"}:
-        return None
-    return f"{entry['repository']}@{entry['digest']}"
+        entry = None
+    if entry and not set(entry["digest"].removeprefix("sha256:")) <= {"0"}:
+        return f"{entry['repository']}@{entry['digest']}"
+    if locked_tools("starknet-build").get("scarb") == cairo_version:
+        return locked_image("starknet-build")
+    return None
 
 
 def probe_cairo_version(image: str, work_dir: Path) -> str | None:
