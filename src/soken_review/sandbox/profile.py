@@ -6,10 +6,13 @@ deps); local development uses `runc` with the same flags (`SOKEN_SANDBOX_RUNTIME
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 OFFLINE_STEPS = {"build", "analyze", "map", "verify", "render"}
 NETWORK_STEPS = {"fetch", "deps"}
@@ -24,6 +27,124 @@ class StepLimits:
     memory: str          # docker size, e.g. "4g"
     pids: int
     max_file: int        # bytes, ulimit fsize
+
+
+# --------------------------------------------------------------------------------------------
+# Host memory admission (09 3.3 resource budgets, applied to the host's physical memory)
+# --------------------------------------------------------------------------------------------
+#
+# `--memory=8g` on a 3.9 GiB host never engages: the container is not cgroup-limited below the
+# host, so the kernel's global OOM killer reaps the step's process after the work is mostly done
+# (stand, caracal on oz-account-v3, 2026-10-23: `scarb` killed at 2.8 GiB RSS after 20 minutes,
+# the step recorded only `analyzer_failed: exit 1`). A step whose container limit the host cannot
+# honour is refused before it starts, with the numbers in the reason.
+
+_MEMINFO = Path("/proc/meminfo")
+_ADMISSION_FRACTION = 0.9                 # the kernel, the supervisor and page cache keep the rest
+_DEFAULT_BUDGET_MB = 14336                # the worker default (worker/__main__.py SOKEN_WORKER_RAM_MB)
+_DOCKER_SIZE_RE = re.compile(r"^\s*(\d+)\s*([bkmgBKMG]?)\s*$")
+_SIZE_UNIT_MB = {"": 1 / (1024 * 1024), "b": 1 / (1024 * 1024), "k": 1 / 1024, "m": 1, "g": 1024}
+
+
+class HostCapacityError(RuntimeError):
+    """A container step declares more memory than this host can give it; the step did not run."""
+
+    def __init__(self, *, step: str, need_mb: int, host_mb: int | None, cap_mb: int) -> None:
+        self.step = step
+        self.need_mb = need_mb
+        self.host_mb = host_mb
+        self.cap_mb = cap_mb
+        super().__init__(self.reason)
+
+    @property
+    def reason(self) -> str:
+        host = f"host {self.host_mb} MiB" if self.host_mb is not None else f"budget {self.cap_mb} MiB"
+        return f"insufficient_host_memory (need {self.need_mb} MiB, {host})"
+
+    def detail(self) -> dict[str, int | str | None]:
+        return {"reason": "insufficient_host_memory", "stage": self.step, "need_mb": self.need_mb,
+                "host_mb": self.host_mb, "cap_mb": self.cap_mb}
+
+
+def parse_memory_mb(size: str) -> int:
+    """MiB of a docker memory size (`8g`, `512m`, `1048576k`, bytes without a unit); rounded up."""
+    m = _DOCKER_SIZE_RE.match(size or "")
+    if not m:
+        raise ValueError(f"not a docker memory size: {size!r}")
+    value, unit = int(m.group(1)), m.group(2).lower()
+    mb = value * _SIZE_UNIT_MB[unit]
+    return int(mb) if mb == int(mb) else int(mb) + 1
+
+
+def physical_memory_mb(meminfo: Path = _MEMINFO) -> int | None:
+    """MemTotal of `/proc/meminfo` in MiB; `os.sysconf` physical pages where there is no meminfo
+    (macOS development hosts); None when neither answers (admission then uses the budget only)."""
+    try:
+        for line in meminfo.read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        pages, page_size = os.sysconf("SC_PHYS_PAGES"), os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError, AttributeError):
+        return None
+    if pages <= 0 or page_size <= 0:
+        return None
+    return int(pages) * int(page_size) // (1024 * 1024)
+
+
+@dataclass(frozen=True)
+class HostCapacity:
+    """What this worker host can give a container step: `physical_mb` measured once at worker
+    start (recorded in worker_hosts.ram_mb_total), `budget_mb` the configured worker budget."""
+
+    physical_mb: int | None
+    budget_mb: int
+
+    @property
+    def admit_mb(self) -> int:
+        """Largest container memory limit a step may declare: min(physical * 0.9, budget)."""
+        if self.physical_mb is None:
+            return self.budget_mb
+        return min(int(self.physical_mb * _ADMISSION_FRACTION), self.budget_mb)
+
+    @property
+    def recorded_mb(self) -> int:
+        """Value for worker_hosts.ram_mb_total: the physical memory, the budget when unmeasured."""
+        return self.physical_mb if self.physical_mb is not None else self.budget_mb
+
+    def check(self, limits: StepLimits, step: str) -> None:
+        """Raise HostCapacityError when `limits.memory` is above what the host can honour."""
+        need = parse_memory_mb(limits.memory)
+        if need > self.admit_mb:
+            raise HostCapacityError(step=step, need_mb=need, host_mb=self.physical_mb, cap_mb=self.admit_mb)
+
+
+_HOST: HostCapacity | None = None
+
+
+def configure_host_capacity(budget_mb: int, *, meminfo: Path = _MEMINFO,
+                            physical_mb: int | None = None) -> HostCapacity:
+    """Measure the host once (worker start) and keep the result for every container step.
+    `physical_mb` injects a measurement (tests); otherwise `/proc/meminfo` then `os.sysconf`."""
+    global _HOST
+    measured = physical_mb if physical_mb is not None else physical_memory_mb(meminfo)
+    _HOST = HostCapacity(physical_mb=measured, budget_mb=int(budget_mb))
+    if measured is None:
+        logger.warning("host memory unknown: admission uses the %d MiB budget only", budget_mb)
+    return _HOST
+
+
+def host_capacity() -> HostCapacity:
+    """The configured capacity; a process that never configured it (scripts, adapters run outside
+    the worker) measures on first use with the worker's default budget."""
+    if _HOST is None:
+        raw = os.environ.get("SOKEN_WORKER_RAM_MB")
+        budget = int(raw) if raw and raw.isdigit() and int(raw) > 0 else _DEFAULT_BUDGET_MB
+        configure_host_capacity(budget)
+    assert _HOST is not None
+    return _HOST
 
 
 def docker_argv(
@@ -70,6 +191,9 @@ def docker_argv(
         raise ValueError(f"unknown step {step}")
     if step in NETWORK_STEPS and not family_network:
         raise ValueError(f"{step} needs the family egress network")
+    # Admission: a limit the host cannot honour is refused here, before any `docker run`, so the
+    # global OOM killer never decides the outcome of a step (HostCapacityError carries the numbers).
+    host_capacity().check(limits, step)
     default_runtime = "runsc-egress" if step in NETWORK_STEPS else "runsc-none"
     runtime = runtime or os.environ.get("SOKEN_SANDBOX_RUNTIME") or default_runtime
     if step in NETWORK_STEPS and runtime == "runsc-none":
@@ -144,6 +268,17 @@ def locked_image(name: str) -> str | None:
     if not entry or set(entry["digest"].removeprefix("sha256:")) <= {"0"}:
         return None
     return f"{entry['repository']}@{entry['digest']}"
+
+
+def locked_tools(name: str) -> dict[str, str]:
+    """The `tools` record of an images.lock.json entry: the versions the image was built with
+    (reference data an adapter gates on, never an inline literal). Empty when the entry is absent."""
+    import json
+
+    lock = Path(__file__).resolve().parents[3] / "images.lock.json"
+    entry = json.loads(lock.read_text())["images"].get(name) or {}
+    tools = entry.get("tools") or {}
+    return {str(k): str(v) for k, v in tools.items()}
 
 
 def sandbox_writable_dir(path: Path) -> Path:

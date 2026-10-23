@@ -8,7 +8,12 @@ Layout under work_dir:
   scarb-cache/  SCARB_CACHE filled by deps (registry and git packages, corelib)
   cargo-home/   CARGO_HOME filled by deps (crates of Cairo procedural macros)
   output/       SCARB_TARGET_DIR, empty before build; the only place artifacts are read from
-  host/         supervisor only, never mounted: build log, artifact copies, class hashes, trust scan
+  host/         supervisor only, never mounted: build log, artifact copies, class hashes, trust scan,
+                deps_verify.json (the fetched cache checked against the pinned Scarb.lock)
+
+Gates before a container runs: the host must honour _BUILD_LIMITS (sandbox.profile admission,
+reason `host_capacity`), and the fetched scarb-cache must match the pinned lock (deps_integrity,
+reason `deps_integrity`) before any offline step reads it.
 
 Containers write artifacts only; class hashes, selector sets and dep.match are computed here, in
 the supervisor, from artifact bytes (provenance.decide_dep_match).
@@ -29,11 +34,19 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from soken_review.adapters.base import BuildResult, Candidate
+from soken_review.adapters.starknet.deps_integrity import discard_regenerable, verify_cargo_home, verify_scarb_cache
 from soken_review.adapters.starknet.fetch import STARKNET_EGRESS_NETWORK
 from soken_review.adapters.starknet.sierra import class_hash, hex_felt, selector_set
 from soken_review.adapters.starknet.trust_scan import lock_path, package_name, scan_files
 from soken_review.adapters.starknet.units import count_nsloc_cairo, in_scope_paths
-from soken_review.sandbox.profile import SANDBOX_UID, StepLimits, docker_argv, sandbox_writable_dir
+from soken_review.sandbox.profile import (
+    SANDBOX_UID,
+    HostCapacityError,
+    StepLimits,
+    docker_argv,
+    host_capacity,
+    sandbox_writable_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -353,17 +366,43 @@ def run_metadata(image: str, work_dir: Path, workdir: str) -> tuple[int, str]:
 # Public API
 # --------------------------------------------------------------------------------------------
 
+def plugin_cargo_locks(files: dict[str, str]) -> dict[str, str | None]:
+    """Pinned `Cargo.lock` text of every in-tree `[cairo-plugin]` package dir (None when the dir has
+    none): the oracle for CARGO_HOME. Only plugin dirs count; a Cargo.lock elsewhere is not one
+    Scarb's cargo run reads."""
+    import tomllib
+
+    out: dict[str, str | None] = {}
+    for path, text in files.items():
+        if PurePosixPath(path).name != "Scarb.toml":
+            continue
+        try:
+            manifest = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            continue
+        if "cairo-plugin" not in manifest:
+            continue
+        d = str(PurePosixPath(path).parent) if "/" in path else ""
+        out[d] = files.get(f"{d}/Cargo.lock" if d else "Cargo.lock")
+    return out
+
+
+def _mark_untrusted(candidate: Candidate, host: Path, reasons: list[str]) -> None:
+    """Add `reasons` to host/trust_scan.json and flag the inputs untrusted (blocks tier A, not the build)."""
+    candidate.untrusted_inputs = True
+    path = host / "trust_scan.json"
+    data = json.loads(path.read_text()) if path.exists() else {"untrusted": True, "reasons": []}
+    data["untrusted"] = True
+    data["reasons"] = sorted(set(data["reasons"]) | set(reasons))
+    _write_host(path, json.dumps(data).encode())
+
+
 def _mark_lock(candidate: Candidate, host: Path, work_dir: Path, package_dir: str, stage: str) -> None:
     """A lockfile that resolution changed makes the inputs untrusted (blocks tier A, not the build)."""
     reason = lock_changed(work_dir / "tree", candidate.files, package_dir)
     if reason is None:
         return
-    candidate.untrusted_inputs = True
-    path = host / "trust_scan.json"
-    data = json.loads(path.read_text()) if path.exists() else {"untrusted": True, "reasons": []}
-    data["untrusted"] = True
-    data["reasons"] = sorted(set(data["reasons"]) | {f"{reason}:{stage}"})
-    _write_host(path, json.dumps(data).encode())
+    _mark_untrusted(candidate, host, [f"{reason}:{stage}"])
 
 
 def build(candidate: Candidate, work_dir: Path, cairo_version: str | None) -> BuildResult:
@@ -402,6 +441,16 @@ def build(candidate: Candidate, work_dir: Path, cairo_version: str | None) -> Bu
         return failed("toolchain_unavailable", f"no_image_for_cairo_{cairo_version}")
     if not shutil.which("docker"):
         return failed("build_failed", "sandbox_unavailable")
+    # Admission before any container: the step's largest limit (_BUILD_LIMITS) must fit this host,
+    # or the job fails now with the numbers (E_HOST_CAPACITY) instead of fetching for nothing and
+    # ending under the global OOM killer. docker_argv repeats the check for every run as a backstop.
+    try:
+        host_capacity().check(_BUILD_LIMITS, "build")
+    except HostCapacityError as exc:
+        _write_host(host / "build_status.json", json.dumps({"status": "failed", "reason": "host_capacity",
+                                                            "detail": exc.detail()}).encode())
+        return BuildResult(candidate=candidate, status="failed", reason="host_capacity", stderr_head=exc.reason,
+                           build_notes={"host_capacity": exc.detail()})
     bundled = probe_cairo_version(image, work_dir)
     if bundled != cairo_version:
         return failed("toolchain_unavailable", f"image_cairo_{bundled}_not_{cairo_version}")
@@ -419,6 +468,36 @@ def build(candidate: Candidate, work_dir: Path, cairo_version: str | None) -> Bu
         return failed("deps_unreachable", deps_err)
     _mark_lock(candidate, host, work_dir, package_dir, "after_deps")
 
+    # The fetched cache is checked against the pinned lock (never the tree copy, which the deps
+    # container may rewrite) before the first offline step reads it. A mismatch or an unlisted
+    # package closes the build; rows the lock cannot vouch for are flagged, not trusted.
+    scarb_v = verify_scarb_cache(lock_content if lock_rel in candidate.files else None, work_dir / "scarb-cache")
+    cargo_v = verify_cargo_home(plugin_cargo_locks(candidate.files), work_dir / "cargo-home")
+    verify: dict[str, Any] = {"scarb_cache": scarb_v.as_dict(), "cargo_home": cargo_v.as_dict()}
+    failures = [*scarb_v.failures, *[f"cargo-home/{f}" for f in cargo_v.failures]]
+    if not failures:
+        # Scarb and cargo compile an already-extracted tree as is (`.scarb-ok` / `.cargo-ok` skip the
+        # untar) and Scarb reuses an unpacked corelib the same way, so the verified bytes vouch for
+        # the build only once those trees are gone and the offline run re-extracts them. Removed
+        # through directory descriptors: a symlink planted there is refused, never followed.
+        discarded: list[str] = []
+        for root, rels in ((work_dir / "scarb-cache", scarb_v.regenerate), (work_dir / "cargo-home", cargo_v.regenerate)):
+            for rel in rels:
+                removed, reason = discard_regenerable(root, rel)
+                if reason is not None:
+                    failures.append(f"{root.name}/{reason}")
+                elif removed:
+                    discarded.append(f"{root.name}/{rel}")
+        verify["discarded"] = discarded
+    failures = sorted(set(failures))
+    verify["failures"] = failures
+    _write_host(host / "deps_verify.json", json.dumps(verify, indent=1).encode())
+    if failures:
+        return failed("deps_integrity", "\n".join(failures[:20]))
+    deps_unverified = list(scarb_v.unverified)
+    if deps_unverified:
+        _mark_untrusted(candidate, host, [f"deps_unverified:{label}" for label in deps_unverified])
+
     # Supervisor reads scarb metadata offline (after fetch, before build); host/ is never
     # mounted into containers so this file cannot be modified by the build step.
     meta_rc, meta_out = run_metadata(image, work_dir, workdir)
@@ -426,6 +505,13 @@ def build(candidate: Candidate, work_dir: Path, cairo_version: str | None) -> Bu
         _write_host(host / "scarb_metadata.json", meta_out.encode())
     else:
         logger.warning("scarb metadata failed (rc=%d); plugin-scope check will be skipped", meta_rc)
+    # The metadata probe is the first resolution from the fetched index with no network: Scarb
+    # checks every resolved record against the lock (`ops/resolve.rs` `check_checksums`) and
+    # rewrites Scarb.lock from the result. A tree lock that is not the pinned one byte for byte
+    # means the index did not reproduce the pinned resolution; nothing has compiled yet, so close.
+    drift = lock_changed(work_dir / "tree", candidate.files, package_dir)
+    if drift is not None:
+        return failed("deps_integrity", f"index_resolution_differs_from_lock:{drift}")
 
     t0 = time.monotonic()
     # --package: only the scanned package is compiled (a workspace build would compile every member).
@@ -445,4 +531,5 @@ def build(candidate: Candidate, work_dir: Path, cairo_version: str | None) -> Bu
     scope = in_scope_paths(candidate.files, package_dir)
     nsloc = sum(count_nsloc_cairo(candidate.files[p]) for p in scope)
     return BuildResult(candidate=candidate, status="ok", nsloc=nsloc, work_dir=str(work_dir),
-                       stderr_head="\n".join(log.splitlines()[-5:]) or None)
+                       stderr_head="\n".join(log.splitlines()[-5:]) or None,
+                       build_notes={"deps_unverified": deps_unverified})

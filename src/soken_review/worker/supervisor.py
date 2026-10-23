@@ -54,6 +54,7 @@ from ..mapping import step as _map_step
 from ..pinning.store import PinnedSource
 from ..report import render as _render_mod
 from ..sandbox.output import UnsafeOutput, read_output_files
+from ..sandbox.profile import HostCapacityError, configure_host_capacity
 from ..tools.git_probe import _SHA1_RE as _COMMIT_SHA1_RE
 from ..tools.git_probe import resolve_ref as _resolve_ref
 from . import move_steps as _move
@@ -180,6 +181,11 @@ class Supervisor:
         self._total_ram_mb = total_ram_mb
         self._free_units = total_units
         self._free_ram_mb = total_ram_mb
+        # Physical memory, measured once here and recorded in worker_hosts.ram_mb_total; the
+        # container admission (sandbox.profile) refuses a step above min(physical * 0.9, budget).
+        # The claim budget stays `total_ram_mb`: a budget clamped to a small host would leave an
+        # 8 GiB step queued forever with nothing recorded, the admission fails it with a reason.
+        self._host_capacity = configure_host_capacity(total_ram_mb)
         self._running: dict[int, asyncio.Task] = {}  # step_id -> task
         # Dedicated executor for Move steps (Sui / Aptos): prevents them from exhausting the
         # default thread pool shared with lightweight steps (09 UV9-8).
@@ -218,13 +224,16 @@ class Supervisor:
         while True:
             try:
                 async with self._pool.connection() as conn:
+                    # ram_mb_total is the host's physical memory (measured at start), not the
+                    # configured budget; a host that was resized reports the new value.
                     await conn.execute(
                         """
                         insert into worker_hosts (name, units_total, ram_mb_total, last_seen)
                         values (%s, %s, %s, now())
-                        on conflict (name) do update set last_seen = now()
+                        on conflict (name) do update set last_seen = now(),
+                            units_total = excluded.units_total, ram_mb_total = excluded.ram_mb_total
                         """,
-                        (self._host, self._total_units, self._total_ram_mb),
+                        (self._host, self._total_units, self._host_capacity.recorded_mb),
                     )
             except Exception:
                 logger.exception("heartbeat failed")
@@ -361,6 +370,15 @@ class Supervisor:
                     async with conn.transaction():
                         await repo.complete_step(step_id, "done", error_code="E_INTERNAL")
                         await _fail_job(repo, job_id, "E_INTERNAL", {"stage": step_name, "reason": "rpc_all_endpoints_failed"})
+        except HostCapacityError as exc:
+            # The sandbox refused a container limit this host cannot honour (no OOM kill, nothing
+            # ran). Not transient on this host: the job fails with the numbers, never E_INTERNAL.
+            logger.error("step %s/%s job %s refused: %s", step_name, step["seq"], job_id[-8:], exc.reason)
+            async with self._pool.connection() as conn:
+                repo = JobRepo(conn)
+                async with conn.transaction():
+                    await repo.complete_step(step_id, "failed", error_code="E_HOST_CAPACITY")
+                    await _fail_job(repo, job_id, "E_HOST_CAPACITY", exc.detail())
         except Exception:
             logger.exception("step %s/%s failed for job %s", step_name, step["seq"], job_id[-8:])
             await self._mark_step(step_id, "failed", error_code="E_INTERNAL")

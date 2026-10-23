@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from soken_review.adapters.base import BuildResult, Candidate
+from soken_review.adapters.base import BuildResult, Candidate, Compiler
 from soken_review.adapters.starknet import analyze as A
 from soken_review.adapters.starknet import build as B
 from soken_review.adapters.starknet import caracal as C
@@ -66,8 +66,11 @@ def _mounts(argv: list[str]) -> list[str]:
     return [argv[i + 1] for i, a in enumerate(argv) if a == "--mount"]
 
 
-def _build_result(tmp_path: Path, package_dir: str = "packages/presets") -> BuildResult:
-    cand = Candidate(provider="repo", files={}, sha256="0" * 64, language="cairo", compiler=None,
+def _build_result(tmp_path: Path, package_dir: str = "packages/presets", cairo: str | None = "2.5.4") -> BuildResult:
+    """A build result whose class caracal 0.2.3 can read (Cairo 2.5.x emits Sierra 1.4.0); the
+    compiler-version gate has its own tests in test_caracal_gate.py."""
+    cand = Candidate(provider="repo", files={}, sha256="0" * 64, language="cairo",
+                     compiler=Compiler(version=cairo, version_pinned_by="sierra_program") if cairo else None,
                      settings={"package_dir": package_dir, "profile": "release"}, std_json_input=None,
                      entry_contract=None)
     return BuildResult(candidate=cand, status="ok", work_dir=str(tmp_path))

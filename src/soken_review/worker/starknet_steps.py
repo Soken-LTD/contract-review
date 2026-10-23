@@ -296,9 +296,19 @@ async def _build(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
     if not cairo and not job.get("address"):
         cairo = None   # no deployment: no decoded version; build needs a version (07 3.1) -> toolchain_unavailable
     result = await asyncio.get_running_loop().run_in_executor(None, lambda: build(cand, out / "build", cairo))
+    notes = result.build_notes or {}
     (out / "build_result.json").write_text(json.dumps({
         "status": result.status, "reason": result.reason, "nsloc": result.nsloc, "stderr_head": result.stderr_head,
-        "work_dir": result.work_dir}, indent=1), encoding="utf-8")
+        "work_dir": result.work_dir,
+        # Lock rows the cache check could not verify (no checksum in Scarb.lock): named here and in
+        # the trust scan (`deps_unverified:<name>@<version>`), never silently trusted.
+        "deps_unverified": list(notes.get("deps_unverified") or [])}, indent=1), encoding="utf-8")
+    if result.reason == "host_capacity":
+        # The sandbox refused the build container's limit on this host (no OOM kill, nothing ran):
+        # the job fails with the numbers instead of continuing as a "failed build" review.
+        detail = dict(notes.get("host_capacity") or {"reason": "insufficient_host_memory", "stage": "build"})
+        await _finish(sup, step, step_status="failed", to_state="failed", error_code="E_HOST_CAPACITY", detail=detail)
+        return
     prov = decide(out, result.status, result.reason, bool(job.get("address")))
     (out / "provenance.json").write_text(json.dumps(prov, indent=1), encoding="utf-8")
     fields: dict[str, Any] = {"tier": prov["tier"], "map_status": "none" if result.status == "ok" else "failed"}
