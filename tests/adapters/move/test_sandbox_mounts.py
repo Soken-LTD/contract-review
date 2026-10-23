@@ -47,9 +47,14 @@ def test_cache_copy_does_not_follow_symlinks(tmp_path: Path) -> None:
     (secret / "k").write_text("x")
     (dirs["move"] / "link").symlink_to(secret, target_is_directory=True)
     (dirs["move"] / "flink").symlink_to(secret / "k")
+    (dirs["move"] / "git").mkdir()
+    (dirs["move"] / "git" / "real.move").write_text("module a::a {}")
+    before = secret.stat().st_mode
     copy = S.cache_copy(dirs, "build")
-    assert (copy / "link").is_symlink() and (copy / "flink").is_symlink()      # links copied as links
-    assert not any(p.is_file() and not p.is_symlink() and p.read_text() == "x" for p in copy.rglob("*"))
+    assert not (copy / "link").exists() and not (copy / "flink").exists()      # links dropped, never followed
+    assert (copy / "git" / "real.move").read_text() == "module a::a {}"
+    assert secret.stat().st_mode == before                                        # nothing chmod-ed through a link
+    assert not any(p.is_file() and p.read_text() == "x" for p in copy.rglob("*"))
 
 
 def test_run_removes_the_copy_after_the_container(tmp_path: Path, monkeypatch) -> None:

@@ -153,23 +153,33 @@ def mounts_for(dirs: dict[str, Path], step: str) -> list[tuple[Path, str, bool]]
 
 def cache_copy(dirs: dict[str, Path], step: str) -> Path:
     """Fresh copy of the job's dependency cache for one build/analyze/prove run; the canonical
-    cache written by deps stays untouched. Symlinks are copied as symlinks, never followed: the
-    cache was written by a sandboxed container, and following a planted link would read a host
-    path as the supervisor and mount its content into the next container. Caller removes it."""
+    cache written by deps stays untouched. The cache was written by a sandboxed container, so
+    the copy is an lstat walk that drops every symlink (a planted link would otherwise be read,
+    or chmod-ed, as the supervisor on a host path) and copies regular files and directories
+    only. Caller removes it."""
     import tempfile
 
     base = Path(tempfile.mkdtemp(prefix=f"move-{step}-", dir=dirs["move"].parent))
-    shutil.rmtree(base)
-    shutil.copytree(dirs["move"], base, symlinks=True)
-    for root, dnames, fnames in os.walk(base):
-        for n in dnames:
-            os.chmod(os.path.join(root, n), 0o777)
-        for n in fnames:
-            fp = os.path.join(root, n)
-            if not os.path.islink(fp):
-                os.chmod(fp, 0o666)
+    _copy_no_links(dirs["move"], base)
     os.chmod(base, 0o777)
     return base
+
+
+def _copy_no_links(src: Path, dst: Path) -> None:
+    for root, dnames, fnames in os.walk(src, followlinks=False):
+        rel = Path(root).relative_to(src)
+        dnames[:] = [d for d in dnames if not os.path.islink(os.path.join(root, d))]
+        for d in dnames:
+            target = dst / rel / d
+            target.mkdir(exist_ok=True)
+            os.chmod(target, 0o777)
+        for f in fnames:
+            fp = os.path.join(root, f)
+            if os.path.islink(fp) or not os.path.isfile(fp):
+                continue
+            target = dst / rel / f
+            shutil.copyfile(fp, target)
+            os.chmod(target, 0o666)
 
 
 def run(
