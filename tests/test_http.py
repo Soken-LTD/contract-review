@@ -64,3 +64,31 @@ def test_stateless_across_replicas():
 def test_foreign_host_rejected(client):
     r = client.post("/mcp", headers={**H, "Host": "evil.example"}, json=INIT)
     assert r.status_code == 421
+
+
+# ─── /healthz (09 O5) ─────────────────────────────────────────────────────────────────────────
+
+def test_healthz_payload_without_a_pool_is_unhealthy():
+    import asyncio
+
+    from soken_review.tools.context_pg import health_payload
+
+    payload, ok = asyncio.run(health_payload(None))
+    assert ok is False and payload["db"] == "down"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_healthz_payload_reports_db_and_worker_age(db_pool):
+    from soken_review.tools.context_pg import WORKER_STALE_S, health_payload
+
+    async with db_pool.connection() as conn:
+        await conn.execute("insert into worker_hosts (name, units_total, ram_mb_total, last_seen)"
+                           " values ('t-health', 4, 4096, now()) on conflict (name) do update set last_seen = now()")
+    payload, ok = await health_payload(db_pool)
+    assert payload["db"] == "ok" and payload["workers"] >= 1 and payload["worker_age_s"] <= WORKER_STALE_S and ok
+    async with db_pool.connection() as conn:
+        await conn.execute("update worker_hosts set last_seen = now() - interval '10 minutes'")
+    payload, ok = await health_payload(db_pool)
+    assert ok is False and payload["worker_age_s"] > WORKER_STALE_S
+    async with db_pool.connection() as conn:
+        await conn.execute("delete from worker_hosts where name = 't-health'")

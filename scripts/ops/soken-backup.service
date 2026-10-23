@@ -1,0 +1,6 @@
+[Unit]
+Description=Soken contract-review backup (09 O3)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/soken-audit-test/public-export/scripts/ops/backup.sh

@@ -1,0 +1,10 @@
+[Unit]
+Description=Soken contract-review retention sweep (09 O1)
+After=soken-mcp-worker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/soken-audit-test/public-export
+Environment=SOKEN_DATABASE_URL=postgresql://soken:soken@127.0.0.1:15499/soken
+Environment=SOKEN_PIN_ROOT=/opt/soken-audit-test/public-export/.sbx/pins
+ExecStart=/opt/soken-audit-test/public-export/.venv/bin/python -m soken_review.worker.retention --json
