@@ -159,7 +159,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {contents: write}
     steps:
+      # A commit pushed with GITHUB_TOKEN starts no workflow, so the branch's required `test`
+      # check stays "expected" until a human pushes again. With IMAGES_LOCK_TOKEN set (a
+      # fine-grained PAT, Contents: read/write on this repository only) the lock commit runs CI
+      # like any push; without it the token falls back to GITHUB_TOKEN and the old dance applies.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          token: ${{ secrets.IMAGES_LOCK_TOKEN || secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: {pattern: "digest-*", path: results, merge-multiple: true}
       - name: Write digests into images.lock.json
