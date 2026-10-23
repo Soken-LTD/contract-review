@@ -2,10 +2,13 @@
 
 Registered via @handler("review_set_section").
 
-Three sections:
+Four sections:
   roles_notes          – notes on protocol roles (owner, admin, pauser, …)
   out_of_scope_reasons – files/directories excluded from the audit scope
   coverage             – per-category area coverage rows
+  context_notes        – reviewer prose on the project documents (context ingestion spec 6, 7):
+                         1..8 model blocks ({p} | {ul} | {table}), text gate scope model and the
+                         number check on every string; printed under "Project context"
 
 For F5, a coverage section with at least one row closes the check.
 Idempotent by content_hash: same content → return existing revision unchanged.
@@ -80,6 +83,41 @@ def _get_ctx() -> JobContext:
 
 _FROZEN_STATES = frozenset({"finalized", "render_queued", "rendering", "rendered", "render_failed"})
 _TERMINAL_STATES = frozenset({"insufficient_source", "failed", "expired", "deleted"})
+_SECTIONS = ("roles_notes", "out_of_scope_reasons", "coverage", "context_notes")  # enums.yaml `section`
+# context_notes block limits: finding.v1 `block` (the tools.v1 `context_notes.notes` items) and the
+# report schema `context.notes` (max 8 model blocks).
+_CTX_MAX_BLOCKS, _CTX_P_MAX, _CTX_UL_MAX, _CTX_UL_ITEM_MAX = 8, 900, 8, 300
+_CTX_HEAD_MAX, _CTX_HEAD_CELL_MAX, _CTX_ROWS_MAX, _CTX_COLS_MAX, _CTX_CELL_MAX = 6, 60, 12, 6, 300
+
+
+def _check_context_blocks(content: Any) -> str | None:
+    """Shape check for context_notes blocks; returns the E_SECTION_INVALID detail or None."""
+    if len(content) > _CTX_MAX_BLOCKS:
+        return f"context_notes: at most {_CTX_MAX_BLOCKS} blocks (got {len(content)})"
+    for i, b in enumerate(content):
+        if not isinstance(b, dict) or len(b) != 1 or next(iter(b)) not in ("p", "ul", "table"):
+            return f"context_notes[{i}]: block must be one of {{p}}, {{ul}}, {{table}}"
+        if "p" in b:
+            if not isinstance(b["p"], str) or not 1 <= len(b["p"]) <= _CTX_P_MAX:
+                return f"context_notes[{i}].p: string of 1..{_CTX_P_MAX} characters"
+        elif "ul" in b:
+            ul = b["ul"]
+            if not isinstance(ul, list) or not 1 <= len(ul) <= _CTX_UL_MAX or not all(
+                    isinstance(s, str) and 1 <= len(s) <= _CTX_UL_ITEM_MAX for s in ul):
+                return f"context_notes[{i}].ul: 1..{_CTX_UL_MAX} strings of 1..{_CTX_UL_ITEM_MAX} characters"
+        else:
+            tb = b["table"]
+            if not isinstance(tb, dict) or set(tb) != {"head", "rows"}:
+                return f"context_notes[{i}].table: {{head, rows}} only"
+            head, rows = tb["head"], tb["rows"]
+            if not isinstance(head, list) or not 1 <= len(head) <= _CTX_HEAD_MAX or not all(
+                    isinstance(s, str) and 1 <= len(s) <= _CTX_HEAD_CELL_MAX for s in head):
+                return f"context_notes[{i}].table.head: 1..{_CTX_HEAD_MAX} strings of 1..{_CTX_HEAD_CELL_MAX} characters"
+            if not isinstance(rows, list) or not 1 <= len(rows) <= _CTX_ROWS_MAX or not all(
+                    isinstance(r, list) and len(r) <= _CTX_COLS_MAX and all(isinstance(s, str) and len(s) <= _CTX_CELL_MAX for s in r)
+                    for r in rows):
+                return f"context_notes[{i}].table.rows: 1..{_CTX_ROWS_MAX} rows of up to {_CTX_COLS_MAX} strings of up to {_CTX_CELL_MAX} characters"
+    return None
 
 
 @cache
@@ -124,7 +162,17 @@ def _check_na_predicate_for_section(reason: str, family: str, map_doc: dict | No
 def _collect_text_fields(section: str, content: Any) -> list[tuple[str, str]]:
     """Extract (field_path, text) pairs from section content for V5/V6 checks."""
     result: list[tuple[str, str]] = []
-    if section == "roles_notes":
+    if section == "context_notes":
+        for i, b in enumerate(content):
+            if "p" in b:
+                result.append((f"context_notes[{i}].p", b["p"]))
+            elif "ul" in b:
+                result.extend((f"context_notes[{i}].ul[{j}]", s) for j, s in enumerate(b["ul"]))
+            else:
+                result.extend((f"context_notes[{i}].table.head[{j}]", s) for j, s in enumerate(b["table"]["head"]))
+                result.extend((f"context_notes[{i}].table.rows[{j}][{k}]", s)
+                              for j, row in enumerate(b["table"]["rows"]) for k, s in enumerate(row) if s)
+    elif section == "roles_notes":
         if isinstance(content, list):
             for i, row in enumerate(content):
                 for field in ("role_name", "risk_note", "notes"):
@@ -155,7 +203,9 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
     """
     job_id: str = args["job_id"]
     section: str = args["section"]
-    content: Any = args["content"]
+    content: Any = args.get("content")
+    if content is None and section == "context_notes" and isinstance(args.get("context_notes"), dict):
+        content = args["context_notes"].get("notes")  # tools.v1 shape: {section: "context_notes", context_notes: {notes: [...]}}
     pool = _get_pool()
 
     # State check — quick unlocked read before we do any work (map, text-gate, etc.)
@@ -180,7 +230,7 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
     # Note: the write transaction below re-checks state with FOR UPDATE (TOCTOU guard).
 
     # Validate section name
-    if section not in ("roles_notes", "out_of_scope_reasons", "coverage"):
+    if section not in _SECTIONS:
         return {"accepted": False, "errors": [
             ReviewError("E_SECTION_INVALID", detail=f"unknown section '{section}'").envelope()
         ]}
@@ -194,11 +244,19 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
         return {"accepted": False, "errors": [
             ReviewError("E_SECTION_INVALID", detail="content must have at least one row").envelope()
         ]}
+    if section == "context_notes":
+        detail = _check_context_blocks(content)
+        if detail is not None:
+            return {"accepted": False, "errors": [ReviewError("E_SECTION_INVALID", detail=detail).envelope()]}
 
     # ── V5/V6 on all text fields ──────────────────────────────────────────────
     violations: list[dict[str, Any]] = []
     for field_path, text in _collect_text_fields(section, content):
-        for v in check_text(text, "model", CheckContext(field=field_path)):
+        # context_notes strings are report prose (field class `notes`, same rules as roles notes;
+        # list items get the T30 list-actor check); the other sections keep their path as field.
+        gate_ctx = (CheckContext(field="notes", is_list_item=".ul[" in field_path) if section == "context_notes"
+                    else CheckContext(field=field_path))
+        for v in check_text(text, "model", gate_ctx):
             violations.append(ReviewError(
                 v.code, rule=v.rule_id,
                 match=v.match[:80] if v.match else "",

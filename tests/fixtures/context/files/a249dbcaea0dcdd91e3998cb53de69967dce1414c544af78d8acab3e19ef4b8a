@@ -1,0 +1,13 @@
+# Example Protocol
+source: https://example-protocol.finance/
+retrieved: 2026-10-22
+sha256: a186a07719c60c63627ab88846c33dd1690c3e10ca4215c1bf4c43cbe3f64e87
+kind: website
+
+Trade on the Example Protocol vault.
+
+Vault contract on Base: 0xc2181d975c05c8c724b334bcED0764c0b86B1D53
+
+Available on Base and Arbitrum.
+
+Audited by Example Audit Firm in 2026.

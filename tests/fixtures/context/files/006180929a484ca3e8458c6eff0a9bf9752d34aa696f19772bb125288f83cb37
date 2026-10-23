@@ -1,0 +1,13 @@
+# Protocol documentation: tokenomics, fee schedule, governance process, emergency procedures and integration notes for the version two deployment on every supported network
+source: https://very-long-subdomain-for-the-documentation-portal.docs.example-protocol.finance/
+retrieved: 2026-10-22
+sha256: fcd2acf400b2446ee9844f408dc4dcbbf61a5705e80bb2c7a0e42e9bdc812882
+kind: docs
+
+# Fees
+
+The swap fee is 25 basis points.
+
+# Admin
+
+The owner multisig can pause the vault.

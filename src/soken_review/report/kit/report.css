@@ -65,6 +65,7 @@ td.id{white-space:nowrap;}
 .tile .l{font-size:7.4pt;color:#cdd9ea;text-transform:uppercase;letter-spacing:.07em;margin-top:3px;white-space:nowrap;}
 .tile .l i{display:inline-block;width:8px;height:8px;margin-right:6px;}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0;break-inside:avoid;}
+.kpis.wide{grid-template-columns:repeat(4,1fr);}
 .kpi{background:#132238;border:1px solid #26374f;border-radius:5px;padding:10px 12px;}
 .kpi .n{font-size:15pt;font-weight:700;color:#fff;}
 .kpi .l{font-size:7.4pt;color:#8397b4;text-transform:uppercase;letter-spacing:.07em;margin-top:2px;}
