@@ -1,10 +1,10 @@
-"""Number check (04 section 6). Pure; no I/O.
+"""Number check (04 section 6). Pure; no I/O beyond the rubric.
 
 Entry points:
   lex_numbers(text, context) -> list[Violation]  - ordered single-pass lexer
   parse_placeholder(s) -> Placeholder            - parse {{fact:}}/{{calc:}}/{{finding:}}
 
-Plan: 04 §6.1 (scope), §6.2 (lexer classes L0-L9b), §6.3 (allowed set),
+Plan: 04 §6.1 (scope), §6.2 (lexer classes L0-L9b, L9c plain number words), §6.3 (allowed set),
 §6.4 (placeholders), number_lexer.yaml.
 """
 from __future__ import annotations
@@ -14,9 +14,15 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
+from functools import cache
+from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .text_gate import Violation
+
+_LEXER_YAML = Path(__file__).resolve().parents[3] / "contract" / "rubric" / "number_lexer.yaml"
 
 # ── Placeholder grammar (04 §6.4) ─────────────────────────────────────────
 #
@@ -175,12 +181,43 @@ _L9_RE = re.compile(
 _THIRD_PARTY_RE = re.compile(r"(?i)\bthird[- ]party\b")
 
 # ── Magnitude / multiplier words (L9a) ───────────────────────────────────
+# \w{2,}uple: quadruple, quintuple, sextuple; the code word "tuple" is not a multiplier
+# ("Magnitude suffix in tuple", c6 re-run 2026-10-23).
 _L9A_RE = re.compile(
     r"(?i)\b(?:"
     r"hundreds?|thousands?|millions?|billions?|trillions?|"
-    r"dozens?|twice|thrice|double|triple|\w+uple|half|halves|quarters?|\w+fold"
+    r"dozens?|twice|thrice|double|triple|\w{2,}uple|half|halves|quarters?|\w+fold"
     r")\b"
 )
+
+# ── Plain-language number words (L9c, number_lexer.yaml plain_number_words) ─
+# A small count of code things in words ("two pools", "the third call", "pays twice") is structure,
+# not a quantity, and needs no source; followed by a unit, percent or token/currency word it is an
+# amount ("two tokens", "ten percent") and falls through to L9 / L9a. Runs after L9b so "two thirds
+# of" is still a fraction. Added 2026-10-23 after the MasterChef re-run rewrote titles to dodge it.
+_FOLLOWER_WORD_RE = re.compile(r"[\s-]*([A-Za-z%]+)(?:\s+([A-Za-z]+))?")
+
+
+@cache
+def _plain_number_words() -> tuple[re.Pattern[str], frozenset[str]]:
+    """(word pattern, blocked follower words lower-cased) from number_lexer.yaml."""
+    data = yaml.safe_load(_LEXER_YAML.read_text(encoding="utf-8")).get("plain_number_words") or {}
+    words = [*data.get("cardinals", []), *data.get("ordinals", []), *data.get("frequency", [])]
+    blocked = frozenset(str(w).lower() for w in data.get("blocked_followers", []))
+    pattern = re.compile(r"(?i)\b(?:" + "|".join(re.escape(str(w)) for w in words) + r")\b")
+    return pattern, blocked
+
+
+def _amount_follows(text: str, pos: int, blocked: frozenset[str]) -> bool:
+    """True when the word(s) after *pos* make the number word an amount (unit, percent, token)."""
+    m = _FOLLOWER_WORD_RE.match(text, pos)
+    if not m:
+        return False
+    first = m.group(1).lower()
+    if first.startswith("%") or first in blocked:
+        return True
+    second = m.group(2)
+    return bool(second) and f"{first} {second.lower()}" in blocked
 
 # ── Fraction phrases (L9b) ────────────────────────────────────────────────
 _L9B_RE = re.compile(
@@ -450,6 +487,13 @@ def lex_numbers(text: str, context: NumberContext | None = None) -> list[Violati
         m = _L9B_RE.match(nfkc, pos)
         if m:
             violations.append(Violation("E_NUMBER_FORMAT", "L9b", (m.start(), m.end()), m.group()))
+            pos = m.end()
+            continue
+
+        # ── L9c: plain number word with no unit, percent or token word after it ──
+        plain_re, blocked = _plain_number_words()
+        m = plain_re.match(nfkc, pos)
+        if m and not _amount_follows(nfkc, m.end(), blocked):
             pos = m.end()
             continue
 
