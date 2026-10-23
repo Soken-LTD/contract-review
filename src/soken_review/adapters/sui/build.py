@@ -1,6 +1,6 @@
 """Sui build step and deployment comparison (plan v4 07 sections 4, 6.2, 9.1).
 
-  build   (ALWAYS --network=none, MOVE_HOME r/o):  sui move build --install-dir /work/out
+  build   (ALWAYS --network=none, MOVE_HOME r/o):  sui move build --path <pkg> --install-dir /work/out
   compare (supervisor, host only):                  DESIGN.md checks against chain_state
 
 The pinned source is mounted read-only; only /work/out receives artifacts.  The build container
@@ -37,7 +37,6 @@ from soken_review.adapters.move.units import count_nsloc, declared_modules, is_i
 IMAGE_VERSION = "1.81.1"
 LINT_VERSION = IMAGE_VERSION
 _SBX = Path(__file__).resolve().parents[4] / ".sbx"
-_SKIP_GIT = "--skip-fetch-latest-" + "git-deps"
 _FRAMEWORK = "/opt/sui-framework"
 
 # Dep name → local image path (inside the sui-build image, from the sparse-clone of MystenLabs/sui).
@@ -211,7 +210,14 @@ def _pkg_path(pkg_dir: str) -> str:
 
 
 def lint_argv(pkg_dir: str) -> list[str]:
-    return ["sui", "move", "build", "--lint", "--path", _pkg_path(pkg_dir), "--install-dir", "/work/out/lint", _SKIP_GIT]
+    return ["sui", "move", "build", "--lint", "--path", _pkg_path(pkg_dir), "--install-dir", "/work/out/lint"]
+
+
+def build_argv(pkg_dir: str) -> list[str]:
+    """No `--skip-fetch-latest-git-deps`: the flag left `sui move build` with the new package
+    system (mainnet-v1.81.1 rejects it as an unexpected argument; stand, 2026-10-23). The CLI
+    fetches only when the lockfile needs repinning, and the build container has no network."""
+    return ["sui", "move", "build", "--path", _pkg_path(pkg_dir), "--install-dir", "/work/out"]
 
 
 def inline_manifest(named: dict[str, str]) -> str:
@@ -279,12 +285,10 @@ def build(c: Candidate, work_dir: Path | None = None) -> BuildResult:
     except sandbox.SandboxUnavailable as exc:
         return BuildResult(candidate=c, status="failed", reason="sandbox_unavailable", stderr_head=str(exc))
 
-    path = _pkg_path(pkg_dir)
     # Build always runs offline (step = "build" → sandbox profile enforces --network=none).
     # External deps must be pre-populated in MOVE_HOME by the supervisor via git_materializer.
     # Any dep not pre-fetched → build fails offline → insufficient_source (fail-closed).
-    run = sandbox.run("sui", "build", dirs, ["sui", "move", "build", "--path", path, "--install-dir", "/work/out",
-                                             _SKIP_GIT], timeout=sandbox.BUILD_WALL_S)
+    run = sandbox.run("sui", "build", dirs, build_argv(pkg_dir), timeout=sandbox.BUILD_WALL_S)
     sandbox.write_host(host / "build.log", run.stdout + "\n" + run.stderr)
     if run.returncode != 0:
         return finish(None, "build_failed", "failed", _tail(run))
