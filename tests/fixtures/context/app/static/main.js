@@ -1,0 +1,1 @@
+(()=>{"use strict";const e={chainId:1,router:"0xC2EdaD668740f1aA35E4D8f227fB8E17dcA888Cd",factory:"0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"};window.__CONFIG__=e;fetch("/api/pools").then(r=>r.json()).then(p=>console.log(p.length))})();

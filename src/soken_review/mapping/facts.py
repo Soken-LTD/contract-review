@@ -157,14 +157,32 @@ def _decode_word(raw: str | None, kind: str) -> str | None:
     return str(n)
 
 
+_CONTEXT_FACTS_FILE = "context_facts.json"   # written by the `context` step (context/facts.py)
+
+
+def _is_context_fact(f: dict[str, Any]) -> bool:
+    return str(f.get("key", "")).startswith("context.")
+
+
 def write_facts(root: Path, job_id: str, facts: list[dict[str, Any]]) -> None:
+    """facts.json holds the code and chain facts only. Context facts (`context.*`) live in
+    `context_facts.json`, written by the `context` step, which may run before or after the map step
+    rewrites this file; dropping them here keeps the two files disjoint and `load_facts` the merge."""
     d = root / job_id
     d.mkdir(parents=True, exist_ok=True)
-    (d / "facts.json").write_text(json.dumps(sorted(facts, key=lambda f: f["key"]), indent=1), encoding="utf-8")
+    rows = [f for f in facts if not _is_context_fact(f)]
+    (d / "facts.json").write_text(json.dumps(sorted(rows, key=lambda f: f["key"]), indent=1), encoding="utf-8")
 
 
 def load_facts(root: Path, job_id: str) -> list[dict[str, Any]] | None:
+    """The job's facts: facts.json plus the context facts file when present. None without facts.json."""
     p = root / job_id / "facts.json"
     if not p.exists():
         return None
-    return json.loads(p.read_text(encoding="utf-8"))
+    facts = json.loads(p.read_text(encoding="utf-8"))
+    ctx = root / job_id / _CONTEXT_FACTS_FILE
+    if ctx.exists():
+        extra = json.loads(ctx.read_text(encoding="utf-8"))
+        if isinstance(extra, list):
+            facts = [f for f in facts if not _is_context_fact(f)] + extra
+    return facts

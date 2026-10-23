@@ -9,6 +9,8 @@ tags:
     - '^onchain\.tvl(\..+)?$'
     - '^onchain\.vault_assets(\..+)?$'
     - '^onchain\.token_balance\..+$'
+  context:                   # read from the project's own documents (context ingestion spec 5): declared, not observed
+    - '^context\..+$'
 # fact unit -> unit words that may follow the value in model text (unit context, 04 6.3)
 units:
   wei: [wei]
@@ -22,3 +24,4 @@ units:
   lines: [lines, nSLOC]
   bytes: [bytes]
   block: [block]
+  tokens: [tokens, token]
