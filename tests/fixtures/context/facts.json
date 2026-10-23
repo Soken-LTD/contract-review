@@ -1,0 +1,140 @@
+[
+ {
+  "key": "context.docs.admin_claims_1",
+  "value": "multisig",
+  "unit": null,
+  "unit_id": null,
+  "source": "context/docs-1.md:13",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.docs.admin_claims_2",
+  "value": "pausable",
+  "unit": null,
+  "unit_id": null,
+  "source": "context/docs-1.md:13",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.docs.fee_pct_1",
+  "value": "25",
+  "unit": "bps",
+  "unit_id": null,
+  "source": "context/docs-1.md:9",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.website.addresses",
+  "value": "0xc2181d975c05c8c724b334bcED0764c0b86B1D53",
+  "unit": null,
+  "unit_id": null,
+  "source": "context/website-1.md:9",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.website.audit_claims_1",
+  "value": "Example Audit Firm",
+  "unit": null,
+  "unit_id": null,
+  "source": "context/website-1.md:13",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.website.chains",
+  "value": "Base, Arbitrum",
+  "unit": null,
+  "unit_id": null,
+  "source": "context/website-1.md:11",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.website.mentions_reviewed_address",
+  "value": "true",
+  "unit": null,
+  "unit_id": null,
+  "source": "context/website-1.md:9",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.whitepaper.admin_claims_1",
+  "value": "renounced",
+  "unit": null,
+  "unit_id": null,
+  "source": "context/whitepaper-1.md:20",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.whitepaper.chains",
+  "value": "Ethereum, Base, Arbitrum",
+  "unit": null,
+  "unit_id": null,
+  "source": "context/whitepaper-1.md:24",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.whitepaper.decimals",
+  "value": "18",
+  "unit": null,
+  "unit_id": null,
+  "source": "context/whitepaper-1.md:12",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.whitepaper.fee_pct_1",
+  "value": "0.3",
+  "unit": "percent",
+  "unit_id": null,
+  "source": "context/whitepaper-1.md:16",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "context.whitepaper.total_supply",
+  "value": "1000000000",
+  "unit": "tokens",
+  "unit_id": null,
+  "source": "context/whitepaper-1.md:12",
+  "tags": [
+   "context"
+  ]
+ },
+ {
+  "key": "onchain.owner",
+  "value": "0x1111111111111111111111111111111111111111",
+  "unit": null,
+  "unit_id": "src/Vault.sol:Vault",
+  "source": "eth_call owner at block 52392348",
+  "tags": []
+ },
+ {
+  "key": "onchain.total_supply",
+  "value": "1000000000000000000000000000",
+  "unit": "wei",
+  "unit_id": "src/Vault.sol:Vault",
+  "source": "eth_call totalSupply at block 52392348",
+  "tags": [
+   "amount_at_risk"
+  ]
+ }
+]

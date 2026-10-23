@@ -67,10 +67,11 @@
     "kpis": {
      "type": "array",
      "minItems": 6,
-     "maxItems": 6,
+     "maxItems": 7,
      "items": {
       "$ref": "#/$defs/kpi"
-     }
+     },
+     "description": "Six server KPIs, plus `documents` when at least one project document was retrieved (context ingestion spec 7)"
     },
     "dismissed_leads": {
      "$ref": "#/$defs/dismissed_leads"
@@ -240,6 +241,9 @@
   },
   "review_coverage": {
    "$ref": "#/$defs/review_coverage"
+  },
+  "context": {
+   "$ref": "#/$defs/context"
   }
  },
  "$defs": {
@@ -611,7 +615,8 @@
       "leads",
       "promoted",
       "areas_returned",
-      "deployed_code"
+      "deployed_code",
+      "documents"
      ]
     },
     "value": {
@@ -1975,6 +1980,141 @@
        }
       }
      }
+    }
+   }
+  },
+  "context": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "documents",
+    "comparison",
+    "notes"
+   ],
+   "description": "Project context (context ingestion spec 7): documents ingested for the job, declared-vs-observed rows computed by the server at assembly, and the reviewer's context_notes blocks. Empty documents print the kit empty line, never an empty table",
+   "properties": {
+    "documents": {
+     "type": "array",
+     "maxItems": 12,
+     "items": {
+      "$ref": "#/$defs/context_document"
+     }
+    },
+    "comparison": {
+     "type": "array",
+     "maxItems": 40,
+     "items": {
+      "$ref": "#/$defs/context_row"
+     }
+    },
+    "notes": {
+     "type": "array",
+     "maxItems": 8,
+     "items": {
+      "$ref": "#/$defs/model_block"
+     }
+    }
+   }
+  },
+  "context_document": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "kind",
+    "title",
+    "host",
+    "retrieved",
+    "sha256_short",
+    "status"
+   ],
+   "properties": {
+    "kind": {
+     "enum": [
+      "whitepaper",
+      "website",
+      "app",
+      "docs",
+      "terms",
+      "privacy",
+      "other"
+     ]
+    },
+    "title": {
+     "type": "string",
+     "maxLength": 200,
+     "description": "Document title as extracted; untrusted web text, SRC class (escaped, never gated)",
+     "x-text-class": "src"
+    },
+    "host": {
+     "type": "string",
+     "maxLength": 253,
+     "description": "Host of the final URL; empty for inline documents (the kit prints its inline label)",
+     "x-text-class": "src"
+    },
+    "retrieved": {
+     "$ref": "#/$defs/date_text"
+    },
+    "sha256_short": {
+     "type": "string",
+     "pattern": "^([0-9a-f]{12})?$",
+     "description": "First 12 hex digits of sha256_raw; empty when the fetch failed",
+     "x-text-class": "server"
+    },
+    "status": {
+     "enum": [
+      "ok",
+      "failed"
+     ]
+    }
+   }
+  },
+  "context_row": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "claim",
+    "declared",
+    "declared_source",
+    "observed",
+    "observed_source",
+    "status"
+   ],
+   "description": "One declared-vs-observed row (context ingestion spec 6). claim is server text from the fixed claim set; declared and its source come from the document (SRC); observed and its source may carry contract names and addresses (SRC)",
+   "properties": {
+    "claim": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 120,
+     "x-text-class": "server"
+    },
+    "declared": {
+     "type": "string",
+     "maxLength": 300,
+     "x-text-class": "src"
+    },
+    "declared_source": {
+     "type": "string",
+     "maxLength": 120,
+     "description": "context/<kind>-<n>.md:<line>, or empty",
+     "x-text-class": "src"
+    },
+    "observed": {
+     "type": "string",
+     "maxLength": 300,
+     "x-text-class": "src"
+    },
+    "observed_source": {
+     "type": "string",
+     "maxLength": 200,
+     "description": "Fact source (RPC method and block), map reference or job field; empty when nothing was observed",
+     "x-text-class": "src"
+    },
+    "status": {
+     "enum": [
+      "matches",
+      "differs",
+      "not_checkable"
+     ]
     }
    }
   }

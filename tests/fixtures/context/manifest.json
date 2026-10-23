@@ -1,0 +1,77 @@
+{
+ "context_pin": "5ed2cd13aee2ae480a58e46694345cb3bc227687c700c708cb88a9be5719de96",
+ "entries": [
+  {
+   "path": "context/whitepaper-1.md",
+   "kind": "whitepaper",
+   "url": "https://example-protocol.finance/whitepaper.pdf",
+   "final_url": "https://cdn.example-protocol.finance/wp/v2/whitepaper.pdf",
+   "title": "Example Protocol Whitepaper v2",
+   "content_type": "application/pdf",
+   "bytes_raw": 184221,
+   "sha256_raw": "b5fee9e8d23184962f219cc36a7636961be34ec26b6fb9548e0a6394d0ecaa58",
+   "sha256_lf": "b904b195f93600e009c9997efa44fedd62c26a645abd76412f7d460069918a4b",
+   "lines": 24,
+   "fetched_at": "2026-10-22T14:03:11Z",
+   "status": "ok",
+   "error": null,
+   "bundle_hits": {
+    "evm": []
+   }
+  },
+  {
+   "path": "context/website-1.md",
+   "kind": "website",
+   "url": "https://example-protocol.finance/",
+   "final_url": "https://www.example-protocol.finance/",
+   "title": "Example Protocol",
+   "content_type": "text/html",
+   "bytes_raw": 51902,
+   "sha256_raw": "a186a07719c60c63627ab88846c33dd1690c3e10ca4215c1bf4c43cbe3f64e87",
+   "sha256_lf": "a249dbcaea0dcdd91e3998cb53de69967dce1414c544af78d8acab3e19ef4b8a",
+   "lines": 13,
+   "fetched_at": "2026-10-22T14:03:19Z",
+   "status": "ok",
+   "error": null,
+   "bundle_hits": {
+    "evm": [
+     "0xc2181d975c05c8c724b334bcED0764c0b86B1D53"
+    ]
+   }
+  },
+  {
+   "path": "context/docs-1.md",
+   "kind": "docs",
+   "url": "https://very-long-subdomain-for-the-documentation-portal.docs.example-protocol.finance/",
+   "final_url": "https://very-long-subdomain-for-the-documentation-portal.docs.example-protocol.finance/en/latest/",
+   "title": "Protocol documentation: tokenomics, fee schedule, governance process, emergency procedures and integration notes for the version two deployment on every supported network",
+   "content_type": "text/html",
+   "bytes_raw": 240117,
+   "sha256_raw": "fcd2acf400b2446ee9844f408dc4dcbbf61a5705e80bb2c7a0e42e9bdc812882",
+   "sha256_lf": "006180929a484ca3e8458c6eff0a9bf9752d34aa696f19772bb125288f83cb37",
+   "lines": 13,
+   "fetched_at": "2026-10-22T14:03:40Z",
+   "status": "ok",
+   "error": null,
+   "bundle_hits": {
+    "evm": []
+   }
+  },
+  {
+   "path": "context/terms-1.md",
+   "kind": "terms",
+   "url": "https://example-protocol.finance/terms",
+   "final_url": null,
+   "title": null,
+   "content_type": null,
+   "bytes_raw": 0,
+   "sha256_raw": null,
+   "sha256_lf": null,
+   "lines": 0,
+   "fetched_at": "2026-10-22T14:04:01Z",
+   "status": "failed",
+   "error": "unreachable",
+   "bundle_hits": {}
+  }
+ ]
+}

@@ -1,0 +1,24 @@
+# Example Protocol Whitepaper v2
+source: https://example-protocol.finance/whitepaper.pdf
+retrieved: 2026-10-22
+sha256: b5fee9e8d23184962f219cc36a7636961be34ec26b6fb9548e0a6394d0ecaa58
+kind: whitepaper
+
+## Abstract
+Example Protocol is an automated market maker with a single vault contract per network.
+
+## Token
+
+Total supply: 1,000,000,000 EXP tokens, fixed at genesis. Decimals: 18.
+
+## Fees
+
+A swap fee of 0.3% is charged on every trade and sent to the treasury.
+
+## Governance
+
+Ownership of the vault contract has been renounced; no admin can pause or upgrade it.
+
+## Networks
+
+The protocol is live on Ethereum, Base and Arbitrum.
