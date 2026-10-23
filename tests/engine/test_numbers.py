@@ -234,14 +234,15 @@ class TestL8dMagnitudeSuffix:
 # ── L9: cardinal/ordinal words ────────────────────────────────────────────
 
 class TestL9CardinalOrdinal:
-    def test_two_rejected(self):
-        assert "E_NUMBER_UNSOURCED" in error_codes("two callers can drain")
+    def test_eleven_rejected(self):
+        # Above ten a count in words is not a plain number word (L9c) and needs a source
+        assert "E_NUMBER_UNSOURCED" in error_codes("eleven iterations are needed")
 
-    def test_three_rejected(self):
-        assert "E_NUMBER_UNSOURCED" in error_codes("three iterations are needed")
+    def test_twenty_rejected(self):
+        assert "E_NUMBER_UNSOURCED" in error_codes("twenty callers can drain")
 
-    def test_third_rejected(self):
-        assert "E_NUMBER_UNSOURCED" in error_codes("the third call")
+    def test_fourth_rejected(self):
+        assert "E_NUMBER_UNSOURCED" in error_codes("the fourth call")
 
     def test_third_party_passes(self):
         # Exception: "third party" and "third-party"
@@ -259,14 +260,76 @@ class TestL9CardinalOrdinal:
         assert passes("the last item")
 
 
+# ── L9c: plain number words (2026-10-23) ─────────────────────────────────
+
+class TestL9cPlainNumberWords:
+    """A small count of code things in words needs no source; an amount still does."""
+
+    def test_masterchef_title_passes(self):
+        # Rewritten to "An empty totalAllocPoint" in the 2026-10-23 re-run to dodge the gate
+        assert passes("A zero totalAllocPoint makes updatePool revert on division")
+
+    def test_small_counts_of_code_things_pass(self):
+        assert passes("two callers can drain the pool")
+        assert passes("reached from two external governance entry points")
+        assert passes("the third call reverts")
+        assert passes("a two-step ownership transfer")
+        assert passes("two or three pools share one LP token")
+        assert passes("Adding the same LP token to two pools divides the rewards")
+        assert passes("ten iterations are needed")
+
+    def test_frequency_words_pass(self):
+        assert passes("the reward is paid twice")
+        assert passes("pending rewards are collected twice during the LP pull")
+        assert passes("updatePool runs once per block")
+
+    def test_thrice_still_rejected(self):
+        assert "E_NUMBER_FORMAT" in error_codes("the fee is charged thrice")
+
+    def test_token_word_after_count_rejected(self):
+        assert "E_NUMBER_UNSOURCED" in error_codes("two tokens are minted")
+        assert "E_NUMBER_UNSOURCED" in error_codes("the attacker receives three ETH")
+        assert "E_NUMBER_UNSOURCED" in error_codes("five shares per deposit")
+
+    def test_unit_after_count_rejected(self):
+        assert "E_NUMBER_UNSOURCED" in error_codes("the lock lasts five days")
+        assert "E_NUMBER_UNSOURCED" in error_codes("a delay of two blocks")
+        assert "E_NUMBER_UNSOURCED" in error_codes("a fee of three basis points")
+
+    def test_percent_after_count_rejected(self):
+        assert "E_NUMBER_UNSOURCED" in error_codes("a fee of ten percent")
+        assert "E_NUMBER_UNSOURCED" in error_codes("ten % of the supply")
+
+    def test_multiplier_after_count_rejected(self):
+        assert "E_NUMBER_UNSOURCED" in error_codes("three times the fee")
+        assert "E_NUMBER_UNSOURCED" in error_codes("a two-fold increase")
+        codes = error_codes("two hundred tokens")
+        assert "E_NUMBER_UNSOURCED" in codes and "E_NUMBER_FORMAT" in codes
+
+    def test_fraction_phrase_still_rejected(self):
+        # L9b runs before L9c
+        assert "E_NUMBER_FORMAT" in error_codes("two thirds of the balance")
+
+    def test_zero_fee_with_bare_percent_still_rejected(self):
+        # zero is exempt; the quantity "3 percent" is the unsourced part
+        assert "E_NUMBER_UNSOURCED" in error_codes("zero fee of 3 percent")
+
+    def test_code_word_tuple_passes(self):
+        # \w{2,}uple: "tuple" is not a multiplier ("Magnitude suffix in tuple", c6 re-run)
+        assert passes("the tuple returned by the swap call")
+
+    def test_quadruple_rejected(self):
+        assert "E_NUMBER_FORMAT" in error_codes("a quadruple payout")
+
+
 # ── L9a: magnitude words ──────────────────────────────────────────────────
 
 class TestL9aMagnitudeWords:
     def test_thousands_rejected(self):
         assert "E_NUMBER_FORMAT" in error_codes("thousands of tokens")
 
-    def test_twice_rejected(self):
-        assert "E_NUMBER_FORMAT" in error_codes("the fee is doubled twice")
+    def test_double_rejected(self):
+        assert "E_NUMBER_FORMAT" in error_codes("the fee is double the limit")
 
     def test_half_rejected(self):
         assert "E_NUMBER_FORMAT" in error_codes("half the supply is burned")

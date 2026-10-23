@@ -3,11 +3,53 @@
 from __future__ import annotations
 
 import copy
+import json
+from datetime import date
+from pathlib import Path
 from typing import Any
 
 from soken_review.report.kit.build import SEV_PREFIX, kit_texts
 
 SEV_ORDER = ["Critical", "High", "Medium", "Low", "Informational"]
+# Context ingestion spec fixtures (sections 4, 5, 6): manifest + files, facts.json, comparison rows.
+CONTEXT_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "context"
+CONTEXT_TODAY = date(2026, 10, 23)
+CONTEXT_NOTES = [
+    {"p": "The whitepaper declares a total supply of {{fact:context.whitepaper.total_supply}} and a swap fee of "
+          "{{fact:context.whitepaper.fee_pct_1}}; the documentation states {{fact:context.docs.fee_pct_1}} for the same fee."},
+    {"ul": ["The whitepaper describes ownership as `renounced`; the documentation names an owner multisig that can pause the vault.",
+            "The website lists the reviewed vault address on Base and names an external review firm."]},
+]
+
+
+def context_manifest() -> dict[str, Any]:
+    return json.loads((CONTEXT_DIR / "manifest.json").read_text(encoding="utf-8"))
+
+
+def context_facts_json() -> list[dict[str, Any]]:
+    return json.loads((CONTEXT_DIR / "facts.json").read_text(encoding="utf-8"))
+
+
+def context_comparison_json() -> list[dict[str, Any]]:
+    return json.loads((CONTEXT_DIR / "comparison.json").read_text(encoding="utf-8"))
+
+
+def context_fixture() -> dict[str, Any]:
+    """Report `context` object built the way assemble builds it: 4 documents (one failed), 5 rows of
+    mixed status, 2 notes."""
+    from soken_review.report.assemble import context_documents, context_rows
+
+    return {"documents": context_documents(context_manifest()["entries"], CONTEXT_TODAY),
+            "comparison": context_rows(context_comparison_json()), "notes": copy.deepcopy(CONTEXT_NOTES)}
+
+
+def context_report_facts() -> dict[str, dict[str, Any]]:
+    from soken_review.report.assemble import context_facts
+
+    return context_facts(context_facts_json())
+
+
+EMPTY_CONTEXT: dict[str, Any] = {"documents": [], "comparison": [], "notes": []}
 HIGH_TITLE = "Reentrant withdraw lets a caller drain the vault before the balance write"
 CODE = [
     "function withdraw(uint256 amount) external {",
@@ -62,8 +104,14 @@ def finding(i: int, sev: str, *, title: str | None = None, level: str = "reasoni
 
 
 def report(n_findings: int = 3, profile: str = "public_review", severities: list[str] | None = None,
-           tier: str = "B", label_key: str = "tier_b_not_checked", with_map: bool = False) -> dict[str, Any]:
+           tier: str = "B", label_key: str = "tier_b_not_checked", with_map: bool = False,
+           context: str = "full") -> dict[str, Any]:
+    """`context`: "full" (4 documents, 5 rows, 2 notes, `documents` KPI) or "empty" (no documents)."""
     t = kit_texts()
+    ctx = context_fixture() if context == "full" else copy.deepcopy(EMPTY_CONTEXT)
+    ctx_facts = context_report_facts() if context == "full" else {}
+    n_docs = sum(1 for d in ctx["documents"] if d["status"] == "ok")
+    doc_kpi = [{"key": "documents", "value": n_docs, "label": t["kpi_labels"]["documents"]}] if n_docs else []
     sevs = severities or [SEV_ORDER[i % 5] for i in range(n_findings)]
     sevs = sorted(sevs, key=SEV_ORDER.index)
     per: dict[str, int] = {}
@@ -94,18 +142,19 @@ def report(n_findings: int = 3, profile: str = "public_review", severities: list
                  "ownership_proven": profile == "owner", "profile": profile,
                  "requested_by": {"role": "third_party_public_code", "label": "Third party reviewing public code"},
                  "date": "10 October 2026", "expires": "2026-11-09", "out_name": "Automated_Review_abcdefghij.pdf"},
-        "facts": {"vault.balance": {"value": "1,250", "unit": "ETH", "amount_at_risk": True}},
+        "facts": {"vault.balance": {"value": "1,250", "unit": "ETH", "amount_at_risk": True}, **ctx_facts},
         "summary": {"kpis": [
             {"key": "files", "value": 3, "label": t["kpi_labels"]["files"]},
             {"key": "nsloc", "value": 412, "label": t["kpi_labels"]["nsloc"]},
             {"key": "leads", "value": 12, "label": t["kpi_labels"]["leads"]},
             {"key": "promoted", "value": 1, "label": t["kpi_labels"]["promoted"]},
             {"key": "areas_returned", "value": "4 of 31", "label": t["kpi_labels"]["areas_returned"]},
-            {"key": "deployed_code", "value": "Not checked", "label": t["kpi_labels"]["deployed_code"]}]},
+            {"key": "deployed_code", "value": "Not checked", "label": t["kpi_labels"]["deployed_code"]}, *doc_kpi]},
         "scope": {"head": ["Unit", "File", "nSLOC", "Address"],
                   "files": [{"name": "Vault", "file": "src/Vault.sol", "nsloc": 300},
                             {"name": "Lib", "file": "src/Lib.sol", "nsloc": 112}],
                   "out_of_scope": [{"path": "test/Vault.t.sol", "reason": "Test file", "by": "server"}]},
+        "context": ctx,
         "architecture": arch,
         "roles": {"rows": [], "notes": []},
         "method": [{"step": t["method_steps"]["analyzer"], "detail": "slither 0.11.6, 12 leads"}],
