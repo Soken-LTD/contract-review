@@ -29,6 +29,10 @@ SEVS = ["Critical", "High", "Medium", "Low", "Informational"]
 SEV_PREFIX = {"Critical": "C", "High": "H", "Medium": "M", "Low": "L", "Informational": "I"}
 SEVCOL = {"Critical": "#d9536b", "High": "#e07a4a", "Medium": "#c2922f", "Low": "#6fa3cc", "Informational": "#8397b4"}
 SURF, INK, MUTE, GRID = "#0d1728", "#cdd9ea", "#8397b4", "#26374f"
+# Declared-vs-observed status chips (context ingestion spec 7): matches green, differs amber,
+# not_checkable grey; same chip markup and style as the severity chips.
+STATUS_COL = {"matches": "#199e70", "differs": "#c2922f", "not_checkable": "#8397b4"}
+MAX_CONTEXT_KEEP_ROWS = 12
 SERIES = ["#3987e5", "#199e70"]  # kit palette, validated on SURF (kit REPORT-STANDARD)
 WITHHELD = ("Critical", "High")
 CSP = ("default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; "
@@ -360,6 +364,8 @@ def project(report: dict[str, Any], profile: str | None = None) -> dict[str, Any
     roles["notes"] = _map_strings(roles["notes"], exp)
     if "figures" in roles and profile == "public_review":
         roles["figures"] = [g for g in roles["figures"] if not _figure_risky(g, facts)]
+    if "context" in out:  # context_notes blocks expand like roles notes (same gates, same projection)
+        out["context"]["notes"] = _map_strings(out["context"]["notes"], exp)
     cov = out["review_coverage"]
     cov["areas"] = [{**a, "note": exp(a["note"])} if "note" in a else a for a in cov["areas"]]
     out["scope"]["out_of_scope"] = [{**r, "reason": exp(r["reason"])} for r in out["scope"]["out_of_scope"]]
@@ -397,6 +403,12 @@ def chip(sev: str) -> str:
 
 def ev_chip(level: str, ctx: BuildContext) -> str:
     return f'<span class="ev">{esc(ctx.texts["evidence_chips"][level])}</span>'
+
+
+def status_chip(status: str, ctx: BuildContext) -> str:
+    """Comparison status chip, kit chip style (`.sev`) with the STATUS_COL colour and kit label."""
+    c = STATUS_COL[status]
+    return f'<span class="sev st-{esc(status)}" style="color:{c}"><i style="background:{c}"></i>{esc(ctx.texts["context"]["status_chips"][status])}</span>'
 
 
 def addr_html(a: str, ctx: BuildContext, short: bool = False, addr_url: str | None = None) -> str:
@@ -722,6 +734,56 @@ def _counts_line(c: dict[str, int]) -> str:
     return ", ".join(f"{c[s]} {s}" for s in SEVS)
 
 
+def _sub_table(title: str, head: str, rows: list[str]) -> str:
+    """h3 plus table; short tables share one keep block with their heading so the heading is never
+    orphaned at a page bottom (the kit's existing `.keep` wrapper pattern). Long tables rely on
+    `h3{break-after:avoid}` and `tr:first-child{break-after:avoid}` and may split across pages."""
+    tab = f"<table><tr>{head}</tr>{''.join(rows)}</table>"
+    if len(rows) <= MAX_CONTEXT_KEEP_ROWS:
+        return f'<div class="keep"><h3>{esc(title)}</h3>{tab}</div>'
+    return f"<h3>{esc(title)}</h3>{tab}"
+
+
+def context_section(r: dict[str, Any], ctx: BuildContext, meta: dict[str, Any]) -> str:
+    """"Project context" (context ingestion spec 7): documents table, declared-vs-observed table with
+    status chips, reviewer notes. No documents: one kit line in the `.emptynote` card, never an
+    empty table. Document fields are SRC text (escaped, hidden characters shown, never gated)."""
+    t = ctx.texts["context"]
+    c = r.get("context") or {"documents": [], "comparison": [], "notes": []}
+    docs, rows, notes = c["documents"], c["comparison"], c["notes"]
+    if not docs:
+        body = f'<div class="emptynote"><p class="nofind">{esc(t["empty_line"])}</p></div>'
+        return f'<section>{h2("context", ctx)}{body}{blocks(notes, ctx, meta)}</section>'
+    dh = t["documents_head"]
+    head = (f'<th style="width:13%">{esc(dh["kind"])}</th><th>{esc(dh["title"])}</th><th style="width:22%">{esc(dh["host"])}</th>'
+            f'<th style="width:13%">{esc(dh["retrieved"])}</th><th style="width:12%">{esc(dh["sha256"])}</th>'
+            f'<th style="width:12%">{esc(dh["status"])}</th>')
+    drows = []
+    for d in docs:
+        host = esc_src(d["host"], ctx) if d["host"] else f'<span class="nofind">{esc(t["inline_host"])}</span>'
+        sha = esc_src(d["sha256_short"], ctx) if d["sha256_short"] else ""
+        drows.append(f'<tr><td class="nw">{esc(t["kind_labels"][d["kind"]])}</td><td>{esc_src(d["title"], ctx) if d["title"] else ""}</td>'
+                     f'<td>{host}</td><td>{esc(d["retrieved"])}</td><td>{sha}</td><td class="nw">{esc(t["doc_status"][d["status"]])}</td></tr>')
+    body = _sub_table(t["documents_title"], head, drows)
+    if rows:
+        ch = t["comparison_head"]
+        head = (f'<th style="width:18%">{esc(ch["claim"])}</th><th>{esc(ch["declared"])}</th><th style="width:15%">{esc(ch["declared_source"])}</th>'
+                f'<th>{esc(ch["observed"])}</th><th style="width:15%">{esc(ch["observed_source"])}</th><th style="width:12%">{esc(ch["status"])}</th>')
+        crows = []
+        for x in rows:
+            crows.append(f'<tr><td>{esc(x["claim"])}</td><td>{esc_src(x["declared"], ctx) if x["declared"] else ""}</td>'
+                         f'<td>{esc_src(x["declared_source"], ctx) if x["declared_source"] else esc(t["no_source"])}</td>'
+                         f'<td>{esc_src(x["observed"], ctx) if x["observed"] else ""}</td>'
+                         f'<td>{esc_src(x["observed_source"], ctx) if x["observed_source"] else esc(t["no_source"])}</td>'
+                         f'<td>{status_chip(x["status"], ctx)}</td></tr>')
+        body += _sub_table(t["comparison_title"], head, crows)
+    else:
+        body += f'<p class="nofind">{esc(t["no_comparison_line"])}</p>'
+    if notes:
+        body += f'<h3>{esc(t["notes_title"])}</h3>' + blocks(notes, ctx, meta)
+    return f'<section>{h2("context", ctx)}{body}</section>'
+
+
 def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     t, m = ctx.texts, r["meta"]
     prov = m["provenance"]
@@ -778,6 +840,8 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     # Summary
     kpis = "".join(f'<div class="kpi"><div class="n">{esc(f"{k["value"]:,}" if isinstance(k["value"], int) else k["value"])}</div>'
                    f'<div class="l">{esc(k["label"])}</div></div>' for k in r["summary"]["kpis"])
+    # Seven tiles (the `documents` KPI) lay out 4 + 3 instead of leaving one tile alone on a row.
+    kpis_cls = "kpis wide" if len(r["summary"]["kpis"]) > 6 else "kpis"
     comp_order: list[str] = []
     for f in F:
         if f["component"] not in comp_order:
@@ -803,7 +867,7 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
         more = (f'<p class="nofind">and {dl["remainder"]:,} more, counted in Review coverage</p>' if dl["remainder"] else "")
         dl_html = (f'<div class="keep"><h3>{esc(t["dismissed_leads_title"])}</h3><table><tr><th style="width:30%">Detector</th>'
                    f'<th style="width:18%">Severity class</th><th>Location</th></tr>{drows}</table></div>{more}')
-    summary = (f'<section>{h2("summary", ctx)}{authbox}{tierc}{nohigh}<div class="kpis">{kpis}</div>'
+    summary = (f'<section>{h2("summary", ctx)}{authbox}{tierc}{nohigh}<div class="{kpis_cls}">{kpis}</div>'
                f'{figure("Findings by component", stacked(comp_rows), ctx)}{ftable}{dl_html}</section>')
 
     # Scope
@@ -824,6 +888,9 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     scope = (f'<section>{h2("scope", ctx)}{scope_tab}'
              f'{figure("Size of the code in scope, source lines without comments and blank lines", hbar(size_rows), ctx)}'
              f"{oos_html}</section>")
+
+    # Project context (right after Scope; context ingestion spec 7)
+    context = context_section(r, ctx, m)
 
     # Architecture and roles
     arch = r["architecture"]
@@ -901,7 +968,7 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
 
     disclaimer = (f'<section class="keep">{h2("disclaimer", ctx)}<p class="disc">{esc(t["disclaimer"].format(date=m["date"]))}</p>'
                   f'<p class="disc">{esc(t["responsible_disclosure"])}</p></section>')
-    return cover + summary + scope + architecture + method + findings + verification + coverage + disclaimer
+    return cover + summary + scope + context + architecture + method + findings + verification + coverage + disclaimer
 
 
 @cache
