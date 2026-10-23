@@ -862,11 +862,14 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     dl = r["summary"].get("dismissed_leads")
     dl_html = ""
     if dl and no_high and dl["rows"]:
+        labels = t["dismissal_reasons"]
         drows = "".join(f'<tr><td>{esc_src(x["detector"], ctx)}</td><td>{chip(x["severity_class"])}</td>'
-                        f'<td>{esc_src(ref_text(x["location"]), ctx)}</td></tr>' for x in dl["rows"])
+                        f'<td>{esc_src(ref_text(x["location"]), ctx)}</td><td>{esc(labels[x["reason"]])}</td></tr>'
+                        for x in dl["rows"])
         more = (f'<p class="nofind">and {dl["remainder"]:,} more, counted in Review coverage</p>' if dl["remainder"] else "")
-        dl_html = (f'<div class="keep"><h3>{esc(t["dismissed_leads_title"])}</h3><table><tr><th style="width:30%">Detector</th>'
-                   f'<th style="width:18%">Severity class</th><th>Location</th></tr>{drows}</table></div>{more}')
+        dl_html = (f'<div class="keep"><h3>{esc(t["dismissed_leads_title"])}</h3><table><tr><th style="width:26%">Detector</th>'
+                   f'<th style="width:14%">Severity class</th><th style="width:32%">Location</th>'
+                   f'<th>{esc(t["dismissed_leads_reason_header"])}</th></tr>{drows}</table></div>{more}')
     summary = (f'<section>{h2("summary", ctx)}{authbox}{tierc}{nohigh}<div class="{kpis_cls}">{kpis}</div>'
                f'{figure("Findings by component", stacked(comp_rows), ctx)}{ftable}{dl_html}</section>')
 

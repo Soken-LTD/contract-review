@@ -659,7 +659,8 @@
       "required": [
        "detector",
        "severity_class",
-       "location"
+       "location",
+       "reason"
       ],
       "properties": {
        "detector": {
@@ -672,6 +673,20 @@
        },
        "location": {
         "$ref": "#/$defs/code_ref"
+       },
+       "reason": {
+        "type": "string",
+        "enum": [
+         "fp_guarded",
+         "fp_unreachable",
+         "not_a_vulnerability",
+         "duplicate_of",
+         "fixed",
+         "out_of_scope",
+         "disproved_by_challenge",
+         "not_reviewed"
+        ],
+        "description": "dismissal_reason (rubric enums), model or server; the audit note never prints"
        }
       }
      }
