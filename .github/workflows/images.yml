@@ -6,6 +6,10 @@ name: images
 # images.lock.json. Runtime pulls repository@digest only. Docker Hub bases come through
 # mirror.gcr.io (anonymous Docker Hub pulls are rate limited on shared runners).
 # Never triggered by pull_request: no PR code runs next to a write token.
+# A branch push plans from the paths changed since main (`images.py plan --changed`): each
+# image's inputs come from its own Dockerfile (COPY/ADD sources, the docker/<dir> tree,
+# .dockerignore), so an image that bakes repo code (soken-render: src/soken_review + contract)
+# is rebuilt when that code changes. An untouched set plans nothing and the run ends green.
 on:
   workflow_dispatch:
     inputs:
@@ -18,8 +22,6 @@ on:
         default: true
   push:
     branches-ignore: [main]
-    paths: ["docker/**", ".dockerignore", "src/soken_review/sandbox/git_materializer.py",
-            "src/soken_review/adapters/ton/node_scripts/**", "slither_plugins/**"]
 
 permissions:
   contents: read
@@ -40,11 +42,21 @@ jobs:
       level1: ${{ steps.plan.outputs.level1 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: {fetch-depth: 0}
       - id: plan
         env:
           ONLY: ${{ inputs.only }}
+          EVENT: ${{ github.event_name }}
         run: |
-          python3 scripts/images.py plan --only "$ONLY" > plan.json
+          args=(--only "$ONLY")
+          if [ "$EVENT" = "push" ]; then
+            git fetch -q origin main
+            base=$(git merge-base origin/main HEAD)
+            git diff --name-only "$base" HEAD > changed.txt
+            echo "changed since main ($base):"; cat changed.txt
+            args+=(--changed changed.txt)
+          fi
+          python3 scripts/images.py plan "${args[@]}" > plan.json
           echo "level0=$(python3 -c 'import json;print(json.dumps(json.load(open("plan.json"))["level0"]))')" >> "$GITHUB_OUTPUT"
           echo "level1=$(python3 -c 'import json;print(json.dumps(json.load(open("plan.json"))["level1"]))')" >> "$GITHUB_OUTPUT"
           python3 -m json.tool plan.json
@@ -142,8 +154,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   lock:
-    needs: [push0, push1]
-    if: always() && !cancelled()
+    needs: [plan, push0, push1]
+    if: always() && !cancelled() && (needs.plan.outputs.level0 != '[]' || needs.plan.outputs.level1 != '[]')
     runs-on: ubuntu-latest
     permissions: {contents: write}
     steps:
