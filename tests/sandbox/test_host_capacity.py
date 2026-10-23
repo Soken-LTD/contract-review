@@ -17,7 +17,8 @@ STAND_MEMINFO = (
     "MemFree:         1816432 kB\n"
     "MemAvailable:    2768164 kB\n"
 )
-BUILD = P.StepLimits(cpus=4, memory="8g", pids=1024, max_file=512 * 1024 * 1024)
+BUILD = P.StepLimits(cpus=4, memory="8g", pids=1024, max_file=512 * 1024 * 1024, min_memory="4g")
+CEILING_ONLY = P.StepLimits(cpus=2, memory="4g", pids=256, max_file=1)   # evm build shape: ceiling, no floor
 DEPS = P.StepLimits(cpus=2, memory="2g", pids=256, max_file=256 * 1024 * 1024)
 
 
@@ -74,9 +75,10 @@ def test_admission_cap_is_min_of_physical_share_and_budget() -> None:
 def test_configure_from_fake_meminfo_refuses_the_build_limit(tmp_path: Path) -> None:
     cap = P.configure_host_capacity(14336, meminfo=_meminfo(tmp_path))
     assert (cap.physical_mb, cap.budget_mb, cap.admit_mb) == (3915, 14336, 3523)
-    cap.check(DEPS, "deps")                                           # 2048 MiB fits
+    assert cap.check(DEPS, "deps") == DEPS.memory                     # 2048 MiB fits
+    assert cap.check(CEILING_ONLY, "build") == "3523m"                 # ceiling above the host: clamped
     with pytest.raises(P.HostCapacityError) as exc:
-        cap.check(BUILD, "build")
+        cap.check(BUILD, "build")                                      # floor 4096 above the host: refused
     assert exc.value.reason == "insufficient_host_memory (need 8192 MiB, host 3915 MiB)"
     assert exc.value.detail() == {"reason": "insufficient_host_memory", "stage": "build", "need_mb": 8192,
                                   "host_mb": 3915, "cap_mb": 3523}
@@ -85,6 +87,9 @@ def test_configure_from_fake_meminfo_refuses_the_build_limit(tmp_path: Path) -> 
 def test_budget_alone_caps_when_the_host_is_unmeasured(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(P, "physical_memory_mb", lambda _m=None: None)
     cap = P.configure_host_capacity(4096, meminfo=tmp_path / "absent")
+    assert cap.check(CEILING_ONLY, "build") == "4g"                    # equal to the budget: untouched
+    big = P.StepLimits(cpus=2, memory="6g", pids=256, max_file=1)
+    assert cap.check(big, "analyze") == "4096m"                         # clamped to the budget
     with pytest.raises(P.HostCapacityError) as exc:
         cap.check(BUILD, "build")
     assert exc.value.reason == "insufficient_host_memory (need 8192 MiB, budget 4096 MiB)"
@@ -96,6 +101,8 @@ def test_docker_argv_refuses_before_building_the_command(tmp_path: Path) -> None
         P.docker_argv("build", "img@sha256:" + "ab" * 32, tmp_path, None, BUILD, {}, ["scarb", "build"])
     argv = P.docker_argv("build", "img@sha256:" + "ab" * 32, tmp_path, None, DEPS, {}, ["scarb", "fetch"])
     assert "--memory=2g" in argv
+    clamped = P.docker_argv("build", "img@sha256:" + "ab" * 32, tmp_path, None, CEILING_ONLY, {}, ["solc"])
+    assert "--memory=3523m" in clamped and "--memory-swap=3523m" in clamped
 
 
 def test_docker_argv_admits_on_a_host_with_the_memory(tmp_path: Path) -> None:

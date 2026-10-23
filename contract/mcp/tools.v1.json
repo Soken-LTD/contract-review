@@ -2014,7 +2014,7 @@
      "context_notes": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Reviewer prose on the project documents; blocks as in roles_notes.notes, text gate scope model and number check on every string, at most 8 blocks. Printed under Project context.",
+      "description": "Reviewer prose on the project documents. Shape: {\"notes\": [{\"p\": \"...\"}, ...]} (blocks as in roles_notes.notes), text gate scope model and number check on every string, at most 8 blocks. Printed under Project context.",
       "properties": {
        "notes": {
         "type": "array",
