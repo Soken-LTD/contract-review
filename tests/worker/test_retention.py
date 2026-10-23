@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -44,12 +46,21 @@ async def _report(conn, jid: str, rid: str, *, expires: timedelta) -> None:
     await conn.execute("update jobs set report_id = %s where job_id = %s", (rid, jid))
 
 
-def _dirs(root: Path, jid: str, rid: str | None = None) -> None:
+def _dirs(root: Path, jid: str, rid: str | None = None, *, old: bool = True) -> None:
+    import os
+    import time
+
+    paths = [root / "pins" / jid, root / "work" / jid]
     (root / "pins" / jid / "pin").mkdir(parents=True, exist_ok=True)
     (root / "work" / jid).mkdir(parents=True, exist_ok=True)
     if rid:
         (root / "store" / "reports" / rid / "1").mkdir(parents=True, exist_ok=True)
         (root / "store" / "reports" / rid / "1" / "report.pdf").write_bytes(b"%PDF")
+        paths.append(root / "store" / "reports" / rid)
+    if old:                                            # settled: older than the orphan grace period
+        stamp = time.time() - 7 * 3600
+        for d in paths:
+            os.utime(d, (stamp, stamp))
 
 
 @pytest.fixture()
@@ -89,8 +100,12 @@ async def test_sweep_applies_every_rule_once(db_pool, roots: Path) -> None:
                            " on conflict (cache_key) do update set expires_at = excluded.expires_at")
     for n, j in ids.items():
         _dirs(roots, j, rids.get(n))
-    _dirs(roots, "job_" + "0" * 24 + "ZZ")                    # orphan dir, no row
+    _dirs(roots, "job_" + "0" * 24 + "ZZ")                    # orphan dir, no row, settled
+    _dirs(roots, "job_" + "0" * 24 + "ZY", old=False)         # orphan dir, no row, still being written
     (roots / "store" / "reports" / ("t" * 26) / "1").mkdir(parents=True)   # orphan report dir
+    stamp = time.time() - 7 * 3600
+    os.utime(roots / "store" / "reports" / ("t" * 26), (stamp, stamp))
+    (roots / "store" / "reports" / ("u" * 26) / "1").mkdir(parents=True)   # fresh: a render in flight
 
     async with db_pool.connection() as conn:
         out = await R.sweep(conn, roots / "pins", idle_hours=24)
@@ -122,7 +137,9 @@ async def test_sweep_applies_every_rule_once(db_pool, roots: Path) -> None:
         assert (roots / "pins" / ids[n]).exists() and (roots / "work" / ids[n]).exists(), n
     assert not (roots / "store" / "reports" / rids[5]).exists() and (roots / "store" / "reports" / rids[6]).exists()
     assert not (roots / "pins" / ("job_" + "0" * 24 + "ZZ")).exists()
+    assert (roots / "pins" / ("job_" + "0" * 24 + "ZY")).exists()                 # grace period
     assert not (roots / "store" / "reports" / ("t" * 26)).exists()
+    assert (roots / "store" / "reports" / ("u" * 26)).exists()
 
     # idempotent: a second pass finds nothing
     async with db_pool.connection() as conn:
@@ -196,3 +213,26 @@ def test_expired_report_is_gone_for_review_report_before_the_sweep() -> None:
 
     src = Path(T.__file__).read_text()
     assert 'rep["expires_at"] <= datetime.now(UTC)' in src and '_status_only("expired", job)' in src
+
+
+@ASYNC
+async def test_a_job_touched_after_selection_is_left_alone(db_pool, roots: Path, monkeypatch) -> None:
+    """The predicate runs again under the row lock: a tool call between the selection and the
+    purge (last_call_at refreshed) keeps the job."""
+    jid = _jid(31)
+    async with db_pool.connection() as conn:
+        await conn.execute("delete from jobs where job_id = %s", (jid,))
+        await _job(conn, jid, "ready", age=timedelta(days=2), idle=timedelta(hours=30))
+    _dirs(roots, jid)
+    real = R._still_due
+
+    async def touched_then_check(conn, job_id, why, idle_hours, failed_days):
+        await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
+        return await real(conn, job_id, why, idle_hours, failed_days)
+
+    monkeypatch.setattr(R, "_still_due", touched_then_check)
+    async with db_pool.connection() as conn:
+        out = await R.sweep(conn, roots / "pins", idle_hours=24)
+        state = (await (await conn.execute("select state from jobs where job_id = %s", (jid,))).fetchone())[0]
+        await conn.execute("delete from jobs where job_id = %s", (jid,))
+    assert out.expired_idle == [] and state == "ready" and (roots / "pins" / jid).exists()

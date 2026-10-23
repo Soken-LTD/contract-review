@@ -97,25 +97,62 @@ async def _candidates(conn: psycopg.AsyncConnection, idle_hours: int, failed_day
         return list(await cur.fetchall())
 
 
-async def _purge_one(conn: psycopg.AsyncConnection, pin_root: Path, job_id: str, to_state: str) -> None:
+_RECHECK = {
+    "terminal": "j.state = any(%(seven)s) and j.created_at < now() - %(seven_days)s::interval",
+    "idle": "j.state = 'ready' and j.last_call_at < now() - %(idle)s::interval",
+    "report": "j.state = 'rendered' and exists (select 1 from reports r where r.job_id = j.job_id and r.expires_at < now())",
+}
+
+
+async def _still_due(conn: psycopg.AsyncConnection, job_id: str, why: str, idle_hours: int, failed_days: int) -> bool:
+    """The candidate predicate again, under the row lock: a job that a tool touched or a report
+    that was re-rendered between the selection and the purge is left alone (TOCTOU)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"select 1 from jobs j where j.job_id = %(job_id)s and ({_RECHECK[why]})",
+            {"job_id": job_id, "seven": list(_SEVEN_DAY_STATES), "seven_days": timedelta(days=failed_days),
+             "idle": timedelta(hours=idle_hours)},
+        )
+        return await cur.fetchone() is not None
+
+
+async def _purge_one(conn: psycopg.AsyncConnection, pin_root: Path, job_id: str, why: str, to_state: str,
+                     idle_hours: int, failed_days: int) -> bool:
     async with conn.transaction():
         job = await JobRepo(conn).get_and_lock(job_id)
         if job is None or job["state"] in ("deleted", "expired"):
-            return
+            return False
+        if not await _still_due(conn, job_id, why, idle_hours, failed_days):
+            return False
         _deleted, report = await purge_job(conn, job_id, reason="expiry", to_state=to_state)
     await asyncio.get_event_loop().run_in_executor(
         None, _remove_files, pin_root, job_id, report["object_prefix"] if report else None)
+    return True
+
+
+ORPHAN_GRACE_S = 6 * 3600   # longer than any step wall: a directory a live container is filling is never an orphan
+
+
+def _settled(path: Path, now: float) -> bool:
+    try:
+        return now - path.lstat().st_mtime > ORPHAN_GRACE_S
+    except OSError:
+        return False
 
 
 async def _orphan_dirs(conn: psycopg.AsyncConnection, pin_root: Path, dry_run: bool) -> list[str]:
-    """Directories no live row points at. A job dir whose job is deleted or expired, or missing;
-    a report dir whose report row is gone."""
+    """Directories no live row points at and nobody wrote to within ORPHAN_GRACE_S: a job dir
+    whose job is deleted or expired, or missing; a report dir whose report row is gone."""
+    import time
+
+    now = time.time()
     removed: list[str] = []
     roots = [pin_root.resolve(), pin_root.resolve().parent / "work"]
     names: set[str] = set()
     for root in roots:
         if root.is_dir():
-            names.update(p.name for p in root.iterdir() if p.name.startswith(_JOB_DIR) and p.is_dir() and not p.is_symlink())
+            names.update(p.name for p in root.iterdir()
+                         if p.name.startswith(_JOB_DIR) and p.is_dir() and not p.is_symlink() and _settled(p, now))
     live: set[str] = set()
     if names:
         async with conn.cursor() as cur:
@@ -131,7 +168,7 @@ async def _orphan_dirs(conn: psycopg.AsyncConnection, pin_root: Path, dry_run: b
                     shutil.rmtree(path, ignore_errors=True)
     reports_root = store_root() / "reports"
     if reports_root.is_dir():
-        ids = sorted(p.name for p in reports_root.iterdir() if p.is_dir() and not p.is_symlink())
+        ids = sorted(p.name for p in reports_root.iterdir() if p.is_dir() and not p.is_symlink() and _settled(p, now))
         kept: set[str] = set()
         if ids:
             async with conn.cursor() as cur:
@@ -159,8 +196,8 @@ async def sweep(conn: psycopg.AsyncConnection, pin_root: Path, *, dry_run: bool 
             bucket.append(job_id)
             continue
         try:
-            await _purge_one(conn, pin_root, job_id, to_state)
-            bucket.append(job_id)
+            if await _purge_one(conn, pin_root, job_id, why, to_state, idle, failed_days):
+                bucket.append(job_id)
         except Exception as exc:  # logged, the sweep goes on
             logger.exception("retention: job %s (%s) not purged", job_id[-8:], why)
             out.errors.append(f"{job_id}: {exc}"[:200])
