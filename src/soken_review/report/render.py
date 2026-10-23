@@ -278,6 +278,12 @@ async def _upsert_report(conn: psycopg.AsyncConnection, report: dict[str, Any], 
     )
 
 
+async def _job_deleted(pool: Any, job_id: str) -> bool:
+    async with pool.connection() as conn:
+        row = await (await conn.execute("select state from jobs where job_id = %s", (job_id,))).fetchone()
+    return row is None or row[0] == "deleted"
+
+
 async def run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, image: str | None = None) -> RenderOutcome:
     """Run one claimed render row end to end; returns the outcome (08 3.1, 3.2).
 
@@ -326,6 +332,14 @@ async def _run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, i
     logger.info("render %s attempt %d: %s %s (%d ms)", job_id[-8:], attempt, outcome.code, outcome.detail[:120], wall_ms)
 
     if outcome.code == "ok":
+        if await _job_deleted(pool, job_id):
+            # review_delete_job ran while the container rendered: nothing of the job may land on
+            # disk or in the DB after the delete answered (security review, 2026-10-23).
+            logger.info("render %s: job deleted during the render, output discarded", job_id[-8:])
+            async with pool.connection() as conn:
+                await conn.execute("update job_steps set status = 'cancelled', cancel_reason = 'user_delete' where id = %s",
+                                   (step_id,))
+            return outcome
         prefix = _upload(outcome.files, report_bytes, report["meta"]["report_id"], render_no)
         exp = datetime.now(UTC) + timedelta(days=_default_days())
         async with pool.connection() as conn, conn.transaction():
