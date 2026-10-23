@@ -86,7 +86,51 @@
   "leads": "Analyzer leads",
   "promoted": "Leads promoted to findings",
   "areas_returned": "Areas with code returned",
-  "deployed_code": "Deployed code"
+  "deployed_code": "Deployed code",
+  "documents": "Project documents"
+ },
+ "context": {
+  "documents_title": "Documents",
+  "documents_head": {
+   "kind": "Kind",
+   "title": "Title",
+   "host": "Host",
+   "retrieved": "Retrieved",
+   "sha256": "SHA-256",
+   "status": "Status"
+  },
+  "comparison_title": "Declared vs observed",
+  "comparison_head": {
+   "claim": "Claim",
+   "declared": "Declared",
+   "declared_source": "Declared in",
+   "observed": "Observed",
+   "observed_source": "Observed from",
+   "status": "Status"
+  },
+  "notes_title": "Reviewer notes",
+  "empty_line": "No project documents were supplied for this review.",
+  "no_comparison_line": "No checkable statement was found in the documents.",
+  "inline_host": "Supplied inline by the requester",
+  "no_source": "none",
+  "kind_labels": {
+   "whitepaper": "Whitepaper",
+   "website": "Website",
+   "app": "App bundle",
+   "docs": "Documentation",
+   "terms": "Terms",
+   "privacy": "Privacy policy",
+   "other": "Other"
+  },
+  "doc_status": {
+   "ok": "Retrieved",
+   "failed": "Not retrieved"
+  },
+  "status_chips": {
+   "matches": "Matches",
+   "differs": "Differs",
+   "not_checkable": "Not checkable"
+  }
  },
  "method_steps": {
   "pin": "Source pinning",
@@ -98,6 +142,7 @@
  "section_titles": {
   "summary": "Summary",
   "scope": "Scope",
+  "context": "Project context",
   "architecture": "Architecture and privileged roles",
   "method": "Method and severity scale",
   "findings": "Findings",
