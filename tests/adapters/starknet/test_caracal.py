@@ -187,9 +187,13 @@ def test_run_caracal_build_not_ok():
 
 
 def test_run_caracal_toolchain_missing_when_image_unpinned(monkeypatch):
-    # images.lock.json ships an empty digest for starknet-caracal -> locked_image() is None
-    # -> caracal is not_run with caracal_toolchain_missing (checked before docker availability).
+    # An unpinned image (placeholder digest, no env override) -> locked_image() is None ->
+    # caracal is not_run with caracal_toolchain_missing (checked before docker availability).
+    # The lock on main carries a real digest since the CI image build, so the unpinned state is
+    # simulated rather than read from the file.
+    import soken_review.sandbox.profile as profile_mod
     monkeypatch.delenv("SOKEN_IMAGE_STARKNET_CARACAL", raising=False)
+    monkeypatch.setattr(profile_mod, "locked_image", lambda name: None, raising=True)
     status, findings, reason = run_caracal(_build_result(status="ok"))
     assert status == "not_run" and findings == [] and reason == "caracal_toolchain_missing"
 
