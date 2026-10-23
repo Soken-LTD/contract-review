@@ -26,6 +26,7 @@ from typing import Any
 # RE2 only: patterns are caller input, a backtracking engine would allow ReDoS (03 4.5).
 import re2 as _re2  # type: ignore[import-untyped]
 
+from ..context.store import ContextStore, is_context_path
 from ..db.leads_repo import lead_states
 from ..db.pool import get_pool
 from ..engine.injection import escape_invisible
@@ -103,6 +104,16 @@ def _load_pin(job_id: str) -> PinnedSource:
     return PinnedSource.load(root, job_id)
 
 
+def _load_context(job_id: str) -> ContextStore:
+    """The job's project documents (context ingestion spec 4); empty when none were ingested."""
+    return ContextStore.load(_get_ctx().get_pin_root(), job_id)
+
+
+def _all_paths(pin: PinnedSource, context: ContextStore) -> list[str]:
+    """Code paths then readable context paths, each group sorted (search order, closest-path hints)."""
+    return sorted(pin.entries.keys()) + sorted(p for p, e in context.entries.items() if e.ok)
+
+
 # ── cursor helpers (03 section 5) ────────────────────────────────────────────
 
 
@@ -152,9 +163,13 @@ async def _read_code(args: dict[str, Any]) -> str:
     _check_job_readable(job_id)
 
     pin = _load_pin(job_id)
-    entry = pin.get_entry(path)
+    context = _load_context(job_id)
+    # A `context/` path reads from the document store with the same window, cap and job_reads log
+    # (context ingestion spec 4); flags and map markers are code-only and print as none.
+    source: Any = context if is_context_path(path) else pin
+    entry = source.get_entry(path)
     if entry is None:
-        closest = _closest_paths(path, list(pin.entries.keys()))
+        closest = _closest_paths(path, _all_paths(pin, context))
         raise ReviewError("E_FILE_UNKNOWN", path=path, paths=", ".join(closest))
 
     total = entry.lines
@@ -163,15 +178,15 @@ async def _read_code(args: dict[str, Any]) -> str:
         raise ReviewError("E_RANGE_INVALID", path=path, lines=total)
     end = min(end, start + 399)  # at most 400 lines (03 4.4)
 
-    lines = pin.read_lines(path, start, end)
-    sha_short = entry.sha256_lf[:8]
+    lines = source.read_lines(path, start, end)
+    sha_short = str(entry.sha256_lf)[:8]
     meta = f"{path} sha256:{sha_short} lines {start}-{end} of {total}"
     root = _get_ctx().get_pin_root()
     job_flags = load_flags(root, job_id)
     if job_flags is None:
         # Flags are written at pin time with the map (04 12); a readable job without them is a fault.
         raise ReviewError("E_INTERNAL", incident=f"flags-missing-{job_id[-8:]}")
-    detailed = args.get("response_format") == "detailed"
+    detailed = args.get("response_format") == "detailed" and not is_context_path(path)
     doc = load_map(root, job_id)[0] if detailed else None
 
     def _tail(a: int, b: int) -> str:
@@ -184,7 +199,8 @@ async def _read_code(args: dict[str, Any]) -> str:
 
     def _body(n: int) -> str:
         last = start + n - 1
-        header = f"Untrusted source data, file {path}, lines {start}-{last}"
+        label = "project document" if is_context_path(path) else "file"
+        header = f"Untrusted source data, {label} {path}, lines {start}-{last}"
         numbered = "\n".join(rendered[:n])
         out = f"{header}\n{meta}\n```\n{numbered}\n```\n{_tail(start, last)}"
         return out if n == len(lines) else f"{out}\nnext_start_line {last + 1}"
@@ -264,6 +280,10 @@ async def _search_code(args: dict[str, Any]) -> str:
 
     _check_job_readable(job_id)
     pin = _load_pin(job_id)
+    context = _load_context(job_id)
+
+    def _source(p: str) -> Any:
+        return context if is_context_path(p) else pin
 
     filters = {
         "pattern": pattern,
@@ -275,15 +295,15 @@ async def _search_code(args: dict[str, Any]) -> str:
 
     compiled = _compile_pattern(pattern, mode)
 
-    # Collect all hits in keyset order (sorted paths, then line number)
+    # Collect all hits in keyset order (sorted code paths, then sorted context paths, then line number)
     all_hits: list[tuple[str, int, str]] = []
-    for path in sorted(pin.entries.keys()):
+    for path in _all_paths(pin, context):
         if path_glob and not fnmatch.fnmatch(path, path_glob):
             continue
-        entry = pin.get_entry(path)
+        entry = _source(path).get_entry(path)
         if entry is None:
             continue
-        file_lines = pin.read_all(path)
+        file_lines = _source(path).read_all(path)
         for lineno, line in enumerate(file_lines, start=1):
             if _matches(line, pattern, mode, compiled):
                 all_hits.append((path, lineno, line))
@@ -297,9 +317,9 @@ async def _search_code(args: dict[str, Any]) -> str:
 
     for page_idx, (hit_path, lineno, hit_text) in enumerate(page_hits):
         if context_lines > 0:
-            entry = pin.get_entry(hit_path)
+            entry = _source(hit_path).get_entry(hit_path)
             if entry:
-                file_lines = pin.read_all(hit_path)
+                file_lines = _source(hit_path).read_all(hit_path)
                 ctx_start = max(0, lineno - 1 - context_lines)
                 ctx_end = min(len(file_lines), lineno + context_lines)
                 for ci in range(ctx_start, ctx_end):

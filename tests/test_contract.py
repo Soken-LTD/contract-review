@@ -13,9 +13,10 @@ TOOL_ORDER = [
     "review_start", "review_status", "review_get_guide", "review_read_code", "review_search_code",
     "review_contract_map", "review_leads", "review_facts", "review_dismiss_lead",
     "review_submit_finding", "review_withdraw_finding", "review_challenge",
-    "review_answer_challenge", "review_set_section", "review_finalize", "review_report",
+    "review_answer_challenge", "review_set_section", "review_add_context", "review_finalize", "review_report",
     "review_delete_job", "review_publish",
 ]
+TOOL_COUNT = 19
 
 # 03 section 2: (readOnly, destructive, idempotent, openWorld)
 HINTS = {
@@ -25,6 +26,7 @@ HINTS = {
     "review_withdraw_finding": (False, True, True, False),
     "review_answer_challenge": (False, True, True, False),
     "review_set_section": (False, True, True, False),
+    "review_add_context": (False, False, True, True),   # mutates the job, never destructive; fetches public URLs
     "review_finalize": (False, True, True, False),
     "review_delete_job": (False, True, True, False),
     "review_publish": (False, False, True, False),
@@ -42,6 +44,7 @@ TOOLS = bundle_tools()
 def test_names_and_order():
     names = [t["name"] for t in TOOLS]
     assert names == TOOL_ORDER
+    assert len(names) == TOOL_COUNT
     assert all(re.fullmatch(r"review_[a-z_]{1,25}", n) for n in names)
 
 
@@ -117,3 +120,30 @@ def test_answer_challenge_schema_accepts_fresh_finding_revision_zero():
     assert list(v.iter_errors({**base, "revision": 1})) == []  # a later revision still fine
     neg = [e.message for e in v.iter_errors({**base, "revision": -1})]
     assert any("minimum" in m for m in neg)  # negatives are still rejected
+
+
+def test_context_surfaces_in_the_contract():
+    """Context ingestion spec 2 and 8: start takes `context`, status reports it, the guide has the
+    topic and review_add_context carries the item shape and the per-item result."""
+    tools = {t["name"]: t for t in TOOLS}
+    start = tools["review_start"]["inputSchema"]["properties"]["context"]
+    items = start["properties"]["items"]
+    assert start["required"] == ["items"] and items["maxItems"] == 12
+    kinds = items["items"]["properties"]["kind"]["enum"]
+    assert kinds == yaml.safe_load((CONTRACT_DIR / "rubric" / "enums.yaml").read_text())["context_kind"]
+    assert items["items"]["properties"]["url"]["maxLength"] == 2048
+    assert items["items"]["properties"]["content"]["maxLength"] == 60000
+    add = tools["review_add_context"]
+    assert add["inputSchema"]["properties"]["items"]["maxItems"] == 8
+    assert add["inputSchema"]["required"] == ["job_id", "items"]
+    out = add["outputSchema"]["properties"]
+    assert out["items"]["items"]["properties"]["status"]["enum"] == ["queued", "ok", "failed", "exists"]
+    assert out["context"]["required"] == ["requested", "done", "failed"]
+    status = tools["review_status"]["outputSchema"]["properties"]["context"]
+    assert status["required"] == ["requested", "done", "failed"]
+    assert "context" in tools["review_get_guide"]["inputSchema"]["properties"]["topic"]["enum"]
+    codes = {r["code"] for r in yaml.safe_load((CONTRACT_DIR / "errors.yaml").read_text())["codes"]}
+    assert {"E_CONTEXT_URL", "E_CONTEXT_LIMIT", "E_CONTEXT_FETCH"} <= codes
+    for name in ("review_start", "review_add_context"):
+        desc = tools[name]["description"]
+        assert "context" in desc.lower() and len(desc) <= 600 and "soken" not in desc.lower()

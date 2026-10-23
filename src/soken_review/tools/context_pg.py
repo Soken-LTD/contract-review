@@ -118,6 +118,7 @@ class _LifespanWrapper:
         from ..db import pool as _pool_mod
         from ..tools import (
             challenge,
+            context_tool,
             dismiss,
             finalize,
             read,
@@ -130,7 +131,8 @@ class _LifespanWrapper:
 
         # Wire async pool into every module that needs it.
         # One loop: adding a new tool module here is the only change needed.
-        _POOL_MODULES = [start_status, report, submit, finalize, challenge, dismiss, withdraw, set_section]
+        _POOL_MODULES = [start_status, report, submit, finalize, challenge, dismiss, withdraw, set_section,
+                         context_tool]
         for mod in _POOL_MODULES:
             if hasattr(mod, "set_pool"):
                 mod.set_pool(self._async_pool)
@@ -145,7 +147,7 @@ class _LifespanWrapper:
         ctx = PgJobContext(self._sync_pool, self._pin_root)
 
         # Wire context into every module that reads pins/maps.
-        _CTX_MODULES = [read, submit, finalize, challenge, dismiss, withdraw, set_section]
+        _CTX_MODULES = [read, submit, finalize, challenge, dismiss, withdraw, set_section, context_tool]
         for mod in _CTX_MODULES:
             if hasattr(mod, "set_context"):
                 mod.set_context(ctx)

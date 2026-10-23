@@ -126,3 +126,39 @@ def test_lock_updates_aliases_and_keeps_other_entries(tmp_path, monkeypatch):
     assert after["solana-build"] == before["solana-build"]          # upstream pin untouched
     assert set(after) == set(before)
     assert after["evm-analyze"] == before["evm-analyze"]
+
+
+def test_docs_family_renders_an_open_acl_without_hosts():
+    # Context ingestion spec 3: `docs: {allow_public: true}` -> smokescreen `open` default, no host
+    # list; the proxy's own private-range denial is what keeps metadata and LAN out of reach.
+    acl = yaml.safe_load(egress.render_acl("docs"))
+    assert acl["default"] == {"project": "soken-docs", "action": "open"}
+    assert egress.allowlist("docs") == [] and egress.allow_public("docs") is True
+    assert egress.network_name("docs") == "soken-egress-docs"
+    assert egress.allow_public("evm") is False
+    evm = yaml.safe_load(egress.render_acl("evm"))
+    assert evm["default"]["action"] == "enforce" and "github.com" in evm["default"]["allowed_domains"]
+
+
+def test_allow_public_row_must_be_exact(tmp_path):
+    limits = tmp_path / "limits.yaml"
+    for bad in ({"allow_public": False}, {"allow_public": True, "hosts": []}, {"open": True}):
+        limits.write_text(yaml.safe_dump({"egress": {"all": [], "docs": bad}}))
+        with pytest.raises(ValueError):
+            egress.allowlist("docs", limits)
+
+
+def test_open_family_keeps_private_denial_and_denies_internal_names():
+    # Security review 2026-10-23 (SSRF): the docs family may be `open`, but the proxy still refuses
+    # private, loopback, link-local and metadata destinations (never allow_private_ranges), and the
+    # internal name space is denied by name on top.
+    acl = yaml.safe_load(egress.render_acl("docs"))
+    assert acl["default"]["action"] == "open" and "allowed_domains" not in acl["default"]
+    for name in ("localhost", "*.localhost", "*.internal", "*.local", "*.arpa", "metadata.google.internal",
+                 "169.254.169.254"):
+        assert name in acl["global_deny_list"], name
+    cfg = yaml.safe_load(egress.render_config())
+    assert "allow_private_ranges" not in cfg and "allow_ranges" not in cfg
+    assert {"169.254.169.254", "fd00:ec2::254", "100.100.100.200"} <= set(cfg["deny_addresses"])
+    enforce = yaml.safe_load(egress.render_acl("evm"))
+    assert "global_deny_list" not in enforce and enforce["default"]["action"] == "enforce"

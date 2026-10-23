@@ -1,11 +1,13 @@
 """Family egress proxies of 09 section 4.3 (P0-DEPS, UV9-3).
 
-Only repo `fetch` and `deps` containers have a network: `soken-egress-<family>`, created
-`--internal` (no route out). The one way out is a smokescreen on that network under the alias
-`smokescreen`, also attached to `soken-egress-<family>-out`. Its ACL holds only a `default:`
-rule (certificate-less clients, `allow_missing_role: true`, S9) with the hosts of
-`contract/ops/limits.yaml` `egress.all` + `egress.<family>`. Smokescreen refuses private,
-loopback and link-local addresses (169.254.169.254 included) on its own.
+Only repo `fetch`, `deps` and the document `context` containers have a network:
+`soken-egress-<family>`, created `--internal` (no route out). The one way out is a smokescreen on
+that network under the alias `smokescreen`, also attached to `soken-egress-<family>-out`. Its ACL
+holds only a `default:` rule (certificate-less clients, `allow_missing_role: true`, S9) with the
+hosts of `contract/ops/limits.yaml` `egress.all` + `egress.<family>`; the `docs` family
+(`{allow_public: true}`, context ingestion spec 3) renders `action: open` instead of a host list.
+Smokescreen refuses private, loopback and link-local addresses (169.254.169.254 included) on its
+own, for every family.
 
     python -m soken_review.sandbox.egress up <family> [--image REF]   # network + proxy
     python -m soken_review.sandbox.egress down <family>
@@ -22,7 +24,7 @@ from pathlib import Path
 
 import yaml
 
-FAMILIES = ("evm", "solana", "move", "starknet", "ton")
+FAMILIES = ("evm", "solana", "move", "starknet", "ton", "docs")
 PROXY_ALIAS = "smokescreen"
 PROXY_PORT = 4750
 PROXY_UID = "65532:65532"
@@ -63,9 +65,25 @@ def _check_family(family: str) -> None:
         raise ValueError(f"unknown egress family {family!r}")
 
 
-def allowlist(family: str, limits_path: Path = LIMITS) -> list[str]:
-    """Hosts of `egress.all` plus `egress.<family>`; refuses wildcards, IPs and odd names."""
+def allow_public(family: str, limits_path: Path = LIMITS) -> bool:
+    """True for a family whose `egress.<family>` row is `{allow_public: true}` (the `docs` family of
+    the context ingestion spec): its proxy reaches any public host and keeps no host list.
+    Smokescreen's own deny list (private, loopback, link-local and metadata ranges) still applies."""
     _check_family(family)
+    row = yaml.safe_load(limits_path.read_text())["egress"].get(family)
+    if isinstance(row, dict):
+        if set(row) != {"allow_public"} or row["allow_public"] is not True:
+            raise ValueError(f"egress family {family!r}: a mapping row must be exactly {{allow_public: true}}")
+        return True
+    return False
+
+
+def allowlist(family: str, limits_path: Path = LIMITS) -> list[str]:
+    """Hosts of `egress.all` plus `egress.<family>`; refuses wildcards, IPs and odd names.
+    An `allow_public` family has no host list: [] (the ACL is `open`, not `enforce`)."""
+    _check_family(family)
+    if allow_public(family, limits_path):
+        return []
     egress = yaml.safe_load(limits_path.read_text())["egress"]
     hosts = [*(egress.get("all") or []), *(egress.get(family) or [])]
     for host in hosts:
@@ -74,23 +92,47 @@ def allowlist(family: str, limits_path: Path = LIMITS) -> list[str]:
     return sorted(set(hosts))
 
 
+# Names an `open` (allow-public) family may never reach, on top of smokescreen's address checks:
+# loopback and link-local names, mDNS/.local, private DNS suffixes, reverse-lookup zones and the cloud
+# metadata host. smokescreen matches these against the request host before resolving it.
+PUBLIC_DENY_NAMES = (
+    "localhost", "*.localhost", "*.internal", "*.local", "*.arpa", "*.home.arpa", "*.lan", "*.intranet",
+    "*.corp", "*.private", "metadata.google.internal", "169.254.169.254", "metadata", "instance-data",
+)
+# Addresses denied in config regardless of the ACL (smokescreen already denies RFC 1918, loopback,
+# link-local, CGNAT, multicast and the IPv6 equivalents by default; these are the metadata endpoints
+# that sit in those ranges, named so a changed default can never re-open them).
+DENY_ADDRESSES = ("169.254.169.254", "fd00:ec2::254", "100.100.100.200", "169.254.170.2")
+
+
 def render_acl(family: str, limits_path: Path = LIMITS) -> str:
-    acl = {
-        "version": "v1",
-        "services": [],
-        "default": {"project": f"soken-{family}", "action": "enforce",
-                    "allowed_domains": allowlist(family, limits_path)},
-    }
+    """The smokescreen ACL of a family (09 4.3; context ingestion spec 3 for `docs`).
+
+    An `enforce` default lists the family's hosts. An allow-public family renders `open` plus a
+    `global_deny_list` of the names in PUBLIC_DENY_NAMES. In both cases smokescreen resolves the host
+    itself and checks every resolved address against its deny ranges at connect time (the client
+    only ever sends CONNECT host:443), so a public name that resolves to a private address, or
+    rebinds to one, is refused by the proxy; nothing here sets `allow_private_ranges`.
+    """
+    if allow_public(family, limits_path):
+        default = {"project": f"soken-{family}", "action": "open"}
+        acl = {"version": "v1", "services": [], "default": default, "global_deny_list": list(PUBLIC_DENY_NAMES)}
+    else:
+        default = {"project": f"soken-{family}", "action": "enforce",
+                   "allowed_domains": allowlist(family, limits_path)}
+        acl = {"version": "v1", "services": [], "default": default}
     return yaml.safe_dump(acl, sort_keys=False)
 
 
 def render_config() -> str:
+    """smokescreen config.yaml. Never sets `allow_private_ranges` (default false) or custom
+    `allow_ranges`: the built-in deny ranges and `deny_addresses` apply to every family."""
     config = {
         "ip": "0.0.0.0",
         "port": PROXY_PORT,
         "allow_missing_role": True,
         "acl_file": "/etc/smokescreen/acl.yaml",
-        "deny_addresses": ["169.254.169.254"],
+        "deny_addresses": list(DENY_ADDRESSES),
         "connect_timeout": "10s",
     }
     return yaml.safe_dump(config, sort_keys=False)

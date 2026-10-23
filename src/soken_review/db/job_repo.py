@@ -59,6 +59,14 @@ _TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+class ContextCapError(Exception):
+    """The per-job cap on context document requests would be passed (migration 009 row check)."""
+
+    def __init__(self, *, cap: int, have: int, add: int) -> None:
+        self.cap, self.have, self.add = cap, have, add
+        super().__init__(f"context documents per job capped at {cap} (have {have}, adding {add})")
+
+
 class JobStateError(Exception):
     """Raised when a state transition is not in the graph (03 section 3.1)."""
 
@@ -377,6 +385,44 @@ class JobRepo:
             f"update jobs set {set_parts} where job_id = %(job_id)s",
             params,
         )
+
+    # ------------------------------------------------------------------
+    # Project context items (context ingestion spec 2026-10-23, section 2)
+    # ------------------------------------------------------------------
+
+    async def append_context_items(self, job_id: str, items: list[dict[str, Any]], *,
+                                   cap: int = 12) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Append request records to `jobs.context_items` under the row lock (`select ... for update`).
+
+        Must be called inside an open transaction: the lock, the duplicate check, the cap check and
+        the write happen in that one transaction, so two concurrent calls serialise and the second
+        sees the first's rows (security review 2026-10-23). Returns `(locked job row, full list)`.
+        Records are `{kind, url|None, path|None, content|None, sha256|None, requested_at}`; a record
+        whose `url` (or inline `sha256`) is already present is not appended again. Raises
+        ContextCapError when the union would pass `cap`; migration 009 enforces the same cap and the
+        key uniqueness as row checks.
+        """
+        job = await self.get_and_lock(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        current: list[dict[str, Any]] = list(job.get("context_items") or [])
+        keys = {(r.get("url") or None, r.get("sha256") or None) for r in current}
+        added: list[dict[str, Any]] = []
+        for item in items:
+            key = (item.get("url") or None, item.get("sha256") or None)
+            if key in keys:
+                continue
+            keys.add(key)
+            added.append(item)
+        if len(current) + len(added) > cap:
+            raise ContextCapError(cap=cap, have=len(current), add=len(added))
+        if added:
+            current = current + added
+            await self._conn.execute(
+                "update jobs set context_items = %s, last_call_at = now() where job_id = %s",
+                (psycopg.types.json.Jsonb(current), job_id),
+            )
+        return job, current
 
     async def find_unseeded_jobs(self) -> list[dict[str, Any]]:
         """Return queued jobs that have no job_steps rows yet (supervisor seed loop, 09 3.3)."""

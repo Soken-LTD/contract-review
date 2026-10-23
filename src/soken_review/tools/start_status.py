@@ -24,6 +24,8 @@ from typing import Any, Protocol
 
 import psycopg_pool
 
+from ..context.items import check_cap, status_counts, validate_items
+from ..context.store import ContextStore
 from ..db.job_repo import JobRepo, new_job_id
 from ..db.pool import get_pool
 from ..errors import ReviewError
@@ -319,8 +321,14 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             if not await _repo_probe.is_reachable(repo_url):
                 raise ReviewError("E_REPO_UNREACHABLE", url=repo_url)
 
+        # -- Project context items (context ingestion spec 2): checked here, fetched by the worker
+        context_items: list[dict[str, Any]] = []
+        if args.get("context"):
+            context_items = validate_items((args["context"] or {}).get("items") or [])
+            check_cap([], context_items)
+
     except ReviewError as exc:
-        if exc.code in _REJECTION_CODES:
+        if exc.code in _REJECTION_CODES or exc.channel == "rejection":
             # Rejection channel (03 §7.1): caller can fix; is_error stays False
             return {"accepted": False, "errors": [exc.envelope()]}
         raise  # error channel: let server.py convert to is_error=True
@@ -374,6 +382,8 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
                 guide_version=_GUIDE_VERSION,
                 rubric_version=_RUBRIC_VERSION,
             )
+            if context_items:
+                await repo.append_context_items(job_id, context_items)   # fresh row: no cap or duplicate possible
             # Insert the first step for queued jobs (09 section 3.3); upload jobs wait for
             # the archive before being seeded by the supervisor.
             if initial_state == "queued":
@@ -422,7 +432,26 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
         result["upload_url"] = upload_url
         result["upload_expires_at"] = upload_expires_at
 
+    if context_items:
+        result["context"] = {"requested": len(context_items), "done": 0, "failed": 0}
+
     return result
+
+
+def _context_status(job: dict[str, Any]) -> dict[str, int] | None:
+    """`{requested, done, failed}` of the job's context requests against the store on disk; None
+    when nothing was requested. Without a wired read context (bare server) the counts are the
+    requests alone."""
+    items = job.get("context_items") or []
+    if not items:
+        return None
+    try:
+        from .read import _get_ctx
+
+        store = ContextStore.load(_get_ctx().get_pin_root(), job["job_id"])
+    except ReviewError:
+        return {"requested": len(items), "done": 0, "failed": 0}
+    return status_counts(store, items)
 
 
 # ---------------------------------------------------------------------------
@@ -747,6 +776,11 @@ def _build_status_response(
         if job.get("error_detail") is not None:
             err["detail"] = _error_detail_text(job["error_detail"])
         out["error"] = err
+
+    # Project context (context ingestion spec 3): present once documents were requested
+    ctx = _context_status(job)
+    if ctx is not None:
+        out["context"] = ctx
 
     # Drafts: every draft (03 §4.2); server drafts carry flag and location while needs_text
     out["drafts"] = [_draft_row(d) for d in (drafts or [])][:60]

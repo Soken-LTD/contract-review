@@ -285,6 +285,26 @@
         "run_id": "39909694496",
         "trivy_critical": 2
       }
+    },
+    "doc-fetch": {
+      "repository": "ghcr.io/soken-ltd/doc-fetch",
+      "tag": "0.1.0-dev",
+      "digest": "sha256:2e0ef763b3169645c0377ca8baee2c2f67f9cbee580a2dc87ec686e0d0c81c48",
+      "tools": {
+        "python3": "3.13",
+        "trafilatura": "2.3.1",
+        "pdfminer.six": "20260107",
+        "charset-normalizer": "3.5.2"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "soken-doc-fetch: sandboxed project-document fetcher (context ingestion spec 2026-10-23 section 3, sandbox/doc_fetch.py, context/fetcher.py) on Debian trixie; no browser, no JS. Zero digest = not built; locked_image('doc-fetch') fails closed (every requested document records error unreachable) until the CI push; the stand uses SOKEN_IMAGE_DOC_FETCH. Build: docker build -f docker/doc-fetch/Dockerfile -t ghcr.io/soken-ltd/doc-fetch:0.1.0-dev .",
+      "built": {
+        "commit": "bd3eaebf496a2e46b891153ab3e4ff5cbf1405ef",
+        "run_id": "39910901988",
+        "trivy_critical": 0
+      }
     }
   }
 }

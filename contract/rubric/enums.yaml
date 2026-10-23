@@ -183,5 +183,6 @@ coverage_status: [read, partially_read, not_covered, no_candidates, not_applicab
 challenge_value: [present, absent, not_applicable]
 checklist_kind: [kill, downgrade, context, basis]
 challenge_scope: [entry_function, call_site, shared_state_writers, account_struct, handler, module]
+context_kind: [whitepaper, website, app, docs, terms, privacy, other]   # review_start.context and review_add_context items
 na_reasons: [nr_no_external_call, nr_no_delegatecall, nr_no_oracle, nr_no_signature_check, nr_no_token_transfer,
              nr_no_loop_over_storage, nr_no_proxy, nr_no_upgrade_path, nr_no_randomness_source, nr_no_timestamp_use]

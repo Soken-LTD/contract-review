@@ -1,0 +1,90 @@
+# rubric/context_phrases.yaml (context ingestion spec 2026-10-23, section 5). Reference data for
+# soken_review.context.facts: every phrase, firm name, jurisdiction and vendor the extractor looks for
+# lives here, never in Python. Matching is case-insensitive on the LF text of a stored document; a
+# phrase is a plain substring (no regex). `window` is the character distance a number may sit from
+# its phrase.
+version: 1
+window: 60
+supply:
+  total_supply: [total supply, totalsupply, initial supply, circulating supply at launch]
+  max_supply: [max supply, maximum supply, hard cap, supply cap, capped supply, fixed supply of]
+  decimals: [decimals]
+number_words:            # suffix word -> multiplier applied to the figure before it
+  thousand: 1000
+  k: 1000
+  million: 1000000
+  mn: 1000000
+  m: 1000000
+  billion: 1000000000
+  bn: 1000000000
+  b: 1000000000
+  trillion: 1000000000000
+  t: 1000000000000
+fee:
+  phrases: [fee, fees, tax, taxes, commission, commissions, royalty, royalties, slippage]
+admin_claims:            # claim id -> phrases; the fact value is the claim id, the line is the source
+  renounced: [renounced, renounce ownership, ownership renounced, ownership has been renounced]
+  multisig: [multisig, multi-sig, multi sig, multisignature, multi-signature, gnosis safe, safe wallet]
+  timelock: [timelock, time-lock, time lock, timelocked]
+  upgradeable: [upgradeable, upgradable, upgradeable proxy, uups, transparent proxy, can be upgraded]
+  immutable: [immutable, non-upgradeable, non upgradeable, not upgradeable, cannot be upgraded, cannot be changed]
+  pausable: [pausable, pause the contract, paused by, can pause, emergency pause, circuit breaker]
+  blacklist: [blacklist, blocklist, denylist, deny list, block list, blacklisted]
+  mint: [mint, mintable, minting, minted, mint function, can mint]
+audit_claims:
+  phrases: [audited by, audit report, security audit, audit completed, audit was conducted, has been audited,
+            audits by, smart contract audit, security review by]
+  firms: [CertiK, Hacken, PeckShield, SlowMist, Trail of Bits, OpenZeppelin, Quantstamp, Halborn, Cyberscope,
+          Zokyo, Code4rena, Sherlock, Spearbit, Consensys Diligence, ConsenSys Diligence, Sigma Prime,
+          ChainSecurity, Dedaub, Cantina, Zellic, OtterSec, Neodyme, Kudelski, Hexens, Pashov, Oak Security,
+          MixBytes, Ackee Blockchain, Veridise, Nethermind, Beosin, QuillAudits, Immunefi, Omniscia, SolidProof,
+          Coinspect, Statemind, Three Sigma, Guardian Audits, Zokyo, Runtime Verification, Certora, Soken]
+terms:
+  restricted_jurisdictions:
+    phrases: [restricted jurisdiction, restricted jurisdictions, prohibited jurisdiction, prohibited jurisdictions,
+              restricted territory, restricted territories, excluded jurisdiction, excluded jurisdictions,
+              not available to residents, not available in, residents of, citizens of, sanctioned, sanctions,
+              ofac, prohibited persons, restricted persons, may not use, are not permitted]
+    names: [United States, United States of America, USA, U.S., US persons, U.S. persons, Canada, China,
+            People's Republic of China, Hong Kong, Iran, North Korea, Democratic People's Republic of Korea,
+            Syria, Cuba, Crimea, Donetsk, Luhansk, Russia, Russian Federation, Belarus, Myanmar, Burma,
+            Venezuela, Sudan, South Sudan, Libya, Yemen, Somalia, Zimbabwe, Iraq, Afghanistan, Lebanon,
+            Mali, Nicaragua, Ethiopia, Central African Republic, Congo, United Kingdom, Singapore, Japan,
+            South Korea, Australia, Netherlands, European Union, EEA]
+  kyc: [kyc, know your customer, know-your-customer, identity verification, verify your identity,
+        verification of identity, proof of identity, aml, anti-money laundering, anti money laundering,
+        customer due diligence]
+privacy:
+  data_collected:        # category -> phrases found in a privacy policy
+    wallet_address: [wallet address, wallet addresses, public address, blockchain address, on-chain address]
+    ip_address: [ip address, ip addresses, internet protocol address]
+    email: [email address, e-mail address, email addresses, contact information]
+    device: [device information, device identifier, device identifiers, browser type, operating system,
+             user agent, device data]
+    cookies: [cookies, cookie, local storage, tracking technologies]
+    transaction_data: [transaction history, transaction data, on-chain activity, transaction information]
+    location: [geolocation, location data, approximate location, country of access]
+  analytics_vendors: [Google Analytics, Mixpanel, Segment, Hotjar, Amplitude, Plausible, Matomo,
+                      Cloudflare Analytics, Microsoft Clarity, Sentry, Datadog, Intercom, HubSpot, Vercel Analytics,
+                      PostHog, Heap, Fullstory, Umami]
+chains:                  # alias -> chain record; chain_id for the EVM registry, chain key for the other families
+  - {chain_id: 1, aliases: [Ethereum, Ethereum Mainnet, ETH mainnet, Ethereum network]}
+  - {chain_id: 10, aliases: [Optimism, OP Mainnet]}
+  - {chain_id: 56, aliases: [BNB Chain, BNB Smart Chain, Binance Smart Chain, BSC]}
+  - {chain_id: 100, aliases: [Gnosis Chain, Gnosis]}
+  - {chain_id: 137, aliases: [Polygon, Polygon PoS, Polygon network]}
+  - {chain_id: 250, aliases: [Fantom, Fantom Opera]}
+  - {chain_id: 324, aliases: [zkSync Era, zkSync, ZKsync]}
+  - {chain_id: 8453, aliases: [Base network, Base chain, Base mainnet, Coinbase Base]}
+  - {chain_id: 42161, aliases: [Arbitrum, Arbitrum One]}
+  - {chain_id: 43114, aliases: [Avalanche, Avalanche C-Chain]}
+  - {chain_id: 59144, aliases: [Linea]}
+  - {chain_id: 534352, aliases: [Scroll network, Scroll zkEVM]}
+  - {chain_id: 81457, aliases: [Blast network, Blast L2]}
+  - {chain_id: 999, aliases: [HyperEVM, Hyperliquid EVM]}
+  - {chain_id: 728126428, aliases: [TRON, Tron network]}
+  - {chain: solana, aliases: [Solana]}
+  - {chain: ton, aliases: [TON blockchain, The Open Network, TON network]}
+  - {chain: sui, aliases: [Sui network, Sui blockchain, Sui mainnet]}
+  - {chain: aptos, aliases: [Aptos]}
+  - {chain: starknet, aliases: [Starknet, StarkNet]}

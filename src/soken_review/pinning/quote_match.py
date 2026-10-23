@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Any
 
+from ..context.store import is_context_path
 from .store import PinnedSource
 
 ELISION = "..."
@@ -83,8 +85,13 @@ def quote_match(
     start: int,
     end: int,
     text: str,
+    context: Any | None = None,
 ) -> None:
     """Verify that `text` matches pinned lines [start, end] per 04 5.2.
+
+    `context` is the job's ContextStore (context ingestion spec 4): a `context/` path is matched
+    against the stored document through the same routine, so provenance headers and document
+    lines quote exactly like code. Without a store, a `context/` path is E_FILE_UNKNOWN.
 
     On success returns None. On failure raises QuoteMatchError with the
     appropriate errors.yaml code:
@@ -95,7 +102,12 @@ def quote_match(
       E_QUOTE_ELISION    more than one "..." line
       E_QUOTE_MISMATCH   normalized text does not match
     """
-    entry = pin.get_entry(path)
+    source: Any = pin
+    if is_context_path(path):
+        if context is None:
+            raise QuoteMatchError("E_FILE_UNKNOWN", path=path)
+        source = context
+    entry = source.get_entry(path)
     if entry is None:
         raise QuoteMatchError("E_FILE_UNKNOWN", path=path)
 
@@ -105,7 +117,7 @@ def quote_match(
         raise QuoteMatchError("E_RANGE_INVALID", path=path, lines=entry.lines)
 
     # Normalized pinned lines (non-empty only)
-    raw_pinned = pin.read_lines(path, start, end)
+    raw_pinned = source.read_lines(path, start, end)
     P = [nl for raw in raw_pinned if (nl := normalize_line(raw))]
 
     # Parse the quote text into segments split on elision
