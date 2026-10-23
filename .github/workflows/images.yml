@@ -63,9 +63,17 @@ jobs:
             # lock already pinned; image builds are not reproducible, so a rebuild is a new digest
             # and another lock commit.
             last_lock=$(git log --format=%H --author=soken-ci "$base..HEAD" | head -1)
-            [ -n "$last_lock" ] && base=$last_lock
-            git diff --name-only "$base" HEAD > changed.txt
-            echo "changed since $base:"; cat changed.txt
+            # Changed = differs from main AND changed since the last lock: a merge from main
+            # makes files equal to main (nothing to rebuild), a branch edit after the lock
+            # differs from both.
+            git diff --name-only origin/main HEAD | sort > vs_main.txt
+            if [ -n "$last_lock" ]; then
+              git diff --name-only "$last_lock" HEAD | sort > since_lock.txt
+              comm -12 vs_main.txt since_lock.txt > changed.txt
+            else
+              cp vs_main.txt changed.txt
+            fi
+            echo "changed vs main since ${last_lock:-$base}:"; cat changed.txt
             args+=(--changed changed.txt)
             python3 scripts/images.py plan "${args[@]}" > plan.json
           else
