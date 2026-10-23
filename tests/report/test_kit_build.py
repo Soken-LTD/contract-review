@@ -241,3 +241,51 @@ def test_deepcopy_not_mutated():
     project(r)
     check_strings(r)
     assert r == before
+
+
+# ─── dismissed leads carry their dismissal reason (road-to-prod item 9) ───────────────────────
+
+def _dismissed(report_: dict, reasons: list[str]) -> dict:
+    r = copy.deepcopy(report_)
+    r["summary"]["dismissed_leads"] = {
+        "rows": [{"detector": f"det-{i}", "severity_class": "Medium",
+                  "location": {"path": "src/Vault.sol", "start": 10 + i, "end": 12 + i}, "reason": reason}
+                 for i, reason in enumerate(reasons)],
+        "remainder": 0,
+    }
+    return r
+
+
+def test_dismissed_leads_table_prints_the_reason_column(tmp_path):
+    r = _dismissed(report(severities=["Medium", "Low"]), ["fp_guarded", "not_a_vulnerability", "disproved_by_challenge"])
+    html = _html(r, tmp_path)
+    labels = kb.kit_texts()["dismissal_reasons"]
+    assert "<th>Reason</th>" in html
+    for reason in ("fp_guarded", "not_a_vulnerability", "disproved_by_challenge"):
+        assert labels[reason] in html
+    assert "det-0" in html and "det-2" in html
+
+
+def test_dismissed_leads_row_without_a_reason_fails_the_schema(tmp_path):
+    r = _dismissed(report(severities=["Medium"]), ["fp_guarded"])
+    del r["summary"]["dismissed_leads"]["rows"][0]["reason"]
+    with pytest.raises(BuildError) as e:
+        build(r, tmp_path)
+    assert e.value.code == "schema" and "reason" in e.value.detail
+
+
+def test_dismissed_leads_reason_outside_the_rubric_fails_the_schema(tmp_path):
+    r = _dismissed(report(severities=["Medium"]), ["because"])
+    with pytest.raises(BuildError) as e:
+        build(r, tmp_path)
+    assert e.value.code == "schema"
+
+
+def test_every_rubric_dismissal_reason_has_a_label():
+    import yaml
+
+    enums = yaml.safe_load((Path(__file__).resolve().parents[2] / "contract" / "rubric" / "enums.yaml").read_text())
+    rubric = set(enums["dismissal_reason"]["model"]) | set(enums["dismissal_reason"]["server"])
+    labels = kb.kit_texts()["dismissal_reasons"]
+    schema_enum = set(kb.schema()["$defs"]["dismissed_leads"]["properties"]["rows"]["items"]["properties"]["reason"]["enum"])
+    assert set(labels) == rubric == schema_enum

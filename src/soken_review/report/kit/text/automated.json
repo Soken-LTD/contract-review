@@ -150,5 +150,16 @@
   "coverage": "Review coverage",
   "disclaimer": "Disclaimer"
  },
- "upgrade_authority_not_checked": "Not checked in this review"
+ "upgrade_authority_not_checked": "Not checked in this review",
+ "dismissed_leads_reason_header": "Reason",
+ "dismissal_reasons": {
+  "fp_guarded": "Guarded at the entry",
+  "fp_unreachable": "Unreachable",
+  "not_a_vulnerability": "Not a weakness at this location",
+  "duplicate_of": "Duplicate of a finding",
+  "fixed": "Fixed on this commit",
+  "out_of_scope": "Out of scope",
+  "disproved_by_challenge": "Disproved by challenge",
+  "not_reviewed": "Not reviewed"
+ }
 }
