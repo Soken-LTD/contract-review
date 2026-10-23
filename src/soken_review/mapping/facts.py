@@ -123,6 +123,58 @@ async def onchain_facts(rpc: Any, address: str, block: int, map_doc: dict[str, A
         value = _decode_word(raw, "address")
         if value is not None and int(value, 16) != 0:
             out.append(fact(key, value, unit_id=unit_id, source=f"eth_getStorageAt EIP-1967 slot at block {block}"))
+    holders = {"owner": "onchain.owner", "admin": "onchain.eip1967.admin"}
+    by_key = {f["key"]: f["value"] for f in out}
+    for role, key in holders.items():
+        holder = by_key.get(key)
+        if holder and int(holder, 16) != 0:
+            out.extend(await holder_facts(rpc, role, holder, block, unit_id))
+    return out
+
+
+# Probes for the kind of a holder contract (08 2.2 roles table `type`), all read-only eth_call selectors:
+# Safe `getThreshold()` and `getOwners()`, OpenZeppelin TimelockController `getMinDelay()`.
+_PROBE = {"getThreshold": "0xe75235b8", "getOwners": "0xa0e67e2b", "getMinDelay": "0xf27a0c92"}
+
+
+async def holder_facts(rpc: Any, role: str, holder: str, block: int, unit_id: str | None) -> list[dict[str, Any]]:
+    """`onchain.<role>.holder_code_size`, `.holder_is_contract` and `.holder_kind` for one holder address.
+
+    Fail-closed: a failed `eth_getCode` yields no fact at all (never a false). `holder_kind` is
+    `eoa` for empty code, `multisig` when `getThreshold()` returns a positive word and `getOwners()`
+    answers, `timelock` when `getMinDelay()` returns a word, else `contract`; a failed probe only
+    means the generic `contract`."""
+    try:
+        code = await rpc.get_code(holder, block=block)
+    except Exception as exc:  # noqa: BLE001  # a failed read is no fact (04 1.3)
+        logger.info("eth_getCode %s failed: %s", holder, exc)
+        return []
+    if not isinstance(code, str) or not code.startswith("0x"):
+        return []
+    try:
+        size = len(bytes.fromhex(code[2:]))
+    except ValueError:
+        return []
+    source = f"eth_getCode at block {block}"
+    out = [fact(f"onchain.{role}.holder_code_size", size, unit="bytes", unit_id=unit_id, source=source),
+           fact(f"onchain.{role}.holder_is_contract", "true" if size else "false", unit_id=unit_id, source=source)]
+    kind = "contract" if size else "eoa"
+    if size:
+        probes: dict[str, int | None] = {}
+        for name, sel in _PROBE.items():
+            try:
+                raw = await rpc.eth_call(holder, sel, block=block)
+            except Exception as exc:  # noqa: BLE001  # a failed probe is the generic kind, not an error
+                logger.info("eth_call %s on %s failed: %s", name, holder, exc)
+                probes[name] = None
+                continue
+            word = _decode_word(raw, "uint")
+            probes[name] = int(word) if word is not None else None
+        if (probes.get("getThreshold") or 0) > 0 and probes.get("getOwners") is not None:
+            kind = "multisig"
+        elif probes.get("getMinDelay") is not None:
+            kind = "timelock"
+    out.append(fact(f"onchain.{role}.holder_kind", kind, unit_id=unit_id, source=source))
     return out
 
 

@@ -143,6 +143,38 @@ def test_vault_renounced_owner_and_no_facts(vault):
     assert _node(block, "u_vault")["sub"] == "4 entries"
 
 
+@pytest.mark.parametrize(("extra", "expected"), [
+    ([], "Unknown"),                                                        # no holder fact
+    ([("onchain.owner.holder_is_contract", "false")], "EOA"),
+    ([("onchain.owner.holder_is_contract", "true")], "Contract"),
+    ([("onchain.owner.holder_is_contract", "true"), ("onchain.owner.holder_kind", "multisig")], "Multisig"),
+    ([("onchain.owner.holder_is_contract", "true"), ("onchain.owner.holder_kind", "timelock")], "Timelock"),
+    ([("onchain.owner.holder_is_contract", "true"), ("onchain.owner.holder_kind", "contract")], "Contract"),
+    ([("onchain.owner.holder_is_contract", "false"), ("onchain.owner.holder_kind", "eoa")], "EOA"),
+])
+def test_type_column_from_holder_facts(vault, extra, expected):
+    facts = [_fact("onchain.owner", OWNER, "src/Vault.sol:Vault")] + [_fact(k, v, "src/Vault.sol:Vault") for k, v in extra]
+    rows = role_rows(vault, facts, {"address": ADDRESS})
+    owner = next(r for r in rows if r["role"] == "onlyOwner")
+    assert owner["holder"] == {"addr": OWNER} and owner["type"] == expected
+    assert _errors("role_row", owner) == []
+    # the inline check has no address fact, so the holder facts never leak onto it
+    assert next(r for r in rows if r["role"] == "msg.sender check")["type"] == "Unknown"
+
+
+def test_type_column_renounced_owner_and_proxy_admin(vault):
+    zero = [_fact("onchain.owner", "0x" + "0" * 40, "src/Vault.sol:Vault"),
+            _fact("onchain.owner.holder_is_contract", "false", "src/Vault.sol:Vault")]
+    owner = next(r for r in role_rows(vault, zero, {"address": ADDRESS}) if r["role"] == "onlyOwner")
+    assert owner["holder"] == "Renounced" and owner["type"] == "Unknown"   # no holder to type
+    facts = [_fact("onchain.eip1967.implementation", IMPL, "src/Vault.sol:Vault"),
+             _fact("onchain.eip1967.admin", ADMIN, "src/Vault.sol:Vault"),
+             _fact("onchain.admin.holder_is_contract", "true", "src/Vault.sol:Vault"),
+             _fact("onchain.admin.holder_kind", "multisig", "src/Vault.sol:Vault")]
+    rows = role_rows(vault, facts, {"address": ADDRESS})
+    assert rows[0]["role"] == "Proxy admin" and rows[0]["type"] == "Multisig"
+
+
 def test_vault_deployed_unit_from_deployment_json(vault):
     block = architecture_block(vault, [], {}, {"dep": {"contract": "src/Vault.sol:Vault"}})
     assert _node(block, "u_vault")["sub"] == "deployed, 4 entries"

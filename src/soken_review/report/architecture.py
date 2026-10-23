@@ -502,21 +502,42 @@ def _signals(gated: list[dict[str, Any]], cats_of: dict[str, set[str]]) -> list[
     return phrases
 
 
-def _holder(role: str, unit_is_deployed: bool, fv: dict[str, dict[str, Any]]) -> dict[str, str] | str:
-    if not unit_is_deployed:
-        return "Unknown"
-    key = None
+HOLDER_FACT = {"owner": "onchain.owner", "admin": "onchain.eip1967.admin"}
+KIND_FACT_TYPES = {"eoa": "EOA", "multisig": "Multisig", "timelock": "Timelock", "contract": "Contract"}
+
+
+def _holder_type(role_key: str | None, fv: dict[str, dict[str, Any]], map_kind: str | None) -> str:
+    """Schema `type` from the chain_state holder facts (`onchain.<role>.holder_kind`, else the
+    `holder_is_contract` flag), falling back to the map `holder_kind`; `Unknown` when nothing says."""
+    if role_key:
+        kind = fv.get(f"onchain.{role_key}.holder_kind")
+        if kind and str(kind.get("value")) in KIND_FACT_TYPES:
+            return KIND_FACT_TYPES[str(kind["value"])]
+        flag = fv.get(f"onchain.{role_key}.holder_is_contract")
+        if flag and str(flag.get("value")) in ("true", "false"):
+            return "Contract" if str(flag["value"]) == "true" else "EOA"
+    return HOLDER_TYPES.get(map_kind or "unknown", "Unknown")
+
+
+def _holder(role: str, unit_is_deployed: bool, fv: dict[str, dict[str, Any]],
+            map_kind: str | None) -> tuple[dict[str, str] | str, str]:
+    """(holder cell, type) of a role row; the address facts apply to the deployed unit only."""
+    role_key = None
     if re.search("owner", role, re.IGNORECASE):
-        key = "onchain.owner"
+        role_key = "owner"
     elif re.search("admin", role, re.IGNORECASE):
-        key = "onchain.eip1967.admin"
-    rec = fv.get(key) if key else None
+        role_key = "admin"
+    if not unit_is_deployed or role_key is None:
+        return "Unknown", _holder_type(None, fv, map_kind)
+    rec = fv.get(HOLDER_FACT[role_key])
     if not rec:
-        return "Unknown"
+        return "Unknown", _holder_type(None, fv, map_kind)
     value = str(rec.get("value") or "")
     if ZERO_ADDR_RE.match(value):
-        return "Renounced"
-    return {"addr": value} if len(value) >= 20 else "Unknown"
+        return "Renounced", _holder_type(None, fv, map_kind)
+    if len(value) < 20:
+        return "Unknown", _holder_type(None, fv, map_kind)
+    return {"addr": value}, _holder_type(role_key, fv, map_kind)
 
 
 def _gated_labels(spans: list[str]) -> list[str]:
@@ -556,15 +577,15 @@ def role_rows(map_doc: dict[str, Any] | None, facts: Any, job: dict[str, Any] | 
             role = label if len(groups) == 1 else f"{label} ({unit_name})"
             gated = [fns[s] for s in spans if s in fns]
             phrases = _signals(gated, cats_of) or [_rules()["fallback"]]
-            row = {"role": role[:300], "holder": _holder(r["name"], is_dep, fv),
-                   "type": HOLDER_TYPES.get(r.get("holder_kind") or "unknown", "Unknown"),
+            holder, kind = _holder(r["name"], is_dep, fv, r.get("holder_kind"))
+            row = {"role": role[:300], "holder": holder, "type": kind,
                    "gated_functions": _gated_labels(spans)[:MAX_GATED],
                    "risk_note": "; ".join(phrases)[:300]}
             rows.append(((0 if is_dep else 1, unit_name, role), row))
     admin = fv.get("onchain.eip1967.admin")
     if admin and deployed and len(str(admin.get("value") or "")) >= 20:
         rows.append(((0, "", "Proxy admin"), {"role": "Proxy admin", "holder": {"addr": str(admin["value"])},
-                                              "type": "Unknown", "gated_functions": [],
+                                              "type": _holder_type("admin", fv, None), "gated_functions": [],
                                               "risk_note": next(s["phrase"] for s in _rules()["signals"]
                                                                 if s["id"] == "code_change")}))
     return [row for _, row in sorted(rows, key=lambda kv: kv[0])][:MAX_ROLE_ROWS]
