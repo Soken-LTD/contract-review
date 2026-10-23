@@ -292,6 +292,7 @@ async def _assign_final_ids(
                       d.current_revision,
                       r.category, r.category_family, r.impact_class,
                       r.content->>'matrix' as matrix_json,
+                      d.matrix_effective,
                       r.map_unavailable,
                       jsonb_array_length(coalesce(r.content->'attack_steps', '[]'::jsonb)) > 0
                           as has_attack_steps,
@@ -342,9 +343,15 @@ async def _assign_final_ids(
         map_unavail = bool(d.get("map_unavailable", False))
         has_attack_steps = bool(d.get("has_attack_steps", False))
 
+        # The post-challenge matrix (basis fallbacks applied, 04 8.2) is the one the reviewer
+        # defended; recomputing from the submitted matrix re-raised a challenge-downgraded
+        # Critical->High back to Critical in the PDF (c2 re-run, 2026-10-23).
         matrix_raw = d.get("matrix_json")
         try:
-            matrix = json.loads(matrix_raw) if matrix_raw else {}
+            eff = d.get("matrix_effective")
+            if isinstance(eff, str):
+                eff = json.loads(eff)
+            matrix = dict(eff) if isinstance(eff, dict) and eff else (json.loads(matrix_raw) if matrix_raw else {})
         except (ValueError, TypeError):
             # Corrupt stored JSON — cannot compute severity safely; block finalize
             raise ReviewError(

@@ -2386,3 +2386,54 @@ def test_lead_function_ranges_narrowest_structure_first():
     pragma = {"path": "a.sol", "start_line": 1, "end_line": 1}
     assert _lead_function_ranges(doc, pragma, 80) == [("a.sol", 1, 80)]
     assert _lead_function_ranges(None, pragma, 80) == [("a.sol", 1, 1)]
+
+
+@ASYNC
+async def test_finalize_keeps_the_post_challenge_severity_after_a_basis_downgrade(db_pool):
+    """Challenge verdict `downgraded` (basis fallbacks applied to matrix_effective) must survive
+    finalize: the printed severity is the defended one, not a recomputation from the submitted
+    matrix (c2 re-run 2026-10-23: Critical -> High at challenge, Critical again in the PDF)."""
+    from soken_review.tools import challenge as challenge_mod
+    from soken_review.tools import finalize as finalize_mod
+    from soken_review.tools import submit as submit_mod
+    from soken_review.tools.context import MemoryJobContext
+
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    ctx = MemoryJobContext(pin_root)
+    for mod in (submit_mod, challenge_mod, finalize_mod):
+        mod.set_pool(db_pool)
+        mod.set_context(ctx)
+
+    args = dict(_VALID_SUBMISSION)
+    args.update(job_id=job_id, draft_key="draft-basis-001", claimed_severity="Critical",
+                matrix={**_VALID_MATRIX, "precondition": "none"})
+    sub = await submit_mod.handle_review_submit_finding(args)
+    assert sub["accepted"] is True, sub
+    if sub.get("status") != "needs_challenge":
+        pytest.skip(f"severity {sub.get('computed_severity')} needs no challenge")
+    ch = await challenge_mod.handle_review_challenge({"job_id": job_id, "draft_key": "draft-basis-001"})
+    await _log_reads(db_pool, job_id, "src/Vault.sol", 1, 9)
+    # every item absent: the basis items that expect `present` (MB0 value transfer, MB1 unbounded)
+    # fall back and lower the matrix, so the verdict is `downgraded`
+    answers = [{"item_id": i["id"], "value": "absent",
+                "refs": i["scope"].get("ranges") or ["src/Vault.sol:1-9"],
+                "note": "No code evidence for this condition after reading the whole scope."}
+               for i in ch["items"]]
+    ans = await challenge_mod.handle_review_answer_challenge(
+        {"job_id": job_id, "draft_key": "draft-basis-001", "revision": ch["revision"], "answers": answers})
+    assert ans["accepted"] is True, ans
+    if ans["verdict"] != "downgraded":
+        pytest.skip(f"no basis downgrade on this fixture: {ans}")
+    defended = ans["severity_after"]
+    assert defended != ans["severity_before"]
+    try:
+        fin = await finalize_mod.handle_review_finalize({"job_id": job_id})
+        assert fin["accepted"] is True, fin
+        async with db_pool.connection() as conn:
+            row = await (await conn.execute(
+                "select severity from finding_drafts where job_id = %s and draft_key = %s",
+                (job_id, "draft-basis-001"))).fetchone()
+        assert row[0] == defended, (row, ans)
+    finally:
+        async with db_pool.connection() as conn:
+            await conn.execute("delete from job_steps where job_id = %s", (job_id,))
