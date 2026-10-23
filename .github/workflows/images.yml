@@ -58,8 +58,14 @@ jobs:
           elif [ "$EVENT" = "push" ]; then
             git fetch -q origin main
             base=$(git merge-base origin/main HEAD)
+            # Plan from what changed since the last lock commit on this branch, else since main:
+            # a push after a lock (a fix, an empty commit to re-run CI) must not rebuild what that
+            # lock already pinned; image builds are not reproducible, so a rebuild is a new digest
+            # and another lock commit.
+            last_lock=$(git log --format=%H --author=soken-ci "$base..HEAD" | head -1)
+            [ -n "$last_lock" ] && base=$last_lock
             git diff --name-only "$base" HEAD > changed.txt
-            echo "changed since main ($base):"; cat changed.txt
+            echo "changed since $base:"; cat changed.txt
             args+=(--changed changed.txt)
             python3 scripts/images.py plan "${args[@]}" > plan.json
           else
