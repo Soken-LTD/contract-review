@@ -5,7 +5,7 @@ root, no network for build and analyze, the family egress network for deps only.
 
   <work>/src   -> /work/src   read-only (the pinned source, never writable after the pin)
   <work>/out   -> /work/out   read-write, empty at start (artifacts only)
-  <work>/move  -> /work/move  MOVE_HOME: written by deps (egress), read-only in build/analyze
+  <work>/move  -> /work/move  MOVE_HOME: filled by deps (egress); writable everywhere, offline in build/analyze
   <work>/host  never mounted: supervisor files (logs, hashes, provenance)
 
 Container output is read back with lstat checks only (no symlink, regular files, inside out/).
@@ -133,6 +133,22 @@ def prepare_dirs(work: Path) -> dict[str, Path]:
     return dirs
 
 
+def mounts_for(dirs: dict[str, Path], step: str) -> list[tuple[Path, str, bool]]:
+    """Bind mounts of one CLI run: (host, container, read_only). The source is read-only after
+    the pin; artifacts are written by build/analyze only; MOVE_HOME is writable in every step:
+    deps fills it (the only step with egress), and the new Sui package system (move-package-alt,
+    mainnet-v1.81.1) takes a lock file under `$MOVE_HOME/git/` even when every dependency is
+    cached, so a read-only cache panicked the offline build (`failed to get git cache folder
+    lock ... Read-only file system`, stand 2026-10-23). Writes there cannot fetch anything:
+    build and analyze run with --network=none."""
+    deps = step == "deps"
+    return [
+        (dirs["src"].resolve(), "/work/src", True),
+        (dirs["out"].resolve(), "/work/out", deps),
+        (dirs["move"].resolve(), "/work/move", False),
+    ]
+
+
 def run(
     chain: str,
     step: str,
@@ -144,7 +160,7 @@ def run(
     extra_env: dict[str, str] | None = None,
     image: str | None = None,
 ) -> RunResult:
-    """One CLI run. step = deps (egress, MOVE_HOME writable) | build | analyze (no network).
+    """One CLI run. step = deps (egress) | build | analyze (no network); mounts: `mounts_for`.
 
     image: optional pre-resolved image string (repository@digest).  When given the
     caller is responsible for having checked availability via ``image_for`` or
@@ -153,12 +169,7 @@ def run(
     image = image if image is not None else image_for(chain)
     if any(".." in tok.split("/") for tok in command):
         raise ValueError("path token with ..")
-    deps = step == "deps"
-    mounts = [
-        (dirs["src"].resolve(), "/work/src", True),          # source: read-only after the pin
-        (dirs["out"].resolve(), "/work/out", deps),           # artifacts: written by build/analyze only
-        (dirs["move"].resolve(), "/work/move", not deps),     # MOVE_HOME: written by deps only
-    ]
+    mounts = mounts_for(dirs, step)
     if "scratch" in dirs:
         # Analyzer scratch copy of the source (the CLI writes next to the package); the host never
         # reads anything back from it except the process output.
