@@ -1214,7 +1214,7 @@
   {
    "name": "review_dismiss_lead",
    "title": "Dismiss leads",
-   "description": "Closes 1 to 50 analyzer leads with a reason (guarded, unreachable, not a vulnerability at this location, duplicate of a finding, or fixed) and quoted code evidence that the server checks. Changes lead states in the job. Results are reported per item.",
+   "description": "Closes 1 to 50 analyzer leads with a reason (guarded, unreachable, not a vulnerability at this location, duplicate of a finding, or fixed) and quoted code evidence that the server checks. Arguments: job_id and items, an array of {lead_id, reason, quotes, note, duplicate_of, item_id}; there is no top-level lead_id. Changes lead states in the job. Results are reported per item.",
    "annotations": {
     "title": "Dismiss leads",
     "readOnlyHint": false,
@@ -1268,7 +1268,7 @@
         },
         "note": {
          "type": "string",
-         "maxLength": 300,
+         "maxLength": 600,
          "description": "reason not_a_vulnerability: required, at least 40 characters, why the detector pattern is not a weakness at the lead location; other reasons: optional. Audit-log text, not report text."
         }
        },

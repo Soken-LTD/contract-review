@@ -2283,9 +2283,13 @@ async def _dismiss_nav(db_pool, job_id, pin_root, lead_id: str, quote: dict | No
 async def test_not_a_vulnerability_with_quote_in_function_and_note_dismisses_and_closes_f2(db_pool):
     """Quote inside the lead's function + note >= 40 chars: dismissed, audit row written, F2 closed.
     The note carries numbers, a tool name and a question mark: no prose or number gate on notes."""
+    from soken_review.tools import finalize as finalize_mod
+    from soken_review.tools.context import MemoryJobContext
     from soken_review.tools.finalize import compute_finalize_checks
 
     job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    finalize_mod.set_pool(db_pool)
+    finalize_mod.set_context(MemoryJobContext(pin_root))
     await _insert_lead(db_pool, job_id, "LEAD-0601", severity_norm="High", start=5, end=8)
     res = await _dismiss_nav(db_pool, job_id, pin_root, "LEAD-0601",
                              {"file": "src/Vault.sol", "start": 6, "end": 6,
@@ -2348,3 +2352,34 @@ async def test_not_a_vulnerability_comment_only_quote_is_rejected(db_pool):
                              _NAV_NOTE)
     codes = [e["code"] for e in res["rejected"][0]["errors"]]
     assert codes == ["E_DISMISS_COMMENT_ONLY"], res
+
+
+@ASYNC
+async def test_not_a_vulnerability_file_level_lead_accepts_any_code_line_of_the_file(db_pool):
+    """A `solc-version`-style lead at 1-1 sits in no function; with a (lexical) map the whole file
+    is the holding scope, so a real code line elsewhere in the file closes it."""
+    from soken_review.mapping.step import run_map_step
+
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    run_map_step(pin_root, job_id, solc_output_path=None, build_ok=False)
+    await _insert_lead(db_pool, job_id, "LEAD-0606", start=1, end=1)
+    res = await _dismiss_nav(db_pool, job_id, pin_root, "LEAD-0606",
+                             {"file": "src/Vault.sol", "start": 6, "end": 6,
+                              "text": '        (bool ok, ) = msg.sender.call{value: a}("");'},
+                             _NAV_NOTE)
+    assert res["dismissed"] == ["LEAD-0606"], res
+
+
+def test_lead_function_ranges_narrowest_structure_first():
+    """Pure: function span > semantic unit > whole file > own lines (no map)."""
+    from soken_review.tools.dismiss import _lead_function_ranges
+
+    lead = {"path": "a.sol", "start_line": 20, "end_line": 20}
+    doc = {"spans": [{"id": "a.sol:f", "kind": "function", "file": "a.sol", "start": 18, "end": 25}],
+           "semantic": {"units": [{"id": "a.sol:C", "file": "a.sol", "start": 5, "end": 60}]}}
+    assert _lead_function_ranges(doc, lead, 80) == [("a.sol", 18, 25)]
+    state_var = {"path": "a.sol", "start_line": 7, "end_line": 7}
+    assert _lead_function_ranges(doc, state_var, 80) == [("a.sol", 5, 60)]
+    pragma = {"path": "a.sol", "start_line": 1, "end_line": 1}
+    assert _lead_function_ranges(doc, pragma, 80) == [("a.sol", 1, 80)]
+    assert _lead_function_ranges(None, pragma, 80) == [("a.sol", 1, 1)]

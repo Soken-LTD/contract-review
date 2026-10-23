@@ -110,18 +110,42 @@ def _check_note(note: str, lead_id: str) -> list[dict[str, Any]]:
 _NAV_MIN_NOTE_CHARS = 40
 
 
-def _lead_function_ranges(map_doc: dict | None, lead: dict[str, Any]) -> list[tuple[str, int, int]]:
-    """Line ranges a `not_a_vulnerability` quote must touch: the lexical spans enclosing the
-    lead location (function, modifier or contract-level span), else the lead's own lines."""
+def _lead_function_ranges(map_doc: dict | None, lead: dict[str, Any], file_lines: int = 0) -> list[tuple[str, int, int]]:
+    """Line ranges a `not_a_vulnerability` quote must touch, narrowest known structure first.
+
+    1. The lexical function or modifier spans enclosing the lead location (the lexical layer emits
+       only those two kinds, so a lead inside a function is bound to that function).
+    2. Otherwise the lead is contract-level code (state variable, event, `using for`) or
+       file-level code (pragma, import; `solc-version` detectors report `1-1`): the semantic unit
+       (contract) that holds the lead when the map has one.
+    3. Otherwise, with a map present, the whole file. Binding such a lead to its own lines made it
+       unclosable: the only quotable line was a pragma or a license comment (c4 re-run,
+       2026-10-23). Reviewed and accepted as the narrowest range that still contains code; the
+       note and the audit row remain mandatory.
+    4. Without a map the lead's own lines are the only known structure (fail closed)."""
     path, start, end = lead["path"], int(lead["start_line"]), int(lead["end_line"])
-    out: list[tuple[str, int, int]] = []
-    for sp in (map_doc or {}).get("spans", []) or []:
-        if sp.get("file") != path:
-            continue
-        s, e = int(sp.get("start", 0)), int(sp.get("end", 0))
-        if s and e and not (e < start or s > end):
-            out.append((path, s, e))
-    return out or [(path, start, end)]
+
+    def covering(items: list[dict], s_key: str = "start", e_key: str = "end") -> list[tuple[str, int, int]]:
+        out: list[tuple[str, int, int]] = []
+        for it in items:
+            if it.get("file") != path:
+                continue
+            s, e = int(it.get(s_key, 0)), int(it.get(e_key, 0))
+            if s and e and not (e < start or s > end):
+                out.append((path, s, e))
+        return out
+
+    if map_doc is None:
+        return [(path, start, end)]
+    fn_spans = covering([sp for sp in (map_doc.get("spans") or []) if sp.get("kind") in ("function", "modifier")])
+    if fn_spans:
+        return fn_spans
+    units = covering(list((map_doc.get("semantic") or {}).get("units") or []))
+    if units:
+        return units
+    if file_lines > 0:
+        return [(path, 1, file_lines)]
+    return [(path, start, end)]
 
 
 # ── Duplicate-of checks (04 §10 D1–D4) ───────────────────────────────────────
@@ -487,7 +511,11 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                     reason="not_a_vulnerability requires a code quote inside the lead's function",
                 ).envelope())
             else:
-                allowed = _lead_function_ranges(map_doc, lead)
+                try:
+                    n_lines = pin.line_count(lead["path"])
+                except (KeyError, ValueError):
+                    n_lines = 0
+                allowed = _lead_function_ranges(map_doc, lead, n_lines)
                 for q in quotes[:3]:
                     qt = q.get("text")
                     q_file, q_start, q_end = q.get("file"), q.get("start"), q.get("end")
