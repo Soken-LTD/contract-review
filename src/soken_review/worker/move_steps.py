@@ -75,8 +75,11 @@ def fetch(job: dict[str, Any], out_dir: Path, pin_root: Path) -> dict[str, Any] 
     j: dict[str, Any] = {"address": job.get("address"), "chain_state_file": str(cs_file) if cs else None,
                          "work_dir": str(out_dir / "fetch")}
     if job.get("source_kind") == "repo":
-        j |= {"repo_url": args["repo_url"], "commit": args.get("commit") or args.get("ref") or "HEAD",
-              "package_dir": args.get("subdir") or "."}
+        # The supervisor-resolved sha pins the fetch when `_fetch_repo` already resolved the
+        # request's short commit or ref (non-EVM repo mode); otherwise the request's own pin.
+        j |= {"repo_url": args["repo_url"],
+              "commit": job.get("resolved_commit") or args.get("commit") or args.get("ref") or "HEAD",
+              "package_dir": (args.get("subdir") or "").strip("/") or "."}
     elif job.get("source_kind") == "files":
         j["files"] = {f["path"]: f["content"] for f in args.get("files", [])}
     bundles = adapter(chain).fetch_source(j, {chain: ChainValue(cs, "pinned")} if cs else {})

@@ -117,11 +117,18 @@ def find_package_dir(files: dict[str, str], name: str | None) -> str | None:
 
 
 def candidate_from_repo(repo_url: str, commit: str, work: Path, package: str | None,
-                        cs: dict[str, Any] | None, chain_state_file: str | None) -> Candidate:
+                        cs: dict[str, Any] | None, chain_state_file: str | None,
+                        package_dir: str | None = None) -> Candidate:
     """User repo at commit (07 7.1.3). With an address, the unit is the package the manifest names;
-    a name absent from the registry is not_checkable package_not_found (07 7.1.1)."""
+    a name absent from the registry is not_checkable package_not_found (07 7.1.1). `package_dir`
+    (the request's `subdir`, or the directory repo detection chose) names the package directly
+    when the repository holds several."""
     files, resolved = gitfetch.fetch_repo(repo_url, commit, work)
-    pkg_dir = find_package_dir(files, package)
+    wanted = (package_dir or "").strip("/")
+    if wanted and wanted != "." and f"{wanted}/Move.toml" in files:
+        pkg_dir = wanted
+    else:
+        pkg_dir = find_package_dir(files, package)
     if pkg_dir is None:
         raise gitfetch.FetchError("package manifest not found in repository")
     name = tomllib.loads(files[f"{pkg_dir}/Move.toml" if pkg_dir != "." else "Move.toml"])["package"]["name"]

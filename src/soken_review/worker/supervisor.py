@@ -893,6 +893,15 @@ class Supervisor:
         )
 
         if cand is None:
+            detail: dict[str, Any] = {"stage": "repo_candidate", "detail": reason}
+            if reason == "no_solidity_sources" and not chain_name and not address:
+                # A repo-only job reaches this path with no chain. A Scarb or Move tree is not
+                # an EVM failure: hand the same fetch step to its family runner
+                # (adapters/repo_detect). Undetectable trees keep the reason in error_detail.
+                handed = await self._hand_repo_to_family(step, job, source_args, fetch_result.src_dir,
+                                                         expected_sha, detail)
+                if handed:
+                    return None
             # npm-only, no sources, etc. → insufficient_source (09 3.6)
             async with self._pool.connection() as conn:
                 repo = JobRepo(conn)
@@ -900,8 +909,8 @@ class Supervisor:
                     await repo.complete_step(step_id, "done",
                                              error_code="E_SOURCE_NOT_FOUND")
                     await repo.transition(job_id, "insufficient_source",
-                                          error_code="E_SOURCE_NOT_FOUND")
-            logger.info("job %s: repo insufficient_source reason=%s", job_id[-8:], reason)
+                                          error_code="E_SOURCE_NOT_FOUND", error_detail=detail)
+            logger.info("job %s: repo insufficient_source reason=%s", job_id[-8:], detail)
             return None
 
         candidates = [cand]
@@ -911,6 +920,41 @@ class Supervisor:
             candidates.append(explorer_candidate)
 
         return candidates
+
+    async def _hand_repo_to_family(self, step: dict[str, Any], job: dict[str, Any],
+                                   source_args: dict[str, Any], src_dir: Path,
+                                   resolved_sha: str | None, detail: dict[str, Any]) -> bool:
+        """Non-EVM repo mode (road-to-prod item 4): a Scarb.toml tree runs the Starknet fetch, a
+        Move.toml tree the Sui/Aptos fetch, on this same step. The chain is persisted first so
+        every later step of the job routes to that family (`_run_step`). Returns False, with the
+        reason added to `detail`, when the tree is not recognised; the caller then ends the job."""
+        from ..adapters.repo_detect import RepoFamily, detect_repo_family
+
+        job_id = job["job_id"]
+        files, _refused = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: safe_read_repo_tree(src_dir))
+        found = detect_repo_family(files, source_args.get("subdir"))
+        if not isinstance(found, RepoFamily):
+            detail["repo_family"] = found.reason
+            if found.manifests:
+                detail["manifests"] = list(found.manifests[:10])
+            return False
+        async with self._pool.connection() as conn:
+            await JobRepo(conn).update_job_fields(job_id, chain=found.chain)
+        args = dict(source_args)
+        if not (args.get("subdir") or "").strip("/") and found.package_dir:
+            args["subdir"] = found.package_dir
+        handed = dict(job)
+        handed.update(chain=found.chain, source_args=args, resolved_commit=resolved_sha or job.get("resolved_commit"))
+        logger.info("job %s: repo is %s (%s), handing the fetch step to the %s runner",
+                    job_id[-8:], found.chain, found.manifest, found.chain)
+        if found.chain == "starknet":
+            from . import starknet_steps
+
+            await starknet_steps.run_step(self, step, handed)
+        else:
+            await self._run_move_step(step, handed)
+        return True
 
     async def _after_fetch(self, step: dict[str, Any], job: dict[str, Any]) -> None:
         """Transition job to building and insert build step after fetch done."""

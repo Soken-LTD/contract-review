@@ -138,7 +138,11 @@ async def _fetch(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
     args = job.get("source_args") or {}
     if isinstance(args, str):
         args = json.loads(args)
-    repo_url, commit, subdir = args.get("repo_url"), args.get("commit") or "", args.get("subdir") or ""
+    repo_url, subdir = args.get("repo_url"), args.get("subdir") or ""
+    # The supervisor-resolved sha (a short commit or a ref pinned by `_fetch_repo`) is the pin;
+    # the request's own 40-hex commit is the fallback for jobs that never passed through it.
+    resolved = str(job.get("resolved_commit") or "").lower()
+    commit = resolved if _COMMIT_RE.match(resolved) else str(args.get("commit") or "").lower()
     if not repo_url:
         await _finish(sup, step, step_status="done", to_state="insufficient_source", error_code="E_SOURCE_NOT_FOUND",
                       detail={"detail": "starknet_needs_repo", "hint": _TIER_D_HINT})

@@ -35,7 +35,7 @@ class AptosAdapter:
         address = normalize_address(j["address"]) if j.get("address") else None
         if j.get("repo_url"):
             cand = fetch.candidate_from_repo(j["repo_url"], j["commit"], Path(j["work_dir"]), j.get("package"),
-                                             state, j.get("chain_state_file"))
+                                             state, j.get("chain_state_file"), package_dir=j.get("package_dir"))
         elif j.get("files"):
             cand = fetch.candidate_from_inline(j["files"])
         elif state is not None:
