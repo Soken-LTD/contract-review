@@ -58,6 +58,8 @@ egress:                        # 09 4.3: sandbox outbound allowlist, one smokesc
   move: []
   starknet: [scarbs.xyz, storage.googleapis.com, index.crates.io, static.crates.io]   # verified 2026-10-22: Scarb index on scarbs.xyz, package blobs on GCS (signed URLs); Cairo procedural macros are Rust crates fetched by cargo (same two crates.io hosts as solana)
   ton: []
+  docs: {allow_public: true}   # context ingestion spec 3: the doc-fetch step reaches any public https host; smokescreen's own
+                               # deny list (private, loopback, link-local, metadata ranges) stays in force; no host list
 outbound:                      # politeness, supervisor only; rate_buckets out:s:<provider>; a provider without a row is not callable
   quicknode: {per_s: 40}
   sourcify: {per_s: 2}         # 05 R4; value set by 05 UV5-02

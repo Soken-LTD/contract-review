@@ -34,6 +34,21 @@
       ],
       "note": "docker/aptos-prove (plan v4 07 prover integration). Extends aptos-build with z3 (apt, Debian bookworm 4.8.17) and Boogie 3.4.3 (dotnet global tool). Zero digest = not built; prove_image_for('aptos') fails closed until the x86 stand builds and pins the digest. Build: docker build -f docker/aptos-prove/Dockerfile -t ghcr.io/soken-ltd/aptos-prove:aptos-cli-v9.6.0-prove ."
     },
+    "doc-fetch": {
+      "repository": "ghcr.io/soken-ltd/doc-fetch",
+      "tag": "0.1.0-dev",
+      "digest": "",
+      "tools": {
+        "python3": "3.13",
+        "trafilatura": "2.3.1",
+        "pdfminer.six": "20260107",
+        "charset-normalizer": "3.5.2"
+      },
+      "platforms": [
+        "linux/amd64"
+      ],
+      "note": "soken-doc-fetch: sandboxed project-document fetcher (context ingestion spec 2026-10-23 section 3, sandbox/doc_fetch.py, context/fetcher.py) on Debian trixie; no browser, no JS. Zero digest = not built; locked_image('doc-fetch') fails closed (every requested document records error unreachable) until the CI push; the stand uses SOKEN_IMAGE_DOC_FETCH. Build: docker build -f docker/doc-fetch/Dockerfile -t ghcr.io/soken-ltd/doc-fetch:0.1.0-dev ."
+    },
     "evm-analyze": {
       "repository": "ghcr.io/soken-ltd/evm-analyze",
       "tag": "0.1.0-dev",

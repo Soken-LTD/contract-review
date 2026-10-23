@@ -126,3 +126,23 @@ def test_lock_updates_aliases_and_keeps_other_entries(tmp_path, monkeypatch):
     assert after["solana-build"] == before["solana-build"]          # upstream pin untouched
     assert set(after) == set(before)
     assert after["evm-analyze"] == before["evm-analyze"]
+
+
+def test_docs_family_renders_an_open_acl_without_hosts():
+    # Context ingestion spec 3: `docs: {allow_public: true}` -> smokescreen `open` default, no host
+    # list; the proxy's own private-range denial is what keeps metadata and LAN out of reach.
+    acl = yaml.safe_load(egress.render_acl("docs"))
+    assert acl["default"] == {"project": "soken-docs", "action": "open"}
+    assert egress.allowlist("docs") == [] and egress.allow_public("docs") is True
+    assert egress.network_name("docs") == "soken-egress-docs"
+    assert egress.allow_public("evm") is False
+    evm = yaml.safe_load(egress.render_acl("evm"))
+    assert evm["default"]["action"] == "enforce" and "github.com" in evm["default"]["allowed_domains"]
+
+
+def test_allow_public_row_must_be_exact(tmp_path):
+    limits = tmp_path / "limits.yaml"
+    for bad in ({"allow_public": False}, {"allow_public": True, "hosts": []}, {"open": True}):
+        limits.write_text(yaml.safe_dump({"egress": {"all": [], "docs": bad}}))
+        with pytest.raises(ValueError):
+            egress.allowlist("docs", limits)
