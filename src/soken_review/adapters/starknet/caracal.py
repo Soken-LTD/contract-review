@@ -26,6 +26,7 @@ failing closed to High for an unlisted value.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 # Tool identity (reference data, not output): the binary name and the pinned release version.
 CARACAL_TOOL = "caracal"
 CARACAL_VERSION = "0.2.3"
+_SEMVER_RE = re.compile(r"^(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?:[-+][0-9A-Za-z.]{1,40})?$")
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # Header of one finding: `<name> Impact: <I> Confidence: <C>`. Detector names are lowercase with
@@ -70,6 +72,91 @@ _DETECTOR_CATEGORY: dict[str, str] = {
     "use-after-pop-front": "cairo.data_handling",
 }
 _DEFAULT_CATEGORY = "cairo.best_practice"
+
+
+@dataclass(frozen=True)
+class SierraSupport:
+    """What the pinned caracal can read, from images.lock.json `tools` of `starknet-caracal`."""
+
+    caracal: str          # "0.2.3"
+    cairo_lang: str       # the cairo-lang-* crates its Cargo.lock pins, "2.5.0"
+    sierra_max: str       # current_sierra_version_id() of that cairo-lang, "1.4.0"
+
+    @property
+    def sierra_major_minor(self) -> tuple[int, int]:
+        return _major_minor(self.sierra_max)
+
+    @property
+    def cairo_major_minor(self) -> tuple[int, int]:
+        return _major_minor(self.cairo_lang)
+
+    def reason(self) -> str:
+        major, minor = self.sierra_major_minor
+        return f"unsupported_cairo_version (caracal {self.caracal} supports Sierra <= {major}.{minor})"
+
+
+def _major_minor(version: str) -> tuple[int, int]:
+    m = _SEMVER_RE.match(version or "")
+    if m is None:
+        raise ValueError(f"not a version: {version!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def supported_sierra() -> SierraSupport | None:
+    """The Sierra ceiling of the pinned caracal, or None when the lock does not record it.
+
+    caracal v0.2.3 pins every `cairo-lang-*` crate at 2.5.0 (`Cargo.toml` lines 25 to 35:
+    `git = ".../cairo.git", tag = "v2.5.0"`; `Cargo.lock` `cairo-lang-sierra 2.5.0`), and cairo
+    v2.5.0 `crates/cairo-lang-starknet/src/compiler_version.rs` sets `current_sierra_version_id()`
+    to 1.4.0. Its loader (`src/compilation/scarb.rs`: vendored `sierra_from_felt252s`, then
+    `src/core/core_unit.rs:31` `ProgramRegistry::<CoreType, CoreLibfunc>::new(&p.sierra).unwrap()`)
+    decodes the felts of a newer program but the 2.5.0 registry rejects its declarations: Cairo
+    2.6.0 renamed the const type id from `"const"` to `"Const"` (`cairo-lang-sierra/src/extensions/
+    modules/const_type.rs`, 2.5.0 line 27 vs 2.6.0 line 30) and added types and libfuncs the crate
+    has no entry for. Verified on the stand 2026-10-23 with the real dev-profile artifacts of OZ
+    presets at Cairo 2.13.1 (Sierra 1.7.0): every class panics at `core_unit.rs:31` with
+    `TypeSpecialization { .. GenericTypeId("Const"), error: UnsupportedId("Const") }`, exit 101,
+    within 2 s of loading. Scarb toolchains emit Sierra 1.4.0 (Cairo 2.4, 2.5), 1.5.0 (2.6),
+    1.6.0 (2.7 to 2.9) and 1.7.0 (2.10 to 2.13). The numbers live in images.lock.json `tools`
+    (`cairo-lang`, `sierra`) beside the caracal version, not here.
+    """
+    from soken_review.sandbox.profile import locked_tools
+
+    tools = locked_tools("starknet-caracal")
+    caracal, cairo_lang, sierra_max = tools.get("caracal"), tools.get("cairo-lang"), tools.get("sierra")
+    if not caracal or not cairo_lang or not sierra_max:
+        return None
+    try:
+        _major_minor(cairo_lang), _major_minor(sierra_max)
+    except ValueError:
+        return None
+    return SierraSupport(caracal=caracal, cairo_lang=cairo_lang, sierra_max=sierra_max)
+
+
+def sierra_supported(support: SierraSupport, *, sierra: str | None, cairo: str | None) -> bool | None:
+    """True when the class caracal would load is within the ceiling, False when above, None when
+    neither the Sierra version of a built class nor the project's Cairo version is known.
+
+    The Sierra header of a built class is exact (the artifact the build step produced; caracal's
+    own dev build uses the same compiler). Without one, the Cairo compiler version decides: a Cairo
+    minor above the pinned cairo-lang minor emits a Sierra above the ceiling (the table in
+    `supported_sierra`), a Cairo at or below it does not.
+    """
+    if sierra:
+        try:
+            major, minor = _major_minor(sierra)
+        except ValueError:
+            return None
+        smajor, sminor = support.sierra_major_minor
+        return major == smajor and minor <= sminor
+    if cairo:
+        try:
+            major, minor = _major_minor(cairo)
+        except ValueError:
+            return None
+        cmajor, cminor = support.cairo_major_minor
+        return (major, minor) <= (cmajor, cminor)
+    return None
 
 
 def detect_argv(target: str = ".") -> list[str]:

@@ -19,9 +19,12 @@
 #
 # STAND NOTES (build and verify on x86 before pinning the digest):
 #   1. caracal ships a linux x86_64 release only; this image is linux/amd64 (as are all
-#      analyze images). The bundled compiler of v0.2.x targets Cairo 2.x; in Scarb mode the
-#      Scarb-built SIERRA is what caracal reads, so the reviewed project's Cairo version is
-#      what matters, not the binary's bundled one.
+#      analyze images). In Scarb mode the Scarb-built SIERRA is what caracal reads, but it
+#      reads it through the cairo-lang-sierra crate its Cargo.lock pins (2.5.0 for v0.2.3,
+#      Sierra 1.4.0): a class compiled by Cairo 2.6 or later (Sierra >= 1.5) makes its
+#      ProgramRegistry panic (stand 2026-10-23, OZ presets at Cairo 2.13.1:
+#      `UnsupportedId("Const")`, exit 101). images.lock.json `tools` records that ceiling
+#      (`cairo-lang`, `sierra`) and the analyze step gates on it before caracal's own build.
 #   2. After building, run:
 #        docker run --rm <tag> caracal --version
 #        docker run --rm <tag> caracal detectors
