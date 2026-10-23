@@ -29,6 +29,7 @@ from ..context.store import ContextStore
 from ..db.job_repo import JobRepo, new_job_id
 from ..db.pool import get_pool
 from ..errors import ReviewError
+from ..families import require_enabled
 from ..server import handler
 from .git_probe import GitLsRemoteProbe
 from .listen import RECHECK_S, job_hash, listener_for
@@ -252,6 +253,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             address = source["address"]
 
             chain, chain_id, detected_chain = _normalise_chain(chain, chain_id)
+            require_enabled(chain=chain)
             _validate_address(address, chain)
             _require_rpc_chain(chain, chain_id)
             has_deployment = True
@@ -263,6 +265,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
                 dep_chain_id = dep.get("chain_id")
                 dep_address = dep["address"]
                 dep_chain, dep_chain_id, _ = _normalise_chain(dep_chain, dep_chain_id)
+                require_enabled(chain=dep_chain)
                 _validate_address(dep_address, dep_chain)
                 _require_rpc_chain(dep_chain, dep_chain_id)
                 chain = dep_chain
@@ -272,6 +275,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
 
         elif kind == "files":
             detected_lang = source["language"]
+            require_enabled(language=detected_lang)
             # Inline size checks (03 §4.1, limits.yaml inline.*)
             files = source["files"]
             if len(files) > _MAX_INLINE_FILES:
@@ -308,6 +312,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
                 dep_chain_id = dep.get("chain_id")
                 dep_address = dep["address"]
                 dep_chain, dep_chain_id, _ = _normalise_chain(dep_chain, dep_chain_id)
+                require_enabled(chain=dep_chain)
                 _validate_address(dep_address, dep_chain)
                 _require_rpc_chain(dep_chain, dep_chain_id)
                 chain = dep_chain

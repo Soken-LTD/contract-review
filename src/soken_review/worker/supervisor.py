@@ -945,6 +945,20 @@ class Supervisor:
             if found.manifests:
                 detail["manifests"] = list(found.manifests[:10])
             return False
+        from ..families import enabled_chains, family_disabled
+
+        if family_disabled(chain=found.chain):
+            # Launch switch (SOKEN_DISABLED_FAMILIES): the tree is a family this deployment does not
+            # review; the job ends with the same code review_start gives a deployed source.
+            async with self._pool.connection() as conn:
+                repo = JobRepo(conn)
+                async with conn.transaction():
+                    await repo.complete_step(step["id"], "done", error_code="E_CHAIN_DISABLED")
+                    await repo.transition(job_id, "failed", error_code="E_CHAIN_DISABLED",
+                                          error_detail={"stage": "repo_family", "repo_family": found.chain,
+                                                        "enabled": enabled_chains()})
+            logger.info("job %s: repo is %s, family disabled", job_id[-8:], found.chain)
+            return True
         async with self._pool.connection() as conn:
             await JobRepo(conn).update_job_fields(job_id, chain=found.chain)
         args = dict(source_args)
