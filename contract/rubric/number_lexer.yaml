@@ -15,8 +15,85 @@ classes:
   - {id: L8b, pattern: 'L8 token ending in %', result: E_NUMBER_FORMAT}
   - {id: L8c, pattern: 'other L8 tokens', result: allowed-set check (section 6.3)}
   - {id: L8d, pattern: '\b\d+(\.\d+)?\s?[kKmMbB]\b|\b\d+(st|nd|rd|th)\b', result: E_NUMBER_FORMAT}
-  - {id: L9,  pattern: '(?i)\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth|millionth)\b', except: ['third party', 'third-party'], result: E_NUMBER_UNSOURCED}
-  - {id: L9a, pattern: '(?i)\b(hundreds?|thousands?|millions?|billions?|trillions?|dozens?|twice|thrice|double|triple|\w+uple|half|halves|quarters?|\w+fold)\b', result: E_NUMBER_FORMAT}
   - {id: L9b, pattern: '(?i)\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+(third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|hundredth|thousandth)s?\s+of\b|(?i)\b(thirds?|fourths?|fifths?|sixths?|sevenths?|eighths?|ninths?|tenths?|hundredths?|thousandths?)\s+of\b', result: E_NUMBER_FORMAT}
+  - {id: L9c, pattern: 'a plain_number_words entry (below) not followed, after spaces or a hyphen, by a blocked_followers word or %', result: 'exempt: a count of code things ("two pools", "the third call", "paid twice") is structure, not a quantity; with a follower it falls through to L9 or L9a'}
+  - {id: L9a, pattern: '(?i)\b(hundreds?|thousands?|millions?|billions?|trillions?|dozens?|twice|thrice|double|triple|\w{2,}uple|half|halves|quarters?|\w+fold)\b', result: 'E_NUMBER_FORMAT (\w{2,}uple: quadruple, quintuple; the code word tuple is not a multiplier)'}
+  - {id: L9,  pattern: '(?i)\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth|millionth)\b', except: ['third party', 'third-party'], result: E_NUMBER_UNSOURCED}
 exempt_everywhere: ['0', '1', zero, one, first, second, last]
 type_names: ['uint8..uint256 (step 8)', 'int8..int256 (step 8)', 'bytes1..bytes32', u8, u16, u32, u64, u128, u256, i8, i16, i32, i64, i128, felt252]
+# L9c (2026-10-23, MasterChef re-run): the rule's purpose is no invented quantity in client text. A small count of
+# code things in words is not a quantity ("reached from two entry points", "the third call", "pays the reward twice")
+# and needs no source; the same word followed by a unit, percent or token/currency word is an amount ("two tokens",
+# "ten percent", "five days") and still needs one. Loaded by engine/numbers.py; zero, one, first, second stay in
+# exempt_everywhere. Two-word followers ("basis points", "token units") are matched as a pair.
+plain_number_words:
+  cardinals: [two, three, four, five, six, seven, eight, nine, ten]
+  ordinals: [third]
+  frequency: [once, twice]
+  blocked_followers:
+    # units.yaml unit words and the Solidity unit suffixes (04 6.3 A2), singular and plural
+    - wei
+    - gwei
+    - ether
+    - seconds
+    - second
+    - minutes
+    - minute
+    - hours
+    - hour
+    - days
+    - day
+    - weeks
+    - week
+    - months
+    - month
+    - years
+    - year
+    - blocks
+    - block
+    - epochs
+    - epoch
+    - bps
+    - basis points
+    - units
+    - token units
+    - lines
+    - nSLOC
+    - bytes
+    # percent and multiplier words (the word itself is then an amount or a factor)
+    - '%'
+    - percent
+    - pct
+    - times
+    - fold
+    - hundred
+    - thousand
+    - million
+    - billion
+    - trillion
+    # token and currency words
+    - token
+    - tokens
+    - coin
+    - coins
+    - share
+    - shares
+    - ETH
+    - WETH
+    - BTC
+    - WBTC
+    - BNB
+    - SOL
+    - TON
+    - TRX
+    - APT
+    - SUI
+    - STRK
+    - USD
+    - USDC
+    - USDT
+    - DAI
+    - EUR
+    - GBP
+    - dollars
+    - dollar
