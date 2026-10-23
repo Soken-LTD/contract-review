@@ -76,10 +76,30 @@ def detect_argv(target: str = ".") -> list[str]:
     """argv for a caracal run on the Scarb project at ``target`` (the dir with Scarb.toml).
 
     ``analyze.py`` runs this with the container workdir set to the package directory, so the
-    default ``.`` points caracal at the reviewed package. Caracal reuses the Scarb-produced
-    SIERRA (already fetched scarb-cache mounted from the build step) and needs no network.
+    default ``.`` points caracal at the reviewed package. Caracal's Scarb mode runs ``scarb clean``
+    and ``scarb build --workspace`` itself (offline through ``SCARB_OFFLINE``, against the
+    scarb-cache the deps step fetched) and reads the classes from :func:`target_dir`.
     """
     return ["caracal", "detect", target]
+
+
+def target_dir(workdir: str) -> str:
+    """``SCARB_TARGET_DIR`` for a caracal run whose project dir is ``workdir`` in the container.
+
+    caracal 0.2.x (``compilation/scarb.rs``) reads ``<project>/target/dev`` and never consults
+    ``SCARB_TARGET_DIR``; pointing Scarb's target dir there makes its own build land where it
+    looks, and keeps ``scarb clean`` away from the build step's ``/work/output``.
+    """
+    return workdir.rstrip("/") + "/target"
+
+
+# One line per class caracal refused (no SIERRA debug names); it exits 0 regardless.
+_SKIPPED = re.compile(r"^Skipping analysing file .*Debug info not found", re.MULTILINE)
+
+
+def skipped_files(text: str) -> int:
+    """Number of classes caracal skipped for missing debug info (``sierra-replace-ids`` off)."""
+    return len(_SKIPPED.findall(_ANSI.sub("", text)))
 
 
 def category_for(detector: str) -> str:
