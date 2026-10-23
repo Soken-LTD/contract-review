@@ -28,7 +28,7 @@ from ..db.pool import get_pool
 from ..engine.severity import SeverityContext, compute_severity
 from ..errors import ReviewError
 from ..mapping.build import load_map
-from ..mapping.semantic_evm import detect_token_review
+from ..mapping.semantic_evm import detect_token_review, units_holding
 from ..report.render import queue_render
 from ..server import handler
 from .context import JobContext
@@ -79,6 +79,17 @@ def _derive_report_id(job_id: str) -> str:
 
 
 # ── F-check queries ───────────────────────────────────────────────────────────
+
+def _loc_quotes(draft_row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Location quotes of a draft row as the finalize query returns them (jsonb list or JSON text)."""
+    raw = draft_row.get("location_quotes")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
+    return [q for q in (raw or []) if isinstance(q, dict)]
+
 
 async def compute_finalize_checks(
     conn: psycopg.AsyncConnection, job_id: str
@@ -274,13 +285,14 @@ async def _assign_final_ids(
     # Retail-token profile (04 §7.4): computed once from the persisted semantic map; applies to
     # every draft of this job. per-draft `has_location_quote` comes from finding_quote_ranges.
     f_map_doc, _ = load_map(_get_ctx().get_pin_root(), job_id)
-    token_review = detect_token_review(f_map_doc.get("semantic") if f_map_doc else None)
+    f_semantic = f_map_doc.get("semantic") if f_map_doc else None
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """select d.draft_key, d.finding_no, d.severity, d.evidence_level,
                       d.current_revision,
                       r.category, r.category_family, r.impact_class,
                       r.content->>'matrix' as matrix_json,
+                      d.matrix_effective,
                       r.map_unavailable,
                       jsonb_array_length(coalesce(r.content->'attack_steps', '[]'::jsonb)) > 0
                           as has_attack_steps,
@@ -288,6 +300,10 @@ async def _assign_final_ids(
                               where q.job_id = d.job_id and q.draft_key = d.draft_key
                                 and q.revision = d.current_revision and q.role = 'location')
                           as has_location_quote,
+                      (select coalesce(jsonb_agg(jsonb_build_object('file', q.path, 'start', q.start_line, 'end', q.end_line)), '[]'::jsonb)
+                         from finding_quote_ranges q
+                        where q.job_id = d.job_id and q.draft_key = d.draft_key
+                          and q.revision = d.current_revision and q.role = 'location') as location_quotes,
                       d.status
                from finding_drafts d
                join finding_revisions r on r.job_id = d.job_id and r.draft_key = d.draft_key
@@ -327,9 +343,15 @@ async def _assign_final_ids(
         map_unavail = bool(d.get("map_unavailable", False))
         has_attack_steps = bool(d.get("has_attack_steps", False))
 
+        # The post-challenge matrix (basis fallbacks applied, 04 8.2) is the one the reviewer
+        # defended; recomputing from the submitted matrix re-raised a challenge-downgraded
+        # Critical->High back to Critical in the PDF (c2 re-run, 2026-10-23).
         matrix_raw = d.get("matrix_json")
         try:
-            matrix = json.loads(matrix_raw) if matrix_raw else {}
+            eff = d.get("matrix_effective")
+            if isinstance(eff, str):
+                eff = json.loads(eff)
+            matrix = dict(eff) if isinstance(eff, dict) and eff else (json.loads(matrix_raw) if matrix_raw else {})
         except (ValueError, TypeError):
             # Corrupt stored JSON — cannot compute severity safely; block finalize
             raise ReviewError(
@@ -379,7 +401,8 @@ async def _assign_final_ids(
             category_generic=bool(cat_info.get("generic", False)) if cat_info else False,
             category_max_severity=cat_info.get("max_severity") if cat_info else None,
             linked_lead_same_cat=d["draft_key"] in analyzer_lead_draft_keys,
-            token_review=token_review,
+            # per finding: the unit holding the location decides the retail-token profile
+            token_review=detect_token_review(f_semantic, units_holding(f_semantic, _loc_quotes(d))),
             has_location_quote=bool(d["has_location_quote"]),
         )
 

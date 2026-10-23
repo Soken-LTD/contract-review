@@ -44,7 +44,7 @@ from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
 from ..mapping.build import load_map
-from ..mapping.semantic_evm import detect_token_review
+from ..mapping.semantic_evm import detect_token_review, units_holding
 from ..mapping.step import load_flags
 from ..pinning.quote_match import QuoteMatchError, quote_match
 from ..pinning.store import PinnedSource
@@ -695,7 +695,9 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                     linked_lead_same_cat=linked_same_cat,
                     has_attack_steps=bool(args.get("attack_steps")),
                     map_unavailable=map_unavailable,
-                    token_review=detect_token_review(map_doc.get("semantic") if map_doc else None),
+                    token_review=detect_token_review(
+                        map_doc.get("semantic") if map_doc else None,
+                        units_holding(map_doc.get("semantic") if map_doc else None, location_quotes)),
                     has_location_quote=bool(location_quotes),
                 )
                 try:
@@ -910,8 +912,11 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
         else:
             finding_no = draft["finding_no"]
             await conn.execute(
+                # A new revision carries a new matrix: the post-challenge matrix of the previous
+                # revision must not survive it (finalize and the report prefer matrix_effective).
                 """update finding_drafts
-                   set status = %s, current_revision = %s, severity = %s, evidence_level = %s
+                   set status = %s, current_revision = %s, severity = %s, evidence_level = %s,
+                       matrix_effective = null
                    where job_id = %s and draft_key = %s""",
                 (new_status, new_revision, computed_severity, evidence_level, job_id, draft_key),
             )

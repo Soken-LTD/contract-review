@@ -124,7 +124,9 @@ def _topic_challenge_rules() -> list[str]:
                " quotes (exact pinned lines) and refs path:start-end; not_applicable needs a reason.")
     out.append("not_applicable reasons: " + ", ".join(enums.get("na_reasons", [])))
     out.append("Scopes: " + ", ".join(enums.get("challenge_scope", [])) + ". A scope the quotes do not cover"
-               " marks the item not covered and caps the finding at High (K10).")
+               " marks the item not covered and caps the finding at High (K10). An absent answer needs refs that"
+               " cover every range in that item's scope.ranges, basis items included, each range read first with"
+               " review_read_code; E_CHALLENGE_SCOPE names the failing item.")
     out.append("Revision: pass the revision review_challenge reports; a stale revision is rejected.")
     out.append("Lead dismissal (review_dismiss_lead, arguments job_id and items: a list of {lead_id, reason, quotes, note}) reasons: "
                + ", ".join(enums.get("dismissal_reason", {}).get("model", []))

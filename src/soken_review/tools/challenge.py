@@ -52,7 +52,7 @@ from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
 from ..mapping.build import load_map
-from ..mapping.semantic_evm import detect_token_review
+from ..mapping.semantic_evm import detect_token_review, units_holding
 from ..pinning.quote_match import QuoteMatchError, normalize_lines, quote_match
 from ..pinning.store import PinnedSource
 from ..server import handler
@@ -1225,7 +1225,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             # below regardless).  (04 §8.3/§8.4: kill+downgrade require evidence bound to scope.)
             if scope_not_covered_item and item_kind in ("kill", "downgrade"):
                 violations.append(ReviewError(
-                    "E_CHALLENGE_SCOPE",
+                    "E_CHALLENGE_SCOPE", item=item_id,
                     ranges="scope_not_covered",
                 ).envelope())
 
@@ -1268,7 +1268,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 if (not scope_not_covered_item and scope_ranges
                         and not _quote_in_scope_ranges(q_file, q_start, q_end, scope_ranges)):
                     violations.append(ReviewError(
-                        "E_CHALLENGE_SCOPE",
+                        "E_CHALLENGE_SCOPE", item=item_id,
                         ranges=", ".join(scope_ranges[:5]),
                     ).envelope())
 
@@ -1286,8 +1286,11 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 refs = answer.get("refs") or []
                 missing = _ranges_cover(scope_ranges, refs, job_reads_index)
                 if missing:
+                    # Names the item: a basis item with one ref fails while the kill items pass,
+                    # and without the id the reviewer re-filed the wrong answers five times
+                    # (c2 re-run, 2026-10-23).
                     violations.append(ReviewError(
-                        "E_CHALLENGE_SCOPE",
+                        "E_CHALLENGE_SCOPE", item=item_id,
                         ranges=", ".join(missing[:5]),
                     ).envelope())
             # If scope is NOT_COVERED: check passes trivially, K10 will apply
@@ -1450,7 +1453,9 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 category_generic=is_generic,
                 category_max_severity=cat_info.get("max_severity"),
                 linked_lead_same_cat=draft_locked.get("evidence_level") == "analyzer_and_reasoning",
-                token_review=detect_token_review(map_doc.get("semantic") if map_doc else None),
+                token_review=detect_token_review(
+                    map_doc.get("semantic") if map_doc else None,
+                    units_holding(map_doc.get("semantic") if map_doc else None, location_quotes)),
                 has_location_quote=bool(location_quotes),
             )
 

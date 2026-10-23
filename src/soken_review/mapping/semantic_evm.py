@@ -1036,10 +1036,35 @@ _PRIV_TOKEN_MUTATOR_RE = re.compile(
 )
 
 
-def detect_token_review(semantic: dict | None) -> bool:
+def units_holding(semantic: dict | None, quotes: list[dict] | None) -> set[str] | None:
+    """Ids of the semantic units (contracts) whose span overlaps any of the given location quotes
+    (`{file, start, end}`); None when the map or the quotes give no answer (caller falls back to
+    the whole map)."""
+    if not semantic or not quotes:
+        return None
+    out: set[str] = set()
+    for u in semantic.get("units") or []:
+        for q in quotes:
+            try:
+                qs, qe = int(q.get("start", 0)), int(q.get("end", q.get("start", 0)))
+            except (TypeError, ValueError):
+                continue
+            if u.get("file") == q.get("file") and qs and not (int(u.get("end", 0)) < qs or int(u.get("start", 0)) > qe):
+                out.add(str(u.get("id")))
+    return out or None
+
+
+def detect_token_review(semantic: dict | None, unit_ids: set[str] | None = None) -> bool:
     """True when a deployable contract in the map is a retail token whose owner can move, seize,
     block or dilute holder balances. Deterministic over the semantic map; narrow by construction
     (the ERC-20 declaration requirement excludes protocols that merely call tokens).
+
+    `unit_ids`: restrict the verdict to these units, normally the unit(s) holding the finding's
+    location (`units_holding`). The profile is per finding, not per job: a flattened Sourcify
+    source carries the vendored token next to the protocol contract (MasterChef + SushiToken),
+    and with a job-wide verdict an owner-only migrator finding on the farm lost the K1 cap and
+    printed Critical (deployed re-run, 2026-10-23). None = every unit (legacy, files without a
+    location).
 
     Inheritance-aware: functions are stored under their DECLARING contract, so a standard
     OpenZeppelin token inherits transfer/approve/... from base `ERC20` and declares only `mint`
@@ -1070,6 +1095,8 @@ def detect_token_review(semantic: dict | None) -> bool:
 
     extras = (((semantic.get("chain_extras") or {}).get("evm") or {}).get("units")) or {}
     for unit in semantic.get("units") or []:
+        if unit_ids is not None and unit.get("id") not in unit_ids:
+            continue
         base_names = extras.get(unit.get("id"), {}).get("bases") or [unit.get("name")]
         names: set[str] = set()
         has_owner_mutator = False
