@@ -42,7 +42,19 @@ RENDER_UNITS, RENDER_RAM_MB, RENDER_PRIORITY = 1, 2048, 50
 ATTEMPT_CAP_S, TOTAL_S, MAX_ATTEMPTS = 120, 180, 3
 BACKOFF_S = {2: 5, 3: 20}
 RETRIED = {"timeout", "chrome_start"}
-KEY_VERSION = 1
+KEY_VERSION = 1   # the launch key; the version a new report row records is current_key_version()
+
+
+def current_key_version() -> int:
+    """K_v for new reports (08 4.1): `SOKEN_REPORT_KEY_CURRENT`, default 1. Rotation = set
+    SOKEN_REPORT_KEY_V2 beside V1 and SOKEN_REPORT_KEY_CURRENT=2: new rows record 2, existing
+    rows keep their key_version and their links keep verifying with V1."""
+    raw = os.environ.get("SOKEN_REPORT_KEY_CURRENT", "").strip()
+    if not raw:
+        return KEY_VERSION
+    if not raw.isdigit() or int(raw) < 1:
+        raise RuntimeError(f"SOKEN_REPORT_KEY_CURRENT must be a positive integer, got {raw[:8]!r}")
+    return int(raw)
 MAX_PDF_BYTES = 20 * 1024 * 1024
 MAX_RESULT_BYTES = 64 * 1024
 
@@ -274,7 +286,7 @@ async def _upsert_report(conn: psycopg.AsyncConnection, report: dict[str, Any], 
         """,
         {"rid": m["report_id"], "short": m["report_id_short"], "job": job_id, "profile": m["profile"], "prefix": prefix,
          "out": m["out_name"], "sha": sha, "cands": psycopg.types.json.Jsonb(extras["subject_candidates"]),
-         "kv": KEY_VERSION, "exp": expires_at},
+         "kv": current_key_version(), "exp": expires_at},
     )
 
 
