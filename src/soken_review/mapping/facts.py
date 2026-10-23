@@ -147,13 +147,28 @@ def _safe_singletons() -> frozenset[str]:
     return frozenset(str(a).lower() for a in data.get("singletons") or [])
 
 
+@lru_cache(maxsize=1)
+def _safe_proxy_prefix() -> tuple[bytes, int]:
+    data = json.loads(_SAFE_SINGLETONS_PATH.read_text(encoding="utf-8"))
+    return bytes.fromhex(str(data["proxy_runtime_prefix"]).removeprefix("0x")), int(data.get("proxy_runtime_max_bytes", 256))
+
+
+def is_safe_proxy_code(code: bytes) -> bool:
+    """True when `code` is the Safe proxy runtime: the functional prefix shared by v1.1.1, v1.3.0
+    and v1.4.1 (verified against live proxies), followed by the 0xfe INVALID byte and the solc
+    metadata. A contract that merely stores a singleton address in slot 0 does not pass (security
+    review 2026-10-23: slot 0 alone was spoofable)."""
+    prefix, max_bytes = _safe_proxy_prefix()
+    return len(code) <= max_bytes and code.startswith(prefix) and len(code) > len(prefix) and code[len(prefix)] == 0xFE
+
+
 async def holder_facts(rpc: Any, role: str, holder: str, block: int, unit_id: str | None) -> list[dict[str, Any]]:
     """`onchain.<role>.holder_code_size`, `.holder_is_contract` and `.holder_kind` for one holder address.
 
     Fail-closed: a failed `eth_getCode` yields no fact at all (never a false). `holder_kind` is
-    `eoa` for empty code, `multisig` when storage slot 0 holds a published Safe singleton address
-    (`onchain.<role>.holder_singleton` records it), else `contract`; a failed storage read only
-    means the generic `contract`."""
+    `eoa` for empty code, `multisig` when the code is the Safe proxy runtime AND storage slot 0
+    holds a published Safe singleton address (`onchain.<role>.holder_singleton` records it), else
+    `contract`; a failed storage read only means the generic `contract`."""
     try:
         code = await rpc.get_code(holder, block=block)
     except Exception as exc:  # noqa: BLE001  # a failed read is no fact (04 1.3)
@@ -169,7 +184,7 @@ async def holder_facts(rpc: Any, role: str, holder: str, block: int, unit_id: st
     out = [fact(f"onchain.{role}.holder_code_size", size, unit="bytes", unit_id=unit_id, source=source),
            fact(f"onchain.{role}.holder_is_contract", "true" if size else "false", unit_id=unit_id, source=source)]
     kind = "contract" if size else "eoa"
-    if size:
+    if size and is_safe_proxy_code(bytes.fromhex(code[2:])):
         try:
             raw = await rpc.get_storage_at(holder, "0x" + "0" * 64, block=block)
         except Exception as exc:  # noqa: BLE001  # a failed read is the generic kind, not an error

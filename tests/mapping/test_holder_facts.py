@@ -78,11 +78,12 @@ async def test_plain_contract_owner_when_no_probe_answers():
 
 
 SAFE_SINGLETON = "0xd9db270c1b5e3bd161e8c8503c55ceabee709552"   # GnosisSafe 1.3.0 canonical
+SAFE_PROXY_CODE = "0x608060405273ffffffffffffffffffffffffffffffffffffffff600054167fa619486e0000000000000000000000000000000000000000000000000000000060003514156050578060005260206000f35b3660008037600080366000845af43d6000803e60008114156070573d6000fd5b3d6000f3fea2646970667358221220d1429297349653a4918076d650332de1a1068c5f3e07c5c82360c277770b955264736f6c63430007060033"   # live GnosisSafeProxy 1.3.0 runtime (0x849D5231...)
 
 
 @pytest.mark.asyncio
 async def test_safe_proxy_owner_is_multisig_by_singleton_in_slot_zero():
-    rpc = _rpc(code={OWNER: "0x60"}, calls={f"slot0:{OWNER}": _word(SAFE_SINGLETON)})
+    rpc = _rpc(code={OWNER: SAFE_PROXY_CODE}, calls={f"slot0:{OWNER}": _word(SAFE_SINGLETON)})
     out = _by_key(await facts.onchain_facts(rpc, "0xdead", 1, MAP, None))
     assert out["onchain.owner.holder_kind"]["value"] == "multisig"
     assert out["onchain.owner.holder_singleton"]["value"] == SAFE_SINGLETON
@@ -102,9 +103,29 @@ async def test_getter_probes_do_not_make_a_multisig():
 
 @pytest.mark.asyncio
 async def test_unknown_singleton_in_slot_zero_is_a_plain_contract():
-    rpc = _rpc(code={OWNER: "0x60"}, calls={f"slot0:{OWNER}": _word("0x" + "ab" * 20)})
+    rpc = _rpc(code={OWNER: SAFE_PROXY_CODE}, calls={f"slot0:{OWNER}": _word("0x" + "ab" * 20)})
     out = _by_key(await facts.onchain_facts(rpc, "0xdead", 1, MAP, None))
     assert out["onchain.owner.holder_kind"]["value"] == "contract"
+
+
+@pytest.mark.asyncio
+async def test_singleton_in_slot_zero_without_the_proxy_code_is_a_plain_contract():
+    """Storing a Safe singleton address in slot 0 is not enough: the holder must run the Safe
+    proxy code (review 2026-10-23)."""
+    rpc = _rpc(code={OWNER: "0x60"}, calls={f"slot0:{OWNER}": _word(SAFE_SINGLETON)})
+    out = _by_key(await facts.onchain_facts(rpc, "0xdead", 1, MAP, None))
+    assert out["onchain.owner.holder_kind"]["value"] == "contract"
+    assert "onchain.owner.holder_singleton" not in out
+
+
+def test_safe_proxy_code_recogniser_prefix_and_metadata_variants():
+    code = bytes.fromhex(SAFE_PROXY_CODE[2:])
+    assert facts.is_safe_proxy_code(code)
+    other_metadata = code[: code.index(0xFE) + 1] + b"\xa2\x64ipfs" + b"\x00" * 30   # 1.4.1 / 1.1.1 differ only here
+    assert facts.is_safe_proxy_code(other_metadata)
+    assert not facts.is_safe_proxy_code(code[: code.index(0xFE) - 5])   # functional code cut short
+    assert not facts.is_safe_proxy_code(b"\x60" + code)              # prefixed
+    assert not facts.is_safe_proxy_code(code + b"\x00" * 300)        # too long
 
 
 @pytest.mark.asyncio
