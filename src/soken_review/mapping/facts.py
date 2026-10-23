@@ -123,6 +123,79 @@ async def onchain_facts(rpc: Any, address: str, block: int, map_doc: dict[str, A
         value = _decode_word(raw, "address")
         if value is not None and int(value, 16) != 0:
             out.append(fact(key, value, unit_id=unit_id, source=f"eth_getStorageAt EIP-1967 slot at block {block}"))
+    holders = {"owner": "onchain.owner", "admin": "onchain.eip1967.admin"}
+    by_key = {f["key"]: f["value"] for f in out}
+    for role, key in holders.items():
+        holder = by_key.get(key)
+        if holder and int(holder, 16) != 0:
+            out.extend(await holder_facts(rpc, role, holder, block, unit_id))
+    return out
+
+
+# Kind of a holder contract (08 2.2 roles table `type`). Getter probes (`getThreshold()`,
+# `getMinDelay()`) are not evidence: any contract can answer them, and the report would print
+# "Multisig" for an attacker-chosen holder (security review, 2026-10-23). A Safe is recognised
+# structurally instead: a Safe proxy keeps its singleton in storage slot 0, and the singleton
+# addresses are the published deployments (adapters/evm/data/safe_singletons.json). A timelock
+# has no canonical bytecode, so it stays the generic `contract`.
+_SAFE_SINGLETONS_PATH = Path(__file__).resolve().parents[1] / "adapters" / "evm" / "data" / "safe_singletons.json"
+
+
+@lru_cache(maxsize=1)
+def _safe_singletons() -> frozenset[str]:
+    data = json.loads(_SAFE_SINGLETONS_PATH.read_text(encoding="utf-8"))
+    return frozenset(str(a).lower() for a in data.get("singletons") or [])
+
+
+@lru_cache(maxsize=1)
+def _safe_proxy_prefix() -> tuple[bytes, int]:
+    data = json.loads(_SAFE_SINGLETONS_PATH.read_text(encoding="utf-8"))
+    return bytes.fromhex(str(data["proxy_runtime_prefix"]).removeprefix("0x")), int(data.get("proxy_runtime_max_bytes", 256))
+
+
+def is_safe_proxy_code(code: bytes) -> bool:
+    """True when `code` is the Safe proxy runtime: the functional prefix shared by v1.1.1, v1.3.0
+    and v1.4.1 (verified against live proxies), followed by the 0xfe INVALID byte and the solc
+    metadata. A contract that merely stores a singleton address in slot 0 does not pass (security
+    review 2026-10-23: slot 0 alone was spoofable)."""
+    prefix, max_bytes = _safe_proxy_prefix()
+    return len(code) <= max_bytes and code.startswith(prefix) and len(code) > len(prefix) and code[len(prefix)] == 0xFE
+
+
+async def holder_facts(rpc: Any, role: str, holder: str, block: int, unit_id: str | None) -> list[dict[str, Any]]:
+    """`onchain.<role>.holder_code_size`, `.holder_is_contract` and `.holder_kind` for one holder address.
+
+    Fail-closed: a failed `eth_getCode` yields no fact at all (never a false). `holder_kind` is
+    `eoa` for empty code, `multisig` when the code is the Safe proxy runtime AND storage slot 0
+    holds a published Safe singleton address (`onchain.<role>.holder_singleton` records it), else
+    `contract`; a failed storage read only means the generic `contract`."""
+    try:
+        code = await rpc.get_code(holder, block=block)
+    except Exception as exc:  # noqa: BLE001  # a failed read is no fact (04 1.3)
+        logger.info("eth_getCode %s failed: %s", holder, exc)
+        return []
+    if not isinstance(code, str) or not code.startswith("0x"):
+        return []
+    try:
+        size = len(bytes.fromhex(code[2:]))
+    except ValueError:
+        return []
+    source = f"eth_getCode at block {block}"
+    out = [fact(f"onchain.{role}.holder_code_size", size, unit="bytes", unit_id=unit_id, source=source),
+           fact(f"onchain.{role}.holder_is_contract", "true" if size else "false", unit_id=unit_id, source=source)]
+    kind = "contract" if size else "eoa"
+    if size and is_safe_proxy_code(bytes.fromhex(code[2:])):
+        try:
+            raw = await rpc.get_storage_at(holder, "0x" + "0" * 64, block=block)
+        except Exception as exc:  # noqa: BLE001  # a failed read is the generic kind, not an error
+            logger.info("eth_getStorageAt slot 0 on %s failed: %s", holder, exc)
+            raw = None
+        singleton = _decode_word(raw, "address") if isinstance(raw, str) else None
+        if singleton and singleton.lower() in _safe_singletons():
+            kind = "multisig"
+            out.append(fact(f"onchain.{role}.holder_singleton", singleton.lower(), unit_id=unit_id,
+                            source=f"eth_getStorageAt slot 0 at block {block}"))
+    out.append(fact(f"onchain.{role}.holder_kind", kind, unit_id=unit_id, source=source))
     return out
 
 
