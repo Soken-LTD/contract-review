@@ -520,8 +520,8 @@ codes:
     channel: "rejection"
     class: "input"
     tools: "answer"
-    what: "Not covered or not read: {ranges}."
-    fix: "Read the ranges with review_read_code, then cite them."
+    what: "Item {item}: not covered or not read: {ranges}."
+    fix: "For an absent answer, refs must cover every scope range of that item after reading them with review_read_code; for present, quote inside the ranges."
   - code: E_CHALLENGE_CONTRADICTS_AUTO
     owner: "04"
     channel: "rejection"

@@ -93,3 +93,35 @@ def test_empty_or_missing_semantic_is_false():
     assert detect_token_review(None) is False
     assert detect_token_review({}) is False
     assert detect_token_review({"units": [], "functions": [], "roles": []}) is False
+
+
+# ── per-finding profile (2026-10-23): the unit holding the location decides ──────────────
+
+def _masterchef_semantic() -> dict:
+    import gzip
+    from pathlib import Path
+
+    from soken_review.mapping.build import build_map
+    from soken_review.mapping.step import family_categories
+
+    fix = Path(__file__).resolve().parents[1] / "fixtures" / "map" / "masterchef_crlf"
+    crlf = (fix / "MasterChef.crlf.sol").read_bytes().decode("utf-8")
+    with gzip.open(fix / "solc_output.sources.json.gz", "rt", encoding="utf-8") as fh:
+        out = __import__("json").load(fh)
+    return build_map({"MasterChef.sol": crlf.replace("\r\n", "\n")}, out, list(family_categories("evm")),
+                     compiled_texts={"MasterChef.sol": crlf}).doc["semantic"]
+
+
+def test_flattened_source_token_profile_is_per_unit():
+    """SushiToken (owner mint) sits next to MasterChef in one flattened file: a finding inside
+    MasterChef must not get the retail-token profile (K1 owner cap skipped -> Critical migrator)."""
+    from soken_review.mapping.semantic_evm import detect_token_review, units_holding
+
+    sem = _masterchef_semantic()
+    assert detect_token_review(sem) is True                                   # job-wide legacy verdict
+    farm = units_holding(sem, [{"file": "MasterChef.sol", "start": 1497, "end": 1506}])   # migrate()
+    token = units_holding(sem, [{"file": "MasterChef.sol", "start": 1300, "end": 1300}])  # SushiToken
+    assert farm == {"MasterChef.sol:MasterChef"} and token == {"MasterChef.sol:SushiToken"}
+    assert detect_token_review(sem, farm) is False
+    assert detect_token_review(sem, token) is True
+    assert units_holding(sem, []) is None and units_holding(None, [{"file": "x", "start": 1, "end": 1}]) is None

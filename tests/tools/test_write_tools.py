@@ -2179,6 +2179,9 @@ async def test_absent_answer_unread_range_e_challenge_scope(db_pool):
     assert "E_CHALLENGE_SCOPE" in all_codes, (
         f"Expected E_CHALLENGE_SCOPE in errors, got: {all_codes}"
     )
+    # the envelope names the failing item (a reviewer re-filed the wrong answers without it)
+    scope_err = next(e for e in ans["errors"] if e["code"] == "E_CHALLENGE_SCOPE")
+    assert scope_err["what"].startswith(f"Item {target['id']}:"), scope_err
 
 
 @ASYNC
