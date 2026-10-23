@@ -17,6 +17,15 @@ HANDSHAKE_ERA = ("2025-11-25", "2025-06-18")
 SUPPORTED = (MODERN, *HANDSHAKE_ERA)
 HEADER_MISMATCH = -32020
 UNSUPPORTED_VERSION = -32022
+BODY_TOO_LARGE = -32600
+# Largest legitimate request: review_start with 20 inline files of 60 000 chars (200 000 total,
+# limits.yaml inline) JSON-escaped, or 12 context items of 60 000 chars. 2 MiB covers both with
+# margin; the body is buffered before schema validation, so the cap is the memory bound per call.
+MAX_BODY_BYTES = 2 * 1024 * 1024
+
+
+class _TooLarge(Exception):
+    pass
 
 
 class ProtocolRules:
@@ -32,7 +41,15 @@ class ProtocolRules:
             await _respond(send, 405, None, headers=[(b"allow", b"POST")])
             return
 
-        body, receive = await _buffer(receive)
+        declared = _header(scope, b"content-length")
+        if declared is not None and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+            await _respond(send, 413, _rpc_error(None, BODY_TOO_LARGE, f"Request body over {MAX_BODY_BYTES} bytes"))
+            return
+        try:
+            body, receive = await _buffer(receive)
+        except _TooLarge:
+            await _respond(send, 413, _rpc_error(None, BODY_TOO_LARGE, f"Request body over {MAX_BODY_BYTES} bytes"))
+            return
         version = _header(scope, b"mcp-protocol-version")
         message = _parse(body)
 
@@ -81,9 +98,14 @@ def _rpc_error(message: dict[str, Any] | None, code: int, text: str, data: Any =
 
 async def _buffer(receive: Receive) -> tuple[bytes, Receive]:
     chunks = []
+    total = 0
     while True:
         event = await receive()
-        chunks.append(event.get("body", b""))
+        chunk = event.get("body", b"")
+        total += len(chunk)
+        if total > MAX_BODY_BYTES:
+            raise _TooLarge
+        chunks.append(chunk)
         if not event.get("more_body"):
             break
     body = b"".join(chunks)

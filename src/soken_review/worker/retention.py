@@ -168,7 +168,11 @@ async def _orphan_dirs(conn: psycopg.AsyncConnection, pin_root: Path, dry_run: b
                     shutil.rmtree(path, ignore_errors=True)
     reports_root = store_root() / "reports"
     if reports_root.is_dir():
-        ids = sorted(p.name for p in reports_root.iterdir() if p.is_dir() and not p.is_symlink() and _settled(p, now))
+        from ..tools.delete import _REPORT_ID_RE
+
+        # report ids only: a misconfigured store root never loses unrelated directories
+        ids = sorted(p.name for p in reports_root.iterdir()
+                     if _REPORT_ID_RE.match(p.name) and p.is_dir() and not p.is_symlink() and _settled(p, now))
         kept: set[str] = set()
         if ids:
             async with conn.cursor() as cur:

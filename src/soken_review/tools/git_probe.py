@@ -21,6 +21,18 @@ import tempfile
 from ..errors import ReviewError
 
 PROBE_TIMEOUT_S = 10.0
+# `git ls-remote` runs in the API process on every review_start with a repo source; at most this
+# many at once, the rest wait (bounded by the probe timeout), so a burst of starts cannot fork
+# an unbounded number of git processes on the API host.
+MAX_CONCURRENT_PROBES = 4
+_probe_slots: asyncio.Semaphore | None = None
+
+
+def _slots() -> asyncio.Semaphore:
+    global _probe_slots
+    if _probe_slots is None:
+        _probe_slots = asyncio.Semaphore(MAX_CONCURRENT_PROBES)
+    return _probe_slots
 _URL_RE = re.compile(r"^https://(github\.com|gitlab\.com|codeberg\.org)/[A-Za-z0-9][A-Za-z0-9._~/-]{0,300}$")
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 _SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -55,6 +67,11 @@ async def ls_remote(url: str, patterns: list[str], timeout: float = PROBE_TIMEOU
     argv = ["git", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
             "-c", "credential.helper=", "-c", "core.askPass=/bin/echo",
             "ls-remote", "--", url, *patterns]
+    async with _slots():
+        return await _ls_remote(argv, timeout)
+
+
+async def _ls_remote(argv: list[str], timeout: float) -> tuple[int, str]:
     with tempfile.TemporaryDirectory() as home:
         proc = await asyncio.create_subprocess_exec(
             *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,

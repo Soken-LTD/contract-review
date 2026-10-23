@@ -92,3 +92,29 @@ async def test_healthz_payload_reports_db_and_worker_age(db_pool):
     assert ok is False and payload["worker_age_s"] > WORKER_STALE_S
     async with db_pool.connection() as conn:
         await conn.execute("delete from worker_hosts where name = 't-health'")
+
+
+# ─── request body cap (road-to-prod item 8) ───────────────────────────────────────────────────
+
+def test_declared_body_over_the_cap_is_413(client):
+    from soken_review.http import MAX_BODY_BYTES
+
+    r = client.post("/mcp", headers={**H, "Content-Length": str(MAX_BODY_BYTES + 1)},
+                    content=b"x" * 10)
+    assert r.status_code == 413
+
+
+def test_streamed_body_over_the_cap_is_413(client):
+    from soken_review.http import MAX_BODY_BYTES
+
+    def chunks():
+        for _ in range(MAX_BODY_BYTES // 65536 + 2):
+            yield b"x" * 65536
+
+    r = client.post("/mcp", headers=H, content=chunks())
+    assert r.status_code == 413
+
+
+def test_body_under_the_cap_still_reaches_the_protocol_rules(client):
+    r = client.post("/mcp", headers=H, json=INIT)
+    assert r.status_code == 200
