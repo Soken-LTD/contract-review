@@ -299,113 +299,237 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
     already: list[str] = []
     rejected: list[dict[str, Any]] = []
 
-    for item in items:
-        lead_id: str = item["lead_id"]
-        reason: str = item["reason"]
-        quotes: list[dict[str, Any]] = item.get("quotes") or []
-        duplicate_of: str | None = item.get("duplicate_of")
-        fix_item_id: str | None = item.get("item_id")
-        note: str = item.get("note", "")
+    # One connection for the whole batch (up to 50 items): a storm of batches cannot
+    # exhaust the pool one item at a time. Autocommit for the batch keeps every item's
+    # `conn.transaction()` a real BEGIN/COMMIT (not a savepoint of one batch-wide implicit
+    # transaction opened by the first read); restored before the connection goes back.
+    async with pool.connection() as conn:
+        await conn.set_autocommit(True)
+        try:
+            for item in items:
+                lead_id: str = item["lead_id"]
+                reason: str = item["reason"]
+                quotes: list[dict[str, Any]] = item.get("quotes") or []
+                duplicate_of: str | None = item.get("duplicate_of")
+                fix_item_id: str | None = item.get("item_id")
+                note: str = item.get("note", "")
 
-        # Load the lead
-        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                "select * from leads where job_id = %s and lead_id = %s",
-                (job_id, lead_id),
-            )
-            lead = await cur.fetchone()
-
-        if lead is None:
-            rejected.append({"lead_id": lead_id, "errors": [
-                ReviewError("E_FINDING_NOT_FOUND", draft=lead_id).envelope()
-            ]})
-            continue
-
-        if lead["state"] == "dismissed":
-            already.append(lead_id)
-            continue
-
-        if lead["state"] != "open":
-            rejected.append({"lead_id": lead_id, "errors": [
-                ReviewError("E_FINDING_NOT_FOUND", draft=lead_id).envelope()
-            ]})
-            continue
-
-        item_errors: list[dict[str, Any]] = []
-
-        # V5/V6 on note
-        item_errors.extend(_check_note(note, lead_id))
-
-        # Reason-specific checks
-        if reason == "fp_guarded":
-            # fp_guarded is only valid for reentrancy and access_control categories (04 §10).
-            # Without a semantic layer the guard class cannot be verified — reject with
-            # E_DISMISS_UNCHECKABLE so the model must provide a different reason or more evidence.
-            lead_category = lead.get("category", "")
-            if lead_category in ("evm.reentrancy", "cairo.reentrancy"):
-                required_guard_class: str | None = "reentrancy_lock"
-            elif "access_control" in lead_category:
-                required_guard_class = "caller_check"
-            else:
-                required_guard_class = None
-                item_errors.append(ReviewError(
-                    "E_DISMISS_UNCHECKABLE",
-                    lead=lead_id,
-                    reason="fp_guarded only valid for reentrancy/access_control categories",
-                ).envelope())
-
-            if required_guard_class is not None:
-                if map_doc is None or map_doc.get("semantic") is None:
-                    item_errors.append(ReviewError(
-                        "E_DISMISS_UNCHECKABLE",
-                        lead=lead_id,
-                        reason="fp_guarded requires semantic map to verify guard class",
-                    ).envelope())
-                elif not quotes:
-                    item_errors.append(ReviewError(
-                        "E_DISMISS_UNCHECKABLE",
-                        lead=lead_id, reason="no quotes provided",
-                    ).envelope())
-                else:
-                    # Resolve entry function scope for the lead location (guards must be
-                    # inside the entry function's scope, not anywhere in the codebase).
-                    lead_loc = [{"file": lead["path"], "start": lead["start_line"],
-                                 "end": lead["end_line"]}]
-                    # _resolve_scope returns (ranges, not_covered, source); source is unused here
-                    # because fp_guarded already guards against map_doc.semantic is None above.
-                    scope_ranges, scope_nc, _scope_src = _resolve_scope(
-                        "entry_function", family, map_doc, lead_loc
+                # Load the lead
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "select * from leads where job_id = %s and lead_id = %s",
+                        (job_id, lead_id),
                     )
+                    lead = await cur.fetchone()
 
-                    # Fail-closed: if scope cannot be resolved (not_covered or empty),
-                    # we cannot verify that the guard covers the lead's entry function path.
-                    if scope_nc or not scope_ranges:
+                if lead is None:
+                    rejected.append({"lead_id": lead_id, "errors": [
+                        ReviewError("E_FINDING_NOT_FOUND", draft=lead_id).envelope()
+                    ]})
+                    continue
+
+                if lead["state"] == "dismissed":
+                    already.append(lead_id)
+                    continue
+
+                if lead["state"] != "open":
+                    rejected.append({"lead_id": lead_id, "errors": [
+                        ReviewError("E_FINDING_NOT_FOUND", draft=lead_id).envelope()
+                    ]})
+                    continue
+
+                item_errors: list[dict[str, Any]] = []
+
+                # V5/V6 on note
+                item_errors.extend(_check_note(note, lead_id))
+
+                # Reason-specific checks
+                if reason == "fp_guarded":
+                    # fp_guarded is only valid for reentrancy and access_control categories (04 §10).
+                    # Without a semantic layer the guard class cannot be verified — reject with
+                    # E_DISMISS_UNCHECKABLE so the model must provide a different reason or more evidence.
+                    lead_category = lead.get("category", "")
+                    if lead_category in ("evm.reentrancy", "cairo.reentrancy"):
+                        required_guard_class: str | None = "reentrancy_lock"
+                    elif "access_control" in lead_category:
+                        required_guard_class = "caller_check"
+                    else:
+                        required_guard_class = None
                         item_errors.append(ReviewError(
                             "E_DISMISS_UNCHECKABLE",
                             lead=lead_id,
-                            reason="fp_guarded: entry function scope unresolvable",
+                            reason="fp_guarded only valid for reentrancy/access_control categories",
+                        ).envelope())
+
+                    if required_guard_class is not None:
+                        if map_doc is None or map_doc.get("semantic") is None:
+                            item_errors.append(ReviewError(
+                                "E_DISMISS_UNCHECKABLE",
+                                lead=lead_id,
+                                reason="fp_guarded requires semantic map to verify guard class",
+                            ).envelope())
+                        elif not quotes:
+                            item_errors.append(ReviewError(
+                                "E_DISMISS_UNCHECKABLE",
+                                lead=lead_id, reason="no quotes provided",
+                            ).envelope())
+                        else:
+                            # Resolve entry function scope for the lead location (guards must be
+                            # inside the entry function's scope, not anywhere in the codebase).
+                            lead_loc = [{"file": lead["path"], "start": lead["start_line"],
+                                         "end": lead["end_line"]}]
+                            # _resolve_scope returns (ranges, not_covered, source); source is unused here
+                            # because fp_guarded already guards against map_doc.semantic is None above.
+                            scope_ranges, scope_nc, _scope_src = _resolve_scope(
+                                "entry_function", family, map_doc, lead_loc
+                            )
+
+                            # Fail-closed: if scope cannot be resolved (not_covered or empty),
+                            # we cannot verify that the guard covers the lead's entry function path.
+                            if scope_nc or not scope_ranges:
+                                item_errors.append(ReviewError(
+                                    "E_DISMISS_UNCHECKABLE",
+                                    lead=lead_id,
+                                    reason="fp_guarded: entry function scope unresolvable",
+                                ).envelope())
+                            else:
+                                # Build lookup: spans of functions whose body overlaps the lead
+                                # location (these are the functions whose guards are relevant).
+                                functions = map_doc.get("semantic", {}).get("functions", [])  # type: ignore[union-attr]
+                                spans_map = {sp["id"]: sp for sp in map_doc.get("spans", [])}  # type: ignore[union-attr]
+                                lead_path = lead["path"]
+                                lead_start = lead["start_line"]
+                                lead_end = lead["end_line"]
+
+                                for q in quotes[:3]:
+                                    qt = q.get("text")
+                                    # Missing fields are input errors — do NOT default to lead location
+                                    q_file = q.get("file")
+                                    q_start = q.get("start")
+                                    q_end = q.get("end")
+                                    if qt is None or q_file is None or q_start is None or q_end is None:
+                                        item_errors.append(ReviewError(
+                                            "E_INVALID_ARGUMENT",
+                                            field="dismiss.quotes",
+                                            rule="file, start, end, text are required",
+                                            value80="",
+                                        ).envelope())
+                                        break
+                                    if _is_comment_only_text(qt):
+                                        item_errors.append(ReviewError("E_DISMISS_COMMENT_ONLY").envelope())
+                                        break
+                                    try:
+                                        quote_match(pin, q_file, q_start, q_end, qt)
+                                    except QuoteMatchError as e:
+                                        item_errors.append(ReviewError(e.code, **e.detail).envelope())
+                                        continue
+                                    # Quote must lie within the resolved entry function scope (04 §10).
+                                    in_scope = any(
+                                        (parsed := _parse_range_ref(r)) is not None
+                                        and parsed[0] == q_file
+                                        and not (q_end < parsed[1] or q_start > parsed[2])
+                                        for r in scope_ranges
+                                    )
+                                    if not in_scope:
+                                        item_errors.append(ReviewError(
+                                            "E_DISMISS_UNCHECKABLE",
+                                            lead=lead_id,
+                                            reason="quoted guard line is outside the lead's entry function scope",
+                                        ).envelope())
+                                        continue
+                                    # Verify guard class: quoted line must appear in the guards list of a
+                                    # function whose span encloses the lead location (04 §10).
+                                    # Parse guards[].line exactly: rpartition ":" → path + integer lineno.
+                                    guard_found = False
+                                    for fn in functions:
+                                        # Only consider functions whose span overlaps the lead location
+                                        fn_span = spans_map.get(fn.get("span", ""), {})
+                                        if (fn_span.get("file") != lead_path
+                                                or fn_span.get("end", 0) < lead_start
+                                                or fn_span.get("start", 0) > lead_end):
+                                            continue
+                                        for g in fn.get("guards", []):
+                                            if g.get("class") != required_guard_class:
+                                                continue
+                                            gline = g.get("line") or ""
+                                            g_path, _, g_lineno_s = gline.rpartition(":")
+                                            try:
+                                                g_lineno = int(g_lineno_s)
+                                            except ValueError:
+                                                continue
+                                            if g_path == q_file and q_start <= g_lineno <= q_end:
+                                                guard_found = True
+                                                break
+                                        if guard_found:
+                                            break
+                                    if not guard_found:
+                                        item_errors.append(ReviewError(
+                                            "E_DISMISS_UNCHECKABLE",
+                                            lead=lead_id,
+                                            reason=(
+                                                f"quoted line not found as {required_guard_class} "
+                                                "guard in the function enclosing the lead location"
+                                            ),
+                                        ).envelope())
+
+                elif reason == "fp_unreachable":
+                    # Delegate to _run_auto which uses BFS call-graph analysis (04 §10).
+                    # Dismiss only when _run_auto returns 'present' (proven unreachable via full map).
+                    # 'unknown' (partial map or no semantic layer) -> E_DISMISS_UNCHECKABLE (fail closed).
+                    location_quotes_for_auto = [{
+                        "file": lead["path"],
+                        "start": lead["start_line"],
+                        "end": lead["end_line"],
+                    }]
+                    auto_result = _run_auto(
+                        "map.unreachable", lead.get("category", ""), map_doc, location_quotes_for_auto
+                    )
+                    if auto_result != "present":
+                        item_errors.append(ReviewError(
+                            "E_DISMISS_UNCHECKABLE",
+                            lead=lead_id,
+                            reason=(
+                                f"map.unreachable={auto_result}; "
+                                "proof of unreachability requires full map"
+                            ),
+                        ).envelope())
+
+                elif reason == "not_a_vulnerability":
+                    # The reviewer's triage call on analyzer noise (best-practice detectors rated High by
+                    # the analyzer, patterns that do not apply at this location). Not provable by the
+                    # server, so the record must carry evidence: a real code quote inside the lead's
+                    # function (quote-matched against the pin) and a stated reason. Carried leads keep
+                    # their own rule (`fixed`).
+                    if lead.get("origin") != "analyzer":
+                        item_errors.append(ReviewError(
+                            "E_DISMISS_UNCHECKABLE", lead=lead_id,
+                            reason="not_a_vulnerability applies to analyzer leads only; carried leads close as fixed",
+                        ).envelope())
+                    elif len(note.strip()) < _NAV_MIN_NOTE_CHARS:
+                        item_errors.append(ReviewError(
+                            "E_INVALID_ARGUMENT", field=f"dismiss.{lead_id}.note",
+                            rule=f"not_a_vulnerability needs a note of at least {_NAV_MIN_NOTE_CHARS} characters "
+                                 "stating why the detector pattern is not a weakness at this location",
+                            value80=note[:80],
+                        ).envelope())
+                    elif not quotes:
+                        item_errors.append(ReviewError(
+                            "E_DISMISS_UNCHECKABLE", lead=lead_id,
+                            reason="not_a_vulnerability requires a code quote inside the lead's function",
                         ).envelope())
                     else:
-                        # Build lookup: spans of functions whose body overlaps the lead
-                        # location (these are the functions whose guards are relevant).
-                        functions = map_doc.get("semantic", {}).get("functions", [])  # type: ignore[union-attr]
-                        spans_map = {sp["id"]: sp for sp in map_doc.get("spans", [])}  # type: ignore[union-attr]
-                        lead_path = lead["path"]
-                        lead_start = lead["start_line"]
-                        lead_end = lead["end_line"]
-
+                        try:
+                            n_lines = pin.line_count(lead["path"])
+                        except (KeyError, ValueError):
+                            n_lines = 0
+                        allowed = _lead_function_ranges(map_doc, lead, n_lines)
                         for q in quotes[:3]:
                             qt = q.get("text")
-                            # Missing fields are input errors — do NOT default to lead location
-                            q_file = q.get("file")
-                            q_start = q.get("start")
-                            q_end = q.get("end")
+                            q_file, q_start, q_end = q.get("file"), q.get("start"), q.get("end")
                             if qt is None or q_file is None or q_start is None or q_end is None:
                                 item_errors.append(ReviewError(
-                                    "E_INVALID_ARGUMENT",
-                                    field="dismiss.quotes",
-                                    rule="file, start, end, text are required",
-                                    value80="",
+                                    "E_INVALID_ARGUMENT", field="dismiss.quotes",
+                                    rule="file, start, end, text are required", value80="",
                                 ).envelope())
                                 break
                             if _is_comment_only_text(qt):
@@ -416,242 +540,126 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                             except QuoteMatchError as e:
                                 item_errors.append(ReviewError(e.code, **e.detail).envelope())
                                 continue
-                            # Quote must lie within the resolved entry function scope (04 §10).
-                            in_scope = any(
-                                (parsed := _parse_range_ref(r)) is not None
-                                and parsed[0] == q_file
-                                and not (q_end < parsed[1] or q_start > parsed[2])
-                                for r in scope_ranges
-                            )
-                            if not in_scope:
+                            if not any(q_file == p and not (q_end < s or q_start > e) for p, s, e in allowed):
                                 item_errors.append(ReviewError(
-                                    "E_DISMISS_UNCHECKABLE",
-                                    lead=lead_id,
-                                    reason="quoted guard line is outside the lead's entry function scope",
-                                ).envelope())
-                                continue
-                            # Verify guard class: quoted line must appear in the guards list of a
-                            # function whose span encloses the lead location (04 §10).
-                            # Parse guards[].line exactly: rpartition ":" → path + integer lineno.
-                            guard_found = False
-                            for fn in functions:
-                                # Only consider functions whose span overlaps the lead location
-                                fn_span = spans_map.get(fn.get("span", ""), {})
-                                if (fn_span.get("file") != lead_path
-                                        or fn_span.get("end", 0) < lead_start
-                                        or fn_span.get("start", 0) > lead_end):
-                                    continue
-                                for g in fn.get("guards", []):
-                                    if g.get("class") != required_guard_class:
-                                        continue
-                                    gline = g.get("line") or ""
-                                    g_path, _, g_lineno_s = gline.rpartition(":")
-                                    try:
-                                        g_lineno = int(g_lineno_s)
-                                    except ValueError:
-                                        continue
-                                    if g_path == q_file and q_start <= g_lineno <= q_end:
-                                        guard_found = True
-                                        break
-                                if guard_found:
-                                    break
-                            if not guard_found:
-                                item_errors.append(ReviewError(
-                                    "E_DISMISS_UNCHECKABLE",
-                                    lead=lead_id,
-                                    reason=(
-                                        f"quoted line not found as {required_guard_class} "
-                                        "guard in the function enclosing the lead location"
-                                    ),
+                                    "E_DISMISS_UNCHECKABLE", lead=lead_id,
+                                    reason="quote lies outside the function that holds the lead location "
+                                           + ", ".join(f"{p}:{s}-{e}" for p, s, e in allowed[:3]),
                                 ).envelope())
 
-        elif reason == "fp_unreachable":
-            # Delegate to _run_auto which uses BFS call-graph analysis (04 §10).
-            # Dismiss only when _run_auto returns 'present' (proven unreachable via full map).
-            # 'unknown' (partial map or no semantic layer) -> E_DISMISS_UNCHECKABLE (fail closed).
-            location_quotes_for_auto = [{
-                "file": lead["path"],
-                "start": lead["start_line"],
-                "end": lead["end_line"],
-            }]
-            auto_result = _run_auto(
-                "map.unreachable", lead.get("category", ""), map_doc, location_quotes_for_auto
-            )
-            if auto_result != "present":
-                item_errors.append(ReviewError(
-                    "E_DISMISS_UNCHECKABLE",
-                    lead=lead_id,
-                    reason=(
-                        f"map.unreachable={auto_result}; "
-                        "proof of unreachability requires full map"
-                    ),
-                ).envelope())
-
-        elif reason == "not_a_vulnerability":
-            # The reviewer's triage call on analyzer noise (best-practice detectors rated High by
-            # the analyzer, patterns that do not apply at this location). Not provable by the
-            # server, so the record must carry evidence: a real code quote inside the lead's
-            # function (quote-matched against the pin) and a stated reason. Carried leads keep
-            # their own rule (`fixed`).
-            if lead.get("origin") != "analyzer":
-                item_errors.append(ReviewError(
-                    "E_DISMISS_UNCHECKABLE", lead=lead_id,
-                    reason="not_a_vulnerability applies to analyzer leads only; carried leads close as fixed",
-                ).envelope())
-            elif len(note.strip()) < _NAV_MIN_NOTE_CHARS:
-                item_errors.append(ReviewError(
-                    "E_INVALID_ARGUMENT", field=f"dismiss.{lead_id}.note",
-                    rule=f"not_a_vulnerability needs a note of at least {_NAV_MIN_NOTE_CHARS} characters "
-                         "stating why the detector pattern is not a weakness at this location",
-                    value80=note[:80],
-                ).envelope())
-            elif not quotes:
-                item_errors.append(ReviewError(
-                    "E_DISMISS_UNCHECKABLE", lead=lead_id,
-                    reason="not_a_vulnerability requires a code quote inside the lead's function",
-                ).envelope())
-            else:
-                try:
-                    n_lines = pin.line_count(lead["path"])
-                except (KeyError, ValueError):
-                    n_lines = 0
-                allowed = _lead_function_ranges(map_doc, lead, n_lines)
-                for q in quotes[:3]:
-                    qt = q.get("text")
-                    q_file, q_start, q_end = q.get("file"), q.get("start"), q.get("end")
-                    if qt is None or q_file is None or q_start is None or q_end is None:
+                elif reason == "duplicate_of":
+                    if not duplicate_of:
                         item_errors.append(ReviewError(
-                            "E_INVALID_ARGUMENT", field="dismiss.quotes",
-                            rule="file, start, end, text are required", value80="",
+                            "E_DUPLICATE_TARGET", rule="target_required",
                         ).envelope())
-                        break
-                    if _is_comment_only_text(qt):
-                        item_errors.append(ReviewError("E_DISMISS_COMMENT_ONLY").envelope())
-                        break
-                    try:
-                        quote_match(pin, q_file, q_start, q_end, qt)
-                    except QuoteMatchError as e:
-                        item_errors.append(ReviewError(e.code, **e.detail).envelope())
-                        continue
-                    if not any(q_file == p and not (q_end < s or q_start > e) for p, s, e in allowed):
+                    else:
+                        dup_errors = await _check_duplicate_target(lead, duplicate_of, conn, job_id, family)
+                        item_errors.extend(dup_errors)
+
+                elif reason == "fixed":
+                    # Fixed only for previous_report leads (carried leads)
+                    if lead["origin"] != "previous_report":
                         item_errors.append(ReviewError(
-                            "E_DISMISS_UNCHECKABLE", lead=lead_id,
-                            reason="quote lies outside the function that holds the lead location "
-                                   + ", ".join(f"{p}:{s}-{e}" for p, s, e in allowed[:3]),
+                            "E_FIX_NOT_EVIDENT", lead_id=lead_id,
                         ).envelope())
-
-        elif reason == "duplicate_of":
-            if not duplicate_of:
-                item_errors.append(ReviewError(
-                    "E_DUPLICATE_TARGET", rule="target_required",
-                ).envelope())
-            else:
-                async with pool.connection() as conn:
-                    dup_errors = await _check_duplicate_target(lead, duplicate_of, conn, job_id, family)
-                item_errors.extend(dup_errors)
-
-        elif reason == "fixed":
-            # Fixed only for previous_report leads (carried leads)
-            if lead["origin"] != "previous_report":
-                item_errors.append(ReviewError(
-                    "E_FIX_NOT_EVIDENT", lead_id=lead_id,
-                ).envelope())
-            elif lead.get("located") == "moved":
-                # located = moved means the code was moved, not fixed
-                item_errors.append(ReviewError(
-                    "E_FIX_NOT_EVIDENT", lead_id=lead_id,
-                ).envelope())
-            else:
-                # Fixed: need to verify the fix exists via quotes or item_id
-                # At W0: if no evidence provided → E_FIX_NOT_EVIDENT
-                if not quotes and not fix_item_id:
-                    item_errors.append(ReviewError(
-                        "E_FIX_NOT_EVIDENT", lead_id=lead_id,
-                    ).envelope())
-                elif quotes:
-                    # Verify quotes exist in pinned source; missing fields are input errors
-                    for q in quotes[:3]:
-                        qt = q.get("text") or ""
-                        q_file = q.get("file")
-                        q_start = q.get("start")
-                        q_end = q.get("end")
-                        if not qt or q_file is None or q_start is None or q_end is None:
+                    elif lead.get("located") == "moved":
+                        # located = moved means the code was moved, not fixed
+                        item_errors.append(ReviewError(
+                            "E_FIX_NOT_EVIDENT", lead_id=lead_id,
+                        ).envelope())
+                    else:
+                        # Fixed: need to verify the fix exists via quotes or item_id
+                        # At W0: if no evidence provided → E_FIX_NOT_EVIDENT
+                        if not quotes and not fix_item_id:
                             item_errors.append(ReviewError(
-                                "E_INVALID_ARGUMENT",
-                                field="dismiss.quotes",
-                                rule="file, start, end, text are required",
-                                value80="",
+                                "E_FIX_NOT_EVIDENT", lead_id=lead_id,
                             ).envelope())
-                            break
-                        try:
-                            quote_match(pin, q_file, q_start, q_end, qt)
-                        except QuoteMatchError as e:
-                            item_errors.append(ReviewError(e.code, **e.detail).envelope())
+                        elif quotes:
+                            # Verify quotes exist in pinned source; missing fields are input errors
+                            for q in quotes[:3]:
+                                qt = q.get("text") or ""
+                                q_file = q.get("file")
+                                q_start = q.get("start")
+                                q_end = q.get("end")
+                                if not qt or q_file is None or q_start is None or q_end is None:
+                                    item_errors.append(ReviewError(
+                                        "E_INVALID_ARGUMENT",
+                                        field="dismiss.quotes",
+                                        rule="file, start, end, text are required",
+                                        value80="",
+                                    ).envelope())
+                                    break
+                                try:
+                                    quote_match(pin, q_file, q_start, q_end, qt)
+                                except QuoteMatchError as e:
+                                    item_errors.append(ReviewError(e.code, **e.detail).envelope())
 
-        else:
-            item_errors.append(ReviewError(
-                "E_INVALID_ARGUMENT",
-                field="reason",
-                rule="must be fp_guarded, fp_unreachable, not_a_vulnerability, duplicate_of, or fixed",
-                value80=str(reason)[:80],
-            ).envelope())
-
-        if item_errors:
-            rejected.append({"lead_id": lead_id, "errors": item_errors})
-            continue
-
-        # ── Commit the dismissal ─────────────────────────────────────────────
-        async with pool.connection() as conn, conn.transaction():
-            # TOCTOU guard: lock the job row and re-verify state inside the write transaction
-            # (prevents state resurrection if concurrent finalize ran between our guard check
-            # and this write — e.g. job transitions finalized → frozen mid-loop).
-            async with conn.cursor(row_factory=dict_row) as cur2:
-                await cur2.execute(
-                    "select state from jobs where job_id = %s for update", (job_id,)
-                )
-                locked_job = await cur2.fetchone()
-            if locked_job is None:
-                raise ReviewError("E_JOB_NOT_FOUND")
-            locked_state = locked_job["state"]
-            if locked_state in _FROZEN_STATES:
-                # Abort entire batch: job was finalized concurrently
-                return {"accepted": False, "errors": [ReviewError("E_JOB_FROZEN").envelope()]}
-            if locked_state not in ("ready",):
-                return {"accepted": False, "errors": [
-                    ReviewError("E_JOB_NOT_READY", state=locked_state, eta_s=0).envelope()
-                ]}
-
-            async with conn.cursor(row_factory=dict_row) as cur:
-                if reason == "duplicate_of":
-                    await cur.execute(
-                        """update leads set state = 'dismissed', reason = %s, state_ref = %s
-                           where job_id = %s and lead_id = %s and state = 'open'""",
-                        (reason, duplicate_of, job_id, lead_id),
-                    )
                 else:
-                    await cur.execute(
-                        """update leads set state = 'dismissed', reason = %s
-                           where job_id = %s and lead_id = %s and state = 'open'""",
-                        (reason, job_id, lead_id),
-                    )
-                if cur.rowcount == 0:
-                    # Concurrent steal (TOCTOU)
-                    already.append(lead_id)
+                    item_errors.append(ReviewError(
+                        "E_INVALID_ARGUMENT",
+                        field="reason",
+                        rule="must be fp_guarded, fp_unreachable, not_a_vulnerability, duplicate_of, or fixed",
+                        value80=str(reason)[:80],
+                    ).envelope())
+
+                if item_errors:
+                    rejected.append({"lead_id": lead_id, "errors": item_errors})
                     continue
 
-            # Record dismissal audit log
-            await conn.execute(
-                """insert into lead_dismissals (job_id, lead_id, reason, target, quotes, note)
-                   values (%s, %s, %s, %s, %s, %s)""",
-                (job_id, lead_id, reason, duplicate_of,
-                 __import__("psycopg").types.json.Jsonb(quotes) if quotes else None,
-                 note),
-            )
-            await conn.execute(
-                "update jobs set last_call_at = now() where job_id = %s", (job_id,)
-            )
+                # ── Commit the dismissal ─────────────────────────────────────────────
+                async with conn.transaction():
+                    # TOCTOU guard: lock the job row and re-verify state inside the write transaction
+                    # (prevents state resurrection if concurrent finalize ran between our guard check
+                    # and this write — e.g. job transitions finalized → frozen mid-loop).
+                    async with conn.cursor(row_factory=dict_row) as cur2:
+                        await cur2.execute(
+                            "select state from jobs where job_id = %s for update", (job_id,)
+                        )
+                        locked_job = await cur2.fetchone()
+                    if locked_job is None:
+                        raise ReviewError("E_JOB_NOT_FOUND")
+                    locked_state = locked_job["state"]
+                    if locked_state in _FROZEN_STATES:
+                        # Abort entire batch: job was finalized concurrently
+                        return {"accepted": False, "errors": [ReviewError("E_JOB_FROZEN").envelope()]}
+                    if locked_state not in ("ready",):
+                        return {"accepted": False, "errors": [
+                            ReviewError("E_JOB_NOT_READY", state=locked_state, eta_s=0).envelope()
+                        ]}
 
-        dismissed.append(lead_id)
+                    async with conn.cursor(row_factory=dict_row) as cur:
+                        if reason == "duplicate_of":
+                            await cur.execute(
+                                """update leads set state = 'dismissed', reason = %s, state_ref = %s
+                                   where job_id = %s and lead_id = %s and state = 'open'""",
+                                (reason, duplicate_of, job_id, lead_id),
+                            )
+                        else:
+                            await cur.execute(
+                                """update leads set state = 'dismissed', reason = %s
+                                   where job_id = %s and lead_id = %s and state = 'open'""",
+                                (reason, job_id, lead_id),
+                            )
+                        if cur.rowcount == 0:
+                            # Concurrent steal (TOCTOU)
+                            already.append(lead_id)
+                            continue
+
+                    # Record dismissal audit log
+                    await conn.execute(
+                        """insert into lead_dismissals (job_id, lead_id, reason, target, quotes, note)
+                           values (%s, %s, %s, %s, %s, %s)""",
+                        (job_id, lead_id, reason, duplicate_of,
+                         __import__("psycopg").types.json.Jsonb(quotes) if quotes else None,
+                         note),
+                    )
+                    await conn.execute(
+                        "update jobs set last_call_at = now() where job_id = %s", (job_id,)
+                    )
+
+                dismissed.append(lead_id)
+        finally:
+            await conn.set_autocommit(False)
 
     # Count open High/Medium analyzer leads for caller awareness
     async with pool.connection() as conn, conn.cursor() as cur:

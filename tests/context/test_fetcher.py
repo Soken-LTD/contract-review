@@ -310,3 +310,17 @@ def test_main_writes_json_and_exit_codes(opener, tmp_path: Path, capsys) -> None
     assert json.loads(capsys.readouterr().err.strip().splitlines()[-1])["status"] == "ok"
     assert f.main(["--kind", "docs", "--url", "http://x.example/", "--out", str(tmp_path / "1.json")]) == f.EXIT_INVALID
     assert f.main(["--kind", "Bad Kind", "--url", "https://x.example/", "--out", str(tmp_path / "2.json")]) == f.EXIT_INVALID
+
+
+def test_bundle_redirect_to_another_origin_is_refused(opener) -> None:
+    opener({"https://a.example/app.js": ("redirect", 302, "https://b.example/payload.js")})
+    with pytest.raises(f.Refusal) as exc:
+        f.fetch_url("https://a.example/app.js", 1000, _deadline(), same_origin_as="https://a.example/")
+    assert exc.value.error == "blocked" and "origin" in exc.value.detail
+
+
+def test_page_redirect_to_another_origin_is_still_followed(opener) -> None:
+    opener({"https://a.example/": ("redirect", 302, "https://www.a.example/"),
+            "https://www.a.example/": ("ok", 200, {"Content-Type": "text/html"}, b"<html>hi</html>")})
+    got = f.fetch_url("https://a.example/", 1000, _deadline())
+    assert got.final_url == "https://www.a.example/"

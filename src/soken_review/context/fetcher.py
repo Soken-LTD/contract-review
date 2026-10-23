@@ -211,8 +211,10 @@ def _read_capped(resp, cap: int) -> tuple[bytes, bool]:
             return b"".join(chunks), True
 
 
-def fetch_url(url: str, cap: int, deadline: float, accept: str = ACCEPT) -> Fetched:
-    """GET `url` with at most three https redirects and `cap` bytes. Raises Refusal."""
+def fetch_url(url: str, cap: int, deadline: float, accept: str = ACCEPT, same_origin_as: str | None = None) -> Fetched:
+    """GET `url` with at most three https redirects and `cap` bytes. Raises Refusal. With
+    `same_origin_as`, every redirect hop must stay on that origin (script bundles: a bundle the
+    page names may not bounce the fetcher to an arbitrary site)."""
     current = check_url(url)
     opener = _opener()
     for _hop in range(MAX_REDIRECTS + 1):
@@ -234,6 +236,8 @@ def fetch_url(url: str, cap: int, deadline: float, accept: str = ACCEPT) -> Fetc
                     current = check_url(target)
                 except ValueError as why:
                     raise Refusal("blocked", f"redirect refused: {why}") from None
+                if same_origin_as is not None and not same_origin(current, same_origin_as):
+                    raise Refusal("blocked", "redirect refused: leaves the page origin")
                 continue
             code = exc.code
             exc.close()
@@ -476,7 +480,7 @@ def scan_bundles(markup: str, page_url: str, deadline: float) -> dict:
     for bundle_url in script_bundles(markup, page_url):
         row = {"url": bundle_url, "bytes": 0, "status": "failed"}
         try:
-            got = fetch_url(bundle_url, MAX_BUNDLE_BYTES, deadline, accept="*/*")
+            got = fetch_url(bundle_url, MAX_BUNDLE_BYTES, deadline, accept="*/*", same_origin_as=page_url)
             row.update(bytes=len(got.data), status="ok")
             sources.append((bundle_url, decode_bytes(got.data, got.content_type)))
         except Refusal as r:
