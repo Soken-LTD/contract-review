@@ -90,9 +90,11 @@ def test_budget_alone_caps_when_the_host_is_unmeasured(tmp_path: Path, monkeypat
     assert cap.check(CEILING_ONLY, "build") == "4g"                    # equal to the budget: untouched
     big = P.StepLimits(cpus=2, memory="6g", pids=256, max_file=1)
     assert cap.check(big, "analyze") == "4096m"                         # clamped to the budget
+    assert cap.check(BUILD, "build") == "4096m"                         # floor 4096 fits the budget: clamped
+    small = P.configure_host_capacity(2048, meminfo=tmp_path / "absent")
     with pytest.raises(P.HostCapacityError) as exc:
-        cap.check(BUILD, "build")
-    assert exc.value.reason == "insufficient_host_memory (need 8192 MiB, budget 4096 MiB)"
+        small.check(BUILD, "build")                                    # floor above the budget: refused
+    assert exc.value.reason == "insufficient_host_memory (need 8192 MiB, budget 2048 MiB)"
 
 
 def test_docker_argv_refuses_before_building_the_command(tmp_path: Path) -> None:
