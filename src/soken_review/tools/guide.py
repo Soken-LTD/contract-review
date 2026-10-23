@@ -108,9 +108,18 @@ def _topic_severity_inputs() -> list[str]:
     out.append("To print a High: link an analyzer lead of the same category (review_leads, lead_ids), or"
                " answer the challenge (review_challenge, review_answer_challenge). trigger privileged_role"
                " caps at Medium unless the deployment is a retail token where the owner is the threat.")
+    out.append("magnitude: unbounded when the amount lost or frozen is the unit's full balance or a user's whole"
+               " position (a stake, a vote allocation), bounded only with a bound_ref quote of the cap, dust for"
+               " rounding. A freeze that lasts until an admin acts is permanent_freeze with reversibility"
+               " admin_reversible, not temporary_freeze; temporary_freeze is a freeze that clears by itself."
+               " precondition: normal_operation when the path runs in a state the protocol expects (a removed"
+               " gauge, a slashed round, an admin-added token); uncommon_protocol_state only for a state it does"
+               " not expect. A bounded loss under an uncommon state prints Low by the matrix (I2 x L1).")
     out.append("Quotes: role location quotes must copy the pinned lines exactly (review_read_code). Numbers in"
-               " text need a source ({fact:<key>} or {calc:...}); absence phrases (never, nowhere, no function)"
-               " need an absence_claims entry.")
+               " text need a source ({fact:<key>} or {calc:...}); a count in words up to ten, once, twice and"
+               " third pass on their own (two pools, the third call, paid twice) but not before a unit, percent"
+               " or token word (two tokens, ten percent, five days); absence phrases (never, nowhere, no"
+               " function) need an absence_claims entry.")
     return out
 
 
