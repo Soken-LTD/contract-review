@@ -5,7 +5,7 @@ root, no network for build and analyze, the family egress network for deps only.
 
   <work>/src   -> /work/src   read-only (the pinned source, never writable after the pin)
   <work>/out   -> /work/out   read-write, empty at start (artifacts only)
-  <work>/move  -> /work/move  MOVE_HOME: filled by deps (egress); writable everywhere, offline in build/analyze
+  <work>/move  -> /work/move  MOVE_HOME: filled by deps (egress); other steps mount a fresh copy, writable, offline
   <work>/host  never mounted: supervisor files (logs, hashes, provenance)
 
 Container output is read back with lstat checks only (no symlink, regular files, inside out/).
@@ -135,18 +135,41 @@ def prepare_dirs(work: Path) -> dict[str, Path]:
 
 def mounts_for(dirs: dict[str, Path], step: str) -> list[tuple[Path, str, bool]]:
     """Bind mounts of one CLI run: (host, container, read_only). The source is read-only after
-    the pin; artifacts are written by build/analyze only; MOVE_HOME is writable in every step:
-    deps fills it (the only step with egress), and the new Sui package system (move-package-alt,
+    the pin; artifacts are written by build/analyze only; MOVE_HOME is writable in every step but
+    only the deps step (the one with egress) writes the job's canonical cache `dirs["move"]`:
+    every other step gets a fresh host-made copy (`cache_copy`), so a build cannot poison what
+    analyze or prove compile against. The new Sui package system (move-package-alt,
     mainnet-v1.81.1) takes a lock file under `$MOVE_HOME/git/` even when every dependency is
     cached, so a read-only cache panicked the offline build (`failed to get git cache folder
-    lock ... Read-only file system`, stand 2026-10-23). Writes there cannot fetch anything:
-    build and analyze run with --network=none."""
+    lock ... Read-only file system`, stand 2026-10-23). Writes there fetch nothing: build and
+    analyze run with --network=none."""
     deps = step == "deps"
     return [
         (dirs["src"].resolve(), "/work/src", True),
         (dirs["out"].resolve(), "/work/out", deps),
-        (dirs["move"].resolve(), "/work/move", False),
+        ((dirs["move"] if deps else dirs["move_copy"]).resolve(), "/work/move", False),
     ]
+
+
+def cache_copy(dirs: dict[str, Path], step: str) -> Path:
+    """Fresh copy of the job's dependency cache for one build/analyze/prove run; the canonical
+    cache written by deps stays untouched. Symlinks are copied as symlinks, never followed: the
+    cache was written by a sandboxed container, and following a planted link would read a host
+    path as the supervisor and mount its content into the next container. Caller removes it."""
+    import tempfile
+
+    base = Path(tempfile.mkdtemp(prefix=f"move-{step}-", dir=dirs["move"].parent))
+    shutil.rmtree(base)
+    shutil.copytree(dirs["move"], base, symlinks=True)
+    for root, dnames, fnames in os.walk(base):
+        for n in dnames:
+            os.chmod(os.path.join(root, n), 0o777)
+        for n in fnames:
+            fp = os.path.join(root, n)
+            if not os.path.islink(fp):
+                os.chmod(fp, 0o666)
+    os.chmod(base, 0o777)
+    return base
 
 
 def run(
@@ -169,6 +192,10 @@ def run(
     image = image if image is not None else image_for(chain)
     if any(".." in tok.split("/") for tok in command):
         raise ValueError("path token with ..")
+    move_copy: Path | None = None
+    if step != "deps":
+        move_copy = cache_copy(dirs, step)
+        dirs = dirs | {"move_copy": move_copy}
     mounts = mounts_for(dirs, step)
     if "scratch" in dirs:
         # Analyzer scratch copy of the source (the CLI writes next to the package); the host never
@@ -196,6 +223,9 @@ def run(
             capture_output=True, check=False, timeout=60,
         )
         return RunResult(-1, _text(exc.stdout), _text(exc.stderr), timed_out=True)
+    finally:
+        if move_copy is not None:
+            shutil.rmtree(move_copy, ignore_errors=True)
     return RunResult(proc.returncode, _text(proc.stdout), _text(proc.stderr))
 
 
