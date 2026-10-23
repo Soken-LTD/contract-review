@@ -237,3 +237,21 @@ def test_report_dir_removal_requires_a_report_id_shaped_segment(tmp_path: Path, 
     good.mkdir(parents=True)
     assert D._remove_files(None, JOB, f"reports/{REPORT}/1/") == {"report", "pdf"}
     assert not good.exists()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_purge_job_with_expiry_reason_writes_expiry_tombstones(wired) -> None:
+    from soken_review.tools.delete import purge_job
+
+    async with wired.connection() as conn:
+        await _seed(conn, JOB, with_report=True)
+        async with conn.transaction():
+            deleted, report = await purge_job(conn, JOB, reason="expiry", to_state="expired")
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("select state from jobs where job_id = %s", (JOB,))
+            state = (await cur.fetchone())["state"]
+            await cur.execute("select kind, reason from report_tombstones where ref_hash in (%s, %s) order by kind",
+                              (_h(JOB), _h(REPORT)))
+            tombs = await cur.fetchall()
+    assert state == "expired" and report["report_id"] == REPORT and {"report", "pdf", "reads"} <= deleted
+    assert [(t["kind"], t["reason"]) for t in tombs] == [("job", "expiry"), ("report", "expiry")]

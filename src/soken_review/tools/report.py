@@ -16,6 +16,7 @@ import json
 import os
 import secrets
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import psycopg_pool
@@ -193,6 +194,10 @@ async def handle_review_report(args: dict[str, Any]) -> dict[str, Any]:
         return _status_only(state, job)
     if rep is None:
         raise ReviewError("E_INTERNAL")
+    if rep["expires_at"] <= datetime.now(UTC):
+        # Past its retention date the report is gone for the caller even before the sweep
+        # (worker/retention) removes the row and the files.
+        return _status_only("expired", job)
     report = json.loads((store_root() / rep["object_prefix"] / "report.json").read_text(encoding="utf-8"))
     profile = "owner" if job["ownership_proven"] else "public_review"
     projected = project(report, profile)

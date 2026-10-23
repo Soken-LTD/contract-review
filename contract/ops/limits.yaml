@@ -21,8 +21,6 @@ upload:                        # S4 (03 signed URL; 09 5.3)
   url_ttl_s: 1800
   max_bytes: 52428800
   max_files: 20000
-build:                         # step wall for compiler sandbox (05 7, 09 4.1); used by forge_build_repo (B4) and _invoke_solc
-  evm: {timeout_s: 300}       # forge --offline + solc --standard-json; 300 s covers large repos
 chain_state:                   # 05 12.3; call ceiling = 09 step wall x outbound.<provider>.per_s; max_seconds is the EVM chain_state 1 wall
   max_seconds: 120
   max_calls_role: 200
@@ -37,7 +35,10 @@ ton:                           # 06 2.10
   max_compilations_per_job: 8
   max_targets_per_candidate: null
   get_method_gas: null
-build:                         # per-step build wall for compiled families; env override ≤ yaml only
+build:                         # per-step build wall per family (05 7, 09 4.1); env override ≤ yaml only.
+                               # One `build:` key: a second one made yaml.safe_load keep only the last
+                               # and dropped evm.timeout_s to the code default (2026-10-23).
+  evm: {timeout_s: 300}        # forge --offline + solc --standard-json (forge_build_repo B4, _invoke_solc); 300 s covers large repos
   move: {wall_s: 900}          # BUILD_WALL_S; env SOKEN_MOVE_BUILD_WALL_S; includes pre-fetch containers
 analyze:                       # per-step analyze wall; each container gets min(per_container_wall_s, remaining)
   move: {wall_s: 600, per_container_wall_s: 180}  # step total 600 s; per container ≤ 180 s; env SOKEN_MOVE_ANALYZE_WALL_S

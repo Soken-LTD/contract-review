@@ -9,6 +9,7 @@ returning the ASGI app from server.create_app() (09 workstream).
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -85,8 +86,24 @@ class _LifespanWrapper:
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "lifespan":
             await self._lifespan(receive, send)
+        elif scope["type"] == "http" and scope.get("path", "").rstrip("/") == "/healthz":
+            await self._healthz(scope, send)
         else:
             await self._inner(scope, receive, send)
+
+    async def _healthz(self, scope: Any, send: Any) -> None:
+        """GET /healthz for the monitor (09 O5): 200 when the database answers and a worker
+        heartbeat is fresh (`worker_hosts.last_seen`, every 15 s), 503 with the reason otherwise.
+        No job data, no auth, no caching."""
+        if scope.get("method") != "GET":
+            body, status = b'{"error":"method"}', 405
+        else:
+            payload, ok = await health_payload(self._async_pool)
+            body, status = json.dumps(payload, separators=(",", ":")).encode(), (200 if ok else 503)
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [(b"content-type", b"application/json"), (b"cache-control", b"no-store"),
+                                (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
 
     async def _lifespan(self, receive: Any, send: Any) -> None:
         event = await receive()
@@ -158,6 +175,28 @@ class _LifespanWrapper:
             await self._async_pool.close()
         if self._sync_pool:
             self._sync_pool.close()
+
+
+WORKER_STALE_S = 90   # six missed 15 s heartbeats
+
+
+async def health_payload(pool: Any) -> tuple[dict[str, Any], bool]:
+    """(payload, healthy): database reachable and at least one worker seen within WORKER_STALE_S."""
+    out: dict[str, Any] = {"db": "down", "worker_age_s": None, "workers": 0}
+    if pool is None:
+        return out, False
+    try:
+        async with pool.connection() as conn:
+            row = await (await conn.execute(
+                "select count(*), extract(epoch from now() - max(last_seen)) from worker_hosts")).fetchone()
+        out["db"] = "ok"
+        out["workers"] = int(row[0] or 0)
+        out["worker_age_s"] = round(float(row[1]), 1) if row[1] is not None else None
+    except Exception as exc:  # noqa: BLE001  # the monitor sees the class, never the DSN
+        out["db"] = f"error: {type(exc).__name__}"
+        return out, False
+    ok = out["worker_age_s"] is not None and out["worker_age_s"] <= WORKER_STALE_S
+    return out, ok
 
 
 def create_app() -> Any:

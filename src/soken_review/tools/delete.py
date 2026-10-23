@@ -112,15 +112,55 @@ async def _delete_rows(conn: psycopg.AsyncConnection, job_id: str) -> dict[str, 
     return counts
 
 
-async def _tombstones(conn: psycopg.AsyncConnection, job_id: str, report: dict[str, Any] | None) -> None:
-    rows: list[tuple[str, str, str | None]] = [("job", _ref_hash(job_id), None)]
+async def _tombstones(conn: psycopg.AsyncConnection, job_id: str, report: dict[str, Any] | None,
+                      reason: str = "user_delete") -> None:
+    rows: list[tuple[str, str, str | None, str]] = [("job", _ref_hash(job_id), None, reason)]
     if report is not None:
-        rows += [("report", _ref_hash(report["report_id"]), sha) for sha in (report["pdf_sha256s"] or [])]
+        rows += [("report", _ref_hash(report["report_id"]), sha, reason) for sha in (report["pdf_sha256s"] or [])]
     async with conn.cursor() as cur:
         await cur.executemany(
-            "insert into report_tombstones (kind, ref_hash, pdf_sha256, reason) values (%s, %s, %s, 'user_delete')",
+            "insert into report_tombstones (kind, ref_hash, pdf_sha256, reason) values (%s, %s, %s, %s)",
             rows,
         )
+
+
+async def purge_job(conn: psycopg.AsyncConnection, job_id: str, *, reason: str,
+                    to_state: str = "deleted") -> tuple[set[str], dict[str, Any] | None]:
+    """Everything a job loses inside one open transaction (the caller locked the row): open steps
+    cancelled, tombstones appended with `reason` (09: user_delete | expiry), publication records
+    kept by hash, every other row keyed by the job removed, the job row moved to `to_state` and
+    scrubbed. Returns (contract names of what went, the report row for the file removal). Used by
+    review_delete_job and the retention sweep (worker/retention)."""
+    deleted: set[str] = set()
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            "update job_steps set status = 'cancelled', cancel_reason = %s"
+            " where job_id = %s and status in ('queued', 'running')",
+            ("user_delete" if reason == "user_delete" else "budget", job_id),
+        )
+        await cur.execute("select report_id, pdf_sha256s, object_prefix from reports where job_id = %s", (job_id,))
+        report = await cur.fetchone()
+    await _tombstones(conn, job_id, report, reason)
+    if report is not None:
+        await _retain_publication(conn, report["report_id"])
+    counts = await _delete_rows(conn, job_id)
+    if any(counts.get(t, 0) for t in _FINDING_TABLES):
+        deleted.add("findings")
+    if any(counts.get(t, 0) for t in _READ_TABLES):
+        deleted.add("reads")
+    if report is not None:
+        deleted.update({"report", "pdf"})
+    await JobRepo(conn).transition(job_id, to_state, touch=True)
+    await conn.execute(
+        """
+        update jobs set source_args = '{}'::jsonb, error_detail = null, previous_snapshot = null,
+               source_pin = null, resolved_commit = null, code_hash = null, upload_id = null,
+               upload_sha256 = null, address = null, report_id = null
+        where job_id = %s
+        """,
+        (job_id,),
+    )
+    return deleted, report
 
 
 def _rmtree(path: Path) -> bool:
@@ -155,9 +195,6 @@ async def handle_review_delete_job(args: dict[str, Any]) -> dict[str, Any]:
     """Delete a job: rows in one transaction, files after it (best effort, logged)."""
     job_id: str = args["job_id"]
     pool = _get_pool()
-    deleted: set[str] = set()
-    report: dict[str, Any] | None = None
-
     async with pool.connection() as conn:
         repo = JobRepo(conn)
         async with conn.transaction():
@@ -166,36 +203,7 @@ async def handle_review_delete_job(args: dict[str, Any]) -> dict[str, Any]:
                 raise ReviewError("E_JOB_NOT_FOUND")
             if job["state"] == "deleted":
                 return {"accepted": True, "job_id": job_id, "state": "deleted", "deleted": []}
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    "update job_steps set status = 'cancelled', cancel_reason = 'user_delete'"
-                    " where job_id = %s and status in ('queued', 'running')",
-                    (job_id,),
-                )
-                await cur.execute(
-                    "select report_id, pdf_sha256s, object_prefix from reports where job_id = %s", (job_id,)
-                )
-                report = await cur.fetchone()
-            await _tombstones(conn, job_id, report)
-            if report is not None:
-                await _retain_publication(conn, report["report_id"])
-            counts = await _delete_rows(conn, job_id)
-            if any(counts.get(t, 0) for t in _FINDING_TABLES):
-                deleted.add("findings")
-            if any(counts.get(t, 0) for t in _READ_TABLES):
-                deleted.add("reads")
-            if report is not None:
-                deleted.update({"report", "pdf"})
-            await repo.transition(job_id, "deleted", touch=True)
-            await conn.execute(
-                """
-                update jobs set source_args = '{}'::jsonb, error_detail = null, previous_snapshot = null,
-                       source_pin = null, resolved_commit = null, code_hash = null, upload_id = null,
-                       upload_sha256 = null, address = null, report_id = null
-                where job_id = %s
-                """,
-                (job_id,),
-            )
+            deleted, report = await purge_job(conn, job_id, reason="user_delete")
             if job.get("source_pin") or job.get("upload_sha256"):
                 deleted.add("source")
 
