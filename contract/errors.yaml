@@ -137,6 +137,13 @@ codes:
     tools: "start, status"
     what: "{measure} {value} is over the cap {cap}."
     fix: "Narrow scope.include; nSLOC per top directory: {dirs}."
+  - code: E_HOST_CAPACITY
+    owner: "03"
+    channel: "status"
+    class: "server"
+    tools: "status"
+    what: "Step {stage} needs {need_mb} MiB of memory; the worker host has {host_mb} MiB, so the step was not run."
+    fix: "Start the review again later; it is scheduled on a worker with enough memory, never run into an out-of-memory kill."
   - code: E_TIER_UNKNOWN
     owner: "04"
     channel: "status"

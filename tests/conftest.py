@@ -37,6 +37,18 @@ def _docker_ok() -> bool:
 
 _DOCKER_AVAILABLE = _docker_ok()
 
+
+@pytest.fixture(autouse=True)
+def _host_capacity_is_known():
+    """Container admission (sandbox.profile) must not depend on the test runner's RAM: every test
+    sees a 64 GiB host with the default budget unless it configures its own (the admission tests)."""
+    from soken_review.sandbox import profile
+
+    previous = profile._HOST
+    profile.configure_host_capacity(14336, physical_mb=65536)
+    yield
+    profile._HOST = previous
+
 # ---------------------------------------------------------------------------
 # Postgres 16 container fixture (session-scoped)
 # ---------------------------------------------------------------------------
