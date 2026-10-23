@@ -20,7 +20,10 @@ import yaml
 
 from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
+from ..mapping.build import load_map
+from ..mapping.facts import load_facts
 from ..pinning.store import PinnedSource
+from .architecture import architecture_block, role_rows
 from .kit.build import SEV_PREFIX, SEVS, build_date_text, check_strings, counts, kit_texts, out_name, validate
 
 REPO = Path(__file__).resolve().parents[3]
@@ -432,6 +435,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     cands = _json(work / "candidates.json", [])
     chain_state = _json(work / "chain_state.json", None)
     deployment = _json(work / "deployment.json", None)
+    map_doc = load_map(pin_root, job_id)[0] if job.get("map_status") != "failed" else None
+    facts = load_facts(pin_root, job_id) or []
     file_leads: list[dict[str, Any]] = _json(pin_root / job_id / "leads.json", [])
     db_leads = await _rows(conn, "select * from leads where job_id = %s", (job_id,))
     lead_state = {r["lead_id"]: r for r in db_leads}
@@ -671,9 +676,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     report = {
         "meta": meta, "facts": {}, "summary": summary,
         "scope": {"head": ["Unit", "File", "nSLOC", "Address"], "files": scope_files[:400], "out_of_scope": oos[:40]},
-        "architecture": {"title": t["architecture_title"], "cols": 4, "rows": 1, "edges": [],
-                         "nodes": [{"id": "no_map", "label": "map", "kind": "scope", "col": 0, "row": 0}]},
-        "roles": {"rows": [], "notes": _model_blocks(roles_notes.get("notes", []))[:8]},
+        "architecture": architecture_block(map_doc, facts, job, deployment),
+        "roles": {"rows": role_rows(map_doc, facts, job), "notes": _model_blocks(roles_notes.get("notes", []))[:8]},
         "method": method,
         "severity_scale": [{"severity": s, "text": t["severity_scale"][s.lower()]} for s in SEVS],
         "findings": findings,

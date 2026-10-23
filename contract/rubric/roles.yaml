@@ -1,0 +1,63 @@
+# rubric/roles.yaml (owner part 08, section 2.2 architecture and privileged roles; W0 data file).
+# Fixed, factual phrases for the risk-note column of the privileged-roles table. The server attaches a
+# signal's phrase to a role when any function the role gates matches the signal: a category id from
+# enums.yaml (`categories`), the function name (`functions`), a state variable the function writes
+# (`writes`), the member of a call it makes (`call_members`) or the kind of a call (`call_kinds`).
+# Signals run in this order; a note lists at most `max_phrases` distinct phrases joined by "; ".
+# Patterns are regexes matched case-insensitively against the bare identifier. No free prose in code.
+version: 1
+max_phrases: 3
+fallback: Gates the listed functions
+signals:
+  - id: code_change
+    phrase: Can replace the contract code
+    categories: [evm.upgradeability.storage_authority, evm.delegatecall_proxy]
+    functions: ['^(upgradeTo|upgradeToAndCall|setImplementation|_authorizeUpgrade|setLogic)$']
+    writes: ['implementation', 'logic']
+  - id: destroy
+    phrase: Can destroy the contract
+    categories: [evm.selfdestruct]
+    functions: ['^(destroy|kill|selfdestruct)']
+  - id: initialize
+    phrase: Can initialize state
+    categories: [evm.upgradeability.initialization]
+  - id: funds_out
+    phrase: Can move funds held by the contract
+    call_kinds: [value_transfer]
+    call_members: ['^(transfer|transferFrom|safeTransfer|safeTransferFrom|call|send|sendValue)$']
+    functions: ['^(sweep|rescue|recover|withdrawErc20|withdrawToken|emergencyWithdraw|skim)']
+  - id: mint
+    phrase: Can mint tokens
+    functions: ['^_?mint']
+    call_members: ['^_?mint$']
+  - id: burn
+    phrase: Can burn tokens
+    functions: ['^_?burn']
+    call_members: ['^_?burn(From)?$']
+  - id: pause
+    phrase: Can pause or unpause
+    functions: ['^(pause|unpause|setPaused|togglePause)']
+    writes: ['paus', 'halt', 'frozen', 'stopped']
+  - id: role_transfer
+    phrase: Can transfer or renounce the role
+    functions: ['^(transferOwnership|renounceOwnership|setOwner|setAdmin|changeAdmin|grantRole|revokeRole|setGovernance|setPendingOwner|acceptOwnership)$']
+    writes: ['owner', 'admin', 'governance', 'guardian', 'operator']
+  - id: fees
+    phrase: Can change fees or rates
+    writes: ['fee', 'rate', 'bps', 'tax', 'commission', 'slippage']
+  - id: rewards
+    phrase: Can change reward settings
+    writes: ['reward', 'alloc', 'emission', 'multiplier', 'bonus', 'perBlock', 'perSecond']
+  - id: migrate
+    phrase: Can set a migration target
+    functions: ['migrat']
+    writes: ['migrat']
+  - id: lists
+    phrase: Can allow or block callers
+    writes: ['allow', 'whitelist', 'blacklist', 'denylist', 'banned', 'blocked', 'isTrusted']
+  - id: limits
+    phrase: Can change limits
+    writes: ['limit', 'cap$', 'max', 'min', 'threshold', 'quota']
+  - id: addresses
+    phrase: Can change addresses the contract calls or pays
+    writes: ['treasury', 'recipient', 'receiver', 'beneficiary', 'dev', 'oracle', 'router', 'vault', 'pool', 'strategy', 'feeTo']
