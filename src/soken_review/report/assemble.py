@@ -343,11 +343,23 @@ def _parse_ref(s: str) -> dict[str, Any]:
     return _ref(m[1], int(m[2]), int(m[3] or m[2]))
 
 
-def _code_block(pin: PinnedSource, path: str, start: int, end: int, cap: int) -> dict[str, Any]:
+def _code_block(pin: Any, path: str, start: int, end: int, cap: int) -> dict[str, Any]:
+    """`pin` is the code pin or, for `context/` paths, the context store (same read API)."""
     end = min(end, start + cap - 1, pin.line_count(path))
     lines = pin.read_lines(path, start, end)
     return {"code": {"ref": _ref(path, start, end),
                      "lines": [[start + i, line[:MAX_LINE]] for i, line in enumerate(lines)]}}
+
+
+def _quote_source(pin: PinnedSource, ctx_store: Any | None, path: str) -> Any:
+    """Quotes with a `context/` path (role `context`) read from the context store; the render
+    step crashed with KeyError 'context/docs-1.md' when the first such quote reached the pin
+    (2026-10-23)."""
+    if path.startswith("context/"):
+        if ctx_store is None or not ctx_store.has_path(path):
+            raise AssemblyError("schema", f"context quote {path} has no stored document")
+        return ctx_store
+    return pin
 
 
 def _unit_of(path: str) -> str:
@@ -559,6 +571,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         raise AssemblyError("schema", "job has no report_id or source_pin (finalize first)")
     work = pin_root.parent / "work" / job_id
     pin = PinnedSource.load(pin_root, job_id)
+    ctx_store = context_store(pin_root, job_id)
     cands = _json(work / "candidates.json", [])
     chain_state = _json(work / "chain_state.json", None)
     deployment = _json(work / "deployment.json", None)
@@ -626,7 +639,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         loc = next((q for q in code_qs if q["role"] == "location"), None)
         if loc is None:
             raise AssemblyError("schema", f"{d['final_id']} has no location quote")
-        code = [_code_block(pin, q["path"], q["start_line"], q["end_line"], lines_cap) for q in code_qs[:blocks_cap]]
+        code = [_code_block(_quote_source(pin, ctx_store, q["path"]), q["path"], q["start_line"], q["end_line"], lines_cap)
+                for q in code_qs[:blocks_cap]]
         further = [_ref(q["path"], q["start_line"], q["end_line"]) for q in code_qs[blocks_cap:]][:20]
         matrix = d.get("matrix_effective") or c.get("matrix") or {}
         basis = {"head": ["Impact class", "Magnitude", "Trigger", "Precondition", "Reversibility", "Rule"],

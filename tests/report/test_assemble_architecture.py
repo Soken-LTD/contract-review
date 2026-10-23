@@ -61,3 +61,26 @@ async def test_assembled_report_without_a_map_keeps_the_stub(db_pool, tmp_path, 
     r = await _render(db_pool, tmp_path, monkeypatch, with_map=False)
     assert [n["id"] for n in r["architecture"]["nodes"]] == ["no_map"]
     assert r["roles"]["rows"] == []
+
+
+def test_context_quote_reads_from_the_context_store(tmp_path):
+    """A finding quote with a `context/` path renders from the context store, not the code pin
+    (render crashed with KeyError 'context/docs-1.md' on the first such quote, 2026-10-23)."""
+    from soken_review.context.store import ContextStore
+    from soken_review.pinning.store import PinnedSource
+    from soken_review.report.assemble import AssemblyError, _code_block, _quote_source
+
+    pin = PinnedSource.from_files({"src/V.sol": b"pragma solidity ^0.8.0;\ncontract V {}\n"})
+    pin.persist(tmp_path, "job_ctxq")
+    store = ContextStore(tmp_path, "job_ctxq")
+    store.add([{"kind": "docs", "url": "https://docs.example.org/", "final_url": "https://docs.example.org/",
+                "status": "ok", "content_type": "text/html", "bytes": 10, "sha256_raw": "ab" * 32,
+                "fetched_at": "2026-10-23T00:00:00+00:00", "title": "Docs", "text": "Governance\nOwner sets fees\n",
+                "bundle_hits": {}}])
+    path = next(iter(store.entries))
+    pin_loaded = PinnedSource.load(tmp_path, "job_ctxq")
+    block = _code_block(_quote_source(pin_loaded, store, path), path, 1, 3, 40)
+    assert block["code"]["ref"]["path"] == path and len(block["code"]["lines"]) == 3
+    assert _quote_source(pin_loaded, store, "src/V.sol") is pin_loaded
+    with pytest.raises(AssemblyError):
+        _quote_source(pin_loaded, None, path)

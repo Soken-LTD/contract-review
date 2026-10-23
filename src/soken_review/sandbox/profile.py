@@ -24,9 +24,11 @@ _SYSTEM_ROOTS = frozenset({"", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64"
 @dataclass(frozen=True)
 class StepLimits:
     cpus: float
-    memory: str          # docker size, e.g. "4g"
+    memory: str          # docker size, e.g. "4g": the cgroup CEILING for the step
     pids: int
     max_file: int        # bytes, ulimit fsize
+    min_memory: str | None = None   # hard floor: refuse the step on a host that cannot give this much;
+                                    # without a floor a too-small host clamps the ceiling instead
 
 
 # --------------------------------------------------------------------------------------------
@@ -114,11 +116,23 @@ class HostCapacity:
         """Value for worker_hosts.ram_mb_total: the physical memory, the budget when unmeasured."""
         return self.physical_mb if self.physical_mb is not None else self.budget_mb
 
-    def check(self, limits: StepLimits, step: str) -> None:
-        """Raise HostCapacityError when `limits.memory` is above what the host can honour."""
+    def check(self, limits: StepLimits, step: str) -> str:
+        """Effective docker memory size for the step on this host.
+
+        `limits.memory` is a ceiling: when the host cannot honour it the ceiling is clamped to
+        `admit_mb` (a 4 GiB solc build runs fine inside 3.5 GiB; refusing it took every EVM job
+        down on the 3.9 GiB stand, 2026-10-23). `limits.min_memory` is a floor: a step that
+        genuinely needs more than the host has (the Scarb workspace build the OOM killer reaped at
+        2.8 GiB RSS) is refused here with the numbers, before any `docker run`."""
         need = parse_memory_mb(limits.memory)
-        if need > self.admit_mb:
+        if need <= self.admit_mb:
+            return limits.memory
+        floor = parse_memory_mb(limits.min_memory) if limits.min_memory else None
+        if floor is not None and floor > self.admit_mb:
             raise HostCapacityError(step=step, need_mb=need, host_mb=self.physical_mb, cap_mb=self.admit_mb)
+        logger.warning("step %s: memory ceiling %s clamped to %d MiB (host %s MiB)", step, limits.memory,
+                       self.admit_mb, self.physical_mb)
+        return f"{self.admit_mb}m"
 
 
 _HOST: HostCapacity | None = None
@@ -193,7 +207,7 @@ def docker_argv(
         raise ValueError(f"{step} needs the family egress network")
     # Admission: a limit the host cannot honour is refused here, before any `docker run`, so the
     # global OOM killer never decides the outcome of a step (HostCapacityError carries the numbers).
-    host_capacity().check(limits, step)
+    memory = host_capacity().check(limits, step)
     default_runtime = "runsc-egress" if step in NETWORK_STEPS else "runsc-none"
     runtime = runtime or os.environ.get("SOKEN_SANDBOX_RUNTIME") or default_runtime
     if step in NETWORK_STEPS and runtime == "runsc-none":
@@ -237,7 +251,7 @@ def docker_argv(
     argv += [
         "--cap-drop=ALL", "--security-opt=no-new-privileges",
         f"--pids-limit={limits.pids}", f"--cpus={min(limits.cpus, os.cpu_count() or 1)}",
-        f"--memory={limits.memory}", f"--memory-swap={limits.memory}",
+        f"--memory={memory}", f"--memory-swap={memory}",
         "--ulimit", f"fsize={limits.max_file}:{limits.max_file}",
         "--log-driver", "none",
     ]

@@ -51,7 +51,9 @@ from soken_review.sandbox.profile import (
 logger = logging.getLogger(__name__)
 
 _IMAGE_MAP = Path(__file__).parent / "data" / "image_map.json"
-_BUILD_LIMITS = StepLimits(cpus=4, memory="8g", pids=1024, max_file=512 * 1024 * 1024)
+# Floor 4g: the OZ workspace build was OOM-killed at ~2.8 GiB RSS on a 3.9 GiB host (2026-10-23);
+# a host below the floor refuses the step with the numbers instead of letting the kernel decide.
+_BUILD_LIMITS = StepLimits(cpus=4, memory="8g", pids=1024, max_file=512 * 1024 * 1024, min_memory="4g")
 _DEPS_LIMITS = StepLimits(cpus=2, memory="2g", pids=256, max_file=256 * 1024 * 1024)
 # `scarb --version` only. No cache is mounted, so the 1 MiB file cap cannot reach Scarb state.
 _PROBE_LIMITS = StepLimits(cpus=1, memory="512m", pids=64, max_file=1024 * 1024)

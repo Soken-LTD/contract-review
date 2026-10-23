@@ -264,8 +264,14 @@ def _clean_line(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()[:200]
 
 
+_FORMAT_CHARS_RE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufe00-\ufe0f\ufeff]")
+
+
 def _lf(text: str) -> str:
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+    """LF line endings and no Unicode format characters: variation selectors, zero-width and bidi
+    controls carry no meaning in a document and make quotes unmatchable (review_read_code shows
+    them as <U+FE0F>, the copied quote then fails; 2026-10-23)."""
+    return _FORMAT_CHARS_RE.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
 
 
 def _dir(root: Path, job_id: str) -> Path:
