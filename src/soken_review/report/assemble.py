@@ -15,6 +15,7 @@ import re
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -390,6 +391,132 @@ def _json(path: Path, default: Any) -> Any:
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
 
+# ------------------------------------------------------------------ project context (context ingestion spec 4 to 7)
+CONTEXT_KINDS = ("whitepaper", "website", "app", "docs", "terms", "privacy", "other")
+CONTEXT_STATUSES = ("matches", "differs", "not_checkable")
+CONTEXT_FACT_PREFIX = "context."
+MAX_CONTEXT_DOCS, MAX_CONTEXT_ROWS, MAX_CONTEXT_NOTES = 12, 40, 8
+_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def context_store(pin_root: Path, job_id: str) -> Any | None:
+    """Coupling point 1 (spec 4): `soken_review.context.store.ContextStore.load(pin_root, job_id)`.
+
+    The module ships with the context-core branch. No module, or no manifest for the job, means no
+    documents (the section prints its empty line). Anything else is an error and surfaces."""
+    try:
+        from ..context.store import ContextStore
+    except ImportError:
+        return None
+    try:
+        return ContextStore.load(pin_root, job_id)
+    except FileNotFoundError:
+        return None
+
+
+def context_compare(facts: list[dict[str, Any]], map_doc: dict[str, Any] | None, job: dict[str, Any]) -> list[dict[str, Any]]:
+    """Coupling point 2 (spec 6): `soken_review.context.compare.compare(facts, map_doc, job)`, pure.
+
+    `facts` is the whole facts.json list (the comparison reads `context.*` next to `onchain.*`)."""
+    try:
+        from ..context.compare import compare
+    except ImportError:
+        return []
+    return list(compare(facts, map_doc, job))
+
+
+def _src_text(value: Any, cap: int) -> str:
+    """Document-derived text as a SRC cell: control characters out, length capped; lists joined."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        value = ", ".join(str(v) for v in value)
+    return _CTRL_RE.sub(" ", str(value)).strip()[:cap]
+
+
+def _retrieved_date(fetched_at: Any, today: date) -> date:
+    if isinstance(fetched_at, str) and fetched_at:
+        try:
+            return datetime.fromisoformat(fetched_at).date()
+        except ValueError:
+            pass
+    return today
+
+
+def context_documents(entries: list[dict[str, Any]], today: date) -> list[dict[str, Any]]:
+    """Documents table rows (spec 7) from manifest entries (spec 4), in manifest order, max 12."""
+    rows = []
+    for e in entries[:MAX_CONTEXT_DOCS]:
+        kind = e.get("kind") if e.get("kind") in CONTEXT_KINDS else "other"
+        url = e.get("final_url") or e.get("url") or ""
+        host = (urlsplit(url).hostname or "") if url else ""
+        sha = str(e.get("sha256_raw") or "")[:12]
+        rows.append({"kind": kind, "title": _src_text(e.get("title"), 200), "host": _src_text(host, 253),
+                     "retrieved": build_date_text(_retrieved_date(e.get("fetched_at"), today)),
+                     "sha256_short": sha if re.fullmatch(r"[0-9a-f]{12}", sha) else "",
+                     "status": "ok" if e.get("status") == "ok" else "failed"})
+    return rows
+
+
+def context_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Declared-vs-observed rows (spec 6) in report shape. The claim is server text from the fixed
+    claim set; a row with an unknown status or an empty claim is a compare bug and fails assembly."""
+    rows = []
+    for x in raw[:MAX_CONTEXT_ROWS]:
+        status = x.get("status")
+        if status not in CONTEXT_STATUSES:
+            raise AssemblyError("schema", f"context comparison status {status!r}")
+        claim = _CTRL_RE.sub(" ", str(x.get("claim") or "")).strip()[:120]
+        if not claim:
+            raise AssemblyError("schema", "context comparison row without a claim")
+        rows.append({"claim": claim, "declared": _src_text(x.get("declared"), 300),
+                     "declared_source": _src_text(x.get("declared_source"), 120),
+                     "observed": _src_text(x.get("observed"), 300),
+                     "observed_source": _src_text(x.get("observed_source"), 200), "status": status})
+    return rows
+
+
+def context_facts(facts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """`context.*` fact records (spec 5) as report facts, so `{{fact:context.*}}` in context notes
+    expands at build. A value that fails the server text gate (document text) is left out; the
+    build then reports the placeholder as unresolved instead of printing gated text."""
+    from ..engine.text_gate import check_text
+
+    out: dict[str, dict[str, Any]] = {}
+    for f in facts:
+        key = str(f.get("key") or "")
+        if not key.startswith(CONTEXT_FACT_PREFIX) or not re.fullmatch(r"[a-z][a-z0-9_.]{0,79}", key):
+            continue
+        value = _src_text(f.get("value"), 80)
+        if re.fullmatch(r"[0-9]{5,}", value):  # plain integers print grouped (calc operands strip the commas)
+            value = f"{int(value):,}"[:80]
+        unit = f.get("unit")
+        if not value or check_text(value, "server") or (unit is not None and check_text(str(unit)[:40], "server")):
+            continue
+        out[key] = {"value": value, "unit": str(unit)[:40] if unit is not None else None,
+                    "amount_at_risk": "amount_at_risk" in (f.get("tags") or [])}
+    return out
+
+
+def context_notes(section: Any) -> list[dict[str, Any]]:
+    """The stored `context_notes` section (a list of blocks, or `{notes: [...]}`) as model blocks, max 8."""
+    blocks = section.get("notes", []) if isinstance(section, dict) else (section or [])
+    return _model_blocks(list(blocks))[:MAX_CONTEXT_NOTES]
+
+
+def context_section(pin_root: Path, job_id: str, job: dict[str, Any], sections: dict[str, Any], today: date) -> dict[str, Any]:
+    """The report `context` object (spec 7) plus the context facts for `report.facts`."""
+    store = context_store(pin_root, job_id)
+    entries = list((store.manifest() or {}).get("entries") or []) if store is not None else []
+    facts = load_facts(pin_root, job_id) or []
+    rows: list[dict[str, Any]] = []
+    if entries:
+        map_doc, _ = load_map(pin_root, job_id)
+        rows = context_rows(context_compare(facts, map_doc, job))
+    return {"documents": context_documents(entries, today), "comparison": rows,
+            "notes": context_notes(sections.get("context_notes")), "facts": context_facts(facts)}
+
+
 # ------------------------------------------------------------------ main
 
 def _deployed_code_kpi(job: dict[str, Any], deployment: dict[str, Any] | None) -> str:
@@ -626,6 +753,10 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
 
     c = counts(findings)
     dismissed = [lead for lead in leads if lead["state"] == "dismissed"]
+    # Project context (spec 7): documents, declared vs observed, context_notes; KPI when n > 0
+    ctx = context_section(pin_root, job_id, job, sections, today)
+    context_facts_map = ctx.pop("facts")
+    n_documents = sum(1 for d in ctx["documents"] if d["status"] == "ok")
     summary: dict[str, Any] = {"kpis": [
         {"key": "files", "value": len(scope_files), "label": texts["kpi_labels"]["files"]},
         {"key": "nsloc", "value": nsloc, "label": texts["kpi_labels"]["nsloc"]},
@@ -633,6 +764,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         {"key": "promoted", "value": len(promoted_ids), "label": texts["kpi_labels"]["promoted"]},
         {"key": "areas_returned", "value": f"{n_returned} of {len(areas)}", "label": texts["kpi_labels"]["areas_returned"]},
         {"key": "deployed_code", "value": _deployed_code_kpi(job, deployment), "label": texts["kpi_labels"]["deployed_code"]}]}
+    if n_documents > 0:
+        summary["kpis"].append({"key": "documents", "value": n_documents, "label": texts["kpi_labels"]["documents"]})
     if c["Critical"] == 0 and c["High"] == 0 and dismissed:
         rows = sorted(dismissed, key=lambda x: (SEV_RANK[LEAD_SEV[x["severity_norm"]]], x["file"], x["start"]))
         summary["dismissed_leads"] = {"rows": [{"detector": x["rule_id"][:80], "severity_class": LEAD_SEV[x["severity_norm"]],
@@ -674,8 +807,9 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     meta["out_name"] = out_name({**meta, "date_iso": today.isoformat()}, profile, subj["value"])
     t = texts
     report = {
-        "meta": meta, "facts": {}, "summary": summary,
+        "meta": meta, "facts": context_facts_map, "summary": summary,
         "scope": {"head": ["Unit", "File", "nSLOC", "Address"], "files": scope_files[:400], "out_of_scope": oos[:40]},
+        "context": ctx,
         "architecture": architecture_block(map_doc, facts, job, deployment),
         "roles": {"rows": role_rows(map_doc, facts, job), "notes": _model_blocks(roles_notes.get("notes", []))[:8]},
         "method": method,

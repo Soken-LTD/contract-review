@@ -1,0 +1,42 @@
+[
+ {
+  "claim": "Reviewed contract referenced by the project documents",
+  "declared": "0xc2181d975c05c8c724b334bcED0764c0b86B1D53 (website)",
+  "declared_source": "context/website-1.md:9",
+  "observed": "0xc2181d975c05c8c724b334bcED0764c0b86B1D53",
+  "observed_source": "job address",
+  "status": "matches"
+ },
+ {
+  "claim": "Declared total supply vs on-chain total supply",
+  "declared": "1,000,000,000 tokens",
+  "declared_source": "context/whitepaper-1.md:12",
+  "observed": "1,000,000,000 tokens (18 decimals)",
+  "observed_source": "eth_call totalSupply at block 52392348",
+  "status": "matches"
+ },
+ {
+  "claim": "Declared fee vs folded constants",
+  "declared": "0.3 percent (whitepaper); 25 bps (docs)",
+  "declared_source": "context/whitepaper-1.md:16",
+  "observed": "FEE_BPS = 25 bps",
+  "observed_source": "map constants src/Vault.sol:12",
+  "status": "differs"
+ },
+ {
+  "claim": "Declared admin claims vs owner fact",
+  "declared": "renounced",
+  "declared_source": "context/whitepaper-1.md:20",
+  "observed": "owner 0x1111111111111111111111111111111111111111, not the zero address",
+  "observed_source": "eth_call owner at block 52392348",
+  "status": "differs"
+ },
+ {
+  "claim": "Declared chains vs the job chain",
+  "declared": "Ethereum, Base, Arbitrum",
+  "declared_source": "context/whitepaper-1.md:24",
+  "observed": "",
+  "observed_source": "",
+  "status": "not_checkable"
+ }
+]
