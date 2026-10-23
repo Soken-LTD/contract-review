@@ -2437,3 +2437,51 @@ async def test_finalize_keeps_the_post_challenge_severity_after_a_basis_downgrad
     finally:
         async with db_pool.connection() as conn:
             await conn.execute("delete from job_steps where job_id = %s", (job_id,))
+
+
+@ASYNC
+async def test_resubmission_clears_the_previous_revisions_effective_matrix(db_pool):
+    """A new revision must not inherit matrix_effective from an earlier challenge (finalize and the
+    report prefer it over the submitted matrix): a stale one would print a severity nobody
+    defended for the current revision."""
+    from soken_review.tools import challenge as challenge_mod
+    from soken_review.tools import submit as submit_mod
+    from soken_review.tools.context import MemoryJobContext
+
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    ctx = MemoryJobContext(pin_root)
+    for mod in (submit_mod, challenge_mod):
+        mod.set_pool(db_pool)
+        mod.set_context(ctx)
+
+    args = dict(_VALID_SUBMISSION)
+    args.update(job_id=job_id, draft_key="draft-resub-001")
+    sub = await submit_mod.handle_review_submit_finding(args)
+    assert sub["accepted"] is True, sub
+    if sub.get("status") != "needs_challenge":
+        pytest.skip("fixture severity needs no challenge")
+    ch = await challenge_mod.handle_review_challenge({"job_id": job_id, "draft_key": "draft-resub-001"})
+    await _log_reads(db_pool, job_id, "src/Vault.sol", 1, 9)
+    answers = [{"item_id": i["id"], "value": "absent", "refs": i["scope"].get("ranges") or ["src/Vault.sol:1-9"],
+                "note": "No code evidence for this condition after reading the whole scope."} for i in ch["items"]]
+    ans = await challenge_mod.handle_review_answer_challenge(
+        {"job_id": job_id, "draft_key": "draft-resub-001", "revision": ch["revision"], "answers": answers})
+    assert ans["accepted"] is True, ans
+    async with db_pool.connection() as conn:
+        before = await (await conn.execute(
+            "select matrix_effective from finding_drafts where job_id = %s and draft_key = %s",
+            (job_id, "draft-resub-001"))).fetchone()
+    assert before[0], "the challenge records matrix_effective"
+
+    # resubmit as a Low (no challenge): the earlier post-challenge matrix must be gone
+    args2 = dict(args)
+    args2["matrix"] = {**_VALID_MATRIX, "impact_class": "dos_noncore_function", "magnitude": "bounded",
+                       "trigger": "privileged_role", "reversibility": "admin_reversible"}
+    args2["claimed_severity"] = "Low"
+    sub2 = await submit_mod.handle_review_submit_finding(args2)
+    assert sub2["accepted"] is True, sub2
+    async with db_pool.connection() as conn:
+        after = await (await conn.execute(
+            "select matrix_effective, current_revision from finding_drafts where job_id = %s and draft_key = %s",
+            (job_id, "draft-resub-001"))).fetchone()
+    assert after[1] == sub2["revision"] and after[0] is None, after

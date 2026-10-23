@@ -912,8 +912,11 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
         else:
             finding_no = draft["finding_no"]
             await conn.execute(
+                # A new revision carries a new matrix: the post-challenge matrix of the previous
+                # revision must not survive it (finalize and the report prefer matrix_effective).
                 """update finding_drafts
-                   set status = %s, current_revision = %s, severity = %s, evidence_level = %s
+                   set status = %s, current_revision = %s, severity = %s, evidence_level = %s,
+                       matrix_effective = null
                    where job_id = %s and draft_key = %s""",
                 (new_status, new_revision, computed_severity, evidence_level, job_id, draft_key),
             )
