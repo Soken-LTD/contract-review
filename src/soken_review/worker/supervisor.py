@@ -310,6 +310,12 @@ class Supervisor:
 
         try:
             job = await self._get_job(job_id)
+            if job is not None and job.get("state") == "deleted":
+                # review_delete_job cancelled the queued rows; a row claimed in the same instant
+                # ends here, before any family runner writes to the job's directories.
+                logger.info("step %s/%s job %s: job deleted, step cancelled", step_name, step["seq"], job_id[-8:])
+                await self._mark_step(step_id, "cancelled")
+                return
             if step_name == "context":
                 # Project documents (context ingestion spec 3): family-independent, runs at `ready`
                 # and never gates it; failures are per document.

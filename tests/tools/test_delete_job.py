@@ -178,3 +178,62 @@ def test_contract_output_names_only(tmp_path: Path) -> None:
     tool = next(t for t in names["tools"] if t["name"] == "review_delete_job")
     allowed = tool["outputSchema"]["properties"]["deleted"]["items"]["enum"]
     assert set(allowed) == {"source", "artifacts", "findings", "reads", "report", "pdf"}
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_publication_records_survive_the_delete_keyed_by_hash(wired, tmp_path: Path) -> None:
+    """Migration 010: the consent log (who agreed to a permanent publication) and the publish
+    request (public URL a takedown needs) outlive the report; a request not yet pushed is closed."""
+    async with wired.connection() as conn:
+        await _seed(conn, JOB, with_report=True)
+        await conn.execute(
+            "insert into publish_requests (report_id, job_id, status, public_url) values (%s, %s, 'queued', null)",
+            (REPORT, JOB))
+        await conn.execute(
+            "insert into publish_consent_log (report_id, party, name, statement, client_ts)"
+            " values (%s, 'owner', 'A. Owner', 'I consent', '2026-10-23T00:00:00Z')", (REPORT,))
+    out = await D.handle_review_delete_job({"job_id": JOB, "confirm": "delete"})
+    assert "report" in out["deleted"]
+    async with wired.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("select report_id, report_ref_hash, status, error_detail from publish_requests where job_id = %s", (JOB,))
+            req = await cur.fetchone()
+            await cur.execute("select report_id, report_ref_hash, name from publish_consent_log where report_ref_hash = %s", (_h(REPORT),))
+            consent = await cur.fetchone()
+        assert await _count(conn, "reports", JOB) == 0
+        await conn.execute("delete from publish_consent_log where report_ref_hash = %s", (_h(REPORT),))
+    assert req == {"report_id": None, "report_ref_hash": _h(REPORT), "status": "failed", "error_detail": "job deleted"}
+    assert consent == {"report_id": None, "report_ref_hash": _h(REPORT), "name": "A. Owner"}
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_a_published_request_keeps_its_status_and_public_url(wired) -> None:
+    async with wired.connection() as conn:
+        await _seed(conn, JOB2, with_report=False)
+        await conn.execute(
+            """insert into reports (report_id, report_id_short, job_id, profile, object_prefix, out_name, pdf_sha256s,
+                                    subject_candidates, key_version, rendered_at, expires_at)
+               values (%s, %s, %s, 'public_review', %s, 'r.pdf', array[%s]::char(64)[], '[]'::jsonb, 1, now(), now())""",
+            ("b" * 26, "b" * 10, JOB2, f"reports/{'b' * 26}/1/", PDF_SHA))
+        await conn.execute(
+            "insert into publish_requests (report_id, job_id, status, public_url) values (%s, %s, 'published', 'https://x/y.pdf')",
+            ("b" * 26, JOB2))
+    await D.handle_review_delete_job({"job_id": JOB2, "confirm": "delete"})
+    async with wired.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("select status, public_url, report_ref_hash from publish_requests where job_id = %s", (JOB2,))
+            row = await cur.fetchone()
+        await conn.execute("delete from report_tombstones where ref_hash = %s", (_h("b" * 26),))
+    assert row == {"status": "published", "public_url": "https://x/y.pdf", "report_ref_hash": _h("b" * 26)}
+
+
+def test_report_dir_removal_requires_a_report_id_shaped_segment(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SOKEN_REPORT_STORE", str(tmp_path / "store"))
+    odd = tmp_path / "store" / "reports" / "not-an-id"
+    odd.mkdir(parents=True)
+    assert D._remove_files(None, JOB, "reports/not-an-id/1/") == set()
+    assert odd.exists()
+    good = tmp_path / "store" / "reports" / REPORT / "1"
+    good.mkdir(parents=True)
+    assert D._remove_files(None, JOB, f"reports/{REPORT}/1/") == {"report", "pdf"}
+    assert not good.exists()

@@ -5,10 +5,14 @@ transaction on the rows and then best-effort removal of the files:
 
   * open steps become `cancelled` so the worker claims nothing more for the job; a step already
     running finishes against a job that is gone and ends in its own error path;
-  * the live report row goes (publish requests cascade from it) and one 09 tombstone per served
-    PDF plus one for the job are appended (`report_tombstones`, hashes only, reason user_delete);
-  * every row keyed by the job in any table with a `job_id` column goes (findings, leads, reads,
-    sections, context documents, enrichment, uploads);
+  * the live report row goes and one 09 tombstone per served PDF plus one for the job are
+    appended (`report_tombstones`, hashes only, reason user_delete);
+  * publication records stay (migration 010): the consent log is the record of who agreed to a
+    permanent publication and the publish request holds the public URL a takedown needs; both
+    keep sha256(report_id) in `report_ref_hash`, a request not yet pushed becomes `failed`. A
+    copy already pushed to the public showcase is not withdrawn here (takedown is its own path);
+  * every other row keyed by the job in any table with a `job_id` column goes (findings, leads,
+    reads, sections, context documents, enrichment, uploads);
   * the job row itself stays as the terminal `deleted` state with its request data scrubbed, so a
     later call on the same id answers `deleted` (idempotent) and never an existence oracle;
   * on disk: the pin store and context documents (`<pin_root>/<job_id>`), the worker's work dir
@@ -22,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -45,6 +50,9 @@ _ctx: JobContext | None = None
 # Tables whose rows count as the contract's "findings" and "reads" (the rest are removed too).
 _FINDING_TABLES = frozenset({"finding_drafts", "leads", "lead_dismissals", "finding_leads", "challenge_answers"})
 _READ_TABLES = frozenset({"job_reads"})
+# Publication records outlive the job (migration 010): never purged here.
+_RETAINED_TABLES = frozenset({"publish_requests", "publish_consent_log"})
+_REPORT_ID_RE = re.compile(r"^[a-z2-7]{26}$")
 
 
 def set_pool(pool: psycopg_pool.AsyncConnectionPool) -> None:
@@ -76,7 +84,23 @@ async def _child_tables(conn: psycopg.AsyncConnection) -> list[str]:
             order by (table_name = 'reports') desc, table_name
             """
         )
-        return [row[0] for row in await cur.fetchall()]
+        return [row[0] for row in await cur.fetchall() if row[0] not in _RETAINED_TABLES]
+
+
+async def _retain_publication(conn: psycopg.AsyncConnection, report_id: str) -> None:
+    """Consent log and publish request keep the report's hash before the report row goes; a
+    request the worker has not pushed yet is closed as failed so it is never picked up."""
+    ref = _ref_hash(report_id)
+    async with conn.cursor() as cur:
+        await cur.execute("update publish_consent_log set report_ref_hash = %s where report_id = %s", (ref, report_id))
+        await cur.execute(
+            """update publish_requests set report_ref_hash = %s,
+                      status = case when status in ('queued', 'publishing') then 'failed' else status end,
+                      error_detail = case when status in ('queued', 'publishing') then 'job deleted' else error_detail end,
+                      updated_at = now()
+               where report_id = %s""",
+            (ref, report_id),
+        )
 
 
 async def _delete_rows(conn: psycopg.AsyncConnection, job_id: str) -> dict[str, int]:
@@ -120,7 +144,8 @@ def _remove_files(pin_root: Path | None, job_id: str, report_prefix: str | None)
 
         # object_prefix is reports/<report_id>/<render_no>/: remove the report's whole directory
         parts = Path(report_prefix).parts
-        if len(parts) >= 2 and parts[0] == "reports" and _rmtree(store_root() / parts[0] / parts[1]):
+        if (len(parts) >= 2 and parts[0] == "reports" and _REPORT_ID_RE.match(parts[1])
+                and _rmtree(store_root() / parts[0] / parts[1])):
             removed.update({"report", "pdf"})
     return removed
 
@@ -152,6 +177,8 @@ async def handle_review_delete_job(args: dict[str, Any]) -> dict[str, Any]:
                 )
                 report = await cur.fetchone()
             await _tombstones(conn, job_id, report)
+            if report is not None:
+                await _retain_publication(conn, report["report_id"])
             counts = await _delete_rows(conn, job_id)
             if any(counts.get(t, 0) for t in _FINDING_TABLES):
                 deleted.add("findings")
