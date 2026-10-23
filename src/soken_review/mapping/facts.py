@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,27 @@ _KEY_RE = re.compile(r"^[a-z][a-z0-9_.]*$")
 _EIP1967_IMPL = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 _EIP1967_ADMIN = "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"
 _SEL = {"owner": "0x8da5cb5b", "totalSupply": "0x18160ddd", "decimals": "0x313ce567"}
+
+# Zero-argument getters that name a privileged holder (08 2.2 roles table). Read only when the
+# deployed unit exposes a function of that name; a word that is not an address is no fact. The
+# fact key is `onchain.<snake_name>`; `owner` keeps its historical key through _SEL above.
+HOLDER_GETTERS = ("admin", "governance", "governor", "guardian", "pendingOwner", "pauser", "minter", "operator",
+                  "manager", "controller", "authority", "timelock", "strategist", "keeper", "treasury", "feeRecipient")
+
+
+def _snake(name: str) -> str:
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower()
+
+
+@cache
+def getter_selector(name: str) -> str:
+    from soken_review.mapping.keccak import keccak256
+
+    return "0x" + keccak256(f"{name}()".encode()).hex()[:8]
+
+
+def holder_fact_key(getter: str) -> str:
+    return "onchain.owner" if getter == "owner" else f"onchain.{_snake(getter)}"
 
 
 @lru_cache(maxsize=1)
@@ -123,8 +144,23 @@ async def onchain_facts(rpc: Any, address: str, block: int, map_doc: dict[str, A
         value = _decode_word(raw, "address")
         if value is not None and int(value, 16) != 0:
             out.append(fact(key, value, unit_id=unit_id, source=f"eth_getStorageAt EIP-1967 slot at block {block}"))
+    for getter in HOLDER_GETTERS:
+        if getter not in names:
+            continue
+        try:
+            raw = await rpc.eth_call(address, getter_selector(getter), block=block)
+        except Exception as exc:  # noqa: BLE001  # a failed read is no fact (04 1.3)
+            logger.info("eth_call %s failed: %s", getter, exc)
+            continue
+        value = _decode_word(raw, "address")
+        if value is not None:
+            out.append(fact(holder_fact_key(getter), value, unit_id=unit_id,
+                            source=f"eth_call {getter}() at block {block}"))
     holders = {"owner": "onchain.owner", "admin": "onchain.eip1967.admin"}
+    holders.update({_snake(g): holder_fact_key(g) for g in HOLDER_GETTERS})
     by_key = {f["key"]: f["value"] for f in out}
+    if "onchain.admin" not in by_key and "onchain.eip1967.admin" in by_key:
+        holders["admin"] = "onchain.eip1967.admin"
     for role, key in holders.items():
         holder = by_key.get(key)
         if holder and int(holder, 16) != 0:

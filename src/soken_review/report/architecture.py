@@ -503,6 +503,39 @@ def _signals(gated: list[dict[str, Any]], cats_of: dict[str, set[str]]) -> list[
 
 
 HOLDER_FACT = {"owner": "onchain.owner", "admin": "onchain.eip1967.admin"}
+_ROLE_NOISE = frozenset({"only", "role", "roles", "check", "sender", "msg", "is", "has", "require", "when", "not"})
+
+
+def _role_keys(role: str) -> list[str]:
+    """Holder fact keys a role name may resolve through, most specific first: `onlyGovernance`
+    → onchain.governance; `GUARDIAN_ROLE` → onchain.guardian; `onlyAdmin` → onchain.admin then
+    the EIP-1967 admin slot; anything with `owner` → onchain.owner (mapping/facts.HOLDER_GETTERS)."""
+    from soken_review.mapping.facts import HOLDER_GETTERS, holder_fact_key
+
+    words = [w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", role)]
+    words = [w for w in words if w not in _ROLE_NOISE]
+    getters = {g.lower(): g for g in HOLDER_GETTERS}
+    keys: list[str] = []
+    i = 0
+    while i < len(words):
+        pair = "".join(words[i:i + 2]) if i + 1 < len(words) else ""
+        if pair in getters:                       # two-word getters: pendingOwner, feeRecipient
+            keys.append(holder_fact_key(getters[pair]))
+            i += 2
+            continue
+        w = words[i]
+        if w == "owner":
+            keys.append("onchain.owner")
+        elif w in getters:
+            keys.append(holder_fact_key(getters[w]))
+            if w == "admin":
+                keys.append("onchain.eip1967.admin")
+        i += 1
+    if not keys and re.search("owner", role, re.IGNORECASE):
+        keys.append("onchain.owner")
+    if not keys and re.search("admin", role, re.IGNORECASE):
+        keys += ["onchain.admin", "onchain.eip1967.admin"]
+    return list(dict.fromkeys(keys))
 KIND_FACT_TYPES = {"eoa": "EOA", "multisig": "Multisig", "timelock": "Timelock", "contract": "Contract"}
 
 
@@ -522,21 +555,21 @@ def _holder_type(role_key: str | None, fv: dict[str, dict[str, Any]], map_kind: 
 def _holder(role: str, unit_is_deployed: bool, fv: dict[str, dict[str, Any]],
             map_kind: str | None) -> tuple[dict[str, str] | str, str]:
     """(holder cell, type) of a role row; the address facts apply to the deployed unit only."""
-    role_key = None
-    if re.search("owner", role, re.IGNORECASE):
-        role_key = "owner"
-    elif re.search("admin", role, re.IGNORECASE):
-        role_key = "admin"
-    if not unit_is_deployed or role_key is None:
-        return "Unknown", _holder_type(None, fv, map_kind)
-    rec = fv.get(HOLDER_FACT[role_key])
-    if not rec:
+    keys = _role_keys(role) if unit_is_deployed else []
+    rec, key = None, None
+    for key in keys:
+        rec = fv.get(key)
+        if rec:
+            break
+    if not rec or key is None:
         return "Unknown", _holder_type(None, fv, map_kind)
     value = str(rec.get("value") or "")
     if ZERO_ADDR_RE.match(value):
         return "Renounced", _holder_type(None, fv, map_kind)
     if len(value) < 20:
         return "Unknown", _holder_type(None, fv, map_kind)
+    # holder facts are keyed by the role token: onchain.<token>.holder_kind (facts.holder_facts)
+    role_key = "admin" if key == "onchain.eip1967.admin" else key.removeprefix("onchain.")
     return {"addr": value}, _holder_type(role_key, fv, map_kind)
 
 

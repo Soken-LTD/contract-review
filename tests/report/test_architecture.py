@@ -302,3 +302,31 @@ def test_fixture_report_with_real_blocks_builds(tmp_path, masterchef):
     assert kit_texts()["no_map_line"] not in html
     assert "Privileged roles" in html and "onlyOwner (MasterChef)" in html
     assert "Can set a migration target" in html and "deployed, 13 entries" in html
+
+
+# ─── holders from getters beyond owner() (road-to-prod item 9) ─────────────────────────────────
+
+GOV = "0x" + "ab" * 20
+
+
+@pytest.mark.parametrize(("role", "facts_", "expected"), [
+    ("onlyGovernance", [("onchain.governance", GOV)], {"addr": GOV}),
+    ("GUARDIAN_ROLE", [("onchain.guardian", GOV)], {"addr": GOV}),
+    ("onlyAdmin", [("onchain.admin", GOV)], {"addr": GOV}),
+    ("onlyAdmin", [("onchain.eip1967.admin", GOV)], {"addr": GOV}),               # getter absent: the 1967 slot
+    ("onlyPendingOwner", [("onchain.pending_owner", GOV)], {"addr": GOV}),
+    ("onlyGovernance", [("onchain.governance", "0x" + "0" * 40)], "Renounced"),
+    ("onlyGovernance", [("onchain.guardian", GOV)], "Unknown"),                     # wrong role's fact
+    ("MINTER_ROLE", [], "Unknown"),
+])
+def test_holder_from_role_name_and_getter_fact(role, facts_, expected):
+    fv = {k: {"value": v} for k, v in facts_}
+    holder, _kind = arch._holder(role, True, fv, None)
+    assert holder == expected
+
+
+def test_holder_type_follows_the_getter_role_token():
+    fv = {"onchain.governance": {"value": GOV}, "onchain.governance.holder_kind": {"value": "multisig"},
+          "onchain.governance.holder_is_contract": {"value": "true"}}
+    assert arch._holder("onlyGovernance", True, fv, None) == ({"addr": GOV}, "Multisig")
+    assert arch._holder("onlyGovernance", False, fv, None)[0] == "Unknown"          # not the deployed unit
