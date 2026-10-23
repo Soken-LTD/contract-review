@@ -126,7 +126,8 @@ def _topic_challenge_rules() -> list[str]:
     out.append("Scopes: " + ", ".join(enums.get("challenge_scope", [])) + ". A scope the quotes do not cover"
                " marks the item not covered and caps the finding at High (K10).")
     out.append("Revision: pass the revision review_challenge reports; a stale revision is rejected.")
-    out.append("Lead dismissal (review_dismiss_lead) reasons: " + ", ".join(enums.get("dismissal_reason", {}).get("model", []))
+    out.append("Lead dismissal (review_dismiss_lead, arguments job_id and items: a list of {lead_id, reason, quotes, note}) reasons: "
+               + ", ".join(enums.get("dismissal_reason", {}).get("model", []))
                + "; every open High or Medium analyzer lead must be promoted or dismissed before review_finalize (F2)."
                " fp_guarded: reentrancy and access-control leads, quote the guard line inside the entry function."
                " fp_unreachable: the map must prove no entry reaches the location."
