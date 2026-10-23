@@ -5,7 +5,7 @@ root, no network for build and analyze, the family egress network for deps only.
 
   <work>/src   -> /work/src   read-only (the pinned source, never writable after the pin)
   <work>/out   -> /work/out   read-write, empty at start (artifacts only)
-  <work>/move  -> /work/move  MOVE_HOME: written by deps (egress), read-only in build/analyze
+  <work>/move  -> /work/move  MOVE_HOME: filled by deps (egress); other steps mount a fresh copy, writable, offline
   <work>/host  never mounted: supervisor files (logs, hashes, provenance)
 
 Container output is read back with lstat checks only (no symlink, regular files, inside out/).
@@ -133,6 +133,55 @@ def prepare_dirs(work: Path) -> dict[str, Path]:
     return dirs
 
 
+def mounts_for(dirs: dict[str, Path], step: str) -> list[tuple[Path, str, bool]]:
+    """Bind mounts of one CLI run: (host, container, read_only). The source is read-only after
+    the pin; artifacts are written by build/analyze only; MOVE_HOME is writable in every step but
+    only the deps step (the one with egress) writes the job's canonical cache `dirs["move"]`:
+    every other step gets a fresh host-made copy (`cache_copy`), so a build cannot poison what
+    analyze or prove compile against. The new Sui package system (move-package-alt,
+    mainnet-v1.81.1) takes a lock file under `$MOVE_HOME/git/` even when every dependency is
+    cached, so a read-only cache panicked the offline build (`failed to get git cache folder
+    lock ... Read-only file system`, stand 2026-10-23). Writes there fetch nothing: build and
+    analyze run with --network=none."""
+    deps = step == "deps"
+    return [
+        (dirs["src"].resolve(), "/work/src", True),
+        (dirs["out"].resolve(), "/work/out", deps),
+        ((dirs["move"] if deps else dirs["move_copy"]).resolve(), "/work/move", False),
+    ]
+
+
+def cache_copy(dirs: dict[str, Path], step: str) -> Path:
+    """Fresh copy of the job's dependency cache for one build/analyze/prove run; the canonical
+    cache written by deps stays untouched. The cache was written by a sandboxed container, so
+    the copy is an lstat walk that drops every symlink (a planted link would otherwise be read,
+    or chmod-ed, as the supervisor on a host path) and copies regular files and directories
+    only. Caller removes it."""
+    import tempfile
+
+    base = Path(tempfile.mkdtemp(prefix=f"move-{step}-", dir=dirs["move"].parent))
+    _copy_no_links(dirs["move"], base)
+    os.chmod(base, 0o777)
+    return base
+
+
+def _copy_no_links(src: Path, dst: Path) -> None:
+    for root, dnames, fnames in os.walk(src, followlinks=False):
+        rel = Path(root).relative_to(src)
+        dnames[:] = [d for d in dnames if not os.path.islink(os.path.join(root, d))]
+        for d in dnames:
+            target = dst / rel / d
+            target.mkdir(exist_ok=True)
+            os.chmod(target, 0o777)
+        for f in fnames:
+            fp = os.path.join(root, f)
+            if os.path.islink(fp) or not os.path.isfile(fp):
+                continue
+            target = dst / rel / f
+            shutil.copyfile(fp, target)
+            os.chmod(target, 0o666)
+
+
 def run(
     chain: str,
     step: str,
@@ -144,7 +193,7 @@ def run(
     extra_env: dict[str, str] | None = None,
     image: str | None = None,
 ) -> RunResult:
-    """One CLI run. step = deps (egress, MOVE_HOME writable) | build | analyze (no network).
+    """One CLI run. step = deps (egress) | build | analyze (no network); mounts: `mounts_for`.
 
     image: optional pre-resolved image string (repository@digest).  When given the
     caller is responsible for having checked availability via ``image_for`` or
@@ -153,12 +202,11 @@ def run(
     image = image if image is not None else image_for(chain)
     if any(".." in tok.split("/") for tok in command):
         raise ValueError("path token with ..")
-    deps = step == "deps"
-    mounts = [
-        (dirs["src"].resolve(), "/work/src", True),          # source: read-only after the pin
-        (dirs["out"].resolve(), "/work/out", deps),           # artifacts: written by build/analyze only
-        (dirs["move"].resolve(), "/work/move", not deps),     # MOVE_HOME: written by deps only
-    ]
+    move_copy: Path | None = None
+    if step != "deps":
+        move_copy = cache_copy(dirs, step)
+        dirs = dirs | {"move_copy": move_copy}
+    mounts = mounts_for(dirs, step)
     if "scratch" in dirs:
         # Analyzer scratch copy of the source (the CLI writes next to the package); the host never
         # reads anything back from it except the process output.
@@ -185,6 +233,9 @@ def run(
             capture_output=True, check=False, timeout=60,
         )
         return RunResult(-1, _text(exc.stdout), _text(exc.stderr), timed_out=True)
+    finally:
+        if move_copy is not None:
+            shutil.rmtree(move_copy, ignore_errors=True)
     return RunResult(proc.returncode, _text(proc.stdout), _text(proc.stderr))
 
 
