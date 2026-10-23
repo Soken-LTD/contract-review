@@ -1,10 +1,10 @@
 {
-  "$comment": "Cairo compiler version (decoded from the class, 07 8.1) -> starknet-build image (docker/starknet-build with SCARB_VERSION of the same number; 07 U-10). Digest placeholders until CI pushes the images; SOKEN_IMAGE_STARKNET_BUILD_<maj>_<min>_<patch> overrides per version. The build step checks `scarb --version` inside the image before use.",
+  "$comment": "Cairo compiler version (decoded from the class, 07 8.1) -> starknet-build image (docker/starknet-build with SCARB_VERSION of the same number; 07 U-10). SOKEN_IMAGE_STARKNET_BUILD_<maj>_<min>_<patch> overrides per version; a placeholder row falls back to the images.lock.json starknet-build entry when its tools.scarb is this version (images.yml publishes only the Dockerfile default, tag 0.1.0-dev). The build step checks `scarb --version` inside the image before use.",
   "images": {
     "2.13.1": {
       "repository": "ghcr.io/soken-ltd/starknet-build",
-      "tag": "2.13.1",
-      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tag": "0.1.0-dev",
+      "digest": "sha256:bae4df3bfc7ecfe21b58b607ed5e4bcfcdfa729e24498fc5a7072655145f93ad",
       "scarb_sha256": {
         "x86_64": "c3354866901254d1868dcff7b56bb68822ca54f6a522cf8671685b2448ccdf15",
         "aarch64": "0a0a30e57d7255ac0ca5454d846758e5b5d2d4e15d9866d6095b71db95d21964"

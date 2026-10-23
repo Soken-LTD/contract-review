@@ -179,7 +179,12 @@
       "platforms": [
         "linux/amd64"
       ],
-      "tools": {},
+      "tools": {
+        "scarb": "2.13.1",
+        "cairo-lang": "2.13.1",
+        "sierra": "1.7.0"
+      },
+      "note": "docker/starknet-build (07 3.1): Scarb SCARB_VERSION with the bundled Cairo; tools from `scarb --version` inside the pushed digest (x86 stand, 2026-10-23). adapters/starknet/data/image_map.json maps a decoded Cairo version to this entry when its row is a placeholder (build.image_for).",
       "built": {
         "commit": "81b357ad78c4814614a421d491e1131456a782e1",
         "run_id": "39909694496",
