@@ -101,6 +101,7 @@ def test_move_2024_edition_without_framework_dependency_is_sui():
     '[package]\nname = "p"\n[dependencies]\nMoveStdlib = { local = "../stdlib" }\n',
     '[package]\nname = "p"\n[dependencies]\nSui = { local = "x" }\nAptosFramework = { local = "y" }\n',
     "not = toml = at all",
+    'package = "scalar"\ndependencies = ["list"]\n',          # wrong shapes: no crash, undecided
 ])
 def test_unknown_or_contradicting_flavour_is_reported(text: str):
     assert detect_repo_family({"Move.toml": text}) == Undetected("unknown_move_flavour", ("Move.toml",))

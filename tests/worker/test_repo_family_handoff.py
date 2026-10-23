@@ -235,3 +235,16 @@ def test_aptos_repo_candidate_honours_package_dir(tmp_path: Path) -> None:
                                              "upgrade_policy": None, "upgrade_number": None}
         with pytest.raises(F.gitfetch.FetchError):
             F.candidate_from_repo("https://github.com/x/y", SHA, tmp_path, None, None, None)   # two packages, no hint
+
+
+def test_move_gitfetch_admits_the_hosts_review_start_and_the_materializer_admit() -> None:
+    """A codeberg Move repo passed review_start and the EVM materializer, then failed inside the
+    Move fetch with a bare FetchError (security review of this change)."""
+    from soken_review.adapters.move.gitfetch import REPO_URL_RE
+    from soken_review.sandbox.git_materializer import DEFAULT_HOSTS
+
+    for host in DEFAULT_HOSTS:
+        assert REPO_URL_RE.match(f"https://{host}/org/repo"), host
+        assert REPO_URL_RE.match(f"https://{host}/org/repo.git"), host
+    assert not REPO_URL_RE.match("https://bitbucket.org/org/repo")
+    assert not REPO_URL_RE.match("https://github.com/org/repo/tree/main")

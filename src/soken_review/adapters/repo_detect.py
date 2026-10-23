@@ -106,7 +106,8 @@ def _move_flavour(manifest: dict) -> str | None:
             votes.add("aptos")
     if len(votes) == 1:
         return votes.pop()
-    edition = str((manifest.get("package") or {}).get("edition", "")).lower()
+    package = manifest.get("package")
+    edition = str(package.get("edition", "")).lower() if isinstance(package, dict) else ""
     if not votes and edition.startswith("2024"):
         return "sui"            # Move 2024 editions are Sui's; Aptos packages carry no edition
     return None

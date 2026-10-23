@@ -23,7 +23,7 @@ from soken_review.sandbox import repo_fetch as _repo_fetch
 
 logger = logging.getLogger(__name__)
 
-REPO_URL_RE = re.compile(r"^https://(?:github\.com|gitlab\.com)/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(?:\.git)?/?$")
+REPO_URL_RE = re.compile(r"^https://(?:github\.com|gitlab\.com|codeberg\.org)/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?(?:\.git)?/?$")  # the hosts review_start and the materializer admit
 REF_RE = re.compile(r"^(?![-/])[A-Za-z0-9._/@-]{1,120}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _KEEP = {".move", ".toml", ".lock"}
