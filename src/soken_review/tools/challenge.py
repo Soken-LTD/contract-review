@@ -1243,6 +1243,15 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 q_file = q.get("file") or ""
                 q_start_raw = q.get("start")
                 q_end_raw = q.get("end")
+                # A project document is never evidence for a scope-bound claim: kill and downgrade
+                # items take code quotes inside their scope only (security review 2026-10-23,
+                # context ingestion spec 4). Context and basis items may cite a document when their
+                # scope leaves them unbound (the containment check below still applies otherwise).
+                if is_context_path(q_file) and item_kind in ("kill", "downgrade"):
+                    violations.append(ReviewError(
+                        "E_CHALLENGE_SCOPE", item=item_id, ranges="code scope only; a context/ quote is not evidence",
+                    ).envelope())
+                    continue
                 if not isinstance(q_start_raw, int) or not isinstance(q_end_raw, int):
                     violations.append(ReviewError(
                         "E_INVALID_ARGUMENT",
@@ -1285,7 +1294,8 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         elif value == "absent":
             # Scope coverage check against job_reads
             if not scope_not_covered_item and scope_ranges:
-                refs = answer.get("refs") or []
+                # Document reads never cover a code scope range (spec 4: a context quote is not a location).
+                refs = [r for r in (answer.get("refs") or []) if not is_context_path(str(r))]
                 missing = _ranges_cover(scope_ranges, refs, job_reads_index)
                 if missing:
                     # Names the item: a basis item with one ref fails while the kill items pass,

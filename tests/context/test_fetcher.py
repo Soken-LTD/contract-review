@@ -82,10 +82,25 @@ def test_check_url_refuses(bad: str) -> None:
         f.check_url(bad)
 
 
+@pytest.mark.parametrize("bad", [
+    "https://example.org:443/", "https://example.org:8443/", "https://example.org:80/",   # any explicit port
+    "https://127.0.0.1/", "https://[::1]/", "https://0x7f000001/", "https://169.254.169.254/latest/meta-data",
+    "https://user@example.org/", "https://user:pw@example.org/", "https://example.org@evil.example/",
+    "https://localhost/", "https://foo.localhost/", "https://db.internal/", "https://metadata.google.internal/",
+    "https://printer.local/", "https://1.0.0.10.in-addr.arpa/", "https://x.home.arpa/", "https://router.lan/",
+    "https://metadata/", "https://instance-data/",
+])
+def test_check_url_refuses_ssrf_shapes(bad: str) -> None:
+    # Security review 2026-10-23: http, custom port, IP literal, userinfo, localhost, internal suffixes.
+    with pytest.raises(ValueError):
+        f.check_url(bad)
+
+
 def test_check_url_accepts_and_drops_fragment() -> None:
     assert f.check_url("https://docs.sushi.com/a/b?x=1#frag") == "https://docs.sushi.com/a/b?x=1"
     assert f.check_url("https://www.sushi.com") == "https://www.sushi.com/"
-    assert f.check_url("https://Example.ORG:443/p") == "https://Example.ORG:443/p"
+    assert f.check_url("https://internal-tools.example.org/p") == "https://internal-tools.example.org/p"
+    assert f.check_url("https://localhost.example.org/") == "https://localhost.example.org/"
 
 
 # ── fetch_url ────────────────────────────────────────────────────────────────

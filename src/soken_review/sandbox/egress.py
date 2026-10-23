@@ -92,24 +92,47 @@ def allowlist(family: str, limits_path: Path = LIMITS) -> list[str]:
     return sorted(set(hosts))
 
 
+# Names an `open` (allow-public) family may never reach, on top of smokescreen's address checks:
+# loopback and link-local names, mDNS/.local, private DNS suffixes, reverse-lookup zones and the cloud
+# metadata host. smokescreen matches these against the request host before resolving it.
+PUBLIC_DENY_NAMES = (
+    "localhost", "*.localhost", "*.internal", "*.local", "*.arpa", "*.home.arpa", "*.lan", "*.intranet",
+    "*.corp", "*.private", "metadata.google.internal", "169.254.169.254", "metadata", "instance-data",
+)
+# Addresses denied in config regardless of the ACL (smokescreen already denies RFC 1918, loopback,
+# link-local, CGNAT, multicast and the IPv6 equivalents by default; these are the metadata endpoints
+# that sit in those ranges, named so a changed default can never re-open them).
+DENY_ADDRESSES = ("169.254.169.254", "fd00:ec2::254", "100.100.100.200", "169.254.170.2")
+
+
 def render_acl(family: str, limits_path: Path = LIMITS) -> str:
+    """The smokescreen ACL of a family (09 4.3; context ingestion spec 3 for `docs`).
+
+    An `enforce` default lists the family's hosts. An allow-public family renders `open` plus a
+    `global_deny_list` of the names in PUBLIC_DENY_NAMES. In both cases smokescreen resolves the host
+    itself and checks every resolved address against its deny ranges at connect time (the client
+    only ever sends CONNECT host:443), so a public name that resolves to a private address, or
+    rebinds to one, is refused by the proxy; nothing here sets `allow_private_ranges`.
+    """
     if allow_public(family, limits_path):
-        # smokescreen `open`: every public destination; its built-in private-range denial stays.
         default = {"project": f"soken-{family}", "action": "open"}
+        acl = {"version": "v1", "services": [], "default": default, "global_deny_list": list(PUBLIC_DENY_NAMES)}
     else:
         default = {"project": f"soken-{family}", "action": "enforce",
                    "allowed_domains": allowlist(family, limits_path)}
-    acl = {"version": "v1", "services": [], "default": default}
+        acl = {"version": "v1", "services": [], "default": default}
     return yaml.safe_dump(acl, sort_keys=False)
 
 
 def render_config() -> str:
+    """smokescreen config.yaml. Never sets `allow_private_ranges` (default false) or custom
+    `allow_ranges`: the built-in deny ranges and `deny_addresses` apply to every family."""
     config = {
         "ip": "0.0.0.0",
         "port": PROXY_PORT,
         "allow_missing_role": True,
         "acl_file": "/etc/smokescreen/acl.yaml",
-        "deny_addresses": ["169.254.169.254"],
+        "deny_addresses": list(DENY_ADDRESSES),
         "connect_timeout": "10s",
     }
     return yaml.safe_dump(config, sort_keys=False)

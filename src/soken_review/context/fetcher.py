@@ -82,10 +82,20 @@ class Refusal(Exception):
 # URL checks (repeated on the host; the container trusts nothing it is given)
 # ---------------------------------------------------------------------------------------------
 
-def check_url(url: str) -> str:
-    """`https://` only, at most 2048 chars, no credentials, no IP literal, a dotted host name.
+# Host names the fetcher never connects to, whatever the proxy says (mirrors the proxy's
+# global_deny_list in sandbox/egress.py): loopback, link-local, mDNS, private DNS suffixes,
+# reverse zones and the cloud metadata hosts. Suffix entries match the name and every subdomain.
+DENIED_HOSTS = ("localhost", "metadata", "instance-data", "metadata.google.internal", "169.254.169.254")
+DENIED_SUFFIXES = (".localhost", ".internal", ".local", ".arpa", ".lan", ".intranet", ".corp", ".private")
 
-    Returns the URL without its fragment. Raises ValueError with a short reason otherwise.
+
+def check_url(url: str) -> str:
+    """`https://` only, no explicit port (443 implied), at most 2048 chars, no credentials, no IP
+    literal, a dotted public host name outside DENIED_HOSTS / DENIED_SUFFIXES.
+
+    Returns the URL without its fragment. Raises ValueError with a short reason otherwise. The
+    proxy re-checks the resolved address at connect time (smokescreen deny ranges), which covers
+    DNS rebinding; this check keeps the obvious cases from ever leaving the container.
     """
     if not isinstance(url, str) or not url or len(url) > MAX_URL_LEN:
         raise ValueError("length")
@@ -113,11 +123,10 @@ def check_url(url: str) -> str:
         raise ValueError("host")
     if not re.fullmatch(r"[a-z]{2,63}", labels[-1], re.IGNORECASE):
         raise ValueError("host")
-    try:
-        port = parts.port
-    except ValueError as exc:
-        raise ValueError("port") from exc
-    if port is not None and port != 443:
+    lower = host.lower()
+    if lower in DENIED_HOSTS or any(lower.endswith(sfx) for sfx in DENIED_SUFFIXES):
+        raise ValueError("denied host")
+    if ":" in parts.netloc:            # any explicit port, 443 included: the only port is the implied 443
         raise ValueError("port")
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path or "/", parts.query, ""))
 

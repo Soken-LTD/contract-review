@@ -383,7 +383,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
                 rubric_version=_RUBRIC_VERSION,
             )
             if context_items:
-                await repo.append_context_items(job_id, context_items)
+                await repo.append_context_items(job_id, context_items)   # fresh row: no cap or duplicate possible
             # Insert the first step for queued jobs (09 section 3.3); upload jobs wait for
             # the archive before being seeded by the supervisor.
             if initial_state == "queued":

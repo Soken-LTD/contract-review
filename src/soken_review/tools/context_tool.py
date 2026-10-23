@@ -18,8 +18,9 @@ from typing import Any
 
 import psycopg_pool
 
-from ..context.items import check_cap, item_key, item_result, status_counts, validate_items
-from ..context.store import ContextStore
+from ..context.items import item_key, item_result, status_counts, validate_items
+from ..context.store import MAX_DOCS_PER_JOB, ContextStore
+from ..db.job_repo import ContextCapError, JobRepo
 from ..db.pool import get_pool
 from ..errors import ReviewError
 from ..server import handler
@@ -54,8 +55,23 @@ def _get_ctx() -> JobContext:
     return _ctx
 
 
+class _Rollback(Exception):
+    """Leave the locked transaction without writing; carries the rejection envelope."""
+
+    def __init__(self, envelope: dict[str, Any]) -> None:
+        super().__init__(envelope["code"])
+        self.envelope = envelope
+
+
 @handler("review_add_context")
 async def handle_review_add_context(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return await _add_context(args)
+    except _Rollback as rb:
+        return {"accepted": False, "errors": [rb.envelope]}
+
+
+async def _add_context(args: dict[str, Any]) -> dict[str, Any]:
     job_id: str = args["job_id"]
     try:
         items = validate_items(args["items"])
@@ -64,8 +80,6 @@ async def handle_review_add_context(args: dict[str, Any]) -> dict[str, Any]:
             return {"accepted": False, "errors": [exc.envelope()]}
         raise
     pool = _get_pool()
-    from ..db.job_repo import JobRepo
-
     async with pool.connection() as conn:
         job = await JobRepo(conn).get(job_id)
     if job is None or job["state"] == "deleted":
@@ -81,21 +95,29 @@ async def handle_review_add_context(args: dict[str, Any]) -> dict[str, Any]:
     if state not in _OPEN_STATES:
         return {"accepted": False, "errors": [ReviewError("E_JOB_NOT_READY", state=state, eta_s=0).envelope()]}
 
-    existing: list[dict[str, Any]] = list(job.get("context_items") or [])
-    try:
-        check_cap(existing, items)
-    except ReviewError as exc:
-        return {"accepted": False, "errors": [exc.envelope()]}
-
     pin_root = _get_ctx().get_pin_root()
     store = ContextStore.load(pin_root, job_id)
-    known = {item_key(r) for r in existing}
 
+    # One transaction under `select ... for update` on the job row: the state re-check, the
+    # per-URL idempotency, the 12-per-job cap, the append and the step insert all see the same
+    # locked row, so two concurrent calls cannot both pass the cap or both land one URL
+    # (security review 2026-10-23; migration 009 adds the row checks as a second line).
     async with pool.connection() as conn, conn.transaction():
         repo = JobRepo(conn)
-        all_items = await repo.append_context_items(job_id, items)
-        current = await repo.get(job_id)
-        if current is not None and current["state"] == "ready":
+        try:
+            locked, all_items = await repo.append_context_items(job_id, items, cap=MAX_DOCS_PER_JOB)
+        except ContextCapError as exc:
+            return {"accepted": False, "errors": [
+                ReviewError("E_CONTEXT_LIMIT", cap=exc.cap, have=exc.have, add=exc.add).envelope()]}
+        except KeyError:
+            raise ReviewError("E_JOB_NOT_FOUND") from None
+        locked_state = locked["state"]
+        if locked_state in _FROZEN_STATES:
+            raise _Rollback(ReviewError("E_JOB_FROZEN").envelope())
+        if locked_state not in _OPEN_STATES:
+            raise _Rollback(ReviewError("E_JOB_NOT_READY", state=locked_state, eta_s=0).envelope())
+        known = {item_key(r) for r in (locked.get("context_items") or [])}
+        if locked_state == "ready":
             steps = await repo.get_steps(job_id)
             pending = any(s["step"] == "context" and s["status"] in ("queued", "running") for s in steps)
             if not pending:

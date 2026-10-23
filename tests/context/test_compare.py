@@ -80,11 +80,27 @@ def test_admin_claims_renounced_and_multisig() -> None:
     owned = [plain_fact("onchain.owner", "0x" + "1" * 40, source="eth_call owner() at block 5")]
     assert _rows(_admin("renounced") + owned)["Ownership renounced"]["status"] == "differs"
     assert _rows(_admin("renounced"))["Ownership renounced"]["status"] == "not_checkable"
-    contract = [plain_fact("onchain.owner_is_contract", "true", source="eth_getCode owner at block 5")]
-    assert _rows(_admin("multisig") + contract)["Owner is a multisig"]["status"] == "matches"
-    eoa = [plain_fact("onchain.owner_is_contract", "false", source="eth_getCode owner at block 5")]
-    assert _rows(_admin("timelock") + eoa)["Owner is a timelock"]["status"] == "differs"
+    # PR #36 holder facts from chain_state: onchain.owner.holder_kind in eoa | contract | multisig
+    def kind(k: str) -> list[dict]:
+        return [plain_fact("onchain.owner.holder_kind", k, source="eth_getCode owner at block 5"),
+                plain_fact("onchain.owner.holder_is_contract", "false" if k == "eoa" else "true",
+                           source="eth_getCode owner at block 5")]
+    assert _rows(_admin("multisig") + kind("multisig"))["Owner is a multisig"]["status"] == "matches"
+    assert _rows(_admin("multisig") + kind("eoa"))["Owner is a multisig"]["status"] == "differs"
+    assert _rows(_admin("multisig") + kind("contract"))["Owner is a multisig"]["status"] == "not_checkable"
+    assert _rows(_admin("multisig"))["Owner is a multisig"]["status"] == "not_checkable"
+    # timelock: holder_kind is never `timelock` by design, so only an EOA owner is a verdict
+    assert _rows(_admin("timelock") + kind("eoa"))["Owner is a timelock"]["status"] == "differs"
+    assert _rows(_admin("timelock") + kind("contract"))["Owner is a timelock"]["status"] == "not_checkable"
+    assert _rows(_admin("timelock") + kind("multisig"))["Owner is a timelock"]["status"] == "not_checkable"
     assert _rows(_admin("timelock"))["Owner is a timelock"]["status"] == "not_checkable"
+    # holder_is_contract alone (no kind) still gives the EOA verdict
+    only = [plain_fact("onchain.owner.holder_is_contract", "false", source="eth_getCode owner at block 5")]
+    assert _rows(_admin("multisig") + only)["Owner is a multisig"]["status"] == "differs"
+    from pathlib import Path
+
+    import soken_review.context.compare as mod
+    assert "owner_is_contract" not in Path(mod.__file__).read_text()        # the pre-#36 key is gone
 
 
 def test_admin_claims_upgradeable_immutable() -> None:

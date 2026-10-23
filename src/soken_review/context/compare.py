@@ -6,10 +6,12 @@ observed_source, status}` with `status` in `matches | differs | not_checkable`:
 1. Reviewed contract referenced by website, app or docs (`context.*.mentions_reviewed_address`).
 2. Declared total supply vs on-chain `onchain.total_supply` scaled by `onchain.decimals`.
 3. Declared fee figures vs the map's folded constants with unit bps or percent.
-4. Declared admin claims vs facts and map: `renounced` vs `onchain.owner` (zero address),
-   `multisig|timelock` vs `onchain.owner_is_contract`, `upgradeable|immutable` vs the semantic
-   `upgrade_surface`, `pausable|blacklist|mint` vs the entry function names of the map (the
-   category table has no category for those three, so the names of the lexical spans decide).
+4. Declared admin claims vs facts and map: `renounced` vs `onchain.owner` (zero address);
+   `multisig` vs `onchain.owner.holder_kind` (chain_state holder facts: `multisig` matches, `eoa`
+   differs, `contract` or absent is not checkable); `timelock` vs the same key (never `timelock`
+   by design, so not checkable unless the holder is an `eoa`, which differs); `upgradeable|immutable`
+   vs the semantic `upgrade_surface`; `pausable|blacklist|mint` vs the entry function names of the
+   map (the category table has no category for those three, so the names of the lexical spans decide).
 5. Declared chains vs the job's chain.
 
 A row is produced only when the documents declare something; a claim without an observation is
@@ -173,7 +175,8 @@ def _admin_rows(facts: list[dict[str, Any]], map_doc: dict[str, Any]) -> list[di
     has_semantic = bool(semantic)
     surface = semantic.get("upgrade_surface") or []
     owner = _first(facts, "onchain.owner")
-    owner_contract = _first(facts, "onchain.owner_is_contract")
+    holder_kind = _first(facts, "onchain.owner.holder_kind")
+    holder_contract = _first(facts, "onchain.owner.holder_is_contract")
     fn_names = _function_names(map_doc)
     out: list[dict] = []
     for claim, f in first.items():
@@ -187,13 +190,20 @@ def _admin_rows(facts: list[dict[str, Any]], map_doc: dict[str, Any]) -> list[di
                 out.append(_row(label, declared, f["source"], f"owner {owner['value']}", owner["source"],
                                 "matches" if zero else "differs"))
         elif claim in ("multisig", "timelock"):
-            if owner_contract is None:
+            kind = str(holder_kind["value"]).lower() if holder_kind is not None else None
+            if kind is None and holder_contract is not None:
+                kind = "contract" if str(holder_contract["value"]).lower() == "true" else "eoa"
+            source = (holder_kind or holder_contract or {}).get("source", "chain state")
+            if kind is None:
                 out.append(_row(label, declared, f["source"], "owner code not read", "chain state", "not_checkable"))
+            elif kind == "eoa":
+                out.append(_row(label, declared, f["source"], "owner is an externally owned account", source, "differs"))
+            elif claim == "multisig" and kind == "multisig":
+                out.append(_row(label, declared, f["source"], "owner is a known multisig singleton", source, "matches"))
             else:
-                is_contract = str(owner_contract["value"]).lower() == "true"
-                out.append(_row(label, declared, f["source"],
-                                "owner is a contract" if is_contract else "owner is an externally owned account",
-                                owner_contract["source"], "matches" if is_contract else "differs"))
+                # a contract of unknown kind; timelocks have no canonical bytecode, so never a match
+                out.append(_row(label, declared, f["source"], f"owner is a contract (holder kind {kind})", source,
+                                "not_checkable"))
         elif claim in ("upgradeable", "immutable"):
             if not has_semantic:
                 out.append(_row(label, declared, f["source"], "no semantic map", "contract map", "not_checkable"))

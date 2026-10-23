@@ -8,6 +8,7 @@ state gates, idempotency, the cap, URL rejection and the step at `ready`; review
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from soken_review.tools.context import MemoryJobContext
 from soken_review.tools.read import set_context
 from tests.context.conftest import FIXTURES, doc
 
-from .test_submit_finalize import _VALID_SUBMISSION, VAULT_SOL, _create_ready_job_with_pin
+from .test_submit_finalize import _VALID_SUBMISSION, VAULT_SOL, _create_ready_job_with_pin, _insert_lead
 
 ASYNC = pytest.mark.asyncio(loop_scope="session")
 
@@ -307,3 +308,127 @@ async def test_finding_quotes_a_document_with_role_context(db_pool) -> None:
     bad["quotes"] = [{"file": "context/whitepaper-1.md", "start": n, "end": n, "role": "context", "text": "not the line at all"}]
     result = await submit_mod.handle_review_submit_finding(bad)
     assert result["accepted"] is False and any(e["code"] == "E_QUOTE_MISMATCH" for e in result["errors"])
+
+
+# ── security review 2026-10-23: race on the cap, scope parity, principal gates ─────────────────
+
+@ASYNC
+async def test_concurrent_add_context_cannot_pass_the_cap(db_pool) -> None:
+    """Two calls racing at the cap: the row lock serialises them, exactly one lands, 12 stay 12."""
+    wired = _wire(db_pool)
+    job_id, _ = await _ready_job(wired)
+    base = [{"kind": "other", "url": f"https://o.example/{i}"} for i in range(11)]
+    assert (await _call("review_add_context", job_id=job_id, items=base[:8])).structured_content["accepted"]
+    assert (await _call("review_add_context", job_id=job_id, items=base[8:])).structured_content["accepted"]
+    a = _call("review_add_context", job_id=job_id, items=[{"kind": "docs", "url": "https://race.example/a"}])
+    b = _call("review_add_context", job_id=job_id, items=[{"kind": "docs", "url": "https://race.example/b"}])
+    ra, rb = await asyncio.gather(a, b)
+    bodies = [ra.structured_content, rb.structured_content]
+    accepted = [x for x in bodies if x["accepted"]]
+    rejected = [x for x in bodies if not x["accepted"]]
+    assert len(accepted) == 1 and len(rejected) == 1
+    assert rejected[0]["errors"][0]["code"] == "E_CONTEXT_LIMIT"
+    async with wired.connection() as conn:
+        row = await (await conn.execute("select context_items from jobs where job_id = %s", (job_id,))).fetchone()
+    assert len(row[0]) == 12
+    # the same URL twice at once: one row, both calls accepted (idempotent), requested stays 12
+    c = _call("review_add_context", job_id=job_id, items=[{"kind": "docs", "url": "https://o.example/0"}])
+    d = _call("review_add_context", job_id=job_id, items=[{"kind": "docs", "url": "https://o.example/0"}])
+    rc, rd = await asyncio.gather(c, d)
+    assert rc.structured_content["accepted"] and rd.structured_content["accepted"]
+    assert rc.structured_content["context"]["requested"] == 12
+    # the row checks of migration 009 refuse what the handler refuses (belt and braces)
+    import psycopg
+    async with wired.connection() as conn:
+        for bad in ('[{"url": "https://x.example/"}, {"url": "https://x.example/"}]',
+                    json.dumps([{"url": f"https://x.example/{i}"} for i in range(13)])):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                async with conn.transaction():
+                    await conn.execute("update jobs set context_items = %s::jsonb where job_id = %s", (bad, job_id))
+
+
+@ASYNC
+async def test_dismiss_quotes_may_not_cite_a_document(db_pool) -> None:
+    from soken_review.tools import dismiss as dismiss_mod
+
+    wired = _wire(db_pool)
+    job_id, pin_root = await _ready_job(wired)
+    store = ContextStore.load(pin_root, job_id)
+    store.add([doc("whitepaper", WP_URL, (FIXTURES / "whitepaper.md").read_text(), title="Sample Token Whitepaper")])
+    lines = store.read_all("context/whitepaper-1.md")
+    n = next(i for i, ln in enumerate(lines, start=1) if "total supply of" in ln)   # a prose line, not a heading
+    line = lines[n - 1]
+    await _insert_lead(wired, job_id, "LEAD-0701")
+    dismiss_mod.set_pool(wired)
+    dismiss_mod.set_context(MemoryJobContext(pin_root))
+    note = "The detector pattern does not apply here because the call target is the trusted router only."
+    for reason in ("not_a_vulnerability", "fp_guarded"):
+        res = await dismiss_mod.handle_review_dismiss_lead({"job_id": job_id, "items": [
+            {"lead_id": "LEAD-0701", "reason": reason, "note": note,
+             "quotes": [{"file": "context/whitepaper-1.md", "start": n, "end": n, "text": line}]}]})
+        assert res["accepted"] is True and res["dismissed"] == [] and len(res["rejected"]) == 1, reason
+        codes = {e["code"] for e in res["rejected"][0]["errors"]}
+        assert codes & {"E_FILE_UNKNOWN", "E_DISMISS_UNCHECKABLE"}, (reason, codes)
+
+
+@ASYNC
+async def test_kill_item_present_with_a_document_quote_is_scope_rejected(db_pool) -> None:
+    from soken_review.tools import challenge as challenge_mod
+    from soken_review.tools import submit as submit_mod
+
+    wired = _wire(db_pool)
+    job_id, pin_root = await _ready_job(wired)
+    store = ContextStore.load(pin_root, job_id)
+    store.add([doc("whitepaper", WP_URL, (FIXTURES / "whitepaper.md").read_text(), title="Sample Token Whitepaper")])
+    lines = store.read_all("context/whitepaper-1.md")
+    challenge_mod.set_pool(wired)
+    challenge_mod.set_context(MemoryJobContext(pin_root))
+    args = json.loads(json.dumps(_VALID_SUBMISSION))
+    args["job_id"], args["draft_key"] = job_id, "draft-ctx-kill"
+    submitted = await submit_mod.handle_review_submit_finding(args)
+    assert submitted["accepted"] is True, submitted
+    if submitted.get("status") != "needs_challenge":
+        pytest.skip(f"finding did not reach needs_challenge ({submitted.get('computed_severity')})")
+    ch = await challenge_mod.handle_review_challenge({"job_id": job_id, "draft_key": "draft-ctx-kill"})
+    assert ch["accepted"] is True
+    kill = [i for i in ch["items"] if i["kind"] == "kill"]
+    if not kill:
+        pytest.skip("no kill item for this category")
+    async with wired.connection() as conn, conn.transaction():
+        await conn.execute("insert into job_reads (job_id, path, start_line, end_line) values (%s, %s, 1, 9)",
+                           (job_id, "src/Vault.sol"))
+    n = HEADER_LINES + 2
+    answers = []
+    for item in ch["items"]:
+        if item["id"] == kill[0]["id"]:
+            answers.append({"item_id": item["id"], "value": "present",
+                            "quotes": [{"file": "context/whitepaper-1.md", "start": n, "end": n, "text": lines[n - 1]}],
+                            "note": "The whitepaper states the condition in plain words on this line."})
+        else:
+            refs = item["scope"].get("ranges") or ["src/Vault.sol:1-9"]
+            answers.append({"item_id": item["id"], "value": "absent", "refs": refs,
+                            "note": "No evidence of this condition found in the reviewed scope."})
+    res = await challenge_mod.handle_review_answer_challenge({"job_id": job_id, "draft_key": "draft-ctx-kill",
+                                                               "revision": ch["revision"], "answers": answers})
+    assert res["accepted"] is False, res
+    scope_errs = [e for e in res["errors"] if e["code"] == "E_CHALLENGE_SCOPE"]
+    assert scope_errs and any("context/" in json.dumps(e) for e in scope_errs)
+    async with wired.connection() as conn:
+        row = await (await conn.execute("select status from finding_drafts where job_id = %s and draft_key = %s",
+                                        (job_id, "draft-ctx-kill"))).fetchone()
+    assert row[0] == "needs_challenge"                     # nothing was withdrawn by a document quote
+
+
+@pytest.mark.asyncio
+async def test_context_reads_take_the_same_job_gates_as_code(ctx: MemoryJobContext) -> None:
+    # Another principal's job id (unknown here) and a job that is not readable yet: the same
+    # E_JOB_NOT_FOUND / E_JOB_NOT_READY as for code paths, before any store access.
+    foreign = "job_" + "F" * 26
+    res = await _call("review_read_code", job_id=foreign, path="context/whitepaper-1.md", start_line=1, end_line=2)
+    assert json.loads(res.content[0].text)["errors"][0]["code"] == "E_JOB_NOT_FOUND"
+    res = await _call("review_search_code", job_id=foreign, pattern="renounced", path_glob="context/*")
+    assert json.loads(res.content[0].text)["errors"][0]["code"] == "E_JOB_NOT_FOUND"
+    ctx.set_state(JOB_ID, "analyzing")
+    res = await _call("review_read_code", job_id=JOB_ID, path="context/whitepaper-1.md", start_line=1, end_line=2)
+    assert json.loads(res.content[0].text)["errors"][0]["code"] == "E_JOB_NOT_READY"
+    assert not any(r[1].startswith("context/") for r in ctx.reads)

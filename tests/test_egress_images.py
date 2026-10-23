@@ -146,3 +146,19 @@ def test_allow_public_row_must_be_exact(tmp_path):
         limits.write_text(yaml.safe_dump({"egress": {"all": [], "docs": bad}}))
         with pytest.raises(ValueError):
             egress.allowlist("docs", limits)
+
+
+def test_open_family_keeps_private_denial_and_denies_internal_names():
+    # Security review 2026-10-23 (SSRF): the docs family may be `open`, but the proxy still refuses
+    # private, loopback, link-local and metadata destinations (never allow_private_ranges), and the
+    # internal name space is denied by name on top.
+    acl = yaml.safe_load(egress.render_acl("docs"))
+    assert acl["default"]["action"] == "open" and "allowed_domains" not in acl["default"]
+    for name in ("localhost", "*.localhost", "*.internal", "*.local", "*.arpa", "metadata.google.internal",
+                 "169.254.169.254"):
+        assert name in acl["global_deny_list"], name
+    cfg = yaml.safe_load(egress.render_config())
+    assert "allow_private_ranges" not in cfg and "allow_ranges" not in cfg
+    assert {"169.254.169.254", "fd00:ec2::254", "100.100.100.200"} <= set(cfg["deny_addresses"])
+    enforce = yaml.safe_load(egress.render_acl("evm"))
+    assert "global_deny_list" not in enforce and enforce["default"]["action"] == "enforce"
