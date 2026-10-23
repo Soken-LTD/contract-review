@@ -34,7 +34,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from soken_review.adapters.base import BuildResult, Candidate
-from soken_review.adapters.starknet.deps_integrity import verify_registry_cache
+from soken_review.adapters.starknet.deps_integrity import discard_extracted_sources, verify_registry_cache
 from soken_review.adapters.starknet.fetch import STARKNET_EGRESS_NETWORK
 from soken_review.adapters.starknet.sierra import class_hash, hex_felt, selector_set
 from soken_review.adapters.starknet.trust_scan import lock_path, package_name, scan_files
@@ -451,9 +451,15 @@ def build(candidate: Candidate, work_dir: Path, cairo_version: str | None) -> Bu
     # container may rewrite) before the first offline step reads it. A mismatch or an unlisted
     # package closes the build; rows the lock cannot vouch for are flagged, not trusted.
     deps = verify_registry_cache(lock_content if lock_rel in candidate.files else None, work_dir / "scarb-cache")
-    _write_host(host / "deps_verify.json", json.dumps(deps.as_dict(), indent=1).encode())
     if not deps.ok:
+        _write_host(host / "deps_verify.json", json.dumps(deps.as_dict(), indent=1).encode())
         return failed("deps_integrity", "\n".join(deps.failures[:20]))
+    # Scarb compiles an already-extracted `registry/src/<pkg>` tree as is (`.scarb-ok` skips the
+    # untar), so the verified archive bytes only vouch for the build once the extracted trees the
+    # deps container wrote are gone and the offline run re-extracts from those archives.
+    discarded = discard_extracted_sources(work_dir / "scarb-cache")
+    _write_host(host / "deps_verify.json", json.dumps({**deps.as_dict(), "extracted_sources_discarded": discarded},
+                                                      indent=1).encode())
     deps_unverified = list(deps.unverified)
     if deps_unverified:
         _mark_untrusted(candidate, host, [f"deps_unverified:{label}" for label in deps_unverified])

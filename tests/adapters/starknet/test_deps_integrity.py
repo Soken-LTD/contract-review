@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -103,7 +104,8 @@ def test_symlinked_archive_is_not_a_regular_file(tmp_path: Path) -> None:
     real = tmp_path / "elsewhere.tar.zst"
     real.write_bytes(STD)
     os.symlink(real, cache / "registry" / "dl" / IDENT / "snforge_std-0.51.2.tar.zst")
-    assert D.verify_registry_cache(lock_text(), cache).failures == ["archive_not_regular_file:snforge_std@0.51.2"]
+    assert D.verify_registry_cache(lock_text(), cache).failures == [
+        "archive_missing:snforge_std@0.51.2", f"symlink_in_cache:dl/{IDENT}/snforge_std-0.51.2.tar.zst"]
 
 
 def test_git_rows_are_unverified_not_fatal(tmp_path: Path) -> None:
@@ -112,9 +114,87 @@ def test_git_rows_are_unverified_not_fatal(tmp_path: Path) -> None:
     assert v.ok and v.unverified == ["alexandria_math@0.5.1"]
 
 
-def test_registry_row_without_checksum_is_unverified(tmp_path: Path) -> None:
-    v = D.verify_registry_cache(lock_text(std_checksum=None), make_cache(tmp_path))
-    assert v.ok and v.unverified == ["snforge_std@0.51.2"] and v.verified == ["snforge_scarb_plugin@0.51.2"]
+def test_registry_row_without_or_with_a_bad_checksum_closes_the_build(tmp_path: Path) -> None:
+    """Scarb always writes a registry row's checksum (lockfile.rs); a row without one is not a lock
+    Scarb wrote, and nothing else can vouch for the archive: closed, never `unverified`."""
+    cache = make_cache(tmp_path)
+    assert D.verify_registry_cache(lock_text(std_checksum=None), cache).failures == ["checksum_missing:snforge_std@0.51.2"]
+    bad = lock_text().replace(f"sha256:{_sha(STD)}", "md5:" + "0" * 32)
+    assert D.verify_registry_cache(bad, cache).failures == ["checksum_unparsable:snforge_std@0.51.2"]
+    upper = lock_text().replace(f"sha256:{_sha(STD)}", "sha256:" + _sha(STD).upper())
+    assert D.verify_registry_cache(upper, cache).failures == ["checksum_unparsable:snforge_std@0.51.2"]
+
+
+# ─── review bypass classes: identity, renames, case variants, symlinks, duplicates ─────────────
+
+def test_renamed_extracted_dir_closes_the_build(tmp_path: Path) -> None:
+    cache = make_cache(tmp_path, src_dirs=("snforge_std-0.51.3",))         # version renamed
+    assert D.verify_registry_cache(lock_text(), cache).failures == [f"unlisted_source_dir:{IDENT}/snforge_std-0.51.3"]
+
+
+def test_case_variant_names_are_not_the_lock_identity(tmp_path: Path) -> None:
+    cache = make_cache(tmp_path, archives={"Snforge_std-0.51.2": STD, "snforge_scarb_plugin-0.51.2": PLUGIN},
+                       src_dirs=("SNFORGE_STD-0.51.2",))
+    v = D.verify_registry_cache(lock_text(), cache)
+    assert v.failures == ["archive_missing:snforge_std@0.51.2",
+                          f"unlisted_archive:{IDENT}/Snforge_std-0.51.2.tar.zst",
+                          f"unlisted_source_dir:{IDENT}/SNFORGE_STD-0.51.2"]
+    dashed = lock_text().replace('name = "snforge_std"', 'name = "snforge-std"')      # `-` is not `_`
+    assert D.verify_registry_cache(dashed, make_cache(tmp_path / "b")).failures[0].startswith("lock_row_malformed:")
+
+
+def test_symlinked_extracted_dir_and_ident_dir_close_the_build(tmp_path: Path) -> None:
+    cache = make_cache(tmp_path, src_dirs=("snforge_scarb_plugin-0.51.2",))
+    outside = tmp_path / "outside-tree"
+    outside.mkdir()
+    (outside / ".scarb-ok").write_text("")
+    os.symlink(outside, cache / "registry" / "src" / IDENT / "snforge_std-0.51.2")    # listed name, foreign tree
+    os.symlink(cache / "registry" / "dl" / IDENT, cache / "registry" / "dl" / "mirror")
+    v = D.verify_registry_cache(lock_text(), cache)
+    assert v.failures == ["symlink_in_cache:dl/mirror", f"symlink_in_cache:src/{IDENT}/snforge_std-0.51.2"]
+    assert v.verified == ["snforge_scarb_plugin@0.51.2", "snforge_std@0.51.2"]       # the archives themselves are fine
+
+
+def test_symlinked_level_or_stray_entries_close_the_build(tmp_path: Path) -> None:
+    cache = make_cache(tmp_path)
+    (cache / "registry" / "dl" / "notes.txt").write_text("x")
+    (cache / "registry" / "src" / IDENT / "README").write_text("x")
+    shutil.move(cache / "registry" / "src", tmp_path / "moved-src")
+    os.symlink(tmp_path / "moved-src", cache / "registry" / "src")
+    v = D.verify_registry_cache(lock_text(), cache)
+    assert v.failures == ["symlink_in_cache:src", "unexpected_entry:dl/notes.txt"]
+
+
+def test_duplicate_lock_rows_close_the_build(tmp_path: Path) -> None:
+    dup = lock_text() + '\n[[package]]\nname = "snforge_std"\nversion = "0.51.2"\nsource = "registry+https://other.example/"\n' \
+                        f'checksum = "sha256:{_sha(STD)}"\n'
+    failures = D.verify_registry_cache(dup, make_cache(tmp_path)).failures
+    # The lock is no oracle at all: the row is rejected and every fetched archive is unlisted.
+    assert failures[0] == "lock_duplicate_row:snforge_std@0.51.2" and len(failures) == 3
+    with pytest.raises(D.LockFormatError):
+        D.parse_lock(dup)
+
+
+def test_unknown_lock_version_closes_the_build(tmp_path: Path) -> None:
+    v2 = lock_text().replace("version = 1", "version = 2", 1)
+    assert D.verify_registry_cache(v2, make_cache(tmp_path)).failures[0] == "lock_version_unsupported:2"
+    assert D.verify_registry_cache(lock_text().replace("version = 1\n", "", 1), make_cache(tmp_path / "b")).failures[0] \
+        == "lock_version_unsupported:None"
+    # Even on an empty cache a lock of another version is not an oracle this check knows.
+    assert D.verify_registry_cache(v2, tmp_path / "empty").failures == ["lock_version_unsupported:2"]
+
+
+def test_discard_extracted_sources_removes_the_tree_not_a_symlink_target(tmp_path: Path) -> None:
+    cache = make_cache(tmp_path, src_dirs=("snforge_std-0.51.2",))
+    assert D.discard_extracted_sources(cache) is True
+    assert not (cache / "registry" / "src").exists() and (cache / "registry" / "dl").is_dir()
+    assert D.discard_extracted_sources(cache) is False
+    target = tmp_path / "target-tree"
+    target.mkdir()
+    (target / "keep").write_text("")
+    os.symlink(target, cache / "registry" / "src")
+    assert D.discard_extracted_sources(cache) is True
+    assert (target / "keep").exists() and not (cache / "registry" / "src").is_symlink()
 
 
 def test_unknown_source_kind_closes_the_build(tmp_path: Path) -> None:
@@ -140,8 +220,14 @@ def test_unparsable_lock_with_fetched_packages_closes_the_build(tmp_path: Path) 
 
 
 def test_parse_lock_rejects_malformed_rows() -> None:
-    assert D.parse_lock('[[package]]\nname = "Bad Name"\nversion = "1"\nsource = "registry+x"\n') is None
-    assert D.parse_lock(lock_text()) is not None and len(D.parse_lock(lock_text())) == 2
+    with pytest.raises(D.LockFormatError) as exc:
+        D.parse_lock('version = 1\n[[package]]\nname = "Bad Name"\nversion = "1"\nsource = "registry+x"\n')
+    assert exc.value.reason == "lock_row_malformed:0"
+    rows = D.parse_lock(lock_text(git_row=True))
+    assert [(r.name, r.version, r.source[:9]) for r in rows] == [
+        ("snforge_scarb_plugin", "0.51.2", "registry+"), ("snforge_std", "0.51.2", "registry+"),
+        ("alexandria_math", "0.5.1", "git+https")]
+    assert rows[0].archive_name == "snforge_scarb_plugin-0.51.2.tar.zst" and rows[0].source_dir_name == "snforge_scarb_plugin-0.51.2"
 
 
 # ─── build(): the check sits between the deps step and the first offline step ──────────────────
@@ -185,11 +271,19 @@ def _wire(monkeypatch, work_dir: Path, fetched: dict[str, bytes] | None = None) 
 
 def test_build_runs_offline_only_on_a_verified_cache(tmp_path: Path, monkeypatch) -> None:
     ran = _wire(monkeypatch, tmp_path)
+    src_seen: list[bool] = []
+    real_metadata = B.run_metadata
+    monkeypatch.setattr(B, "run_metadata", lambda *a: (src_seen.append((tmp_path / "scarb-cache/registry/src").exists()),
+                                                       real_metadata(*a))[1])
     result = B.build(_candidate(), tmp_path, "2.13.1")
     assert result.status == "ok" and result.build_notes == {"deps_unverified": []}
     assert ran == ["deps", "metadata", "scarb --offline --profile release build --package openzeppelin_presets"]
     verify = json.loads((tmp_path / "host" / "deps_verify.json").read_text())
     assert verify["verified"] == ["snforge_scarb_plugin@0.51.2", "snforge_std@0.51.2"] and verify["failures"] == []
+    # The extracted trees the deps container wrote are gone before the first offline Scarb run, so
+    # it re-extracts from the archives whose bytes were just verified.
+    assert verify["extracted_sources_discarded"] is True and src_seen == [False]
+    assert (tmp_path / "scarb-cache/registry/dl").is_dir()
 
 
 def test_build_closes_on_a_tampered_archive_before_any_offline_step(tmp_path: Path, monkeypatch) -> None:
