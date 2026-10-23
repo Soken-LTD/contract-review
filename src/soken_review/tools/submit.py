@@ -37,6 +37,7 @@ import psycopg_pool
 import yaml
 from psycopg.rows import dict_row
 
+from ..context.store import ContextStore, is_context_path
 from ..db.pool import get_pool
 from ..engine.injection import check_echo
 from ..engine.numbers import lex_numbers
@@ -611,6 +612,7 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                 # UnicodeDecodeError (non-UTF-8 content) — all map to pin_not_found
                 raise ReviewError("E_JOB_NOT_READY", state="pin_not_found", eta_s=60)
 
+            context_store = ContextStore.load(pin_root, job_id)   # context ingestion spec 4: context/ quotes
             for q in quotes:
                 qt = q.get("text")
                 if qt is None:
@@ -625,6 +627,13 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                 # quote_match only verifies text alignment — it does not enforce in_scope.
                 # A model could fabricate findings against vendored dependencies (not audited).
                 q_role = q.get("role", "location")
+                if is_context_path(q["file"]) and q_role != "context":
+                    # A project document never locates a finding (context ingestion spec 4).
+                    violations.append(ReviewError(
+                        "E_INVALID_ARGUMENT", field="quotes.role", rule="a context/ path takes role context",
+                        value80=q["file"][:80], example='{"file": "context/whitepaper-1.md", "role": "context", ...}',
+                    ).envelope())
+                    continue
                 entry = pin.get_entry(q["file"])
                 if entry is not None and q_role == "location" and not entry.in_scope:
                     violations.append(
@@ -632,7 +641,7 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                     )
                     continue
                 try:
-                    quote_match(pin, q["file"], q["start"], q["end"], qt)
+                    quote_match(pin, q["file"], q["start"], q["end"], qt, context=context_store)
                 except QuoteMatchError as e:
                     violations.append(ReviewError(e.code, **e.detail).envelope())
 

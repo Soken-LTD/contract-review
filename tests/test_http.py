@@ -33,10 +33,10 @@ def test_later_request_without_version_header_is_400(client):
 
 
 @pytest.mark.parametrize("version", ["2025-11-25", "2025-06-18"])
-def test_supported_versions_list_18_tools(client, version):
+def test_supported_versions_list_19_tools(client, version):
     r = client.post("/mcp", headers={**H, "MCP-Protocol-Version": version}, json=LIST)
     assert r.status_code == 200
-    assert len(r.json()["result"]["tools"]) == 18
+    assert len(r.json()["result"]["tools"]) == 19
 
 
 def test_2025_03_26_is_not_served(client):

@@ -2,6 +2,7 @@
 
 from . import (  # noqa: F401
     challenge,
+    context_tool,
     dismiss,
     finalize,
     guide,

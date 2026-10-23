@@ -167,13 +167,50 @@
     "what",
     "fix"
    ]
+  },
+  "context_item": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "kind": {
+     "type": "string",
+     "enum": [
+      "whitepaper",
+      "website",
+      "app",
+      "docs",
+      "terms",
+      "privacy",
+      "other"
+     ]
+    },
+    "url": {
+     "type": "string",
+     "pattern": "^https://[^\\s]{1,2040}$",
+     "maxLength": 2048,
+     "description": "https only, named host, no credentials, no IP literal (server check E_CONTEXT_URL). One request per URL; website and app pages also pull up to five same-origin script bundles."
+    },
+    "path": {
+     "type": "string",
+     "pattern": "^[A-Za-z0-9_./-]{1,200}$",
+     "description": "with content: the client's name of an inline document"
+    },
+    "content": {
+     "type": "string",
+     "maxLength": 60000,
+     "description": "inline markdown or plain text when the client already has the document"
+    }
+   },
+   "required": [
+    "kind"
+   ]
   }
  },
  "tools": [
   {
    "name": "review_start",
    "title": "Start contract review",
-   "description": "Starts a security review job for smart contract code and returns a job id. The source is a deployed address on a supported chain, a public repository at a commit or ref, source files supplied by the user, or an upload link for private code. Optionally names an earlier report to re-review. Each call creates a new job. Use it when the user asks for a security review of contract code.",
+   "description": "Starts a security review job for smart contract code and returns a job id. The source is a deployed address on a supported chain, a public repository at a commit or ref, source files supplied by the user, or an upload link for private code. Optionally names an earlier report to re-review. Each call creates a new job. Use it when the user asks for a security review of contract code. Optional context: project documents (whitepaper, website, app, docs, terms, privacy) by URL or inline text.",
    "annotations": {
     "title": "Start contract review",
     "readOnlyHint": false,
@@ -392,6 +429,24 @@
      "previous_manage_key": {
       "type": "string",
       "pattern": "^[a-z2-7]{26}$"
+     },
+     "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project documents to ingest beside the code: whitepaper, website, app, docs, terms, privacy. Fetched in a sandbox after the code; the job reaches ready without waiting for them.",
+      "properties": {
+       "items": {
+        "type": "array",
+        "items": {
+         "$ref": "#/$defs/context_item"
+        },
+        "minItems": 1,
+        "maxItems": 12
+       }
+      },
+      "required": [
+       "items"
+      ]
      }
     },
     "required": [
@@ -929,6 +984,29 @@
        "type": "string"
       },
       "maxItems": 3
+     },
+     "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+       "requested": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "done": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "failed": {
+        "type": "integer",
+        "minimum": 0
+       }
+      },
+      "required": [
+       "requested",
+       "done",
+       "failed"
+      ]
      }
     }
    }
@@ -954,7 +1032,8 @@
        "checklist",
        "categories",
        "severity_inputs",
-       "challenge_rules"
+       "challenge_rules",
+       "context"
       ]
      },
      "job_id": {
@@ -1989,6 +2068,135 @@
         "status"
        ]
       }
+     }
+    }
+   }
+  },
+  {
+   "name": "review_add_context",
+   "title": "Add project documents",
+   "description": "Adds project documents to a job: whitepaper, website, app, docs, terms or privacy pages by URL, or inline text. Documents are fetched in a sandbox and become readable, searchable and quotable under context/ paths; their checkable statements appear as context facts. Same URL again returns the existing document. At most 12 documents per job. Allowed from queued to ready; results are reported per item.",
+   "annotations": {
+    "title": "Add project documents",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   },
+   "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "job_id": {
+      "$ref": "#/$defs/job_id"
+     },
+     "items": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/context_item"
+      },
+      "minItems": 1,
+      "maxItems": 8
+     }
+    },
+    "required": [
+     "job_id",
+     "items"
+    ]
+   },
+   "outputSchema": {
+    "type": "object",
+    "required": [
+     "accepted"
+    ],
+    "properties": {
+     "accepted": {
+      "type": "boolean"
+     },
+     "errors": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/error"
+      },
+      "maxItems": 20
+     },
+     "errors_more": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "job_id": {
+      "$ref": "#/$defs/job_id"
+     },
+     "items": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "properties": {
+        "kind": {
+         "type": "string"
+        },
+        "url": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "path": {
+         "type": [
+          "string",
+          "null"
+         ],
+         "description": "the store path context/<kind>-<n>.md once known"
+        },
+        "status": {
+         "type": "string",
+         "enum": [
+          "queued",
+          "ok",
+          "failed",
+          "exists"
+         ]
+        },
+        "error": {
+         "$ref": "#/$defs/error"
+        }
+       },
+       "required": [
+        "kind",
+        "url",
+        "path",
+        "status"
+       ]
+      }
+     },
+     "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+       "requested": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "done": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "failed": {
+        "type": "integer",
+        "minimum": 0
+       }
+      },
+      "required": [
+       "requested",
+       "done",
+       "failed"
+      ]
+     },
+     "poll_after_s": {
+      "type": "integer",
+      "minimum": 0
      }
     }
    }

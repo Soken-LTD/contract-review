@@ -28,7 +28,7 @@ async def _guide(client, **args) -> str:
     return result.content[0].text
 
 
-@pytest.mark.parametrize("topic", ["checklist", "categories", "severity_inputs", "challenge_rules"])
+@pytest.mark.parametrize("topic", ["checklist", "categories", "severity_inputs", "challenge_rules", "context"])
 async def test_every_topic_answers_with_header(client, topic):
     text = await _guide(client, topic=topic)
     first = text.splitlines()[0]
@@ -65,3 +65,14 @@ async def test_challenge_rules_name_answer_values(client):
     text = await _guide(client, topic="challenge_rules")
     for value in ("present", "absent", "not_applicable", "review_dismiss_lead", "F2"):
         assert value in text
+
+
+async def test_context_topic_describes_the_documents_surface(client):
+    # Context ingestion spec 8: what the tool ingests, role context quotes, {{fact:context.*}} sources,
+    # and context_notes as the only free-text place.
+    text = await _guide(client, topic="context")
+    for value in ("review_add_context", "whitepaper", "privacy", "context/", "role context", "fact:context.",
+                  "context_notes", "E_CONTEXT_FETCH", "12 documents"):
+        assert value in text, value
+    rules = await _guide(client, topic="challenge_rules")
+    assert "role context" in rules

@@ -378,6 +378,34 @@ class JobRepo:
             params,
         )
 
+    # ------------------------------------------------------------------
+    # Project context items (context ingestion spec 2026-10-23, section 2)
+    # ------------------------------------------------------------------
+
+    async def append_context_items(self, job_id: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Append request records to `jobs.context_items` under the row lock; returns the full list.
+
+        Must be called inside an open transaction. Records are
+        `{kind, url|None, path|None, content|None, sha256|None, requested_at}`; a record whose
+        `url` (or inline `sha256`) is already present is not appended again.
+        """
+        job = await self.get_and_lock(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        current: list[dict[str, Any]] = list(job.get("context_items") or [])
+        keys = {(r.get("url") or None, r.get("sha256") or None) for r in current}
+        for item in items:
+            key = (item.get("url") or None, item.get("sha256") or None)
+            if key in keys:
+                continue
+            keys.add(key)
+            current.append(item)
+        await self._conn.execute(
+            "update jobs set context_items = %s, last_call_at = now() where job_id = %s",
+            (psycopg.types.json.Jsonb(current), job_id),
+        )
+        return current
+
     async def find_unseeded_jobs(self) -> list[dict[str, Any]]:
         """Return queued jobs that have no job_steps rows yet (supervisor seed loop, 09 3.3)."""
         async with self._conn.cursor(row_factory=dict_row) as cur:

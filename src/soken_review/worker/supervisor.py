@@ -8,6 +8,10 @@ Step order for EVM deployed-address jobs (09 3.1, 03 3.1):
 flags and the static facts (04 2.1, 6.3, 12); `chain_state 1` reads the on-chain facts at the
 pinned block; the transition to `ready` creates one server draft per J2 or J4 flag (04 12).
 
+`context` (context ingestion spec 3) fetches the project's documents into the context store and
+writes the context facts; it is queued when the job reaches `ready` (and by review_add_context
+afterwards) so it never gates the interactive state.
+
 Non-terminal outcomes (09 3.6):
   - build failed/refused: ready with map_status=failed, analyzer_degraded=True
   - analyzer not_run:     ready with analyzer_degraded=True
@@ -297,7 +301,11 @@ class Supervisor:
 
         try:
             job = await self._get_job(job_id)
-            if job is not None and ton_pipeline.is_ton_job(job):
+            if step_name == "context":
+                # Project documents (context ingestion spec 3): family-independent, runs at `ready`
+                # and never gates it; failures are per document.
+                await self._run_context(step)
+            elif job is not None and ton_pipeline.is_ton_job(job):
                 await ton_pipeline.run_step(self, step, job)
             elif job is not None and job.get("chain") == "starknet" and (
                 (step_name == "chain_state" and step["seq"] == 0) or step_name in ("fetch", "build", "analyze", "map")
@@ -329,6 +337,8 @@ class Supervisor:
             else:
                 logger.warning("no handler for step %s; marking done", step_name)
                 await self._mark_step(step_id, "done")
+            if step_name != "context":
+                await self._maybe_queue_context(job_id)
         except RpcAllEndpointsFailed:
             # All RPC endpoints failed — transient; retry up to max_attempts (09 3.6).
             attempt = step.get("attempt", 1)
@@ -1332,6 +1342,80 @@ class Supervisor:
                 drafts = await repo.create_server_drafts(job_id, "evm", server_draft_flags(flags))
         logger.info("job %s ready (onchain facts %d, server drafts %d, leads persisted %d)",
                     job_id[-8:], added, drafts, n_leads)
+
+    # ------------------------------------------------------------------
+    # context: project documents (context ingestion spec 2026-10-23, section 3)
+    # ------------------------------------------------------------------
+
+    async def _maybe_queue_context(self, job_id: str) -> None:
+        """Queue the first `context` step once the job is `ready` and documents were requested.
+
+        Steps of one job run one at a time in enqueue order (09 3.3 claim query), so a context
+        round queued earlier would hold back build and analyze; queued at `ready` it never gates
+        the interactive state. Later rounds come from review_add_context itself.
+        """
+        try:
+            async with self._pool.connection() as conn:
+                repo = JobRepo(conn)
+                job = await repo.get(job_id)
+                if job is None or job.get("state") != "ready" or not job.get("context_items"):
+                    return
+                steps = await repo.get_steps(job_id)
+                if any(s["step"] == "context" for s in steps):
+                    return
+                async with conn.transaction():
+                    await repo.insert_step(job_id=job_id, step="context", seq=0, container=True, units=1,
+                                           ram_mb=1024, max_attempts=1)
+            logger.info("job %s: context step queued (%d documents requested)", job_id[-8:],
+                        len(job.get("context_items") or []))
+        except Exception:
+            logger.exception("job %s: queuing the context step failed", job_id[-8:])
+
+    async def _run_context(self, step: dict[str, Any]) -> None:
+        """Fetch every requested document not yet in the store, then rebuild the context facts."""
+        from ..context.facts import context_facts, write_context_facts
+        from ..context.items import find_entry, inline_document
+        from ..context.store import ContextStore
+        from ..sandbox.doc_fetch import fetch_document
+
+        job_id, step_id = step["job_id"], step["id"]
+        job = await self._get_job(job_id)
+        items: list[dict[str, Any]] = list((job or {}).get("context_items") or [])
+        store = ContextStore.load(self._pin_root, job_id)
+        work = self._job_dir(job_id) / "context_fetch"
+        work.mkdir(parents=True, exist_ok=True)
+        loop = asyncio.get_event_loop()
+        fetched = failed = 0
+        for n, item in enumerate(items):
+            existing = find_entry(store, item)
+            if existing is not None and (existing.ok or existing.fetched_at >= str(item.get("requested_at") or "")):
+                continue
+            kind, url = str(item.get("kind") or "other"), item.get("url")
+            if url:
+                doc = await loop.run_in_executor(None, lambda k=kind, u=url, i=n: fetch_document(k, u, work, i))
+            else:
+                doc = inline_document(item)
+            try:
+                entry = store.add([doc])[0]
+            except ValueError as exc:            # over the per-job cap or a bad kind: recorded, not fatal
+                logger.warning("job %s: document %s not stored: %s", job_id[-8:], (url or item.get("path") or "")[:80], exc)
+                failed += 1
+                continue
+            if entry.ok:
+                fetched += 1
+            else:
+                failed += 1
+                logger.info("job %s: document %s failed: %s (%s)", job_id[-8:], (url or item.get("path") or "")[:80],
+                            entry.error, doc.get("error_detail", ""))
+        facts = await loop.run_in_executor(None, lambda: context_facts(store, job or {}))
+        write_context_facts(self._pin_root, job_id, facts)
+        done = sum(1 for e in store.documents if e.ok)
+        failed_total = sum(1 for e in store.documents if not e.ok)
+        await self._mark_step(step_id, "done", provenance={"requested": len(items), "done": done,
+                                                           "failed": failed_total, "fetched_now": fetched,
+                                                           "facts": len(facts), "context_pin": store.context_pin})
+        logger.info("job %s: context round done (requested %d, done %d, failed %d, facts %d)",
+                    job_id[-8:], len(items), done, failed_total, len(facts))
 
     # ------------------------------------------------------------------
     # Helpers

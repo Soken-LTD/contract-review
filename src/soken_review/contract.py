@@ -112,7 +112,7 @@ def _drop_empty_enum_arrays(node: Any) -> Any:
 
 
 def bundle_tools(release: Release | None = None) -> list[dict[str, Any]]:
-    """Return the 18 tool definitions with self-contained input and output schemas."""
+    """Return the 19 tool definitions with self-contained input and output schemas."""
     release = release or load_release()
     source = _load_json(TOOLS_FILE)
     tools = []

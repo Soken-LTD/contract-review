@@ -47,6 +47,7 @@ import psycopg_pool
 import yaml
 from psycopg.rows import dict_row
 
+from ..context.store import ContextStore, is_context_path
 from ..db.pool import get_pool
 from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import CheckContext, check_text
@@ -1126,6 +1127,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         pin = PinnedSource.load(pin_root, job_id)
     except (FileNotFoundError, OSError, ValueError):
         raise ReviewError("E_JOB_NOT_READY", state="pin_not_found", eta_s=60)
+    context_store = ContextStore.load(pin_root, job_id)   # context ingestion spec 4: context/ quotes
 
     family = _family_from_chain(job.get("chain"))
     category = rev["category"]
@@ -1251,12 +1253,12 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                     continue
                 q_start = q_start_raw
                 q_end = q_end_raw
-                # Comment-only check
-                if _is_comment_only(qt, pin, q_file, q_start, q_end):
+                # Comment-only check (code only: a document line is prose, never a comment)
+                if not is_context_path(q_file) and _is_comment_only(qt, pin, q_file, q_start, q_end):
                     violations.append(ReviewError("E_CHALLENGE_COMMENT_ONLY").envelope())
                     continue
                 try:
-                    quote_match(pin, q_file, q_start, q_end, qt)
+                    quote_match(pin, q_file, q_start, q_end, qt, context=context_store)
                 except QuoteMatchError as e:
                     violations.append(ReviewError(e.code, **e.detail).envelope())
                     continue

@@ -36,12 +36,12 @@ on every chain.
 
 ## Tools
 
-18 MCP tools, all prefixed `review_`:
+19 MCP tools, all prefixed `review_`:
 
 `review_start` · `review_status` · `review_get_guide` · `review_read_code` · `review_search_code` ·
 `review_contract_map` · `review_leads` · `review_facts` · `review_dismiss_lead` ·
 `review_submit_finding` · `review_withdraw_finding` · `review_challenge` ·
-`review_answer_challenge` · `review_set_section` · `review_finalize` · `review_report` ·
+`review_answer_challenge` · `review_set_section` · `review_add_context` · `review_finalize` · `review_report` ·
 `review_delete_job` · `review_publish`
 
 The full tool contract (input and output schemas, error catalog) lives in `contract/`.

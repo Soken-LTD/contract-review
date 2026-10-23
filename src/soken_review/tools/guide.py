@@ -137,9 +137,38 @@ def _topic_challenge_rules() -> list[str]:
                " lead and give a note of at least 40 characters stating why the detector pattern is not a"
                " weakness there. duplicate_of: an accepted or needs_challenge draft of the same family."
                " Notes are audit-log text: no prose or number rules apply to them.")
+    out.append("Project documents (review_add_context): quotes with role context cite context/ paths exactly like"
+               " code and never count as a location; {{fact:context.*}} placeholders carry the document line.")
     out.append("Text rules on every model string: no second person, no questions, no severity words or"
                " completeness claims in prose, no analyzer or model names, no URLs, no raw LEAD or finding ids,"
                " paragraphs at most 90 words, titles 10 to 110 characters in one sentence.")
+    return out
+
+
+def _topic_context() -> list[str]:
+    enums = _enums()
+    kinds = ", ".join(enums.get("context_kind", []))
+    out = [("Project context: review_start.context or review_add_context ingest the project's own documents beside"
+            " the code so declared facts can be read, quoted and compared with the code and the chain.")]
+    out.append(f"Kinds: {kinds}. Items are {{kind, url}} (https, named host, no credentials) or {{kind, path, content}}"
+               " for inline text; at most 12 documents per job, 8 per call; the same URL again returns the existing"
+               " document. Fetching runs after the code and never delays ready; review_status reports context"
+               " {requested, done, failed}; a document that fails is reported per item (E_CONTEXT_FETCH), never as a"
+               " job error.")
+    out.append("Reading: documents are pinned as context/<kind>-<n>.md, readable with review_read_code and searchable"
+               " with review_search_code (path_glob context/*). Every stored text starts with a six-line provenance"
+               " header (title, source, retrieved, sha256, kind, blank), so a quote of the header is a provenance"
+               " quote. review_contract_map ignores documents.")
+    out.append("Quoting: a quote with role context cites a context/ path with exact stored lines in review_submit_finding"
+               " and in challenge answers; a context quote never counts as a location quote, and a location quote may"
+               " not cite a context/ path.")
+    out.append("Facts: review_facts (filter context.) lists deterministic context.<kind>.* records, each with its source"
+               " line: addresses, mentions_reviewed_address, total_supply, max_supply, decimals, fee_pct, chains,"
+               " admin_claims, audit_claims, terms.restricted_jurisdictions, terms.kyc, privacy.data_collected,"
+               " privacy.contact. A {{fact:context.*}} placeholder in text carries that source; the report prints"
+               " declared values next to what the code and the chain show (matches, differs, not_checkable).")
+    out.append("Prose: review_set_section(section=context_notes) is the only free-text place for the documents (model"
+               " blocks, same text rules as roles_notes, at most 8 blocks).")
     return out
 
 
@@ -176,9 +205,11 @@ async def _get_guide(args: dict[str, Any]) -> str:
         body = _topic_challenge_rules()
     elif topic == "checklist":
         body = _topic_checklist(family)
+    elif topic == "context":
+        body = _topic_context()
     else:  # the input schema already enumerates topics; keep the error shape consistent
         raise ReviewError("E_INVALID_ARGUMENT", field="topic", rule="enum", value80=topic[:80],
-                          example="one of checklist, categories, severity_inputs, challenge_rules")
+                          example="one of checklist, categories, severity_inputs, challenge_rules, context")
     text = "\n".join([f"guide_version {GUIDE_VERSION} topic {topic} chain {chain or 'evm'}", *body])
     if len(text) > _CAP:
         text = text[: _CAP - 20].rsplit("\n", 1)[0] + "\n(truncated)"
