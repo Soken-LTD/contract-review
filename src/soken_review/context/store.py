@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -259,9 +260,21 @@ def _default_title(kind: str, url: str | None, inline_path: str | None) -> str:
     return kind
 
 
+def _strip_pictographs(text: str) -> str:
+    """Drop emoji and other pictographic symbols (Unicode categories So/Sk from U+2000 upwards and
+    every non-BMP code point; Latin-1 and general punctuation symbols such as the copyright sign
+    stay). The report font has no glyphs for them and prints boxes in the
+    documents table and in quoted lines ("Swap | Sushi [box]", 2026-10-23); the raw bytes stay
+    hashed in `sha256_raw`, so provenance is unchanged."""
+    return "".join(
+        ch for ch in text
+        if ord(ch) < 0x10000 and not (ord(ch) >= 0x2000 and unicodedata.category(ch) in ("So", "Sk"))
+    )
+
+
 def _clean_line(text: str) -> str:
     text = _CONTROL_RE.sub("", text.replace("\r", " ").replace("\n", " ").replace("\t", " "))
-    return re.sub(r"\s+", " ", text).strip()[:200]
+    return re.sub(r"\s+", " ", _strip_pictographs(text)).strip()[:200]
 
 
 _FORMAT_CHARS_RE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufe00-\ufe0f\ufeff]")
@@ -271,7 +284,7 @@ def _lf(text: str) -> str:
     """LF line endings and no Unicode format characters: variation selectors, zero-width and bidi
     controls carry no meaning in a document and make quotes unmatchable (review_read_code shows
     them as <U+FE0F>, the copied quote then fails; 2026-10-23)."""
-    return _FORMAT_CHARS_RE.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
+    return _strip_pictographs(_FORMAT_CHARS_RE.sub("", text.replace("\r\n", "\n").replace("\r", "\n")))
 
 
 def _dir(root: Path, job_id: str) -> Path:
