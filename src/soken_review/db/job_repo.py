@@ -368,12 +368,13 @@ class JobRepo:
     ) -> None:
         """UPDATE arbitrary allowed columns on the job row (no state-graph check).
 
-        Allowed: source_pin, tier, code_hash, map_status, analyzer_degraded, upload_sha256.
+        Allowed: source_pin, tier, code_hash, map_status, analyzer_degraded, upload_sha256,
+        resolved_commit, chain (a repo-only job learns its family from the fetched tree).
         This is a low-level helper; state transitions still go through ``transition()``.
         """
         _ALLOWED = frozenset(
             {"source_pin", "tier", "code_hash", "map_status", "analyzer_degraded",
-             "upload_sha256", "resolved_commit"}
+             "upload_sha256", "resolved_commit", "chain"}
         )
         bad = set(fields) - _ALLOWED
         if bad:
