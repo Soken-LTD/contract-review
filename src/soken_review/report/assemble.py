@@ -783,7 +783,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     if c["Critical"] == 0 and c["High"] == 0 and dismissed:
         rows = sorted(dismissed, key=lambda x: (SEV_RANK[LEAD_SEV[x["severity_norm"]]], x["file"], x["start"]))
         summary["dismissed_leads"] = {"rows": [{"detector": x["rule_id"][:80], "severity_class": LEAD_SEV[x["severity_norm"]],
-                                                "location": _ref(x["file"], x["start"], x["end"])} for x in rows[:10]],
+                                                "location": _ref(x["file"], x["start"], x["end"]),
+                                                "reason": x.get("reason") or "not_reviewed"} for x in rows[:10]],
                                       "remainder": max(0, len(rows) - 10)}
 
     m = texts["method_steps"]
