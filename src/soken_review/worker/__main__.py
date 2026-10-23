@@ -7,7 +7,10 @@ so the unit file is the whole contract:
     SOKEN_PIN_ROOT        pin store root, absolute (default /srv/sbx/pins)
     SOKEN_WORKER_HOST     name recorded in worker_hosts (default: the hostname)
     SOKEN_WORKER_UNITS    concurrent step units this host offers (default 7)
-    SOKEN_WORKER_RAM_MB   RAM budget for step containers (default 14336)
+    SOKEN_WORKER_RAM_MB   RAM budget for step containers (default 14336). The host's physical
+                          memory is measured once at start (sandbox.profile.configure_host_capacity)
+                          and recorded in worker_hosts.ram_mb_total; a container step declaring more
+                          than min(physical * 0.9, budget) is refused with E_HOST_CAPACITY.
     SOKEN_WORKER_POLL_S   queue poll interval in seconds (default 1.0)
 
 Sandbox settings (`SOKEN_SANDBOX_RUNTIME`, `SOKEN_IMAGE_*`, provider keys) are read where they are

@@ -8,6 +8,7 @@ program (sierra.class_facts), never over the container tree.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -19,9 +20,10 @@ from soken_review.adapters.base import BuildResult, Lead
 from soken_review.adapters.starknet import caracal as caracal_mod
 from soken_review.adapters.starknet.rules import TOOL as RULES_TOOL
 from soken_review.adapters.starknet.rules import load_rules, run_rules
-from soken_review.adapters.starknet.sierra import ClassFacts
+from soken_review.adapters.starknet.sierra import ClassFacts, decode_versions
 from soken_review.adapters.starknet.source import extract_components, parse
 from soken_review.adapters.starknet.units import in_scope_paths
+from soken_review.sandbox.profile import HostCapacityError
 
 logger = logging.getLogger(__name__)
 
@@ -132,17 +134,47 @@ def run_lint(result: BuildResult, cairo_version: str) -> tuple[str, list[dict[st
         return "not_run", [], "unsafe_package_dir"
     pkg = package_name(result.candidate.files, package_dir)
     cmd = ["scarb", "--offline", "lint"] + (["--package", pkg] if pkg else [])
-    rc, log = run_offline(image, Path(result.work_dir), workdir, cmd, 900)
+    try:
+        rc, log = run_offline(image, Path(result.work_dir), workdir, cmd, 900)
+    except HostCapacityError as exc:
+        return "not_run", [], exc.reason      # refused before any container: no OOM, the numbers in the reason
     if rc != 0:
         return "not_run", [], "\n".join([f"exit {rc}", *log.splitlines()[-10:]])
     return "ok", parse_lint_output(log), None
+
+
+def built_sierra_version(work_dir: Path) -> str | None:
+    """Sierra version of the classes the build step produced, from the supervisor's artifact copies
+    (`host/artifacts.json` -> `host/artifacts/<name>.contract_class.json`, never the container
+    output). None when there is no readable artifact (the caller falls back to the Cairo version).
+    """
+    host = work_dir / "host"
+    try:
+        rows = json.loads((host / "artifacts.json").read_text())
+    except (OSError, ValueError):
+        return None
+    for row in rows if isinstance(rows, list) else []:
+        rel = row.get("file") if isinstance(row, dict) else None
+        if not isinstance(rel, str) or not re.fullmatch(r"artifacts/[A-Za-z0-9_]{1,200}\.contract_class\.json", rel):
+            continue
+        try:
+            cls = json.loads((host / rel).read_text())
+        except (OSError, ValueError):
+            continue
+        versions = decode_versions(cls.get("sierra_program") or []) if isinstance(cls, dict) else None
+        if versions is not None:
+            return versions.sierra
+    return None
 
 
 def run_caracal(result: BuildResult) -> tuple[str, list[dict[str, Any]], str | None]:
     """(status, findings, reason): `caracal detect` inside the pinned starknet-caracal image.
 
     Fail-closed: the image unpinned (empty digest in images.lock.json) -> not_run with
-    ``caracal_toolchain_missing``; no docker -> ``sandbox_unavailable``; a kill on the wall ->
+    ``caracal_toolchain_missing``; no docker -> ``sandbox_unavailable``; the lock without caracal's
+    Sierra ceiling -> ``caracal_support_unknown``; classes above that ceiling ->
+    ``unsupported_cairo_version (...)`` before caracal's own workspace build is spent; the host too
+    small for the container limit -> ``insufficient_host_memory (...)``; a kill on the wall ->
     ``analyze_timeout``; any non-zero exit -> ``analyzer_failed``. A run never yields a silent
     "no findings": only a clean exit 0 reports findings.
     """
@@ -162,11 +194,28 @@ def run_caracal(result: BuildResult) -> tuple[str, list[dict[str, Any]], str | N
     workdir = _container_workdir(package_dir)
     if workdir is None:
         return "not_run", [], "unsafe_package_dir"
+    # Compiler-version gate (caracal.supported_sierra): caracal 0.2.3 panics on a Sierra program its
+    # pinned cairo-lang 2.5.0 cannot decode. Decided from the build step's own artifacts (exact
+    # Sierra header) or the class's Cairo version, before the 7 to 13 minute workspace rebuild.
+    support = caracal_mod.supported_sierra()
+    if support is None:
+        return "not_run", [], "caracal_support_unknown"
+    sierra = built_sierra_version(Path(result.work_dir))
+    cairo = result.candidate.compiler.version if result.candidate.compiler else None
+    verdict = caracal_mod.sierra_supported(support, sierra=sierra, cairo=cairo)
+    if verdict is None:
+        return "not_run", [], "caracal_support_unknown"
+    if verdict is False:
+        seen = f"; class Sierra {sierra}" if sierra else f"; Cairo {cairo}"
+        return "not_run", [], support.reason() + seen
     # Caracal (compilation/scarb.rs) runs `scarb clean` then `scarb build --workspace` in the project
     # dir and reads `<project>/target/dev/*.contract_class.json`. SCARB_TARGET_DIR points there so
     # caracal finds what its own scarb wrote and the build step's /work/output stays untouched.
-    rc, log = run_offline(image, Path(result.work_dir), workdir, caracal_mod.detect_argv(), _CARACAL_WALL_S,
-                          env={"SCARB_TARGET_DIR": caracal_mod.target_dir(workdir)})
+    try:
+        rc, log = run_offline(image, Path(result.work_dir), workdir, caracal_mod.detect_argv(), _CARACAL_WALL_S,
+                              env={"SCARB_TARGET_DIR": caracal_mod.target_dir(workdir)})
+    except HostCapacityError as exc:
+        return "not_run", [], exc.reason
     # Supervisor-only copy of the container output (never mounted), so a failed run is diagnosable
     # from the job dir; build.log and lint already have this.
     _write_host(Path(result.work_dir) / "host" / "caracal.log", log.encode())
