@@ -248,3 +248,17 @@ def test_move_gitfetch_admits_the_hosts_review_start_and_the_materializer_admit(
         assert REPO_URL_RE.match(f"https://{host}/org/repo.git"), host
     assert not REPO_URL_RE.match("https://bitbucket.org/org/repo")
     assert not REPO_URL_RE.match("https://github.com/org/repo/tree/main")
+
+
+@pytest.mark.asyncio
+async def test_disabled_family_repo_ends_failed_with_chain_disabled(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SOKEN_DISABLED_FAMILIES", "starknet")
+    with patch("soken_review.worker.starknet_steps.run_step", new=AsyncMock()) as sn:
+        result, repo_mock, _ = await _run(tmp_path, {"Scarb.toml": SCARB_MANIFEST, "src/lib.cairo": "mod a;"}, _job(),
+                                          {"_run_move_step": AsyncMock()})
+    assert result is None
+    sn.assert_not_awaited()
+    assert not any(c.kwargs.get("chain") for c in repo_mock.update_job_fields.await_args_list)
+    args, kwargs = repo_mock.transition.await_args
+    assert args[1] == "failed" and kwargs["error_code"] == "E_CHAIN_DISABLED"
+    assert kwargs["error_detail"]["repo_family"] == "starknet"

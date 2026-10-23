@@ -154,6 +154,23 @@ class TestReviewStartValidation:
         assert body.get("accepted") is False
         assert body["errors"][0]["code"] == "E_CHAIN_DISABLED"
 
+    @pytest.mark.parametrize("source", [
+        {"kind": "deployed", "chain": "starknet", "address": "0x" + "1" * 63},
+        {"kind": "repo", "repo_url": "https://github.com/a/b", "commit": "a" * 40,
+         "deployment": {"chain": "starknet", "address": "0x" + "1" * 63}},
+        {"kind": "files", "language": "cairo", "files": [{"path": "src/lib.cairo", "content": "mod a;"}]},
+    ])
+    async def test_disabled_family_is_refused_at_start(self, client_no_db, monkeypatch, source):
+        """Launch without Starknet (decision 2026-10-23): SOKEN_DISABLED_FAMILIES=starknet refuses
+        every Starknet entry with E_CHAIN_DISABLED and names the chains that are on."""
+        monkeypatch.setenv("SOKEN_DISABLED_FAMILIES", "starknet")
+        result = await client_no_db.call_tool("review_start", {"source": source})
+        body = json.loads(result.content[0].text)
+        assert body["accepted"] is False
+        err = body["errors"][0]
+        assert err["code"] == "E_CHAIN_DISABLED"
+        assert "starknet" not in err["fix"] and "solana" in err["fix"] and "sui" in err["fix"]
+
     async def test_hyperevm_chain_normalised(self, client_no_db):
         """evm with chain_id 999 is normalised to hyperevm (03 §4.1) — no DB needed."""
         # Without DB the job creation will fail, but chain normalization is checked first.
