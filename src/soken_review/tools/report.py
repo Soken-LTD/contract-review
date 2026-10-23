@@ -25,7 +25,7 @@ from psycopg.rows import dict_row
 from ..db.pool import get_pool
 from ..errors import ReviewError
 from ..report.kit.build import SEVS, counts, kit_texts, project
-from ..report.render import KEY_VERSION, store_root
+from ..report.render import current_key_version, store_root
 from ..server import handler
 
 # Base URL for the signed report links. Production serves them at soken.dev/r/<id>; a test or
@@ -53,23 +53,37 @@ def key(version: int) -> bytes:
     raw = os.environ.get(f"SOKEN_REPORT_KEY_V{version}")
     if raw:
         return raw.encode()
+    # Development only: a per-process key. With a database configured the API refuses to start
+    # without the current key (require_report_keys), so links never change across restarts.
     return _random_keys.setdefault(version, secrets.token_bytes(32))
+
+
+def require_report_keys() -> int:
+    """Startup check for a real deployment: the current key must be set, at least 32 bytes.
+    A missing key used to fall back to a random per-process key, so every restart (or a second
+    replica) silently broke every manage and view link. Returns the current version."""
+    version = current_key_version()
+    raw = os.environ.get(f"SOKEN_REPORT_KEY_V{version}", "")
+    if len(raw.encode()) < 32:
+        raise RuntimeError(f"SOKEN_REPORT_KEY_V{version} unset or shorter than 32 bytes "
+                           f"(current key version {version})")
+    return version
 
 
 def _b32(digest: bytes) -> str:
     return base64.b32encode(digest).decode().lower().rstrip("=")[:26]
 
 
-def view_signature(report_id: str, expires: int, version: int = KEY_VERSION) -> str:
+def view_signature(report_id: str, expires: int, version: int | None = None) -> str:
     """08 4.1: s = base32(HMAC-SHA256(K_v, report_id || "view" || e))[:26]."""
-    return _b32(hmac.new(key(version), f"{report_id}view{expires}".encode(), hashlib.sha256).digest())
+    return _b32(hmac.new(key(version or current_key_version()), f"{report_id}view{expires}".encode(), hashlib.sha256).digest())
 
 
-def manage_key(report_id: str, version: int = KEY_VERSION) -> str:
-    return _b32(hmac.new(key(version), f"{report_id}manage".encode(), hashlib.sha256).digest())
+def manage_key(report_id: str, version: int | None = None) -> str:
+    return _b32(hmac.new(key(version or current_key_version()), f"{report_id}manage".encode(), hashlib.sha256).digest())
 
 
-def check_view(report_id: str, expires: int, sig: str, version: int = KEY_VERSION, now: float | None = None) -> bool:
+def check_view(report_id: str, expires: int, sig: str, version: int | None = None, now: float | None = None) -> bool:
     if (now or time.time()) >= expires:
         return False
     return hmac.compare_digest(view_signature(report_id, expires, version), sig)

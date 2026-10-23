@@ -126,6 +126,10 @@ class _LifespanWrapper:
             await send({"type": "lifespan.shutdown.complete"})
 
     async def _startup(self) -> None:
+        # A real deployment never signs report links with a per-process random key.
+        from .report import require_report_keys
+
+        require_report_keys()
         # Async pool (used by review_start / review_status handlers)
         self._async_pool = psycopg_pool.AsyncConnectionPool(
             self._dsn, min_size=2, max_size=10, open=False

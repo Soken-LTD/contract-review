@@ -106,6 +106,7 @@ async def test_all_write_tools_wired_after_lifespan(pg_dsn, tmp_path):
     pin_root.mkdir()
     os.environ["SOKEN_DATABASE_URL"] = pg_dsn
     os.environ["SOKEN_PIN_ROOT"] = str(pin_root)
+    os.environ.setdefault("SOKEN_REPORT_KEY_V1", "k" * 40)   # the API refuses to start without it
 
     app = create_app()
 
@@ -151,6 +152,7 @@ async def test_e2e_submit_finding_and_finalize(pg_dsn, tmp_path):
     pin_root.mkdir()
     os.environ["SOKEN_DATABASE_URL"] = pg_dsn
     os.environ["SOKEN_PIN_ROOT"] = str(pin_root)
+    os.environ.setdefault("SOKEN_REPORT_KEY_V1", "k" * 40)   # the API refuses to start without it
 
     # Function-scoped pool so we don't share with the session pool.
     pool = psycopg_pool.AsyncConnectionPool(pg_dsn, min_size=1, max_size=3, open=False)
