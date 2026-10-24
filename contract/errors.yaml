@@ -197,9 +197,9 @@ codes:
     owner: "03"
     channel: "report state"
     class: "server"
-    tools: "report"
-    what: "Report could not be built; review data is kept."
-    fix: "None for the user; the operator re-renders."
+    tools: "report, finalize"
+    what: "Report could not be built; review data is kept. detail contains the gate error."
+    fix: "Call review_finalize again: the job is reset to ready so the model can revise the flagged text and re-finalize."
   - code: E_FINALIZE_OPEN
     owner: "04"
     channel: "rejection"

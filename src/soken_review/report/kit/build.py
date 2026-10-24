@@ -181,7 +181,9 @@ def iter_strings(value: Any, node: dict[str, Any] | None = None, path: str = "$"
 # Rules that need submit-time context absent from report.json: T24 binds to absence claims,
 # T31 to the manifest word set, T29 is the typed-id rule (assembly writes {{finding}} ids as final
 # ids). All three ran at submit (04 11); the build re-runs every other rule (late_gate).
-LATE_GATE_SKIP = {"T24", "T29", "T31"}
+# Canonical definition lives in text_gate.LATE_GATE_SKIP; imported here so callers can use either.
+from soken_review.engine.text_gate import LATE_GATE_SKIP
+
 # Kit keys whose fixed text names the company or the audit boundary on purpose (08 1.4: disclaimer,
 # authorship box and footer are the AI and scope disclosure). Matches outside these stay errors.
 KIT_EXEMPT: dict[str, set[str]] = {"footer_line": {"T15"}, "disclaimer": {"T15"}, "authorship_box": {"P1"},
@@ -210,16 +212,26 @@ def gate_kit_text(key: str, text: str) -> list[tuple[str, str]]:
 
 
 def check_strings(report: dict[str, Any]) -> None:
-    """08 1.5: 04 gate by field class on data, never on HTML. A hit is `late_gate`."""
-    from soken_review.engine.text_gate import CheckContext, check_text
+    """08 1.5: 04 gate by field class on data, never on HTML. A hit is `late_gate`.
+
+    Model-class text: calls ``check_model_field`` (full model scope) then filters
+    ``LATE_GATE_SKIP`` (T24, T29, T31).  Those three rules need submit-time context
+    (absence_claims, word_set, manifest ids) that is absent from the assembled
+    report.json; they are enforced at write time and at ``review_finalize``'s
+    pre-freeze gate.  The render builder is the **only** caller that applies
+    ``LATE_GATE_SKIP`` (04 §11.4 render parity).
+    """
+    from soken_review.engine.text_gate import check_model_field, check_text
 
     profile = report["meta"]["profile"]
     for path, cls, text in iter_strings(report):
         if cls == "src" or not text:
             continue
         if cls == "model":
-            ctx = CheckContext(field=_field_of(path), profile=profile, is_list_item=".ul[" in path)
-            hits = [v for v in check_text(text, "model", ctx) if v.rule_id not in LATE_GATE_SKIP]
+            hits = [
+                v for v in check_model_field(text, field=_field_of(path), profile=profile, is_list_item=".ul[" in path)
+                if v.rule_id not in LATE_GATE_SKIP
+            ]
         elif cls == "server":
             hits = check_text(text, "server")
             if path == "$.meta.subject":

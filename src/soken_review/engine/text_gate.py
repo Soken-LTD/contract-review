@@ -347,10 +347,13 @@ _T25_RE = re.compile(r"(?i)\bsoken\b")
 _T25_BRAND_ONLY_RE = re.compile(r"(?i)\bsoken\b(?!\s*\.dev\b)")
 
 _T27_PHRASES = [
+    # Multi-word commercial CTAs only (plan 04 §11.2: "multi-word only; 'book', 'paid', 'contact'
+    # are protocol vocabulary").  Single-word matches are forbidden: "pricing" and "discount" alone
+    # are valid in security findings (e.g. "mint pricing oracle", "no discount to face value").
     "book a call", "book a demo", "contact us", "contact our",
     "reach out", "hire us", "hire a team", "hire our",
     "engage us", "engage our", "paid review", "paid audit", "paid plan",
-    "manual review", "full review", "upgrade to", "pricing", "discount",
+    "manual review", "full review", "upgrade to",
     "team of experts",
 ]
 _T27_RE = _phrase_re(_T27_PHRASES)
@@ -789,3 +792,54 @@ def _check_p4(nfkc: str) -> list[Violation]:
                 violations.append(Violation("E_TEXT_GATE", "P4", (m.start(), m.end()), m.group()))
                 break
     return violations
+
+
+# ── Shared early-gate / late-gate helper ───────────────────────────────────────
+
+#: Rules skipped ONLY at render time (``build.check_strings``).  T24 needs the
+#: absence-claims list from the finding draft (available at submit time, absent from
+#: the assembled report.json); T31 needs the word_set from the manifest; T29 validates
+#: typed-id placeholders that are only expanded during report assembly.
+#:
+#: **Write-time callers (submit, set_section) and ``review_finalize``'s pre-freeze gate
+#: MUST NOT apply this skip.**  Only the render builder may pass it to ``check_text``.
+LATE_GATE_SKIP: frozenset[str] = frozenset({"T24", "T29", "T31"})
+
+
+def check_model_field(
+    text: str,
+    field: str | None = None,
+    profile: str | None = None,
+    is_list_item: bool = False,
+    absence_claims: list[dict[str, str]] | None = None,
+) -> list[Violation]:
+    """Run the **full** model-scope text gate on one prose field (no rule skipping).
+
+    This is the canonical early-gate / pre-finalize-gate function used by write-time
+    tools (``review_submit_finding``, ``review_set_section``) and by
+    ``review_finalize``'s pre-freeze gate.  No rules are skipped so enforcement is
+    never weaker than the render-time gate.
+
+    The render builder (``build.check_strings``) is the **only** caller that applies
+    ``LATE_GATE_SKIP`` — it does so to avoid false positives caused by absent context
+    (absence_claims, word_set) in the assembled report.
+
+    ``field``          -- field name for field-specific rules (title, description, …).
+    ``profile``        -- job profile (``"owner"`` | ``"public_review"``); None disables T30.
+    ``is_list_item``   -- True for list-item bodies (T30 list-actor check).
+    ``absence_claims`` -- absence-claim list for T24 (04 §7.6).  Pass the list from the
+                          finding content at submit time; pass ``[]`` when unavailable so
+                          T24 fires on any unmatched absence phrase rather than silently
+                          skipping.
+
+    Returns a (possibly empty) list of ``Violation`` objects.
+    """
+    if not text:
+        return []
+    ctx = CheckContext(
+        field=field,
+        profile=profile,
+        is_list_item=is_list_item,
+        absence_claims=absence_claims if absence_claims is not None else [],
+    )
+    return list(check_text(text, "model", ctx))

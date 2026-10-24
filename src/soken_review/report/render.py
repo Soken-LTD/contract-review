@@ -392,6 +392,13 @@ async def _finish_failed(pool: Any, step_id: int, job_id: str, code: str, detail
                                  provenance={"attempt": attempt, "detail": code})
         await repo.transition(job_id, "render_failed", error_code="E_RENDER_FAILED",
                               error_detail={"detail": code, "note": detail[:300]})
+        # Quota refund: a report that never rendered must not count (quota.py counts report_at).
+        # Clearing report_at and report_id here means the finalize check at the next attempt
+        # will re-issue them under the advisory lock, keeping the count correct.
+        await conn.execute(
+            "update jobs set report_at = null, report_id = null where job_id = %s",
+            (job_id,),
+        )
     logger.error("render failed for %s: %s %s", job_id[-8:], code, detail[:200])
     return RenderOutcome(code, detail)
 

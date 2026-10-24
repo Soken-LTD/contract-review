@@ -38,7 +38,7 @@ from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
 from ..engine.numbers import lex_numbers
-from ..engine.text_gate import CheckContext, check_text
+from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
 from ..server import handler
@@ -228,6 +228,8 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
             ReviewError("E_JOB_NOT_READY", state=state, eta_s=0).envelope()
         ]}
     # Note: the write transaction below re-checks state with FOR UPDATE (TOCTOU guard).
+    # Profile drives profile-specific text rules (T30) at write time.
+    job_profile = "owner" if job.get("ownership_proven") else "public_review"
 
     # Validate section name
     if section not in _SECTIONS:
@@ -254,9 +256,13 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
     for field_path, text in _collect_text_fields(section, content):
         # context_notes strings are report prose (field class `notes`, same rules as roles notes;
         # list items get the T30 list-actor check); the other sections keep their path as field.
-        gate_ctx = (CheckContext(field="notes", is_list_item=".ul[" in field_path) if section == "context_notes"
-                    else CheckContext(field=field_path))
-        for v in check_text(text, "model", gate_ctx):
+        # Use check_model_field (canonical early-gate = render-time gate, 04 §11.4).
+        if section == "context_notes":
+            field_vs = check_model_field(text, field="notes", profile=job_profile,
+                                         is_list_item=".ul[" in field_path)
+        else:
+            field_vs = check_model_field(text, field=field_path, profile=job_profile)
+        for v in field_vs:
             violations.append(ReviewError(
                 v.code, rule=v.rule_id,
                 match=v.match[:80] if v.match else "",

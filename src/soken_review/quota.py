@@ -13,6 +13,11 @@ cannot be forged from outside) and is put in `CLIENT_IP` by `http.ProtocolRules`
 The quota is checked at `review_start` (early refusal) and enforced under an advisory lock at
 `review_finalize`, where the report is issued; the window is a rolling 24 hours.
 
+Quota counting: ``check()`` counts jobs where ``report_at > now() - 24h``.  A job that ends
+``render_failed`` is refunded: ``render.py::_finish_failed`` clears ``report_at = null`` and
+``report_id = null`` inside the failure transaction, so the job no longer counts toward the
+daily limit and the next ``review_finalize`` re-issues them under the advisory lock.
+
 `target_key` is also the publication key: one published report per target (publish_worker).
 """
 

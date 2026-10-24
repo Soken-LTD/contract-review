@@ -51,7 +51,7 @@ _TRANSITIONS: dict[str, set[str]] = {
     "render_queued": {"rendering", "deleted"},
     "rendering": {"rendered", "render_failed", "render_queued", "deleted"},
     "rendered": {"expired", "deleted"},
-    "render_failed": {"render_queued", "deleted"},  # operator rerender
+    "render_failed": {"render_queued", "ready", "deleted"},  # operator rerender or model text fix
     "insufficient_source": {"deleted"},
     "failed": {"deleted"},
     "expired": {"deleted"},

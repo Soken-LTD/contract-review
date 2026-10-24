@@ -42,7 +42,7 @@ from ..db.pool import get_pool
 from ..engine.injection import check_echo
 from ..engine.numbers import lex_numbers
 from ..engine.severity import SeverityContext, compute_severity
-from ..engine.text_gate import CheckContext, check_text
+from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
 from ..mapping.semantic_evm import detect_token_review, units_holding
@@ -491,6 +491,9 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
         state = job["state"]
         tier = job.get("tier")
         family = _family_from_chain(job.get("chain"))
+        # Profile drives profile-specific text rules (T30 public_review) at write time
+        # so the early gate and the render-time gate see the same set of violations.
+        job_profile = "owner" if job.get("ownership_proven") else "public_review"
 
         # ── State matrix checks (03 §4.10 step 2) ────────────────────
         if state == "finalized":
@@ -575,14 +578,14 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
 
         if is_server_draft:
             # Server drafts: only title+body, merged onto revision 0.
-            # Run full V5 text gate (security fix SF-006: was step0 only).
+            # V5: use check_model_field (canonical early-gate, matches render-time check_strings).
             # The model cannot change category/quotes/matrix/lead links on server drafts
             # (_SERVER_DRAFT_ALLOWED guard already enforces this above).
             title: str = args.get("title", "")
             body_sd = args.get("body") or {}
             sd_text_args: dict[str, Any] = {"title": title, "body": body_sd}
             for field_name, field_text in _iter_text_fields(sd_text_args):
-                for v in check_text(field_text, "model", CheckContext(field=field_name)):
+                for v in check_model_field(field_text, field=field_name, profile=job_profile):
                     violations.append(_violation_to_error(v))
         else:
             # Model draft: full field requirements
@@ -661,9 +664,15 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             for v in check_echo(combined_text, j1_flags):
                 violations.append(_violation_to_error(v))
 
-            # V5: text gate (model scope) on every prose field
+            # V5: text gate (FULL model scope) on every prose field.  check_model_field
+            # enforces all rules including T24/T29/T31 (no LATE_GATE_SKIP at write time,
+            # 04 §11.4 write-time parity).  Pass absence_claims so T24 can bind them.
+            finding_absence_claims: list[dict[str, str]] = args.get("absence_claims") or []
             for field_name, field_text in _iter_text_fields(args):
-                for v in check_text(field_text, "model", CheckContext(field=field_name)):
+                for v in check_model_field(
+                    field_text, field=field_name, profile=job_profile,
+                    absence_claims=finding_absence_claims,
+                ):
                     violations.append(_violation_to_error(v))
 
             # V6: number check on every prose field
