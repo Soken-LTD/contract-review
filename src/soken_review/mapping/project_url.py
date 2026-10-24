@@ -52,6 +52,46 @@ _STRICT_URL_RE = re.compile(
 )
 _MAX_STRICT_URL_LEN = 300  # host(253) + "/" + path(120) + "https://" = well under 300
 
+# Dependency path prefixes — files under these paths are library code, not project code.
+# Any pinned file whose path starts with one of these prefixes is skipped during URL scanning.
+# Paths are matched against the forward-slash-normalised pinned path as-is (no leading "./").
+_DEP_PATH_PREFIXES: tuple[str, ...] = (
+    "lib/",
+    "node_modules/",
+    "vendor/",
+    "dependencies/",
+    "@openzeppelin/",
+    "openzeppelin-contracts/",
+    "solady/",
+    "solmate/",
+    "forge-std/",
+    ".deps/",
+)
+
+# GitHub/Ethereum repository paths for well-known standard libraries that are never project
+# URLs.  Each element is a lowercased path prefix of the form "host/owner/repo".
+# A URL is blocked when its lowercased form starts with any entry in this set.
+_WELL_KNOWN_LIB_URL_PREFIXES: frozenset[str] = frozenset({
+    "https://github.com/ethereum/eips",
+    "https://github.com/ethereum/ercs",
+    "https://github.com/openzeppelin/openzeppelin-contracts",
+    "https://github.com/openzeppelin/openzeppelin-contracts-upgradeable",
+    "https://github.com/openzeppelin/openzeppelin-upgrades",
+    "https://github.com/vectorized/solady",
+    "https://github.com/transmissions11/solmate",
+    "https://github.com/foundry-rs/forge-std",
+    "https://github.com/foundry-rs/foundry",
+    "https://github.com/uniswap/permit2",
+    "https://github.com/uniswap/v2-core",
+    "https://github.com/uniswap/v3-core",
+    "https://github.com/uniswap/v4-core",
+    "https://github.com/aave",
+    "https://github.com/compound-finance",
+    "https://github.com/makerdao",
+    "https://eips.ethereum.org/",
+    "https://ercs.ethereum.org/",
+})
+
 # NatSpec directives that carry project URLs.
 _NATSPEC_WEBSITE_RE = re.compile(
     r"@custom:website\s+(https://\S+)",
@@ -99,6 +139,12 @@ def _validate_url_strict(raw: str) -> str | None:
     if not _STRICT_URL_RE.match(url):
         return None
 
+    # Drop well-known library/standards repos — these are never project URLs.
+    url_lower = url.lower()
+    if any(url_lower.startswith(pfx) for pfx in _WELL_KNOWN_LIB_URL_PREFIXES):
+        logger.debug("project_url: well-known library URL %r; dropped", url[:80])
+        return None
+
     # J1 injection scan: check the full URL string for injection phrases
     # Separators turned into spaces so a phrase written as ignore-previous_instructions is seen.
     if _has_injection(url) or _has_injection(re.sub(r"[-_./~]+", " ", url)):
@@ -131,8 +177,19 @@ def _kind_for_url(url: str) -> str:
     return "website"
 
 
+def _is_dependency_path(path: str) -> bool:
+    """True when the pinned file path belongs to a dependency (lib/, node_modules/, etc.)."""
+    # Normalise separators; pinned paths use forward slashes
+    p = path.replace("\\", "/")
+    return any(p.startswith(pfx) or ("/" + pfx) in p for pfx in _DEP_PATH_PREFIXES)
+
+
 def discover_project_urls(files: dict[str, str]) -> list[dict[str, Any]]:
     """Return deduplicated suggested context items from source file text.
+
+    Only files that are part of the project (not under a dependency prefix such as
+    ``lib/``, ``node_modules/``, etc.) are scanned.  Well-known library or
+    standards URLs found anywhere in the project files are also silently dropped.
 
     Args:
         files: ``{path: text}`` of the pinned source files.
@@ -149,6 +206,8 @@ def discover_project_urls(files: dict[str, str]) -> list[dict[str, Any]]:
     for path, text in sorted(files.items()):
         if len(results) >= MAX_SUGGESTIONS:
             break
+        if _is_dependency_path(path):
+            continue
         try:
             _scan_file(path, text, seen, results)
         except Exception:  # a buggy source file must never fail the map step

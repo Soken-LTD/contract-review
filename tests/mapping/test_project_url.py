@@ -62,15 +62,35 @@ def test_github_url_in_comment_is_discovered():
 def test_github_url_with_deep_path_is_trimmed_to_repo_root():
     files = {
         "Token.sol": (
+            "// https://github.com/MyOrg/my-protocol/blob/main/contracts/token/ERC20/ERC20.sol\n"
+            "contract Token {}\n"
+        )
+    }
+    results = discover_project_urls(files)
+    # Should normalise to repo root: https://github.com/MyOrg/my-protocol
+    found = [r for r in results if "MyOrg/my-protocol" in r["url"]]
+    assert found, results
+    assert found[0]["url"] == "https://github.com/MyOrg/my-protocol"
+
+
+def test_well_known_library_url_in_project_file_is_filtered():
+    """A reference to OpenZeppelin in a project source file must be dropped.
+
+    Well-known library GitHub repos are never project URLs; surfacing them as
+    context suggestions would mislead the model into fetching standard library
+    docs instead of the actual project documentation.
+    """
+    files = {
+        "Token.sol": (
             "// https://github.com/OpenZeppelin/openzeppelin-contracts/blob/main/contracts/token/ERC20/ERC20.sol\n"
             "contract Token {}\n"
         )
     }
     results = discover_project_urls(files)
-    # Should normalise to repo root: https://github.com/OpenZeppelin/openzeppelin-contracts
-    found = [r for r in results if "openzeppelin" in r["url"]]
-    assert found, results
-    assert found[0]["url"] == "https://github.com/OpenZeppelin/openzeppelin-contracts"
+    openzeppelin_urls = [r for r in results if "openzeppelin" in r["url"].lower()]
+    assert not openzeppelin_urls, (
+        f"Well-known library URL must be filtered regardless of file path: {openzeppelin_urls}"
+    )
 
 
 # ---------------------------------------------------------------------------
