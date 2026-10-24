@@ -39,6 +39,7 @@ from psycopg.rows import dict_row
 # dropped.  Matches SOKEN_PUBLISH_RATE_LIMIT_HOUR in publish.py so the env var governs both the
 # legacy enqueue gate and the worker throughput.
 _PUBLISH_BATCH_LIMIT = int(os.environ.get("SOKEN_PUBLISH_RATE_LIMIT_HOUR", "20"))
+_PUBLISH_MAX_ATTEMPTS = 5  # maximum total attempts (initial + retries) per publish_request
 
 from ..quota import job_target
 from ..report.render import store_root
@@ -391,13 +392,17 @@ class PublishWorker:
             await self._do_publish(request_id)
         except Exception as exc:
             logger.exception("publish_worker: request %d failed", request_id)
-            await self._mark(request_id, "failed", error_detail=str(exc)[:400])
+            await self._mark(request_id, "failed", error_detail=str(exc)[:400],
+                             expected_status="publishing")
 
     async def run_queued(self) -> int:
         """Claim and run queued requests within the hourly cap (SOKEN_PUBLISH_RATE_LIMIT_HOUR).
 
         Excess requests remain 'queued' and are processed in subsequent timer runs
         (soken-publish.timer, every 2 minutes).  They are never dropped.
+
+        Also retries 'failed' rows that are past their next_attempt_at backoff window,
+        up to _PUBLISH_MAX_ATTEMPTS total.
         """
         async with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             # A true hourly cap on pushes to the public repository: count what went out in the
@@ -409,9 +414,28 @@ class PublishWorker:
             budget = max(0, _PUBLISH_BATCH_LIMIT - int((await cur.fetchone())["n"]))
             if budget == 0:
                 return 0
+            # Atomic claim: transition eligible rows from queued->publishing or
+            # failed (past backoff, under attempt cap)->publishing in one statement,
+            # using FOR UPDATE SKIP LOCKED to prevent double-claim by concurrent workers.
             await cur.execute(
-                "select id from publish_requests where status = 'queued' order by queued_at limit %s",
-                (budget,),
+                """update publish_requests
+                   set status = 'publishing', updated_at = now()
+                   where id in (
+                     select id from publish_requests
+                     where (
+                       status = 'queued'
+                       or (
+                         status = 'failed'
+                         and attempts < %s
+                         and (next_attempt_at is null or next_attempt_at <= now())
+                       )
+                     )
+                     order by queued_at
+                     limit %s
+                     for update skip locked
+                   )
+                   returning id""",
+                (_PUBLISH_MAX_ATTEMPTS, budget),
             )
             rows = await cur.fetchall()
         count = 0
@@ -421,7 +445,7 @@ class PublishWorker:
         return count
 
     async def _do_publish(self, request_id: int) -> None:
-        # Load the request row.
+        # Load the request row (already claimed as 'publishing' by run_queued's atomic claim).
         async with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "select pr.*, r.object_prefix, r.out_name, j.job_id as _jid, j.target_key, j.chain, "
@@ -435,18 +459,27 @@ class PublishWorker:
             req = await cur.fetchone()
         if req is None:
             raise RuntimeError(f"publish_request {request_id} not found")
-        if req["status"] not in ("queued", "failed"):
+        if req["status"] not in ("publishing", "queued", "failed"):
             logger.info("publish_request %d already in status %s; skipping", request_id, req["status"])
             return
-
-        # Transition to publishing.
-        await self._mark(request_id, "publishing")
 
         report_id: str = req["report_id"]
         object_prefix: str = req["object_prefix"]
         out_name: str = req["out_name"]
+        job_id_val: str = req["_jid"]
 
-        # Read PDF from our object store (not from client input).
+        # Pre-push check 1: abort if the job has been deleted while we were queued.
+        async with self._pool.connection() as conn:
+            job_row = await (await conn.execute(
+                "select state from jobs where job_id = %s", (job_id_val,)
+            )).fetchone()
+        if job_row is None or job_row[0] == "deleted":
+            logger.info("publish_request %d: job %s deleted; cancelling publish", request_id, job_id_val[-8:])
+            await self._mark(request_id, "failed", error_detail="job_deleted",
+                             expected_status="publishing")
+            return
+
+        # Pre-push check 2: verify the PDF is present before we transition anything.
         pdf_path = store_root() / object_prefix / "report.pdf"
         if not pdf_path.exists():
             raise RuntimeError(f"PDF not found at object store path: {object_prefix}report.pdf")
@@ -472,7 +505,8 @@ class PublishWorker:
             )
         # Published once the push and the DB rows are in; the site refresh is best effort (the
         # 8 h fetch-audits cron picks the file up anyway).
-        await self._mark(request_id, "published", public_url=public)
+        await self._mark(request_id, "published", public_url=public,
+                         expected_status="publishing")
         logger.info("published report %s -> %s", report_id, public)
         try:
             self._site.trigger_fetch()
@@ -502,14 +536,62 @@ class PublishWorker:
         *,
         public_url: str | None = None,
         error_detail: str | None = None,
+        expected_status: str | None = None,
     ) -> None:
-        async with self._pool.connection() as conn:
-            await conn.execute(
-                """update publish_requests
-                   set status = %s,
-                       public_url = coalesce(%s, public_url),
-                       error_detail = coalesce(%s, error_detail),
-                       updated_at = now()
-                   where id = %s""",
-                (status, public_url, error_detail, request_id),
-            )
+        """Update publish_request status.
+
+        When ``expected_status`` is given the update is conditional: the row is only
+        updated when its current status matches, preventing a stale worker from
+        clobbering a row that another worker has already advanced (e.g. publishing ->
+        published by two concurrent callers).
+
+        When transitioning to 'failed', increments the attempts counter and sets
+        next_attempt_at to an exponential backoff window so run_queued retries later.
+        """
+        if status == "failed":
+            # Backoff: 2 min, 8 min, 32 min, 2 h — cap at _PUBLISH_MAX_ATTEMPTS total.
+            async with self._pool.connection() as conn:
+                if expected_status is not None:
+                    await conn.execute(
+                        """update publish_requests
+                           set status = %s,
+                               attempts = attempts + 1,
+                               next_attempt_at = now() + (interval '2 minutes' * power(4, least(attempts, 4))),
+                               error_detail = coalesce(%s, error_detail),
+                               updated_at = now()
+                           where id = %s and status = %s""",
+                        (status, error_detail, request_id, expected_status),
+                    )
+                else:
+                    await conn.execute(
+                        """update publish_requests
+                           set status = %s,
+                               attempts = attempts + 1,
+                               next_attempt_at = now() + (interval '2 minutes' * power(4, least(attempts, 4))),
+                               error_detail = coalesce(%s, error_detail),
+                               updated_at = now()
+                           where id = %s""",
+                        (status, error_detail, request_id),
+                    )
+        else:
+            async with self._pool.connection() as conn:
+                if expected_status is not None:
+                    await conn.execute(
+                        """update publish_requests
+                           set status = %s,
+                               public_url = coalesce(%s, public_url),
+                               error_detail = coalesce(%s, error_detail),
+                               updated_at = now()
+                           where id = %s and status = %s""",
+                        (status, public_url, error_detail, request_id, expected_status),
+                    )
+                else:
+                    await conn.execute(
+                        """update publish_requests
+                           set status = %s,
+                               public_url = coalesce(%s, public_url),
+                               error_detail = coalesce(%s, error_detail),
+                               updated_at = now()
+                           where id = %s""",
+                        (status, public_url, error_detail, request_id),
+                    )

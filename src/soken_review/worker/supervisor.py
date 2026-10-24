@@ -1441,6 +1441,15 @@ class Supervisor:
                                 "source": "sourcify",
                                 "unit_id": unit_id,
                             })
+                    # Re-check deleted state before writing (security review 2026-10-24, Issue 8):
+                    # review_delete_job may have run while the probe phase was executing.
+                    async with self._pool.connection() as _del_conn:
+                        _del_row = await (await _del_conn.execute(
+                            "select state from jobs where job_id = %s", (job_id,)
+                        )).fetchone()
+                    if _del_row is None or _del_row[0] == "deleted":
+                        logger.info("job %s: deleted during chain_state phase, discarding related/facts", job_id[-8:])
+                        return
                     write_related_contracts(self._pin_root, job_id, related)
                 except Exception:
                     logger.info("job %s: related/state facts skipped", job_id[-8:], exc_info=True)

@@ -1,11 +1,13 @@
 """Lightweight source-verification check for related contract addresses (feat/context-related-state).
 
-Uses the same egress path as the fetch step (Sourcify v2 via the rate-limited _get helper).
+Uses the same egress path as the supervisor host (Sourcify v2 via the rate-limited _get helper).
 Only ``?fields=compilation`` is requested — no source files are downloaded — so the check is
 much lighter than a full ``fetch_sourcify`` call.
 
-Results are cached per ``(chain_id, address_lower)`` for the lifetime of the process so a job
-with many related contracts does not hammer Sourcify.
+Results are cached per ``(chain_id, address_lower)`` with a TTL:
+- Verified (200, match present): 1 hour  — source verification rarely changes
+- Not verified (404):            1 hour  — avoids hammering Sourcify on repeated analysis
+- Network errors / unknown:      never cached — retried on the next call
 
 Graceful degradation: any network or parse error returns ``(None, None)`` (unknown), never
 raises.  The caller must not infer anything from ``None`` beyond "we could not determine
@@ -16,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 
 import httpx
@@ -24,8 +27,11 @@ from ..adapters.evm.fetch import SOURCIFY_BASE, _get  # private helper, same egr
 
 logger = logging.getLogger(__name__)
 
-# Process-local cache: (chain_id, address_lower) -> (verified, name)
-_VERIFY_CACHE: dict[tuple[int, str], tuple[bool | None, str | None]] = {}
+_VERIFIED_TTL_S = 3600    # 1 hour for definitive results (200 match or 404)
+_NOT_FOUND_TTL_S = 3600   # 1 hour for 404 (not verified)
+
+# Process-local cache: (chain_id, address_lower) -> (result, expires_at)
+_VERIFY_CACHE: dict[tuple[int, str], tuple[tuple[bool | None, str | None], float]] = {}
 
 
 def _cache_key(chain_id: int, address: str) -> tuple[int, str]:
@@ -45,7 +51,8 @@ async def check_sourcify_verified(
     - ``(False, None)``             – Sourcify returned 404 (not verified)
     - ``(None, None)``              – unknown (network error or unexpected response)
 
-    Caches per ``(chain_id, address_lower)`` for the process lifetime.
+    Caches definitive results (200 match and 404) for 1 hour.  Errors are never
+    cached and are retried on the next call.
 
     Args:
         chain_id:     EVM chain ID (e.g. 8453 for Base).
@@ -53,11 +60,18 @@ async def check_sourcify_verified(
         _http_client: Injected client for tests; a fresh client is used when None.
     """
     key = _cache_key(chain_id, address)
-    if key in _VERIFY_CACHE:
-        return _VERIFY_CACHE[key]
+    cached = _VERIFY_CACHE.get(key)
+    if cached is not None:
+        result, expires_at = cached
+        if time.monotonic() < expires_at:
+            return result
 
     result = await _do_check(chain_id, address.lower(), _http_client)
-    _VERIFY_CACHE[key] = result
+    # Only cache definitive results; (None, None) = unknown/error is never cached.
+    # (True, name) = verified with 1 h TTL; (False, None) = 404 not-verified with 1 h TTL.
+    if result != (None, None):
+        ttl = _VERIFIED_TTL_S if result[0] else _NOT_FOUND_TTL_S
+        _VERIFY_CACHE[key] = (result, time.monotonic() + ttl)
     return result
 
 

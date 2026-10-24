@@ -210,7 +210,7 @@
   {
    "name": "review_start",
    "title": "Start contract review",
-   "description": "Starts a security review job for smart contract code and returns a job id. The source is a deployed address on a supported chain, a public repository at a commit or ref, source files supplied by the user, or an upload link for private code. Optionally names an earlier report to re-review. Each call creates a new job. Use it when the user asks for a security review of contract code. Optional context: project documents (whitepaper, website, app, docs, terms, privacy) by URL or inline text.",
+   "description": "Starts a security review job for smart contract code and returns a job id. The source is a deployed address on a supported chain, a public repository at a commit or ref, source files supplied by the user, or an upload link for private code. Optionally names an earlier report to re-review. Each call creates a new job. Use it when the user asks for a security review of contract code. Optional context: project documents (whitepaper, website, app, docs, terms, privacy) by URL or inline text. By starting a review the requester accepts the service terms; the terms URL is returned in the response.",
    "annotations": {
     "title": "Start contract review",
     "readOnlyHint": false,

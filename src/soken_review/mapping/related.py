@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -190,14 +191,26 @@ async def _classify(
                 logger.info("getThreshold %s: %s", address, type(exc).__name__)
             return entry
 
-    # For any non-EOA, non-Safe contract: attempt getMinDelay() (informational)
-    try:
-        raw_delay = await rpc.eth_call(address, _GET_MIN_DELAY_SEL, block=block)
+    # For any non-EOA, non-Safe contract: probe getMinDelay() (informational only).
+    # Use eth_call_probe (single attempt, no retry chain, gas-capped, response-size-capped)
+    # so a hostile or slow contract cannot stall the analysis for up to 3×30 s.
+    # The label makes clear this is a point-in-time read, not a guarantee.
+    probe_fn = getattr(rpc, "eth_call_probe", None)
+    if probe_fn is not None:
+        raw_delay = await probe_fn(address, _GET_MIN_DELAY_SEL, block,
+                                   gas=2_000_000, timeout_s=5.0)
+    else:
+        # Fallback for test doubles that only expose eth_call
+        try:
+            raw_delay = await rpc.eth_call(address, _GET_MIN_DELAY_SEL, block=block)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("getMinDelay %s: %s", address, type(exc).__name__)
+            raw_delay = None
+    if raw_delay is not None:
         delay = _decode_uint(raw_delay)
         if delay is not None and delay > 0:
             entry["min_delay_s"] = delay
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("getMinDelay %s: %s", address, type(exc).__name__)
+            entry["min_delay_label"] = f"getMinDelay() returns {delay} s at block {block}"
 
     return entry
 
@@ -283,6 +296,13 @@ def _role_label_from_key(key: str) -> str:
 # State parameter facts
 # ---------------------------------------------------------------------------
 
+_PROBE_TOTAL_DEADLINE_S = 20.0   # wall-clock budget for the entire probe phase
+_PROBE_PER_CALL_S = 5.0          # per-call timeout for each probe
+_PROBE_GAS_CAP = 2_000_000       # gas limit passed in eth_call to cap node resources
+_PROBE_MAX_HEX = 4096            # reject hex responses longer than this (~ 2 KiB decoded)
+_PROBE_MIN_BYTES = 32            # require at least one uint256 slot before decoding
+
+
 async def state_parameter_facts(
     rpc: Any,
     address: str,
@@ -290,7 +310,7 @@ async def state_parameter_facts(
     map_doc: dict[str, Any] | None,
     unit_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Probe all public zero-arg entry functions not already read by ``onchain_facts``.
+    """Probe public zero-arg view/pure functions not already read by ``onchain_facts``.
 
     Returns ``state.<snake_name>`` facts for each successful read.  The value is
     decoded as: address (top-12 bytes zero, bottom-20 non-zero), uint, or uint
@@ -299,22 +319,43 @@ async def state_parameter_facts(
     function name starts with ``is`` / ``has`` / ``can`` / ``paused`` / ``enabled``
     (naming convention); all others are stored as decimal strings.
 
-    Capped at ``MAX_STATE_PROBES`` calls total (all holder probes count toward this
-    budget; the cap prevents DoS on contracts with many getters).
+    Capped at ``MAX_STATE_PROBES`` calls total and by a 20 s total deadline.  Uses
+    ``eth_call_probe`` (single attempt, gas-capped, no 3×30 s retry chain) so a
+    slow or hostile getter cannot stall the analysis.
     """
     names = _getter_names_to_probe(map_doc, unit_id)
     out: list[dict[str, Any]] = []
     probes_done = 0
+    deadline = time.monotonic() + _PROBE_TOTAL_DEADLINE_S
+
+    probe_fn = getattr(rpc, "eth_call_probe", None)
 
     for name in sorted(names):
         if probes_done >= MAX_STATE_PROBES:
             break
+        if time.monotonic() >= deadline:
+            logger.debug("state_parameter_facts: deadline reached after %d probes", probes_done)
+            break
         sel = getter_selector(name)
         probes_done += 1
-        try:
-            raw = await rpc.eth_call(address, sel, block=block)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("eth_call %s() failed: %s", name, type(exc).__name__)
+
+        if probe_fn is not None:
+            raw = await probe_fn(
+                address, sel, block,
+                gas=_PROBE_GAS_CAP,
+                timeout_s=_PROBE_PER_CALL_S,
+                max_response_hex_chars=_PROBE_MAX_HEX,
+                min_response_bytes=_PROBE_MIN_BYTES,
+            )
+        else:
+            # Fallback for test doubles that only expose eth_call
+            try:
+                raw = await rpc.eth_call(address, sel, block=block)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("eth_call %s() failed: %s", name, type(exc).__name__)
+                raw = None
+
+        if raw is None:
             continue
         value = _decode_state_value(raw, name)
         if value is None:
@@ -332,21 +373,58 @@ def _getter_names_to_probe(
     map_doc: dict[str, Any] | None,
     unit_id: str | None,  # reserved for future unit-scoping
 ) -> set[str]:
-    """Names to probe: public entry functions + public state vars, minus already-read ones."""
+    """Names to probe: public zero-arg view/pure ABI functions + public state vars, minus already-read ones.
+
+    When the map_doc contains an ``abi`` list (from Sourcify or the build artifact), only
+    functions with ``stateMutability`` of ``view`` or ``pure`` AND zero inputs are included.
+    This prevents probing payable, non-view, or parameterised functions which could modify
+    state or fail with unexpected input.
+
+    Without ABI data (ABI not yet available) we fall back to the semantic functions list,
+    which is already limited to entry points.
+    """
     sem = (map_doc or {}).get("semantic") or {}
     spans = {s["id"]: s for s in (map_doc or {}).get("spans") or []}
+
+    # Build an allowlist of zero-arg view/pure names from the ABI when available.
+    abi_zero_arg_view: set[str] | None = None
+    abi_list = (map_doc or {}).get("abi")
+    if isinstance(abi_list, list):
+        abi_zero_arg_view = set()
+        for item in abi_list:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "function":
+                continue
+            if item.get("stateMutability") not in ("view", "pure"):
+                continue
+            inputs = item.get("inputs") or []
+            if inputs:  # must have zero inputs
+                continue
+            fn_name = item.get("name", "")
+            if fn_name and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", fn_name):
+                abi_zero_arg_view.add(fn_name)
+
     names: set[str] = set()
     for f in sem.get("functions") or []:
         if not f.get("is_entry"):
             continue
         sp = spans.get(f.get("span", "")) or {}
         name = sp.get("name", "")
-        if name and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", name):
-            names.add(name)
+        if not name or not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", name):
+            continue
+        # When ABI filter is available, require the function to be zero-arg view/pure.
+        if abi_zero_arg_view is not None and name not in abi_zero_arg_view:
+            continue
+        names.add(name)
     for v in sem.get("state_vars") or []:
         name = v.get("name", "")
-        if name and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", name):
-            names.add(name)
+        if not name or not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", name):
+            continue
+        # Public state vars always generate zero-arg view getters in Solidity.
+        if abi_zero_arg_view is not None and name not in abi_zero_arg_view:
+            continue
+        names.add(name)
     return names - _ALREADY_READ
 
 

@@ -223,6 +223,7 @@ _GUIDE_VERSION = "v0"
 _RUBRIC_VERSION = "v0"
 _LIMITS_CONNECTOR = {"max_nsloc": 3000, "ready_ttl_hours": 24}
 _LIMITS_PLUGIN = {"max_nsloc": 10000, "ready_ttl_hours": 24}
+_MCP_TERMS_URL = "https://soken.dev/mcp/terms.html"
 
 
 @handler("review_start")
@@ -406,6 +407,11 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             )
             await conn.execute("update jobs set target_key = %s, limit_key = %s where job_id = %s",
                                (target, limit_key, job_id))
+            # Record Terms of Use acceptance at review_start (security review 2026-10-24).
+            await conn.execute(
+                "update jobs set terms_url = %s, terms_accepted_at = now() where job_id = %s",
+                (_MCP_TERMS_URL, job_id),
+            )
             if context_items:
                 await repo.append_context_items(job_id, context_items)   # fresh row: no cap or duplicate possible
             # Insert the first step for queued jobs (09 section 3.3); upload jobs wait for
@@ -428,6 +434,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
         "job_id": job_id,
         "state": initial_state,
         "requester_role": requester_role,
+        "terms_url": _MCP_TERMS_URL,
         "detected": {
             "chain": detected_chain or chain,
             "chain_id": chain_id,

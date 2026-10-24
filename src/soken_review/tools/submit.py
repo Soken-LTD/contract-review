@@ -85,7 +85,10 @@ def _get_ctx() -> JobContext:
 def _iter_text_fields(args: dict[str, Any]) -> list[tuple[str, str]]:
     """Return (field_name, text) pairs for all prose fields in a submission.
 
-    Used by V4 echo check, V5 text gate, and V6 number check.
+    Covers p blocks, ul list items, and table head/row cells in body sections
+    so that V4 echo check, V5 text gate, and V6 number check each see the full
+    text surface.  This function is also imported by finalize._check_gate_violations
+    to keep the two walkers in sync.
     """
     result: list[tuple[str, str]] = []
     if title := args.get("title"):
@@ -95,6 +98,16 @@ def _iter_text_fields(args: dict[str, Any]) -> list[tuple[str, str]]:
         for block in (body.get(section) or []):
             if p := block.get("p"):
                 result.append((section, str(p)))
+            for item in block.get("ul") or []:
+                result.append((section, str(item)))
+            tbl = block.get("table")
+            if isinstance(tbl, dict):
+                for cell in tbl.get("head") or []:
+                    result.append((section, str(cell)))
+                for row in tbl.get("rows") or []:
+                    for cell in row:
+                        if cell:
+                            result.append((section, str(cell)))
     for step in (args.get("attack_steps") or []):
         if text := step.get("text"):
             result.append(("attack_steps", str(text)))

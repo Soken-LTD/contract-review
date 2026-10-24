@@ -33,17 +33,20 @@ from psycopg.rows import dict_row
 from .. import quota
 from ..db.job_repo import JobRepo
 from ..db.pool import get_pool
+from ..engine.injection import check_echo
+from ..engine.numbers import lex_numbers
 from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
 from ..mapping.semantic_evm import detect_token_review, units_holding
+from ..mapping.step import load_flags
 from ..report.render import queue_render
 from ..server import handler
 from .context import JobContext
 from .coverage import EnumsLoadError, category_allowed_na_reasons, compute_coverage_rows
 from .set_section import _check_na_predicate_for_section
-from .submit import _category_info, _family_from_chain
+from .submit import _category_info, _family_from_chain, _iter_text_fields
 
 _pool: psycopg_pool.AsyncConnectionPool | None = None
 _ctx: JobContext | None = None
@@ -525,12 +528,26 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
     than write-time.  ``absence_claims`` are extracted from the stored finding content to
     provide T24 its binding context.
 
+    Also runs V4 echo check and V6 number check on the same text blocks, using
+    ``_iter_text_fields`` (shared walker with submit.py) so the two gates cannot drift.
+
     The render builder (``build.check_strings``) is the only place ``LATE_GATE_SKIP`` is
     applied; this pre-freeze gate is not the render builder.
 
     Returns a list of error envelope dicts (empty = clean).
     """
     errors: list[dict[str, Any]] = []
+
+    # Load J1 flags once for the echo check (V4) across all findings.
+    # FileNotFoundError = no map run yet; no J1 spans to check (same degradation as submit-time V4).
+    try:
+        pin_root = _get_ctx().get_pin_root()
+        _raw_flags = load_flags(pin_root, job_id) or []
+    except (FileNotFoundError, ReviewError):
+        _raw_flags = []
+    except (OSError, ValueError) as exc:
+        raise ReviewError("E_INTERNAL", incident=f"flags.json unreadable at finalize: {exc!s:.80}") from exc
+    j1_flags = [f for f in _raw_flags if f.get("rule") == "J1"]
 
     # ── Finding text ──────────────────────────────────────────────────────────
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -550,6 +567,30 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
         finding_ref = f"F-{d['finding_no']:02d}"
         # Extract absence_claims from stored content so T24 can bind them (04 §7.6).
         absence_claims: list[dict[str, str]] = content.get("absence_claims") or []
+
+        # ── V4: echo check using shared walker (same surface as submit-time V4) ──
+        combined_text = "\n".join(t for _, t in _iter_text_fields(content))
+        for v in check_echo(combined_text, j1_flags):
+            errors.append(ReviewError(
+                v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                pos=v.span[0], token=v.match[:40],
+                hint=f"{finding_ref}: echo rule {v.rule_id} on {v.match!r:.40}",
+            ).envelope())
+
+        # ── V6: number check on all prose fields via shared walker ───────────
+        for field_name, field_text in _iter_text_fields(content):
+            for v in lex_numbers(field_text):
+                errors.append(ReviewError(
+                    v.code, rule=v.rule_id,
+                    match=v.match[:80] if v.match else "",
+                    token=v.match[:40] if v.match else "",
+                    field=field_name,
+                    cp=(v.match[:5] if v.match else ""),
+                    pos=v.span[0],
+                    hint=f"{finding_ref}.{field_name}: number rule {v.rule_id}",
+                ).envelope())
+
+        # ── V5: text gate (check_model_field) on every prose block ───────────
         # title
         if title := content.get("title"):
             for v in check_model_field(title, field="title", profile=profile,
@@ -559,7 +600,7 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
                     pos=v.span[0], token=v.match[:40],
                     hint=f"{finding_ref}.title: rule {v.rule_id} on {v.match!r:.40}",
                 ).envelope())
-        # body fields: description, impact, recommendation
+        # body fields: description, impact, recommendation — cover p, ul, and table cells
         body = content.get("body") or {}
         for field_name in ("description", "impact", "recommendation"):
             for block in (body.get(field_name) or []):
@@ -580,6 +621,27 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
                             pos=v.span[0], token=v.match[:40],
                             hint=f"{finding_ref}.{field_name}[ul]: rule {v.rule_id} on {v.match!r:.40}",
                         ).envelope())
+                tbl = block.get("table")
+                if isinstance(tbl, dict):
+                    for cell in tbl.get("head") or []:
+                        for v in check_model_field(str(cell), field=field_name, profile=profile,
+                                                   absence_claims=absence_claims):
+                            errors.append(ReviewError(
+                                v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                pos=v.span[0], token=v.match[:40],
+                                hint=f"{finding_ref}.{field_name}[table.head]: rule {v.rule_id} on {v.match!r:.40}",
+                            ).envelope())
+                    for row in tbl.get("rows") or []:
+                        for cell in row:
+                            if not cell:
+                                continue
+                            for v in check_model_field(str(cell), field=field_name, profile=profile,
+                                                       absence_claims=absence_claims):
+                                errors.append(ReviewError(
+                                    v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                    pos=v.span[0], token=v.match[:40],
+                                    hint=f"{finding_ref}.{field_name}[table.row]: rule {v.rule_id} on {v.match!r:.40}",
+                                ).envelope())
         # attack_steps
         for step in (content.get("attack_steps") or []):
             text = step.get("text") or ""
@@ -591,7 +653,7 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
                         pos=v.span[0], token=v.match[:40],
                         hint=f"{finding_ref}.attack_steps: rule {v.rule_id} on {v.match!r:.40}",
                     ).envelope())
-        # notes (top-level notes in body)
+        # notes (top-level notes in body) — cover p, ul, and table cells
         for note in (body.get("notes") or []):
             text = note.get("p") or ""
             if text:
@@ -602,6 +664,35 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
                         pos=v.span[0], token=v.match[:40],
                         hint=f"{finding_ref}.notes: rule {v.rule_id} on {v.match!r:.40}",
                     ).envelope())
+            for item in note.get("ul") or []:
+                for v in check_model_field(str(item), field="notes", profile=profile,
+                                           is_list_item=True, absence_claims=absence_claims):
+                    errors.append(ReviewError(
+                        v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                        pos=v.span[0], token=v.match[:40],
+                        hint=f"{finding_ref}.notes[ul]: rule {v.rule_id} on {v.match!r:.40}",
+                    ).envelope())
+            tbl = note.get("table")
+            if isinstance(tbl, dict):
+                for cell in tbl.get("head") or []:
+                    for v in check_model_field(str(cell), field="notes", profile=profile,
+                                               absence_claims=absence_claims):
+                        errors.append(ReviewError(
+                            v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                            pos=v.span[0], token=v.match[:40],
+                            hint=f"{finding_ref}.notes[table.head]: rule {v.rule_id} on {v.match!r:.40}",
+                        ).envelope())
+                for row in tbl.get("rows") or []:
+                    for cell in row:
+                        if not cell:
+                            continue
+                        for v in check_model_field(str(cell), field="notes", profile=profile,
+                                                   absence_claims=absence_claims):
+                            errors.append(ReviewError(
+                                v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                pos=v.span[0], token=v.match[:40],
+                                hint=f"{finding_ref}.notes[table.row]: rule {v.rule_id} on {v.match!r:.40}",
+                            ).envelope())
 
     # ── Section text ──────────────────────────────────────────────────────────
     # sections: roles_notes and context_notes contain model prose; out_of_scope_reasons
@@ -628,9 +719,9 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
         seen_sections.add(sec_name)
         field = _SEC_FIELD[sec_name]
         for block in (sec["content"] or []):
-            text = block.get("p") or block.get("reason") or ""
-            is_li = False
-            if isinstance(block, dict) and "ul" in block:
+            if not isinstance(block, dict):
+                continue
+            if "ul" in block:
                 for item in block["ul"] or []:
                     for v in check_model_field(str(item), field=field, profile=profile, is_list_item=True):
                         errors.append(ReviewError(
@@ -638,13 +729,71 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
                             pos=v.span[0], token=v.match[:40],
                             hint=f"{sec_name}[ul]: rule {v.rule_id} on {v.match!r:.40}",
                         ).envelope())
+                    for v in lex_numbers(str(item)):
+                        errors.append(ReviewError(
+                            v.code, rule=v.rule_id,
+                            match=v.match[:80] if v.match else "",
+                            token=v.match[:40] if v.match else "",
+                            field=f"{sec_name}[ul]",
+                            cp=(v.match[:5] if v.match else ""),
+                            pos=v.span[0],
+                        ).envelope())
                 continue
+            if "table" in block:
+                tbl = block["table"]
+                if isinstance(tbl, dict):
+                    for cell in tbl.get("head") or []:
+                        for v in check_model_field(str(cell), field=field, profile=profile):
+                            errors.append(ReviewError(
+                                v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                pos=v.span[0], token=v.match[:40],
+                                hint=f"{sec_name}[table.head]: rule {v.rule_id} on {v.match!r:.40}",
+                            ).envelope())
+                        for v in lex_numbers(str(cell)):
+                            errors.append(ReviewError(
+                                v.code, rule=v.rule_id,
+                                match=v.match[:80] if v.match else "",
+                                token=v.match[:40] if v.match else "",
+                                field=f"{sec_name}[table.head]",
+                                cp=(v.match[:5] if v.match else ""),
+                                pos=v.span[0],
+                            ).envelope())
+                    for row in tbl.get("rows") or []:
+                        for cell in row:
+                            if not cell:
+                                continue
+                            for v in check_model_field(str(cell), field=field, profile=profile):
+                                errors.append(ReviewError(
+                                    v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                    pos=v.span[0], token=v.match[:40],
+                                    hint=f"{sec_name}[table.row]: rule {v.rule_id} on {v.match!r:.40}",
+                                ).envelope())
+                            for v in lex_numbers(str(cell)):
+                                errors.append(ReviewError(
+                                    v.code, rule=v.rule_id,
+                                    match=v.match[:80] if v.match else "",
+                                    token=v.match[:40] if v.match else "",
+                                    field=f"{sec_name}[table.row]",
+                                    cp=(v.match[:5] if v.match else ""),
+                                    pos=v.span[0],
+                                ).envelope())
+                continue
+            text = block.get("p") or block.get("reason") or ""
             if text:
-                for v in check_model_field(text, field=field, profile=profile, is_list_item=is_li):
+                for v in check_model_field(text, field=field, profile=profile):
                     errors.append(ReviewError(
                         v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
                         pos=v.span[0], token=v.match[:40],
                         hint=f"{sec_name}: rule {v.rule_id} on {v.match!r:.40}",
+                    ).envelope())
+                for v in lex_numbers(text):
+                    errors.append(ReviewError(
+                        v.code, rule=v.rule_id,
+                        match=v.match[:80] if v.match else "",
+                        token=v.match[:40] if v.match else "",
+                        field=sec_name,
+                        cp=(v.match[:5] if v.match else ""),
+                        pos=v.span[0],
                     ).envelope())
 
     return errors
@@ -682,20 +831,24 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
         # model can revise the flagged text and finalize again.  The stored gate error
         # is surfaced here; report_at and report_id were already cleared in render.py.
         if state == "render_failed":
-            # At most _MAX_RENDER_RESETS failed renders per job; after that the job stays failed.
-            async with conn.cursor() as cur:
-                await cur.execute("select count(*) from job_steps where job_id = %s and step = 'render'"
-                                  " and status = 'failed'", (job_id,))
-                failed_renders = (await cur.fetchone())[0]
+            # At most _MAX_RENDER_RESETS resets per job; after that the job stays failed.
+            # Use jobs.render_resets column (incremented each time we do this reset) rather
+            # than counting job_steps rows, which miscount because each retry inserts a new row.
+            render_resets = job.get("render_resets") or 0
             stored_detail = job.get("error_detail") or {}
             # Only the failure kind and, for a gate failure, the rule and matched phrase go back.
             shown = {"detail": str(stored_detail.get("detail", ""))[:40]}
             if stored_detail.get("detail") == "late_gate":
                 shown["rule"] = str(stored_detail.get("note", ""))[:120]
-            if failed_renders > _MAX_RENDER_RESETS:
+            if render_resets >= _MAX_RENDER_RESETS:
                 return {"accepted": False, "state": "render_failed",
                         "errors": [ReviewError("E_JOB_TERMINAL", state="render_failed",
                                                exit_code="E_RENDER_FAILED").envelope()]}
+            # Increment the counter atomically before transitioning to ready.
+            await conn.execute(
+                "update jobs set render_resets = render_resets + 1 where job_id = %s",
+                (job_id,),
+            )
             repo = JobRepo(conn)
             await repo.transition(job_id, "ready")
             # Undo what finalize froze, so the revised job finalizes from a clean slate: final ids

@@ -307,7 +307,7 @@ AUTO_PUBLISH_SOURCE_KINDS = frozenset({"deployed", "repo"})
 
 
 async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, job_id: str,
-                                render_ts: str) -> None:
+                                render_ts: str, profile: str | None = None) -> None:
     """Enqueue automatic publication inside the rendered-transition transaction (CEO 2026-10-24).
 
     Inserts one publish_consent_log row (the legal basis) and one publish_requests row
@@ -318,20 +318,52 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
     same job produces a second consent log entry (correct: a new render = a new consent event)
     but the publish_requests dedup (UNIQUE report_id) prevents a duplicate request.
 
-    Only public code is published automatically: a deployed contract or a public repository.
-    `upload` (private code through a one-time link) and `files` (code pasted into the
-    conversation) may be private, and the report quotes that code, so those reports are
-    published only when the owner asks through review_publish with the manage key.
+    Skipped when any of the following conditions hold:
+    - ``source_kind`` is not in AUTO_PUBLISH_SOURCE_KINDS (i.e. not deployed or repo).
+      ``upload`` (private code through a one-time link) and ``files`` (code pasted into the
+      conversation) may be private, and the report quotes that code.
+    - The job has any inline context item (``url`` is None), meaning the requester supplied
+      private content that may be quoted in the report context section.
+    - The report profile is ``owner`` — the requester is the contract owner and has not
+      explicitly opted into public disclosure via review_publish.
+    In all such cases the report is published only when the owner calls review_publish with
+    the manage key.
     """
-    async with conn.cursor() as cur:
-        await cur.execute("select source_kind from jobs where job_id = %s", (job_id,))
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            "select source_kind, context_items, terms_accepted_at from jobs where job_id = %s",
+            (job_id,),
+        )
         row = await cur.fetchone()
-    if row is None or row[0] not in AUTO_PUBLISH_SOURCE_KINDS:
+    if row is None:
         return
+    if row["source_kind"] not in AUTO_PUBLISH_SOURCE_KINDS:
+        return
+    # Skip if any context item was supplied inline (url is None = pasted content, not a URL fetch).
+    context_items: list[dict[str, Any]] = row["context_items"] or []
+    if any(item.get("url") is None for item in context_items):
+        return
+    # Skip for owner-profile reports — they contain owner-only context by design.
+    if profile == "owner":
+        return
+
+    # Build the consent statement, referencing the recorded acceptance timestamp when available.
+    terms_accepted_at = row["terms_accepted_at"]
+    if terms_accepted_at is not None:
+        accepted_str = str(terms_accepted_at)[:19].replace("T", " ")  # "YYYY-MM-DD HH:MM:SS"
+        statement = (
+            f"By submitting source code for this review, the requester accepted the "
+            f"Contract Review MCP Terms of Use at soken.dev/mcp/terms.html "
+            f"(recorded {accepted_str} UTC), "
+            f"which authorises automated publication of this rendered report."
+        )
+    else:
+        statement = AUTO_PUBLISH_STATEMENT
+
     await conn.execute(
         """insert into publish_consent_log (report_id, party, name, statement, client_ts)
            values (%s, %s, %s, %s, %s)""",
-        (report_id, AUTO_PUBLISH_PARTY, AUTO_PUBLISH_NAME, AUTO_PUBLISH_STATEMENT, render_ts),
+        (report_id, AUTO_PUBLISH_PARTY, AUTO_PUBLISH_NAME, statement, render_ts),
     )
     await conn.execute(
         """insert into publish_requests (report_id, job_id, status)
@@ -415,7 +447,10 @@ async def _run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, i
                 await repo.transition(job_id, "rendered")
                 await conn.execute("update jobs set expires_at = %s where job_id = %s", (exp, job_id))
                 # Auto-publish: enqueue in the same transaction (CEO 2026-10-24).
-                await _auto_enqueue_publish(conn, report["meta"]["report_id"], job_id, render_ts)
+                await _auto_enqueue_publish(
+                    conn, report["meta"]["report_id"], job_id, render_ts,
+                    profile=report.get("meta", {}).get("profile"),
+                )
         return outcome
 
     elapsed = time.time() - first_claim

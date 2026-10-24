@@ -930,7 +930,7 @@ class TestAutoPublishEnqueue:
         from soken_review.report.render import _auto_enqueue_publish
         sig = inspect.signature(_auto_enqueue_publish)
         params = list(sig.parameters.keys())
-        assert params == ["conn", "report_id", "job_id", "render_ts"]
+        assert params == ["conn", "report_id", "job_id", "render_ts", "profile"]
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_auto_enqueue_public_sources_only(self, db_pool):
