@@ -124,7 +124,8 @@ def limit_key(*, target: str | None, job_id: str) -> str | None:
         return f"relay:{_h(target or 'job:' + job_id)}"
     if ip:
         return f"ip:{_h(_user_of(ip))}"
-    return f"target:{_h(target)}" if target else None
+    # No client address: an in-process or loopback call (nginx always sets X-Real-IP on /mcp).
+    return None
 
 
 async def _count(conn: psycopg.AsyncConnection, where: str, value: str, job_id: str | None) -> int:
