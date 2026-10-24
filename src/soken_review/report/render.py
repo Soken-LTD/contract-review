@@ -302,6 +302,10 @@ async def _upsert_report(conn: psycopg.AsyncConnection, report: dict[str, Any], 
     )
 
 
+# Source kinds whose reports are public by nature and published automatically (see below).
+AUTO_PUBLISH_SOURCE_KINDS = frozenset({"deployed", "repo"})
+
+
 async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, job_id: str,
                                 render_ts: str) -> None:
     """Enqueue automatic publication inside the rendered-transition transaction (CEO 2026-10-24).
@@ -313,7 +317,17 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
     Called only when outcome.code == "ok" and the job is not deleted.  A re-render of the
     same job produces a second consent log entry (correct: a new render = a new consent event)
     but the publish_requests dedup (UNIQUE report_id) prevents a duplicate request.
+
+    Only public code is published automatically: a deployed contract or a public repository.
+    `upload` (private code through a one-time link) and `files` (code pasted into the
+    conversation) may be private, and the report quotes that code, so those reports are
+    published only when the owner asks through review_publish with the manage key.
     """
+    async with conn.cursor() as cur:
+        await cur.execute("select source_kind from jobs where job_id = %s", (job_id,))
+        row = await cur.fetchone()
+    if row is None or row[0] not in AUTO_PUBLISH_SOURCE_KINDS:
+        return
     await conn.execute(
         """insert into publish_consent_log (report_id, party, name, statement, client_ts)
            values (%s, %s, %s, %s, %s)""",

@@ -394,15 +394,24 @@ class PublishWorker:
             await self._mark(request_id, "failed", error_detail=str(exc)[:400])
 
     async def run_queued(self) -> int:
-        """Claim and run queued requests up to _PUBLISH_BATCH_LIMIT per run.
+        """Claim and run queued requests within the hourly cap (SOKEN_PUBLISH_RATE_LIMIT_HOUR).
 
         Excess requests remain 'queued' and are processed in subsequent timer runs
         (soken-publish.timer, every 2 minutes).  They are never dropped.
         """
         async with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            # A true hourly cap on pushes to the public repository: count what went out in the
+            # last hour and claim only the remainder; the rest waits in 'queued'.
+            await cur.execute(
+                "select count(*) as n from publish_requests where status = 'published' "
+                "and updated_at > now() - interval '1 hour'"
+            )
+            budget = max(0, _PUBLISH_BATCH_LIMIT - int((await cur.fetchone())["n"]))
+            if budget == 0:
+                return 0
             await cur.execute(
                 "select id from publish_requests where status = 'queued' order by queued_at limit %s",
-                (_PUBLISH_BATCH_LIMIT,),
+                (budget,),
             )
             rows = await cur.fetchall()
         count = 0

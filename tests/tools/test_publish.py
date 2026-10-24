@@ -932,46 +932,40 @@ class TestAutoPublishEnqueue:
         params = list(sig.parameters.keys())
         assert params == ["conn", "report_id", "job_id", "render_ts"]
 
-    @ASYNC
-    async def test_auto_enqueue_inserts_consent_and_request(self):
-        """_auto_enqueue_publish inserts one consent log row and one publish_request row."""
-        from unittest.mock import AsyncMock
-
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_auto_enqueue_public_sources_only(self, db_pool):
+        """Deployed and repo reports are queued once (idempotent); upload and files are not."""
+        from soken_review.db.job_repo import JobRepo, new_job_id
         from soken_review.report.render import _auto_enqueue_publish
 
-        conn = AsyncMock()
-        await _auto_enqueue_publish(conn, "abcdefghijklmnopqrst2345", "job_TEST", "2026-10-24T00:00:00+00:00")
-
-        assert conn.execute.call_count == 2
-        calls = conn.execute.call_args_list
-        # First call: consent log insert
-        assert "publish_consent_log" in calls[0].args[0]
-        assert "abcdefghijklmnopqrst2345" in calls[0].args[1]
-        # Second call: publish_requests insert with on conflict do nothing
-        assert "publish_requests" in calls[1].args[0]
-        assert "on conflict" in calls[1].args[0].lower()
-        assert "do nothing" in calls[1].args[0].lower()
-        assert "abcdefghijklmnopqrst2345" in calls[1].args[1]
-
-    @ASYNC
-    async def test_auto_enqueue_idempotent_on_second_render(self):
-        """A second call to _auto_enqueue_publish always inserts the consent log but the
-        on conflict do nothing prevents a duplicate publish_request."""
-        from unittest.mock import AsyncMock
-
-        from soken_review.report.render import _auto_enqueue_publish
-
-        conn = AsyncMock()
-        # First render
-        await _auto_enqueue_publish(conn, "abcdefghijklmnopqrst2345", "job_TEST", "2026-10-24T00:00:00+00:00")
-        # Second render (re-render of same report)
-        await _auto_enqueue_publish(conn, "abcdefghijklmnopqrst2345", "job_TEST", "2026-10-24T01:00:00+00:00")
-        # Two consent log inserts (one per render), two publish_request attempts
-        assert conn.execute.call_count == 4
-        # Both publish_requests inserts use on conflict do nothing
-        calls = conn.execute.call_args_list
-        assert "on conflict" in calls[1].args[0].lower()
-        assert "on conflict" in calls[3].args[0].lower()
+        async with db_pool.connection() as conn:
+            tx = conn.transaction(force_rollback=True)
+            async with tx:
+                rids = {}
+                for kind, rid in (("deployed", "aaaaaaaaaaaaaaaaaaaaaaaaaa"), ("repo", "bbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                                  ("upload", "cccccccccccccccccccccccccc"), ("files", "dddddddddddddddddddddddddd")):
+                    jid = new_job_id()
+                    await JobRepo(conn).create(job_id=jid, principal_key="p", surface="plugin", state="queued",
+                                               requester_role="third_party_public_code", source_kind=kind,
+                                               source_args={}, has_deployment=kind == "deployed", chain="evm")
+                    await conn.execute(
+                        """insert into reports (report_id, report_id_short, job_id, profile, object_prefix, out_name,
+                           pdf_sha256s, subject_candidates, key_version, rendered_at, expires_at)
+                           values (%s, %s, %s, 'public_review', %s, 'R.pdf', array[repeat('0',64)]::char(64)[],
+                                   '[]'::jsonb, 1, now(), now() + interval '30 days')""",
+                        (rid, rid[:10], jid, f"reports/{rid}/1/"))
+                    rids[kind] = (rid, jid)
+                for kind, (rid, jid) in rids.items():
+                    await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T00:00:00+00:00")
+                    await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T01:00:00+00:00")   # re-render
+                got = {}
+                for kind, (rid, _jid) in rids.items():
+                    row = await (await conn.execute(
+                        "select (select count(*) from publish_requests where report_id = %s),"
+                        " (select count(*) from publish_consent_log where report_id = %s)", (rid, rid))).fetchone()
+                    got[kind] = tuple(row)
+        assert got["deployed"] == (1, 2) and got["repo"] == (1, 2)
+        assert got["upload"] == (0, 0) and got["files"] == (0, 0)
 
 
 class TestAutoPublishRateGuard:
@@ -991,8 +985,9 @@ class TestAutoPublishRateGuard:
         from soken_review.worker.publish_worker import PublishWorker
         src = inspect.getsource(PublishWorker.run_queued)
         assert "_PUBLISH_BATCH_LIMIT" in src
-        # Must NOT have a hardcoded 20 in the limit clause
+        # Must NOT have a hardcoded 20 in the limit clause, and must count the last hour
         assert "limit 20" not in src.lower()
+        assert "interval '1 hour'" in src
 
 
 class TestNoPublishOnFailure:
