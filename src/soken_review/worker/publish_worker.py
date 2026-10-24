@@ -19,18 +19,22 @@ are set on the mcp.soken.dev box; they are never returned to clients or logged.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import subprocess
 import tempfile
+import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime
 from pathlib import Path
 
 import psycopg_pool
 from psycopg.rows import dict_row
 
+from ..quota import job_target
 from ..report.render import store_root
 
 logger = logging.getLogger(__name__)
@@ -65,6 +69,44 @@ def sanitize_filename(title: str, report_id: str) -> str:
     safe = _MULTI_SEP_RE.sub("-", safe).strip("-._")
     safe = safe[:_MAX_PREFIX_LEN] or "report"
     return f"{safe}_{report_id[:8]}.pdf"
+
+
+# Published name (CEO 2026-10-24): the report goes live without manual review, so the file and
+# its README/site row carry this label. One file per reviewed target (published_targets); the
+# name is "<subject> (Automated by SOKEN MCP).pdf", with the report id appended only when another
+# target already holds that name. Allowlist adds space and parentheses to sanitize_filename's set:
+# git runs with fixed argv and "--" before paths, so neither reaches a shell or an option parser.
+PUBLISH_LABEL = "Automated by SOKEN MCP"
+_PUBLIC_UNSAFE_RE = re.compile(r"[^A-Za-z0-9 ._-]")
+_PUBLIC_WS_RE = re.compile(r"\s+")
+
+
+def public_filename(subject: str, report_id: str | None = None) -> str:
+    """`<subject> (Automated by SOKEN MCP).pdf`, or `<subject> <id8> (...)` when `report_id` is given."""
+    base = _PUBLIC_UNSAFE_RE.sub(" ", subject or "")
+    base = _MULTI_SEP_RE.sub("-", base)
+    base = _PUBLIC_WS_RE.sub(" ", base).strip(" -._")[:_MAX_PREFIX_LEN].rstrip(" -._") or "Smart contract review"
+    if report_id is not None:
+        if not re.fullmatch(r"[a-z2-7]{8,26}", report_id):
+            raise ValueError(f"report_id {report_id!r:.30} fails allowlist check")
+        base = f"{base} {report_id[:8]}"
+    return f"{base} ({PUBLISH_LABEL}).pdf"
+
+
+def public_url(filename: str) -> str:
+    return f"{GITHUB_RAW_BASE}/{urllib.parse.quote(filename)}"
+
+
+def read_subject(object_prefix: str, fallback: str) -> str:
+    """`meta.subject` of the stored report.json (the cover subject), else `fallback`."""
+    path = store_root() / object_prefix / "report.json"
+    try:
+        rj = json.loads(path.read_text(encoding="utf-8"))
+        subject = (rj.get("meta") or {}).get("subject")
+        return subject if isinstance(subject, str) and subject.strip() else fallback
+    except (OSError, ValueError, AttributeError) as exc:
+        logger.warning("publish: could not read subject from report.json: %s", exc)
+        return fallback
 
 
 # Subject is untrusted (derived from the reviewed project's metadata) and is rendered into a
@@ -102,8 +144,10 @@ class GitPublisher(ABC):
     """
 
     @abstractmethod
-    def push_report(self, pdf_bytes: bytes, safe_filename: str, subject: str, report_id: str) -> str:
-        """Push PDF; return the public URL of the committed file."""
+    def push_report(self, pdf_bytes: bytes, safe_filename: str, subject: str, report_id: str,
+                    *, replace: bool = False) -> str:
+        """Push PDF; return the public URL of the committed file. `replace`: the target already
+        has this file, overwrite its bytes and move its README row to the top."""
         ...
 
 
@@ -139,7 +183,8 @@ class EnvGitPublisher(GitPublisher):
     already been through sanitize_filename() by the time it arrives here.
     """
 
-    def push_report(self, pdf_bytes: bytes, safe_filename: str, subject: str, report_id: str) -> str:
+    def push_report(self, pdf_bytes: bytes, safe_filename: str, subject: str, report_id: str,
+                    *, replace: bool = False) -> str:
         repo_path = os.environ.get("SOKEN_GIT_PUBLISH_REPO_PATH", "")
         if not repo_path:
             raise RuntimeError("SOKEN_GIT_PUBLISH_REPO_PATH is not set")
@@ -152,17 +197,8 @@ class EnvGitPublisher(GitPublisher):
             raise RuntimeError(f"git repo path does not exist: {repo_path}")
 
         pdf_dest = repo / safe_filename
-
-        # Write PDF — O_CREAT|O_EXCL prevents overwrite (idempotent guard at FS level).
-        # If the file already exists this is a duplicate publish; skip write but still push.
-        try:
-            fd = os.open(str(pdf_dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-            try:
-                os.write(fd, pdf_bytes)
-            finally:
-                os.close(fd)
-        except FileExistsError:
-            logger.info("publish: %s already in repo, skipping write", safe_filename)
+        if pdf_dest.parent != repo or pdf_dest.is_symlink():
+            raise RuntimeError("publish: filename escapes the repository")
 
         env = {**os.environ}
         if token:
@@ -192,25 +228,44 @@ class EnvGitPublisher(GitPublisher):
             # Pull latest so README edits don't conflict.
             _run("git", "-C", str(repo), "pull", "--ff-only", "origin", "main")
 
-            # Stage the PDF.
-            _run("git", "-C", str(repo), "add", safe_filename)
+            # Write the PDF after the pull. A new target never overwrites a file it does not own
+            # (O_EXCL; legacy manual reports share the directory); a replacement overwrites its own.
+            flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_TRUNC if replace else os.O_EXCL)
+            fd = os.open(str(pdf_dest), flags, 0o644)
+            try:
+                os.write(fd, pdf_bytes)
+            finally:
+                os.close(fd)
 
-            # Update README: prepend table row and bump report count.
-            _update_readme(repo, safe_filename, subject, report_id)
-            _run("git", "-C", str(repo), "add", "README.md")
+            _run("git", "-C", str(repo), "add", "--", safe_filename)
+
+            # Update README: one row per file, newest first; the count moves only for a new file.
+            _update_readme(repo, safe_filename, subject, report_id, replace=replace)
+            _run("git", "-C", str(repo), "add", "--", "README.md")
 
             # Commit with fixed author identity.
+            verb = "Update" if replace else "Add"
             _run(
                 "git", "-C", str(repo),
                 "-c", f"user.name={author_name}",
                 "-c", f"user.email={author_email}",
                 "commit", "--no-gpg-sign",
-                "-m", f"Add audit report {safe_filename}",
+                "-m", f"{verb} automated review {safe_filename}",
             )
 
             # Push to origin main.
             _run("git", "-C", str(repo), "push", "origin", "main")
 
+        except Exception:
+            # Leave the clone equal to origin so a retry starts clean: drop the unpushed commit and
+            # a new file it added (a replaced file is restored by the reset).
+            try:
+                _run("git", "-C", str(repo), "reset", "--hard", "origin/main")
+                if not replace and pdf_dest.exists():
+                    pdf_dest.unlink()
+            except Exception:
+                logger.exception("publish: could not reset the clone after a failed push")
+            raise
         finally:
             if askpass:
                 try:
@@ -218,42 +273,46 @@ class EnvGitPublisher(GitPublisher):
                 except OSError:
                     pass
 
-        return f"{GITHUB_RAW_BASE}/{safe_filename}"
+        return public_url(safe_filename)
 
 
-def _update_readme(repo: Path, safe_filename: str, subject: str, report_id: str) -> None:
-    """Prepend a row to the audits table in README.md and bump the reports counter.
+_TABLE_HEADERS = ("| Report | Published |\n|---|---|\n", "| Report | PDF |\n| --- | --- |\n")
 
-    The README is our own file.  We still sanitize subject for display only.
-    report_id is already validated (base32 charset) before calling this function.
+
+def _update_readme(repo: Path, safe_filename: str, subject: str, report_id: str,
+                   *, replace: bool = False, today: str | None = None) -> None:
+    """Put the file's row at the top of the README table, `| [name](url) | YYYY-MM-DD |`.
+
+    The README is our own file (the 260-row table of Soken-LTD/smart-contract-audits). The link
+    text is the file name without `.pdf` (it already carries the PUBLISH_LABEL), run through
+    sanitize_cell; the URL is percent-encoded. A row already pointing at this file is removed
+    first, so a replaced report keeps one row; "## Reports (N)" moves only for a new file.
+    `subject` and `report_id` stay in the signature for the injected publisher interface.
     """
+    del subject, report_id
+    day = today or datetime.now(UTC).strftime("%Y-%m-%d")
+    url = public_url(safe_filename)
+    label = sanitize_cell(safe_filename.removesuffix(".pdf"))
+    new_row = f"| [{label}]({url}) | {day} |\n"
     readme = repo / "README.md"
     if not readme.exists():
-        readme.write_text(
-            "# Soken Smart Contract Audits\n\n## Reports (1)\n\n"
-            "| Report | PDF |\n| --- | --- |\n"
-            f"| {sanitize_cell(subject)} | [{safe_filename}](./{safe_filename}) |\n",
-            encoding="utf-8",
-        )
+        readme.write_text("# Smart Contract Audit Reports\n\n## Reports (1)\n\n" + _TABLE_HEADERS[0] + new_row,
+                          encoding="utf-8")
         return
 
     text = readme.read_text(encoding="utf-8")
-    # Bump the count in "## Reports (N)"
-    import re as _re
-    def _bump(m: re.Match) -> str:
-        n = int(m.group(1)) + 1
-        return f"## Reports ({n})"
-    text = _re.sub(r"## Reports \((\d+)\)", _bump, text)
-
-    # Prepend a row right after the table header line.
-    new_row = f"| {sanitize_cell(subject)} | [{safe_filename}](./{safe_filename}) |\n"
-    header_marker = "| Report | PDF |\n| --- | --- |\n"
-    if header_marker in text:
-        text = text.replace(header_marker, header_marker + new_row, 1)
+    lines = text.splitlines(keepends=True)
+    kept = [ln for ln in lines if f"]({url})" not in ln]
+    had_row = len(kept) != len(lines)
+    text = "".join(kept)
+    if not had_row:
+        text = re.sub(r"## Reports \((\d+)\)", lambda m: f"## Reports ({int(m.group(1)) + 1})", text, count=1)
+    for header in _TABLE_HEADERS:
+        if header in text:
+            text = text.replace(header, header + new_row, 1)
+            break
     else:
-        # No table yet: append section.
-        text = text.rstrip() + f"\n\n## Reports (1)\n\n| Report | PDF |\n| --- | --- |\n{new_row}"
-
+        text = text.rstrip() + "\n\n## Reports (1)\n\n" + _TABLE_HEADERS[0] + new_row
     readme.write_text(text, encoding="utf-8")
 
 
@@ -339,7 +398,8 @@ class PublishWorker:
         # Load the request row.
         async with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                "select pr.*, r.object_prefix, r.out_name, j.job_id as _jid "
+                "select pr.*, r.object_prefix, r.out_name, j.job_id as _jid, j.target_key, j.chain, "
+                "j.address, j.source_args "
                 "from publish_requests pr "
                 "join reports r on r.report_id = pr.report_id "
                 "join jobs j on j.job_id = pr.job_id "
@@ -366,39 +426,48 @@ class PublishWorker:
             raise RuntimeError(f"PDF not found at object store path: {object_prefix}report.pdf")
         pdf_bytes = pdf_path.read_bytes()
 
-        # Sanitize the filename used in git (re-derive from out_name for determinism).
-        # out_name is already a validated '^[A-Za-z0-9_-]{1,76}\.pdf$' column per migration 003.
-        # We additionally run it through sanitize_filename for belt-and-braces.
-        base_title = out_name.removesuffix(".pdf")
-        safe_filename = sanitize_filename(base_title, report_id)
+        subject = read_subject(object_prefix, out_name.removesuffix(".pdf"))
+        target = job_target(req) or f"report:{report_id}"
+        safe_filename, replace = await self._choose_filename(target, subject, report_id)
 
-        # Read subject from the report.json for the README row.
-        import json as _json
-        report_json_path = store_root() / object_prefix / "report.json"
-        subject = report_id  # fallback
-        if report_json_path.exists():
-            try:
-                rj = _json.loads(report_json_path.read_text(encoding="utf-8"))
-                subject = rj.get("meta", {}).get("subject", subject)
-            except (OSError, ValueError, KeyError) as exc:
-                logger.warning("publish_worker: could not read subject from report.json: %s", exc)
+        public = self._git.push_report(pdf_bytes, safe_filename, subject, report_id, replace=replace)
 
-        # Push to git repo.
-        public_url = self._git.push_report(pdf_bytes, safe_filename, subject, report_id)
-
-        # Update safe_filename and public_url on the request row before triggering the site.
-        async with self._pool.connection() as conn:
+        async with self._pool.connection() as conn, conn.transaction():
             await conn.execute(
                 "update publish_requests set safe_filename = %s, updated_at = now() where id = %s",
                 (safe_filename, request_id),
             )
+            await conn.execute(
+                """insert into published_targets (target_key, safe_filename, first_report_id, last_report_id)
+                   values (%s, %s, %s, %s)
+                   on conflict (target_key) do update
+                     set last_report_id = excluded.last_report_id, last_published_at = now()""",
+                (target, safe_filename, report_id, report_id),
+            )
+        public_url_ = public
 
         # Trigger site refresh.
         self._site.trigger_fetch()
 
         # Mark published.
-        await self._mark(request_id, "published", public_url=public_url)
-        logger.info("published report %s -> %s", report_id, public_url)
+        await self._mark(request_id, "published", public_url=public_url_)
+        logger.info("published report %s -> %s", report_id, public_url_)
+
+    async def _choose_filename(self, target: str, subject: str, report_id: str) -> tuple[str, bool]:
+        """(filename, replace): the target's existing file, else a fresh labelled name; the report
+        id is appended when another target or a legacy file already holds the plain name."""
+        async with self._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("select safe_filename from published_targets where target_key = %s", (target,))
+            row = await cur.fetchone()
+            if row:
+                return row[0], True
+            name = public_filename(subject)
+            await cur.execute("select 1 from published_targets where safe_filename = %s", (name,))
+            taken = await cur.fetchone() is not None
+        repo_path = os.environ.get("SOKEN_GIT_PUBLISH_REPO_PATH", "")
+        if taken or (repo_path and (Path(repo_path) / name).exists()):
+            name = public_filename(subject, report_id)
+        return name, False
 
     async def _mark(
         self,

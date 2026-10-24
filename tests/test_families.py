@@ -27,6 +27,17 @@ def test_starknet_off_by_chain_and_language(monkeypatch):
     assert e.value.code == "E_CHAIN_DISABLED"
 
 
+def test_sui_off_by_chain_keeps_aptos(monkeypatch):
+    monkeypatch.setenv("SOKEN_DISABLED_FAMILIES", "starknet,sui")
+    assert F.family_disabled(chain="sui") == "sui" and F.family_disabled(language="move_sui") == "sui"
+    assert F.family_disabled(chain="aptos") is None and F.family_disabled(language="move_aptos") is None
+    assert F.family_disabled(chain="starknet") == "starknet"
+    assert F.enabled_chains() == ["aptos", "evm", "hyperevm", "solana", "ton", "tron"]
+    with pytest.raises(ReviewError) as e:
+        F.require_enabled(chain="sui")
+    assert e.value.code == "E_CHAIN_DISABLED"
+
+
 def test_every_contract_chain_and_language_has_a_family():
     from soken_review.contract import bundle_tools, load_release
 

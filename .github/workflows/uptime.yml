@@ -1,0 +1,69 @@
+# Uptime alert for mcp.soken.dev (CEO 2026-10-24). Runs outside the droplet, so it also catches the
+# whole host being down. GET /healthz must answer 200 with db "ok" and a live worker, three tries
+# 20 s apart. On failure one issue labelled `uptime` is opened and assigned (GitHub emails the
+# assignees); on recovery it is commented and closed. GitHub schedules are best effort, about
+# every 5 to 15 minutes.
+name: uptime
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  healthz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe /healthz
+        id: probe
+        run: |
+          detail=""
+          for i in 1 2 3; do
+            body=$(curl -sS -m 15 -w '\nHTTP %{http_code}' https://mcp.soken.dev/healthz 2>&1) || true
+            code=$(printf '%s' "$body" | tail -n1 | awk '{print $2}')
+            json=$(printf '%s' "$body" | sed '$d')
+            if [ "$code" = "200" ] && printf '%s' "$json" | jq -e '.db == "ok" and (.workers // 0) >= 1' >/dev/null 2>&1; then
+              echo "ok=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            detail="try $i: HTTP ${code:-none} ${json:0:300}"
+            echo "$detail"
+            [ "$i" -lt 3 ] && sleep 20
+          done
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          { echo "detail<<EOF"; echo "$detail"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Open or close the alert issue
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        env:
+          OK: ${{ steps.probe.outputs.ok }}
+          DETAIL: ${{ steps.probe.outputs.detail }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const open = await github.rest.issues.listForRepo({ owner, repo, labels: 'uptime', state: 'open', per_page: 1 });
+            const now = new Date().toISOString();
+            const run = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            if (process.env.OK === 'true') {
+              if (open.data.length) {
+                const n = open.data[0].number;
+                await github.rest.issues.createComment({ owner, repo, issue_number: n, body: `Recovered at ${now}. ${run}` });
+                await github.rest.issues.update({ owner, repo, issue_number: n, state: 'closed' });
+              }
+              return;
+            }
+            const body = `mcp.soken.dev/healthz failed at ${now}.\n\n\`\`\`\n${process.env.DETAIL}\n\`\`\`\n\n${run}`;
+            if (open.data.length) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.data[0].number, body: `Still failing. ${body}` });
+            } else {
+              await github.rest.issues.create({ owner, repo, title: 'mcp.soken.dev is down', body, labels: ['uptime'], assignees: ['SokenDev', 'Kmanok'] });
+            }
+            core.setFailed('healthz failed');

@@ -46,6 +46,13 @@ codes:
     tools: "start"
     what: "Chain or chain id {value} is not enabled."
     fix: "Use one of: {enabled}."
+  - code: E_DAILY_REPORT_LIMIT
+    owner: "03"
+    channel: "rejection"
+    class: "input"
+    tools: "start, finalize"
+    what: "Daily report limit reached: {count} of {limit} reports in the last 24 hours."
+    fix: "Wait until 24 hours have passed since the earliest of those reports, then finalize or start again."
   - code: E_CHAIN_PAUSED
     owner: "03"
     channel: "rejection"

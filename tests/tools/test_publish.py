@@ -246,8 +246,10 @@ class TestPublishWorkerSecurity:
         try:
             offer = _offer_response(fake_report)
             fn = offer.get("sanitized_filename", "") or ""
-            for ch in "$`|;&<>()[]{}\\'\"\n\r\t/ ":
-                assert ch not in fn
+            assert fn.endswith(" (Automated by SOKEN MCP).pdf")
+            stem = fn.removesuffix(" (Automated by SOKEN MCP).pdf")
+            for ch in "$`|;&<>()[]{}\\'\"\n\r\t/":
+                assert ch not in stem
         except ValueError:
             pass  # also acceptable if sanitize_filename raises on bad input
 
@@ -588,21 +590,104 @@ class TestReadmeInjection:
         assert sanitize_cell("|||\n\n") == "Security review"
 
     def test_update_readme_injection_stays_one_row(self, tmp_path):
-        from soken_review.worker.publish_worker import _update_readme
+        from soken_review.worker.publish_worker import _update_readme, public_filename
         # A subject trying to inject extra table rows / a malicious markdown link.
         subject = "Pwn | [owned](http://evil) |\n| FAKE AUDIT | [x](http://evil) |"
-        _update_readme(tmp_path, "report_abcdefgh.pdf", subject, "abcdefghijklmnopqrst2345")
+        name = public_filename(subject)
+        _update_readme(tmp_path, name, subject, "abcdefghijklmnopqrst2345", today="2026-10-24")
         text = (tmp_path / "README.md").read_text(encoding="utf-8")
-        # The malicious subject must not create a second table row.
-        data_rows = [ln for ln in text.splitlines() if "report_abcdefgh.pdf" in ln]
-        assert len(data_rows) == 1, f"injected an extra row: {data_rows}"
-        row = data_rows[0]
-        # Row shape is "| <subject> | [file](./file) |": exactly 3 pipes. More => injected columns.
+        rows = [ln for ln in text.splitlines() if ln.startswith("| [")]
+        assert len(rows) == 1, f"injected an extra row: {rows}"
+        row = rows[0]
         assert row.count("|") == 3, f"subject injected extra cells/rows: {row!r}"
-        # The subject cell (between the first two pipes) carries no structural markup.
-        subject_cell = row.split("|")[1]
-        for ch in "[]<>`":
-            assert ch not in subject_cell, f"{ch!r} survived in subject cell: {subject_cell!r}"
+        label = row.split("](", 1)[0].removeprefix("| [")
+        for ch in "[]<>`|":
+            assert ch not in label, f"{ch!r} survived in the link text: {label!r}"
+        assert "(Automated by SOKEN MCP)" in label and row.endswith("| 2026-10-24 |")
+
+
+class TestPublicFilenameAndReplace:
+    """CEO 2026-10-24: labelled name, one file per target, the real README table format."""
+
+    README = ("# Smart Contract Audit Reports\n\n## Reports (260)\n\n| Report | Published |\n|---|---|\n"
+              "| [Old](https://github.com/Soken-LTD/smart-contract-audits/blob/main/Old.pdf) | 2026-10-21 |\n")
+
+    def test_public_filename_label_and_charset(self):
+        from soken_review.worker.publish_worker import public_filename
+        assert public_filename("MasterChef") == "MasterChef (Automated by SOKEN MCP).pdf"
+        assert public_filename("-../x;rm -rf") == "x rm -rf (Automated by SOKEN MCP).pdf"
+        assert public_filename("") == "Smart contract review (Automated by SOKEN MCP).pdf"
+        assert public_filename("Vault", "abcdefghijklmnopqrst2345") == "Vault abcdefgh (Automated by SOKEN MCP).pdf"
+        with pytest.raises(ValueError):
+            public_filename("Vault", "BAD_ID")
+
+    def test_new_row_goes_under_the_real_header_and_bumps_count(self, tmp_path):
+        from soken_review.worker.publish_worker import _update_readme
+        (tmp_path / "README.md").write_text(self.README, encoding="utf-8")
+        _update_readme(tmp_path, "Vault (Automated by SOKEN MCP).pdf", "Vault", "abcdefgh", today="2026-10-24")
+        text = (tmp_path / "README.md").read_text(encoding="utf-8")
+        assert "## Reports (261)" in text and text.count("## Reports") == 1
+        lines = text.splitlines()
+        i = lines.index("|---|---|")
+        assert lines[i + 1] == ("| [Vault (Automated by SOKEN MCP)](https://github.com/Soken-LTD/smart-contract-audits"
+                                "/blob/main/Vault%20%28Automated%20by%20SOKEN%20MCP%29.pdf) | 2026-10-24 |")
+        assert lines[i + 2].startswith("| [Old]")
+
+    def test_replace_keeps_one_row_and_count(self, tmp_path):
+        from soken_review.worker.publish_worker import _update_readme
+        (tmp_path / "README.md").write_text(self.README, encoding="utf-8")
+        name = "Vault (Automated by SOKEN MCP).pdf"
+        _update_readme(tmp_path, name, "Vault", "abcdefgh", today="2026-10-24")
+        _update_readme(tmp_path, "Other (Automated by SOKEN MCP).pdf", "Other", "abcdefgh", today="2026-10-25")
+        _update_readme(tmp_path, name, "Vault", "abcdefgh", replace=True, today="2026-10-26")
+        text = (tmp_path / "README.md").read_text(encoding="utf-8")
+        rows = [ln for ln in text.splitlines() if ln.startswith("| [")]
+        assert [r.split("]")[0] for r in rows] == ["| [Vault (Automated by SOKEN MCP)", "| [Other (Automated by SOKEN MCP)", "| [Old"]
+        assert rows[0].endswith("| 2026-10-26 |") and "## Reports (262)" in text
+
+    def test_git_replace_overwrites_and_failed_push_resets(self, tmp_path):
+        import subprocess
+        from unittest.mock import patch as _patch
+
+        from soken_review.worker.publish_worker import EnvGitPublisher
+
+        origin, clone = tmp_path / "origin.git", tmp_path / "clone"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+        subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True)
+        (clone / "README.md").write_text(self.README, encoding="utf-8")
+        g = ["git", "-C", str(clone), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(g + ["add", "README.md"], check=True)
+        subprocess.run(g + ["commit", "-qm", "init"], check=True)
+        subprocess.run(["git", "-C", str(clone), "push", "-q", "origin", "HEAD:main"], check=True)
+        subprocess.run(["git", "-C", str(clone), "branch", "-q", "--set-upstream-to=origin/main"], check=True)
+        env = {"SOKEN_GIT_PUBLISH_REPO_PATH": str(clone), "SOKEN_GIT_PUBLISH_TOKEN": ""}
+        name = "Vault (Automated by SOKEN MCP).pdf"
+        with _patch.dict("os.environ", env):
+            pub = EnvGitPublisher()
+            url = pub.push_report(b"v1", name, "Vault", "abcdefgh")
+            assert url.endswith("/Vault%20%28Automated%20by%20SOKEN%20MCP%29.pdf")
+            with pytest.raises(FileExistsError):
+                pub.push_report(b"v2", name, "Vault", "abcdefgh")   # a new target never overwrites
+            pub.push_report(b"v2", name, "Vault", "abcdefgh", replace=True)
+            assert (clone / name).read_bytes() == b"v2"
+            shown = subprocess.run(["git", "--git-dir", str(origin), "show", f"main:{name}"],
+                                   capture_output=True, check=True).stdout
+            assert shown == b"v2"
+            # A push that fails leaves the clone equal to origin, without the new file.
+            real_run = subprocess.run
+
+            def failing(argv, **kw):
+                if "push" in argv:
+                    raise subprocess.CalledProcessError(1, argv)
+                return real_run(argv, **kw)
+
+            with (_patch("soken_review.worker.publish_worker.subprocess.run", side_effect=failing),
+                  pytest.raises(subprocess.CalledProcessError)):
+                pub.push_report(b"x", "New (Automated by SOKEN MCP).pdf", "New", "abcdefgh")
+            assert not (clone / "New (Automated by SOKEN MCP).pdf").exists()
+            head = real_run(["git", "-C", str(clone), "rev-parse", "HEAD", "origin/main"],
+                            capture_output=True, text=True, check=True).stdout.split()
+            assert head[0] == head[1]
 
 
 # ---------------------------------------------------------------------------

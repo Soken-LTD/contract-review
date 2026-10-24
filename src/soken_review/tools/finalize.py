@@ -23,6 +23,7 @@ import psycopg
 import psycopg_pool
 from psycopg.rows import dict_row
 
+from .. import quota
 from ..db.job_repo import JobRepo
 from ..db.pool import get_pool
 from ..engine.severity import SeverityContext, compute_severity
@@ -556,10 +557,17 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
 
         # ── All checks pass: finalize ──────────────────────────────────
 
+        # Daily report quota (quota.py): this is where a report is issued, so the count is
+        # taken under an advisory lock per key; a refusal leaves the job ready for tomorrow.
+        try:
+            await quota.check(conn, job.get("limit_key"), job_id=job_id, lock=True)
+        except ReviewError as exc:
+            return {"accepted": False, "errors": [exc.envelope()]}
+
         # Assign report_id (SF-007)
         report_id = _derive_report_id(job_id)
         await conn.execute(
-            "update jobs set report_id = %s where job_id = %s and report_id is null",
+            "update jobs set report_id = %s, report_at = now() where job_id = %s and report_id is null",
             (report_id, job_id),
         )
 
