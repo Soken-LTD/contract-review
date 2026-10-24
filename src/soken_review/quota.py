@@ -2,10 +2,10 @@
 
 There is no user account on the connector, so "user" is approximated:
   - a direct client (Claude Code, Cursor, any MCP client) is its IP address: `ip:<addr>`;
-  - a request relayed by an AI provider's infrastructure (claude.ai, ChatGPT connectors:
-    SOKEN_RELAY_CIDRS + SOKEN_RELAY_CIDRS_FILE) carries an egress IP shared by every user of that
-    product and rotating between calls, so the key is
-    the reviewed target instead: `relay:<target_key>`, and all relayed reports together share one
+  - a request relayed by an AI provider's infrastructure (claude.ai, ChatGPT, Copilot Studio,
+    Gemini, Perplexity: SOKEN_RELAY_CIDRS + SOKEN_RELAY_CIDRS_FILE) carries an egress IP shared by
+    every user of that product and rotating between calls, so the key is
+    the reviewed target instead: `relay:<provider>:<target_key>`, and each provider's relayed reports share one
     daily cap (SOKEN_DAILY_REPORTS_RELAY_TOTAL).
 
 The client IP comes from nginx's `X-Real-IP` (uvicorn listens on 127.0.0.1 only, so the header
@@ -22,6 +22,7 @@ import hashlib
 import hmac
 import ipaddress
 import os
+import re
 from contextvars import ContextVar
 from typing import Any
 
@@ -54,13 +55,15 @@ def _cidrs(name: str, default: str) -> list[ipaddress.IPv4Network | ipaddress.IP
 
 
 _FILE_CACHE: dict[str, tuple[float, list]] = {}
+_PROVIDER_RE = re.compile(r"^#\s*([a-z0-9_-]+)\s*:")
 
 
-def _relay_cidrs() -> list:
-    """SOKEN_RELAY_CIDRS plus the ranges in SOKEN_RELAY_CIDRS_FILE (one CIDR per line, `#`
-    comments), re-read when the file changes: refresh_relay_cidrs.py rewrites it daily from
-    the operators' published egress lists (Anthropic, OpenAI chatgpt-connectors.json)."""
-    nets = _cidrs("SOKEN_RELAY_CIDRS", "160.79.104.0/21")
+def _relay_cidrs() -> list[tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, str]]:
+    """(network, provider) pairs: SOKEN_RELAY_CIDRS (provider `anthropic`) plus the ranges in
+    SOKEN_RELAY_CIDRS_FILE, one CIDR per line under `# <provider>: <count>` headers, re-read when
+    the file changes. refresh_relay_cidrs.py rewrites the file daily from the AI providers'
+    published egress lists."""
+    nets = [(n, "anthropic") for n in _cidrs("SOKEN_RELAY_CIDRS", "160.79.104.0/21")]
     path = os.environ.get("SOKEN_RELAY_CIDRS_FILE", "")
     if not path:
         return nets
@@ -71,13 +74,18 @@ def _relay_cidrs() -> list:
     cached = _FILE_CACHE.get(path)
     if cached is None or cached[0] != mtime:
         parsed = []
+        provider = "relay"
         try:
             with open(path, encoding="utf-8") as fh:
                 for line in fh:
+                    m = _PROVIDER_RE.match(line.strip())
+                    if m:
+                        provider = m.group(1)
+                        continue
                     part = line.split("#", 1)[0].strip()
                     if part:
                         try:
-                            parsed.append(ipaddress.ip_network(part, strict=False))
+                            parsed.append((ipaddress.ip_network(part, strict=False), provider))
                         except ValueError:
                             continue
         except OSError:
@@ -85,6 +93,18 @@ def _relay_cidrs() -> list:
         cached = (mtime, parsed)
         _FILE_CACHE[path] = cached
     return nets + cached[1]
+
+
+def relay_provider(ip: str) -> str | None:
+    """The AI provider whose egress range holds `ip`, else None."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    for net, provider in _relay_cidrs():
+        if addr.version == net.version and addr in net:
+            return provider
+    return None
 
 
 def _in(ip: str, nets: list) -> bool:
@@ -155,8 +175,9 @@ def limit_key(*, target: str | None, job_id: str) -> str | None:
     ip = CLIENT_IP.get()
     if ip and _in(ip, _cidrs("SOKEN_QUOTA_EXEMPT_CIDRS", "")):
         return None
-    if ip and _in(ip, _relay_cidrs()):
-        return f"relay:{_h(target or 'job:' + job_id)}"
+    provider = relay_provider(ip) if ip else None
+    if provider:
+        return f"relay:{provider}:{_h(target or 'job:' + job_id)}"
     if ip:
         return f"ip:{_h(_user_of(ip))}"
     # No client address: an in-process or loopback call (nginx always sets X-Real-IP on /mcp).
@@ -186,10 +207,13 @@ async def check(conn: psycopg.AsyncConnection, key: str | None, *, job_id: str |
     if used >= limit:
         raise ReviewError("E_DAILY_REPORT_LIMIT", count=str(used), limit=str(limit))
     if key.startswith("relay:"):
+        # One shared cap per AI provider: a busy ChatGPT user cannot use up claude.ai's share.
+        parts = key.split(":")
+        scope = f"relay:{parts[1]}:" if len(parts) == 3 else "relay:"
         total = relay_total_limit()
         if lock:
-            await conn.execute("select pg_advisory_xact_lock(hashtext('soken-quota:relay'))")
-        used_all = await _count(conn, "limit_key like %s", "relay:%", job_id)
+            await conn.execute("select pg_advisory_xact_lock(hashtext('soken-quota:' || %s))", (scope,))
+        used_all = await _count(conn, "limit_key like %s", scope + "%", job_id)
         if used_all >= total:
             raise ReviewError("E_DAILY_REPORT_LIMIT", count=str(used_all), limit=str(total))
 

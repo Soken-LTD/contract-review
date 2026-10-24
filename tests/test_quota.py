@@ -84,10 +84,11 @@ async def _check_scenario(db_conn, monkeypatch):
     await Q.check(db_conn, "ip:aaa", job_id=second)          # the job's own report does not count twice
     await Q.check(db_conn, "ip:bbb")
     await Q.check(db_conn, None)
-    for k in ("relay:x", "relay:y", "relay:z"):
+    for k in ("relay:openai:x", "relay:openai:y", "relay:openai:z"):
         await _job_with_report(db_conn, k, 1)
     with pytest.raises(ReviewError):
-        await Q.check(db_conn, "relay:new")                   # shared relay cap reached
+        await Q.check(db_conn, "relay:openai:new")            # this provider's shared cap reached
+    await Q.check(db_conn, "relay:anthropic:new")             # another provider is not affected
 
 
 @pytest.mark.asyncio
@@ -125,12 +126,12 @@ def test_relay_cidrs_file_is_read_and_reloaded(monkeypatch, tmp_path):
     monkeypatch.delenv("SOKEN_RELAY_CIDRS", raising=False)
     tok = Q.CLIENT_IP.set("20.0.0.9")
     try:
-        assert Q.limit_key(target="evm:0xabc", job_id="j").startswith("relay:")
+        assert Q.limit_key(target="evm:0xabc", job_id="j").startswith("relay:openai:")
         import os
         f.write_text("21.0.0.0/24\n", encoding="utf-8")
         os.utime(f, (1, 1))                                   # new mtime: reloaded
         assert Q.limit_key(target="evm:0xabc", job_id="j").startswith("ip:")
         Q.CLIENT_IP.set("160.79.106.1")                       # Anthropic default still relay
-        assert Q.limit_key(target="evm:0xabc", job_id="j").startswith("relay:")
+        assert Q.limit_key(target="evm:0xabc", job_id="j").startswith("relay:anthropic:")
     finally:
         Q.CLIENT_IP.reset(tok)
