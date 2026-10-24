@@ -279,6 +279,10 @@ def _final_id(prefix: str, n: int) -> str:
     return f"{prefix}-{n:03d}"
 
 
+# Failed renders after which a job is no longer reset to ready by review_finalize.
+_MAX_RENDER_RESETS = 3
+
+
 async def _assign_final_ids(
     conn: psycopg.AsyncConnection, job_id: str
 ) -> tuple[dict[str, str], list[dict[str, Any]], int]:
@@ -678,15 +682,32 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
         # model can revise the flagged text and finalize again.  The stored gate error
         # is surfaced here; report_at and report_id were already cleared in render.py.
         if state == "render_failed":
+            # At most _MAX_RENDER_RESETS failed renders per job; after that the job stays failed.
+            async with conn.cursor() as cur:
+                await cur.execute("select count(*) from job_steps where job_id = %s and step = 'render'"
+                                  " and status = 'failed'", (job_id,))
+                failed_renders = (await cur.fetchone())[0]
+            stored_detail = job.get("error_detail") or {}
+            # Only the failure kind and, for a gate failure, the rule and matched phrase go back.
+            shown = {"detail": str(stored_detail.get("detail", ""))[:40]}
+            if stored_detail.get("detail") == "late_gate":
+                shown["rule"] = str(stored_detail.get("note", ""))[:120]
+            if failed_renders > _MAX_RENDER_RESETS:
+                return {"accepted": False, "state": "render_failed",
+                        "errors": [ReviewError("E_JOB_TERMINAL", state="render_failed",
+                                               exit_code="E_RENDER_FAILED").envelope()]}
             repo = JobRepo(conn)
             await repo.transition(job_id, "ready")
-            await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
-            stored_detail = job.get("error_detail") or {}
+            # Undo what finalize froze, so the revised job finalizes from a clean slate: final ids
+            # are re-assigned and leads finalize closed as not reviewed are open again.
+            await conn.execute("update finding_drafts set final_id = null where job_id = %s", (job_id,))
+            await conn.execute("update leads set state = 'open' where job_id = %s and state = 'not_reviewed'",
+                               (job_id,))
             return {
                 "accepted": False,
                 "state": "ready",
                 "errors": [ReviewError("E_RENDER_FAILED",
-                                       detail=json.dumps(stored_detail)[:300]).envelope()],
+                                       detail=json.dumps(shown)).envelope()],
                 "hint": (
                     "Job reset to ready; revise the flagged text (see 'detail') "
                     "and call review_finalize again."

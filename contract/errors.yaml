@@ -198,7 +198,7 @@ codes:
     channel: "report state"
     class: "server"
     tools: "report, finalize"
-    what: "Report could not be built; review data is kept. detail contains the gate error."
+    what: "Report could not be built; review data is kept. Cause: {detail}."
     fix: "Call review_finalize again: the job is reset to ready so the model can revise the flagged text and re-finalize."
   - code: E_FINALIZE_OPEN
     owner: "04"
