@@ -89,10 +89,13 @@ def target_key(*, chain: str | None, address: str | None, repo_url: str | None,
 
 def _h(value: str) -> str:
     """Keyed hash: a plain SHA of an IPv4 address or a public contract is reversible by search.
-    Key: SOKEN_QUOTA_SECRET, else report key V1 (both outside the database)."""
+    Key: SOKEN_QUOTA_SECRET, else the current report key, which the API refuses to start without
+    (require_report_keys); never a per-process random key, which would reset the quota on restart.
+    Rotating the report key starts the 24-hour count afresh."""
+    from .tools.report import current_key_version
     from .tools.report import key as report_key
 
-    secret = os.environ.get("SOKEN_QUOTA_SECRET", "").encode() or report_key(1)
+    secret = os.environ.get("SOKEN_QUOTA_SECRET", "").encode() or report_key(current_key_version())
     return hmac.new(secret, b"soken-quota:" + value.encode(), hashlib.sha256).hexdigest()[:32]
 
 
