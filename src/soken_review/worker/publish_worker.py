@@ -34,6 +34,12 @@ from pathlib import Path
 import psycopg_pool
 from psycopg.rows import dict_row
 
+# Maximum publish requests processed per worker batch run (every 2 minutes via soken-publish.timer).
+# Excess requests stay in 'queued' state and are picked up in subsequent runs — they are never
+# dropped.  Matches SOKEN_PUBLISH_RATE_LIMIT_HOUR in publish.py so the env var governs both the
+# legacy enqueue gate and the worker throughput.
+_PUBLISH_BATCH_LIMIT = int(os.environ.get("SOKEN_PUBLISH_RATE_LIMIT_HOUR", "20"))
+
 from ..quota import job_target
 from ..report.render import store_root
 
@@ -388,10 +394,24 @@ class PublishWorker:
             await self._mark(request_id, "failed", error_detail=str(exc)[:400])
 
     async def run_queued(self) -> int:
-        """Claim and run all queued requests.  Returns count processed."""
+        """Claim and run queued requests within the hourly cap (SOKEN_PUBLISH_RATE_LIMIT_HOUR).
+
+        Excess requests remain 'queued' and are processed in subsequent timer runs
+        (soken-publish.timer, every 2 minutes).  They are never dropped.
+        """
         async with self._pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            # A true hourly cap on pushes to the public repository: count what went out in the
+            # last hour and claim only the remainder; the rest waits in 'queued'.
             await cur.execute(
-                "select id from publish_requests where status = 'queued' order by queued_at limit 20"
+                "select count(*) as n from publish_requests where status = 'published' "
+                "and updated_at > now() - interval '1 hour'"
+            )
+            budget = max(0, _PUBLISH_BATCH_LIMIT - int((await cur.fetchone())["n"]))
+            if budget == 0:
+                return 0
+            await cur.execute(
+                "select id from publish_requests where status = 'queued' order by queued_at limit %s",
+                (budget,),
             )
             rows = await cur.fetchall()
         count = 0

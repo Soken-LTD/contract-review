@@ -583,8 +583,12 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
             except Exception:  # noqa: BLE001
                 finalize_checks = []  # never fail status due to finalize_checks
 
+    # Publish info (CEO 2026-10-24): show the public URL (or "publishing") for rendered jobs.
+    from .report import _publish_info
+    pub_status, pub_url = await _publish_info(job.get("report_id"))
+
     return _build_status_response(job, args.get("response_format", "concise"), steps, drafts, medians,
-                                  finalize_checks=finalize_checks)
+                                  finalize_checks=finalize_checks, pub_status=pub_status, pub_url=pub_url)
 
 
 # States where long-poll should return immediately (03 §4.2)
@@ -743,6 +747,8 @@ def _build_status_response(
     drafts: list[dict[str, Any]] | None = None,
     medians: dict[str, float] | None = None,
     finalize_checks: list[dict[str, Any]] | None = None,
+    pub_status: str | None = None,
+    pub_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the review_status output object from the job row (03 §4.2)."""
     state: str = job["state"]
@@ -806,5 +812,9 @@ def _build_status_response(
 
     # Finalize checks (03 §4.2, F1-F6, F8): shared with review_finalize
     out["finalize_checks"] = finalize_checks or []
+
+    # Publish info (CEO 2026-10-24): present for rendered jobs; null for pre-render.
+    out["publish_status"] = pub_status
+    out["public_url"] = pub_url
 
     return out

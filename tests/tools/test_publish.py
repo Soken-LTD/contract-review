@@ -410,7 +410,7 @@ def _patch_db(job=_FAKE_JOB, report=_FAKE_REPORT, existing=None, rate=0):
     from contextlib import ExitStack
     from unittest.mock import patch
 
-    async def _noop_enqueue(*a, **kw):
+    async def _noop(*a, **kw):
         pass
 
     stack = ExitStack()
@@ -418,13 +418,14 @@ def _patch_db(job=_FAKE_JOB, report=_FAKE_REPORT, existing=None, rate=0):
     stack.enter_context(patch(f"{_MOD}._load_report", new=AsyncMock(return_value=report)))
     stack.enter_context(patch(f"{_MOD}._existing_request", new=AsyncMock(return_value=existing)))
     stack.enter_context(patch(f"{_MOD}._rate_limit_count", new=AsyncMock(return_value=rate)))
-    stack.enter_context(patch(f"{_MOD}._enqueue", new=AsyncMock(side_effect=_noop_enqueue)))
+    stack.enter_context(patch(f"{_MOD}._enqueue", new=AsyncMock(side_effect=_noop)))
+    stack.enter_context(patch(f"{_MOD}._log_consent", new=AsyncMock(side_effect=_noop)))
     return stack
 
 
 @ASYNC
-async def test_offer_returns_phase_offer():
-    """When no consent is given, phase should be 'offer' and future_public_url should be set."""
+async def test_no_consent_returns_status_not_queued():
+    """Without consent, when no publish_request exists, phase is 'not_queued'."""
     import soken_review.tools  # ensure handler registered  # noqa: F401
     from soken_review.tools.publish import handle_review_publish
 
@@ -432,11 +433,26 @@ async def test_offer_returns_phase_offer():
         result = await handle_review_publish({"job_id": _JOB_ID, "manage_key": OWNER_KEY})
 
     assert result["accepted"] is True
-    assert result["phase"] == "offer"
-    assert result["future_public_url"].startswith(GITHUB_RAW_BASE)
-    assert result["disclaimer"] is not None
-    assert "free" not in (result["disclaimer"] or "").lower()
-    assert "$" not in (result["disclaimer"] or "")
+    assert result["phase"] == "not_queued"
+    assert result["status"] is None
+    assert result["public_url"] is None
+    assert "free" not in str(result).lower()
+    assert "$" not in str(result)
+
+
+@ASYNC
+async def test_no_consent_returns_existing_status():
+    """Without consent, when a publish_request exists, the current status is returned."""
+    import soken_review.tools  # noqa: F401
+    from soken_review.tools.publish import handle_review_publish
+
+    with _patch_db(existing=_EXISTING_REQ_PUBLISHED):
+        result = await handle_review_publish({"job_id": _JOB_ID, "manage_key": OWNER_KEY})
+
+    assert result["accepted"] is True
+    assert result["phase"] == "published"
+    assert result["status"] == "published"
+    assert result["public_url"] is not None
 
 
 @ASYNC
@@ -467,30 +483,56 @@ async def test_offer_refuses_missing_job():
 
 
 @ASYNC
-async def test_consent_enqueues_publish():
-    """Valid consent on a rendered report must return phase='queued'."""
+async def test_consent_enqueues_when_no_request_exists():
+    """Valid consent on a rendered report with no existing request must return phase='not_queued'
+    initially (enqueue is called), then return the newly created status via _existing_request.
+
+    After _enqueue() is called, _existing_request returns None (mock doesn't create DB rows),
+    so the response is 'not_queued'.  The key assertion is that _enqueue was called once.
+    """
+    from unittest.mock import patch
+
     import soken_review.tools  # noqa: F401
     from soken_review.tools.publish import handle_review_publish
 
-    with _patch_db():
+    enqueue_calls: list = []
+
+    async def _record_enqueue(*a, **kw):
+        enqueue_calls.append(a)
+
+    with _patch_db(), patch(f"{_MOD}._enqueue", new=AsyncMock(side_effect=_record_enqueue)):
         result = await handle_review_publish(
             {"job_id": _JOB_ID, "manage_key": OWNER_KEY, "consent": VALID_CONSENT}
         )
 
     assert result["accepted"] is True
-    assert result["phase"] == "queued"
-    assert result["status"] == "queued"
+    assert len(enqueue_calls) == 1  # _enqueue was called once for the new publish request
     assert "free" not in str(result).lower()
     assert "price" not in str(result).lower()
 
 
 @ASYNC
-async def test_consent_idempotent_returns_existing_status():
-    """Second consent call returns existing status without duplicate enqueue."""
+async def test_consent_with_existing_request_logs_only():
+    """Consent call when publish_request already exists logs consent but does NOT re-enqueue."""
+    from unittest.mock import patch
+
     import soken_review.tools  # noqa: F401
     from soken_review.tools.publish import handle_review_publish
 
-    with _patch_db(existing=_EXISTING_REQ_PUBLISHED):
+    enqueue_calls: list = []
+    log_calls: list = []
+
+    async def _record_enqueue(*a, **kw):
+        enqueue_calls.append(a)
+
+    async def _record_log(*a, **kw):
+        log_calls.append(a)
+
+    with (
+        _patch_db(existing=_EXISTING_REQ_PUBLISHED),
+        patch(f"{_MOD}._enqueue", new=AsyncMock(side_effect=_record_enqueue)),
+        patch(f"{_MOD}._log_consent", new=AsyncMock(side_effect=_record_log)),
+    ):
         result = await handle_review_publish(
             {"job_id": _JOB_ID, "manage_key": OWNER_KEY, "consent": VALID_CONSENT}
         )
@@ -499,6 +541,8 @@ async def test_consent_idempotent_returns_existing_status():
     assert result["phase"] == "published"
     assert result["status"] == "published"
     assert result["public_url"] is not None
+    assert len(enqueue_calls) == 0  # _enqueue must NOT be called when request already exists
+    assert len(log_calls) == 1  # _log_consent IS called to record the explicit consent
 
 
 @ASYNC
@@ -848,3 +892,187 @@ async def test_db_dedup_second_consent_idempotent(db_conn, db_pool):
     verifies the second call returns the same publish_request status without duplicating.
     """
     pytest.skip("Stand-only test: requires live DB + rendered report fixture (deferred to stand)")
+
+
+# ---------------------------------------------------------------------------
+# Auto-publish: enqueue on render success (CEO 2026-10-24)
+# ---------------------------------------------------------------------------
+
+
+class TestAutoPublishEnqueue:
+    """render.py enqueues a publish_request in the same transaction as rendered."""
+
+    def test_auto_publish_constants_present(self):
+        """AUTO_PUBLISH_STATEMENT, PARTY, NAME are exported from render.py."""
+        from soken_review.report.render import (
+            AUTO_PUBLISH_NAME,
+            AUTO_PUBLISH_PARTY,
+            AUTO_PUBLISH_STATEMENT,
+        )
+        assert AUTO_PUBLISH_PARTY == "requester"
+        assert AUTO_PUBLISH_NAME == "MCP Terms of Use acceptance"
+        assert "soken.dev/mcp/terms.html" in AUTO_PUBLISH_STATEMENT
+        assert "Terms of Use" in AUTO_PUBLISH_STATEMENT
+        assert len(AUTO_PUBLISH_STATEMENT) <= 500  # fits in publish_consent_log.statement
+
+    def test_auto_publish_statement_no_brand_violations(self):
+        """Consent statement must not mention soken.io or hardcoded pricing."""
+        from soken_review.report.render import AUTO_PUBLISH_STATEMENT
+        stmt = AUTO_PUBLISH_STATEMENT.lower()
+        assert "soken.io" not in stmt
+        assert "free" not in stmt
+        assert "$" not in stmt
+
+    def test_auto_enqueue_function_exists(self):
+        """_auto_enqueue_publish is importable and has the expected signature."""
+        import inspect
+
+        from soken_review.report.render import _auto_enqueue_publish
+        sig = inspect.signature(_auto_enqueue_publish)
+        params = list(sig.parameters.keys())
+        assert params == ["conn", "report_id", "job_id", "render_ts"]
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_auto_enqueue_public_sources_only(self, db_pool):
+        """Deployed and repo reports are queued once (idempotent); upload and files are not."""
+        from soken_review.db.job_repo import JobRepo, new_job_id
+        from soken_review.report.render import _auto_enqueue_publish
+
+        async with db_pool.connection() as conn:
+            tx = conn.transaction(force_rollback=True)
+            async with tx:
+                rids = {}
+                for kind, rid in (("deployed", "aaaaaaaaaaaaaaaaaaaaaaaaaa"), ("repo", "bbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                                  ("upload", "cccccccccccccccccccccccccc"), ("files", "dddddddddddddddddddddddddd")):
+                    jid = new_job_id()
+                    await JobRepo(conn).create(job_id=jid, principal_key="p", surface="plugin", state="queued",
+                                               requester_role="third_party_public_code", source_kind=kind,
+                                               source_args={}, has_deployment=kind == "deployed", chain="evm")
+                    await conn.execute(
+                        """insert into reports (report_id, report_id_short, job_id, profile, object_prefix, out_name,
+                           pdf_sha256s, subject_candidates, key_version, rendered_at, expires_at)
+                           values (%s, %s, %s, 'public_review', %s, 'R.pdf', array[repeat('0',64)]::char(64)[],
+                                   '[]'::jsonb, 1, now(), now() + interval '30 days')""",
+                        (rid, rid[:10], jid, f"reports/{rid}/1/"))
+                    rids[kind] = (rid, jid)
+                for kind, (rid, jid) in rids.items():
+                    await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T00:00:00+00:00")
+                    await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T01:00:00+00:00")   # re-render
+                got = {}
+                for kind, (rid, _jid) in rids.items():
+                    row = await (await conn.execute(
+                        "select (select count(*) from publish_requests where report_id = %s),"
+                        " (select count(*) from publish_consent_log where report_id = %s)", (rid, rid))).fetchone()
+                    got[kind] = tuple(row)
+        assert got["deployed"] == (1, 2) and got["repo"] == (1, 2)
+        assert got["upload"] == (0, 0) and got["files"] == (0, 0)
+
+
+class TestAutoPublishRateGuard:
+    """publish_worker uses SOKEN_PUBLISH_RATE_LIMIT_HOUR as the batch cap (excess stays queued)."""
+
+    def test_publish_batch_limit_constant_exported(self):
+        """_PUBLISH_BATCH_LIMIT is set from env var and defaults to 20."""
+        from soken_review.worker import publish_worker
+        assert hasattr(publish_worker, "_PUBLISH_BATCH_LIMIT")
+        assert isinstance(publish_worker._PUBLISH_BATCH_LIMIT, int)
+        assert publish_worker._PUBLISH_BATCH_LIMIT > 0
+
+    def test_run_queued_uses_batch_limit(self):
+        """run_queued SQL uses the _PUBLISH_BATCH_LIMIT, not a hardcoded 20."""
+        import inspect
+
+        from soken_review.worker.publish_worker import PublishWorker
+        src = inspect.getsource(PublishWorker.run_queued)
+        assert "_PUBLISH_BATCH_LIMIT" in src
+        # Must NOT have a hardcoded 20 in the limit clause, and must count the last hour
+        assert "limit 20" not in src.lower()
+        assert "interval '1 hour'" in src
+
+
+class TestNoPublishOnFailure:
+    """render.py must NOT enqueue a publish_request on render_failed or deleted jobs."""
+
+    def test_auto_enqueue_not_called_in_finish_failed(self):
+        """_auto_enqueue_publish is not called from _finish_failed."""
+        import inspect
+
+        from soken_review.report import render
+        src = inspect.getsource(render._finish_failed)
+        assert "_auto_enqueue_publish" not in src
+
+    def test_auto_enqueue_not_called_when_job_deleted(self):
+        """The deleted-during-render guard returns before _auto_enqueue_publish is called."""
+        import inspect
+
+        from soken_review.report import render
+        src = inspect.getsource(render._run_render_step)
+        # The delete guard returns before _auto_enqueue_publish
+        del_idx = src.index("job deleted during the render")
+        enq_idx = src.index("_auto_enqueue_publish")
+        assert del_idx < enq_idx, "_auto_enqueue_publish must appear after the deleted-job guard"
+
+
+class TestReviewPublishStatusLookup:
+    """review_publish without consent returns current status, not an offer phase."""
+
+    @ASYNC
+    async def test_no_consent_returns_accepted_true(self):
+        """No consent → accepted=True with current status."""
+        import soken_review.tools  # noqa: F401
+        from soken_review.tools.publish import handle_review_publish
+
+        with _patch_db(existing=_EXISTING_REQ_PUBLISHED):
+            result = await handle_review_publish({"job_id": _JOB_ID, "manage_key": OWNER_KEY})
+        assert result["accepted"] is True
+        assert result["status"] == "published"
+
+    @ASYNC
+    async def test_no_consent_no_request_returns_not_queued(self):
+        """No consent, no publish_request → not_queued (auto-enqueue not yet committed)."""
+        import soken_review.tools  # noqa: F401
+        from soken_review.tools.publish import handle_review_publish
+
+        with _patch_db(existing=None):
+            result = await handle_review_publish({"job_id": _JOB_ID, "manage_key": OWNER_KEY})
+        assert result["accepted"] is True
+        assert result["phase"] == "not_queued"
+        assert result["status"] is None
+
+    @ASYNC
+    async def test_with_consent_logs_when_request_already_exists(self):
+        """Consent with existing request → logs consent, does not re-enqueue."""
+        from unittest.mock import patch
+
+        import soken_review.tools  # noqa: F401
+        from soken_review.tools.publish import handle_review_publish
+
+        log_calls: list = []
+
+        async def capture_log(*a, **kw):
+            log_calls.append(a)
+
+        with (
+            _patch_db(existing=_EXISTING_REQ_PUBLISHED),
+            patch(f"{_MOD}._log_consent", new=AsyncMock(side_effect=capture_log)),
+        ):
+            result = await handle_review_publish(
+                {"job_id": _JOB_ID, "manage_key": OWNER_KEY, "consent": VALID_CONSENT}
+            )
+        assert result["status"] == "published"
+        assert len(log_calls) == 1
+
+    @ASYNC
+    async def test_delete_before_push_cancels(self):
+        """When job is in 'rendered' state but publish_request shows failed due to delete,
+        the tool correctly reports the failed status (delete.py sets failed, not our tool)."""
+        import soken_review.tools  # noqa: F401
+        from soken_review.tools.publish import handle_review_publish
+
+        deleted_req = {**_EXISTING_REQ_PUBLISHED, "status": "failed",
+                       "error_detail": "job deleted", "public_url": None}
+        with _patch_db(existing=deleted_req):
+            result = await handle_review_publish({"job_id": _JOB_ID, "manage_key": OWNER_KEY})
+        assert result["accepted"] is True
+        assert result["status"] == "failed"
+        assert result["public_url"] is None

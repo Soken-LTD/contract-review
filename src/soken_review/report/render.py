@@ -37,6 +37,18 @@ from .kit.build import BuildError, build
 
 logger = logging.getLogger(__name__)
 
+# Auto-publish consent (CEO 2026-10-24): every successful render enqueues a publish_request.
+# The legal basis is acceptance of the Terms of Use at review_start (soken.dev/mcp/terms.html).
+# These constants are the server-side consent record; they must not be changed without a ToU
+# revision because the text is the legal record stored in publish_consent_log.
+AUTO_PUBLISH_PARTY = "requester"
+AUTO_PUBLISH_NAME = "MCP Terms of Use acceptance"
+AUTO_PUBLISH_STATEMENT = (
+    "By submitting source code for this review, the requester accepted the "
+    "Contract Review MCP Terms of Use at soken.dev/mcp/terms.html, "
+    "which authorises automated publication of this rendered report."
+)
+
 RENDER_LIMITS = StepLimits(cpus=1.0, memory="2g", pids=512, max_file=64 * 1024 * 1024)
 RENDER_UNITS, RENDER_RAM_MB, RENDER_PRIORITY = 1, 2048, 50
 ATTEMPT_CAP_S, TOTAL_S, MAX_ATTEMPTS = 120, 180, 3
@@ -290,6 +302,45 @@ async def _upsert_report(conn: psycopg.AsyncConnection, report: dict[str, Any], 
     )
 
 
+# Source kinds whose reports are public by nature and published automatically (see below).
+AUTO_PUBLISH_SOURCE_KINDS = frozenset({"deployed", "repo"})
+
+
+async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, job_id: str,
+                                render_ts: str) -> None:
+    """Enqueue automatic publication inside the rendered-transition transaction (CEO 2026-10-24).
+
+    Inserts one publish_consent_log row (the legal basis) and one publish_requests row
+    (idempotent: on conflict do nothing).  Both operations are inside the caller's open
+    transaction so they roll back atomically if anything else in that block fails.
+
+    Called only when outcome.code == "ok" and the job is not deleted.  A re-render of the
+    same job produces a second consent log entry (correct: a new render = a new consent event)
+    but the publish_requests dedup (UNIQUE report_id) prevents a duplicate request.
+
+    Only public code is published automatically: a deployed contract or a public repository.
+    `upload` (private code through a one-time link) and `files` (code pasted into the
+    conversation) may be private, and the report quotes that code, so those reports are
+    published only when the owner asks through review_publish with the manage key.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute("select source_kind from jobs where job_id = %s", (job_id,))
+        row = await cur.fetchone()
+    if row is None or row[0] not in AUTO_PUBLISH_SOURCE_KINDS:
+        return
+    await conn.execute(
+        """insert into publish_consent_log (report_id, party, name, statement, client_ts)
+           values (%s, %s, %s, %s, %s)""",
+        (report_id, AUTO_PUBLISH_PARTY, AUTO_PUBLISH_NAME, AUTO_PUBLISH_STATEMENT, render_ts),
+    )
+    await conn.execute(
+        """insert into publish_requests (report_id, job_id, status)
+           values (%s, %s, 'queued')
+           on conflict (report_id) do nothing""",
+        (report_id, job_id),
+    )
+
+
 async def _job_deleted(pool: Any, job_id: str) -> bool:
     async with pool.connection() as conn:
         row = await (await conn.execute("select state from jobs where job_id = %s", (job_id,))).fetchone()
@@ -354,6 +405,7 @@ async def _run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, i
             return outcome
         prefix = _upload(outcome.files, report_bytes, report["meta"]["report_id"], render_no)
         exp = datetime.now(UTC) + timedelta(days=_default_days())
+        render_ts = datetime.now(UTC).isoformat()
         async with pool.connection() as conn, conn.transaction():
                 await _upsert_report(conn, report, extras, job_id, prefix, outcome.pdf_sha256, exp)
                 repo = JobRepo(conn)
@@ -362,6 +414,8 @@ async def _run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, i
                     "wall_ms": wall_ms, "compact": compact, "fonts": outcome.result.get("fonts")})
                 await repo.transition(job_id, "rendered")
                 await conn.execute("update jobs set expires_at = %s where job_id = %s", (exp, job_id))
+                # Auto-publish: enqueue in the same transaction (CEO 2026-10-24).
+                await _auto_enqueue_publish(conn, report["meta"]["report_id"], job_id, render_ts)
         return outcome
 
     elapsed = time.time() - first_claim
