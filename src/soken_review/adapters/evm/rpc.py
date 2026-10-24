@@ -193,15 +193,79 @@ class RpcClient:
         data: str,
         block: int | str | None = None,
         state_override: dict[str, Any] | None = None,
+        gas: int | None = None,
     ) -> str:
         """eth_call at the pinned block. Returns 0x-prefixed hex output.
 
         state_override maps address -> {balance, nonce, code, stateDiff, state}.
+        gas caps the execution gas (prevents a hostile contract consuming unbounded node resources).
         """
-        params: list[Any] = [{"to": to, "data": data}, self._block_tag(block)]
+        tx: dict[str, Any] = {"to": to, "data": data}
+        if gas is not None:
+            tx["gas"] = hex(gas)
+        params: list[Any] = [tx, self._block_tag(block)]
         if state_override is not None:
             params.append(state_override)
         return await self._call("eth_call", params)
+
+    async def eth_call_probe(
+        self,
+        to: str,
+        data: str,
+        block: int | str | None = None,
+        *,
+        gas: int = 2_000_000,
+        timeout_s: float = 5.0,
+        max_response_hex_chars: int = 4096,
+        min_response_bytes: int = 32,
+    ) -> str | None:
+        """Single-attempt eth_call for informational state probes.
+
+        Unlike ``eth_call`` this never retries: probes are best-effort — a timeout or error
+        simply means we skip that fact, not that we should stall the analysis pipeline for
+        up to 3×30 s.
+
+        Returns the 0x-prefixed hex output, or ``None`` on any error / oversized / short
+        response (caller treats None as "unknown").
+
+        Args:
+            gas:                    Execution gas cap (default 2 000 000) — prevents a
+                                    hostile getter from consuming unbounded node resources.
+            timeout_s:              Per-call wall-clock timeout (default 5 s).
+            max_response_hex_chars: Reject hex responses longer than this (default 4096 chars,
+                                    ~ 2 KiB decoded) — guards against oversized blobs.
+            min_response_bytes:     Require at least this many decoded bytes before we try to
+                                    ABI-decode (default 32 = one uint256 slot).
+        """
+        tx: dict[str, Any] = {"to": to, "data": data, "gas": hex(gas)}
+        params: list[Any] = [tx, self._block_tag(block)]
+        payload = {"jsonrpc": "2.0", "method": "eth_call", "params": params, "id": 1}
+        host = _redact(self._url)
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
+                resp = await client.post(self._url, json=payload)
+                if resp.status_code >= 400:
+                    logger.debug("probe: HTTP %d from %s", resp.status_code, host)
+                    return None
+                data_resp = resp.json()
+                if "error" in data_resp:
+                    logger.debug("probe: RPC error from %s: %s", host, str(data_resp["error"])[:80])
+                    return None
+                result: str = data_resp.get("result") or ""
+                if not isinstance(result, str) or not result.startswith("0x"):
+                    return None
+                hex_body = result[2:]
+                if len(hex_body) > max_response_hex_chars:
+                    logger.debug("probe: response %d hex chars > cap %d, rejected", len(hex_body), max_response_hex_chars)
+                    return None
+                decoded_len = len(hex_body) // 2
+                if decoded_len < min_response_bytes:
+                    logger.debug("probe: response %d bytes < min %d, rejected", decoded_len, min_response_bytes)
+                    return None
+                return result
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("probe: %s from %s: %s", "eth_call", host, type(exc).__name__)
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +351,16 @@ class RpcClientPool:
         state_override: dict[str, Any] | None = None,
     ) -> str:
         return await self._try_call("eth_call", "eth_call", to, data, block, state_override)
+
+    async def eth_call_probe(self, to: str, data: str, block: int | str | None = None, **limits: Any) -> str | None:
+        """Best-effort probe: each endpoint once with the probe limits of RpcClient.eth_call_probe
+        (gas cap, timeout, response size bounds); the first usable answer wins, else None."""
+        for client in self._clients():
+            result = await client.eth_call_probe(to, data, block, **limits)
+            if result is not None:
+                self.answered_by = _redact(client._url)
+                return result
+        return None
 
     def with_block(self, block: int | str) -> RpcClientPool:
         """Return a new pool pinned to *block* (shares the same URL list)."""

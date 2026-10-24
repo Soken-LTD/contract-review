@@ -15,12 +15,15 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
 import time
 from datetime import UTC
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 import psycopg_pool
 
@@ -31,6 +34,8 @@ from ..db.job_repo import JobRepo, new_job_id
 from ..db.pool import get_pool
 from ..errors import ReviewError
 from ..families import require_enabled
+from ..mapping.project_url import load_suggested_context
+from ..mapping.related import load_related_contracts
 from ..server import handler
 from .git_probe import GitLsRemoteProbe
 from .listen import RECHECK_S, job_hash, listener_for
@@ -218,6 +223,7 @@ _GUIDE_VERSION = "v0"
 _RUBRIC_VERSION = "v0"
 _LIMITS_CONNECTOR = {"max_nsloc": 3000, "ready_ttl_hours": 24}
 _LIMITS_PLUGIN = {"max_nsloc": 10000, "ready_ttl_hours": 24}
+_MCP_TERMS_URL = "https://soken.dev/mcp/terms.html"
 
 
 @handler("review_start")
@@ -401,6 +407,11 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             )
             await conn.execute("update jobs set target_key = %s, limit_key = %s where job_id = %s",
                                (target, limit_key, job_id))
+            # Record Terms of Use acceptance at review_start (security review 2026-10-24).
+            await conn.execute(
+                "update jobs set terms_url = %s, terms_accepted_at = now() where job_id = %s",
+                (_MCP_TERMS_URL, job_id),
+            )
             if context_items:
                 await repo.append_context_items(job_id, context_items)   # fresh row: no cap or duplicate possible
             # Insert the first step for queued jobs (09 section 3.3); upload jobs wait for
@@ -423,6 +434,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
         "job_id": job_id,
         "state": initial_state,
         "requester_role": requester_role,
+        "terms_url": _MCP_TERMS_URL,
         "detected": {
             "chain": detected_chain or chain,
             "chain_id": chain_id,
@@ -453,6 +465,16 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
 
     if context_items:
         result["context"] = {"requested": len(context_items), "done": 0, "failed": 0}
+    else:
+        # No documents were supplied: surface a plain-language hint so the model
+        # knows to ask the user.  Describe what is possible; never command the model
+        # to call a tool (directory prompt-injection rule).
+        result["next_action"] = (
+            "No project documents were supplied. "
+            "Project documents (website, whitepaper, documentation, terms of use, privacy policy) "
+            "are needed to detect spec-vs-code mismatches. "
+            "Ask the user for the relevant URLs and add them via review_add_context."
+        )
 
     return result
 
@@ -583,8 +605,12 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
             except Exception:  # noqa: BLE001
                 finalize_checks = []  # never fail status due to finalize_checks
 
+    # Publish info (CEO 2026-10-24): show the public URL (or "publishing") for rendered jobs.
+    from .report import _publish_info
+    pub_status, pub_url = await _publish_info(job.get("report_id"))
+
     return _build_status_response(job, args.get("response_format", "concise"), steps, drafts, medians,
-                                  finalize_checks=finalize_checks)
+                                  finalize_checks=finalize_checks, pub_status=pub_status, pub_url=pub_url)
 
 
 # States where long-poll should return immediately (03 §4.2)
@@ -743,6 +769,8 @@ def _build_status_response(
     drafts: list[dict[str, Any]] | None = None,
     medians: dict[str, float] | None = None,
     finalize_checks: list[dict[str, Any]] | None = None,
+    pub_status: str | None = None,
+    pub_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the review_status output object from the job row (03 §4.2)."""
     state: str = job["state"]
@@ -800,6 +828,23 @@ def _build_status_response(
     ctx = _context_status(job)
     if ctx is not None:
         out["context"] = ctx
+    else:
+        # No context items: surface a next_action hint so the model asks the user
+        # for project documents.  This is server text, not model output; it describes
+        # what is available and why, without commanding the model to call anything
+        # (directory prompt-injection rule).
+        open_states = {"awaiting_upload", "queued", "fetching", "building", "analyzing", "ready", "finalized"}
+        if state in open_states:
+            out["next_action"] = (
+                "No project documents were supplied. "
+                "Project documents (website, whitepaper, documentation, terms of use, privacy policy) "
+                "are needed to detect spec-vs-code mismatches. "
+                "Ask the user for the relevant URLs and add them via review_add_context."
+            )
+
+    # Detailed response: related contracts and server-discovered project URLs
+    if response_format == "detailed":
+        out.update(_detailed_extras(job))
 
     # Drafts: every draft (03 §4.2); server drafts carry flag and location while needs_text
     out["drafts"] = [_draft_row(d) for d in (drafts or [])][:60]
@@ -807,4 +852,26 @@ def _build_status_response(
     # Finalize checks (03 §4.2, F1-F6, F8): shared with review_finalize
     out["finalize_checks"] = finalize_checks or []
 
+    # Publish info (CEO 2026-10-24): present for rendered jobs; null for pre-render.
+    out["publish_status"] = pub_status
+    out["public_url"] = pub_url
+
     return out
+
+
+def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
+    """Additional fields for ``response_format=detailed``: related contracts and suggested URLs."""
+    extras: dict[str, Any] = {}
+    try:
+        from .read import _get_ctx
+        pin_root = _get_ctx().get_pin_root()
+        job_id = job["job_id"]
+        related = load_related_contracts(pin_root, job_id)
+        if related:
+            extras["related_contracts"] = related
+        suggested = load_suggested_context(pin_root, job_id)
+        if suggested:
+            extras["suggested_context_items"] = suggested
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("_detailed_extras: %s", type(exc).__name__)
+    return extras

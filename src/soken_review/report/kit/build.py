@@ -181,7 +181,9 @@ def iter_strings(value: Any, node: dict[str, Any] | None = None, path: str = "$"
 # Rules that need submit-time context absent from report.json: T24 binds to absence claims,
 # T31 to the manifest word set, T29 is the typed-id rule (assembly writes {{finding}} ids as final
 # ids). All three ran at submit (04 11); the build re-runs every other rule (late_gate).
-LATE_GATE_SKIP = {"T24", "T29", "T31"}
+# Canonical definition lives in text_gate.LATE_GATE_SKIP; imported here so callers can use either.
+from soken_review.engine.text_gate import LATE_GATE_SKIP
+
 # Kit keys whose fixed text names the company or the audit boundary on purpose (08 1.4: disclaimer,
 # authorship box and footer are the AI and scope disclosure). Matches outside these stay errors.
 KIT_EXEMPT: dict[str, set[str]] = {"footer_line": {"T15"}, "disclaimer": {"T15"}, "authorship_box": {"P1"},
@@ -210,16 +212,26 @@ def gate_kit_text(key: str, text: str) -> list[tuple[str, str]]:
 
 
 def check_strings(report: dict[str, Any]) -> None:
-    """08 1.5: 04 gate by field class on data, never on HTML. A hit is `late_gate`."""
-    from soken_review.engine.text_gate import CheckContext, check_text
+    """08 1.5: 04 gate by field class on data, never on HTML. A hit is `late_gate`.
+
+    Model-class text: calls ``check_model_field`` (full model scope) then filters
+    ``LATE_GATE_SKIP`` (T24, T29, T31).  Those three rules need submit-time context
+    (absence_claims, word_set, manifest ids) that is absent from the assembled
+    report.json; they are enforced at write time and at ``review_finalize``'s
+    pre-freeze gate.  The render builder is the **only** caller that applies
+    ``LATE_GATE_SKIP`` (04 §11.4 render parity).
+    """
+    from soken_review.engine.text_gate import check_model_field, check_text
 
     profile = report["meta"]["profile"]
     for path, cls, text in iter_strings(report):
         if cls == "src" or not text:
             continue
         if cls == "model":
-            ctx = CheckContext(field=_field_of(path), profile=profile, is_list_item=".ul[" in path)
-            hits = [v for v in check_text(text, "model", ctx) if v.rule_id not in LATE_GATE_SKIP]
+            hits = [
+                v for v in check_model_field(text, field=_field_of(path), profile=profile, is_list_item=".ul[" in path)
+                if v.rule_id not in LATE_GATE_SKIP
+            ]
         elif cls == "server":
             hits = check_text(text, "server")
             if path == "$.meta.subject":
@@ -912,6 +924,17 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
                           f'<td>{inl(x.get("risk_note", ""), ctx)}</td></tr>')
             arch_html += (f'<h3>Privileged roles</h3><table><tr><th style="width:15%">Role</th><th style="width:20%">Holder</th>'
                           f'<th style="width:11%">Type</th><th>Gated functions</th><th style="width:26%">Risk note</th></tr>{rrows}</table>')
+        related = roles.get("related_contracts", [])
+        if related:
+            rrel = ""
+            for x in related:
+                rrel += (f'<tr><td>{esc(x["label"])}</td><td>{esc(x["address"])}</td>'
+                         f'<td>{esc(x["kind"])}</td><td>{esc(x["verified"])}</td>'
+                         f'<td>{esc(x.get("note", ""))}</td></tr>')
+            arch_html += (f'<h3>Related contracts</h3><table>'
+                          f'<tr><th style="width:20%">Label</th><th style="width:16%">Address</th>'
+                          f'<th style="width:11%">Kind</th><th style="width:12%">Verified</th>'
+                          f'<th>Notes</th></tr>{rrel}</table>')
         arch_html += blocks(roles["notes"], ctx, m) + figures_table(roles.get("figures", []), ctx, m)
     architecture = f'<section>{h2("architecture", ctx)}{arch_html}</section>'
 

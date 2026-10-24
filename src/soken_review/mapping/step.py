@@ -20,6 +20,7 @@ from ..engine.injection import scan_file
 from ..pinning.store import PinnedSource
 from .build import build_map, load_map, load_tokens, write_map
 from .facts import load_facts, static_facts, write_facts
+from .project_url import discover_project_urls, write_suggested_context
 
 _ENUMS = Path(__file__).resolve().parents[3] / "contract" / "rubric" / "enums.yaml"
 
@@ -71,6 +72,16 @@ def run_map_step(
     art = build_map(files, output, list(family_categories(family, chain)), build_ok=build_ok,
                     compiled_texts=compiled_texts)
     write_map(pin_root, job_id, art, build_detail=build_detail)
+
+    # Server-side project URL discovery: scan source for NatSpec @custom:website,
+    # @custom:security-contact, and GitHub repo URLs; write as suggested context items
+    # so review_status can surface them to the model (feat/context-related-state).
+    try:
+        suggested = discover_project_urls(files)
+        write_suggested_context(pin_root, job_id, suggested)
+    except Exception:  # never fail the map step on a scan error
+        import logging as _logging
+        _logging.getLogger(__name__).debug("project URL discovery failed", exc_info=True)
 
     # The scan reads the lexer's own tokens (comment and string text intact) and the raw text; the
     # stored map tokens are redacted, so they must never feed detection.

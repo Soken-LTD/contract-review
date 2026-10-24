@@ -501,3 +501,185 @@ class TestEvidenceLevelPhases:
         ctx = SeverityContext(phase="finalize", evidence_level="reasoning_only")
         result = compute_severity(_MATRIX_THEFT_ANYONE_NONE_IRREVERSIBLE, "finalize", ctx)
         assert "K4" in result.caps_applied and result.severity == "Low"
+
+
+# ── GBLIN severity-calibration regression cases (2026-10-24) ─────────────────
+#
+# Two findings were printed one step too high by the connector.
+#
+# Finding 1 (oracle-lag-mint-redeem): printed Medium, correct Low.
+#   Matrix as submitted: yield_or_fee_loss / bounded / anyone / market_condition / irreversible
+#   I2 × L2 = Medium (base, no caps).
+#   After MB6 fallback (magnitude: bounded → dust, because per-cycle gain is
+#   bounded by the 10 bps protocol fee): yield_or_fee_loss / dust / ... → I1 × L2 = Low.
+#
+# Finding 2 (bid-callback-readonly-reentrancy): printed Low, correct Informational.
+#   Matrix as submitted: incorrect_accounting_no_fund_effect / bounded / anyone /
+#   normal_operation / self_recovering
+#   I1 × L3 = Low (base, no caps).
+#   After MB5 fallback (impact_class: incorrect_accounting_no_fund_effect → best_practice,
+#   because only external integrators reading views mid-callback are affected, not vault
+#   users or vault state): best_practice → I0 → Informational.
+
+_GBLIN_ORACLE_ARB_MATRIX = {
+    "impact_class": "yield_or_fee_loss",
+    "magnitude": "bounded",
+    "trigger": "anyone",
+    "precondition": "market_condition",
+    "reversibility": "irreversible",
+}
+
+_GBLIN_CALLBACK_VIEWS_MATRIX = {
+    "impact_class": "incorrect_accounting_no_fund_effect",
+    "magnitude": "bounded",
+    "trigger": "anyone",
+    "precondition": "normal_operation",
+    "reversibility": "self_recovering",
+}
+
+
+class TestGBLINRegressionCases:
+    """Regression fixtures for GBLIN blind test over-ratings (2026-10-24).
+
+    Each case tests two phases:
+    1. submit: verify the base severity the connector printed (no challenge yet).
+    2. post_challenge with MB fallback applied: verify the calibrated severity.
+    """
+
+    # ── Finding 1: oracle-lag arb (Medium → Low after MB6) ───────────────────
+
+    def test_gblin_oracle_arb_submit_prints_medium(self):
+        """Baseline: oracle arb is Medium at submit (before any challenge)."""
+        result = compute_severity(_GBLIN_ORACLE_ARB_MATRIX, "submit", SeverityContext(phase="submit"))
+        assert result.severity == "Medium"
+        assert result.i_level == 2
+        assert result.l_level == 2
+
+    def test_gblin_oracle_arb_after_mb6_fallback_is_low(self):
+        """MB6 fallback: magnitude bounded → dust when fee-bounded; yield_or_fee_loss/dust/L2 = Low."""
+        matrix_effective = dict(_GBLIN_ORACLE_ARB_MATRIX)
+        matrix_effective["magnitude"] = "dust"   # MB6 fallback applied by challenge handler
+        result = compute_severity(
+            matrix_effective, "post_challenge",
+            SeverityContext(phase="post_challenge", evidence_level="reasoning_only"),
+        )
+        assert result.severity == "Low"
+        assert result.i_level == 1
+        assert result.l_level == 2
+
+    def test_gblin_oracle_arb_no_fallback_stays_medium(self):
+        """Non-regression: if MB6 is absent (no fee bound quoted), severity stays Medium."""
+        # matrix_effective unchanged — MB6 answered absent, no fallback applied
+        result = compute_severity(
+            _GBLIN_ORACLE_ARB_MATRIX, "post_challenge",
+            SeverityContext(phase="post_challenge", evidence_level="reasoning_only"),
+        )
+        assert result.severity == "Medium"
+
+    # ── Finding 2: callback views (Low → Informational after MB5) ────────────
+
+    def test_gblin_callback_views_submit_prints_low(self):
+        """Baseline: views-during-callback is Low at submit (before any challenge)."""
+        result = compute_severity(_GBLIN_CALLBACK_VIEWS_MATRIX, "submit", SeverityContext(phase="submit"))
+        assert result.severity == "Low"
+        assert result.i_level == 1
+        assert result.l_level == 3
+
+    def test_gblin_callback_views_after_mb5_fallback_is_informational(self):
+        """MB5 fallback: impact_class → best_practice when only external integrators affected; I0 = Informational."""
+        matrix_effective = dict(_GBLIN_CALLBACK_VIEWS_MATRIX)
+        matrix_effective["impact_class"] = "best_practice"  # MB5 fallback applied
+        result = compute_severity(
+            matrix_effective, "post_challenge",
+            SeverityContext(phase="post_challenge", evidence_level="reasoning_only"),
+        )
+        assert result.severity == "Informational"
+        assert result.i_level == 0
+
+    def test_gblin_callback_views_no_fallback_stays_low(self):
+        """Non-regression: if MB5 is present (a participant IS affected), severity stays Low."""
+        # matrix_effective unchanged — MB5 answered present, no fallback
+        result = compute_severity(
+            _GBLIN_CALLBACK_VIEWS_MATRIX, "post_challenge",
+            SeverityContext(phase="post_challenge", evidence_level="reasoning_only"),
+        )
+        assert result.severity == "Low"
+
+
+class TestMB5MB6BasisItems:
+    """Unit tests for the new MB5 and MB6 basis items generated by _basis_items()."""
+
+    def test_mb5_generated_for_incorrect_accounting_no_fund_effect(self):
+        from soken_review.tools.challenge import _basis_items
+
+        items = _basis_items(_GBLIN_CALLBACK_VIEWS_MATRIX)
+        ids = [i["id"] for i in items]
+        assert "MB5" in ids
+
+    def test_mb5_not_generated_for_other_impact_classes(self):
+        from soken_review.tools.challenge import _basis_items
+
+        matrix = dict(_GBLIN_CALLBACK_VIEWS_MATRIX)
+        matrix["impact_class"] = "yield_or_fee_loss"
+        items = _basis_items(matrix)
+        ids = [i["id"] for i in items]
+        assert "MB5" not in ids
+
+    def test_mb5_fallback_field_and_value(self):
+        from soken_review.tools.challenge import _basis_items
+
+        items = _basis_items(_GBLIN_CALLBACK_VIEWS_MATRIX)
+        mb5 = next(i for i in items if i["id"] == "MB5")
+        assert mb5["fallback_field"] == "impact_class"
+        assert mb5["fallback_value"] == "best_practice"
+        assert mb5["expect"] == "present"
+
+    def test_mb6_generated_for_yield_or_fee_loss_bounded(self):
+        from soken_review.tools.challenge import _basis_items
+
+        items = _basis_items(_GBLIN_ORACLE_ARB_MATRIX)
+        ids = [i["id"] for i in items]
+        assert "MB6" in ids
+
+    def test_mb6_not_generated_for_yield_or_fee_loss_unbounded(self):
+        from soken_review.tools.challenge import _basis_items
+
+        matrix = dict(_GBLIN_ORACLE_ARB_MATRIX)
+        matrix["magnitude"] = "unbounded"
+        items = _basis_items(matrix)
+        ids = [i["id"] for i in items]
+        assert "MB6" not in ids
+
+    def test_mb6_not_generated_for_other_impact_class_bounded(self):
+        from soken_review.tools.challenge import _basis_items
+
+        matrix = dict(_GBLIN_ORACLE_ARB_MATRIX)
+        matrix["impact_class"] = "theft_of_funds"
+        items = _basis_items(matrix)
+        ids = [i["id"] for i in items]
+        assert "MB6" not in ids
+
+    def test_mb6_fallback_field_and_value(self):
+        from soken_review.tools.challenge import _basis_items
+
+        items = _basis_items(_GBLIN_ORACLE_ARB_MATRIX)
+        mb6 = next(i for i in items if i["id"] == "MB6")
+        assert mb6["fallback_field"] == "magnitude"
+        assert mb6["fallback_value"] == "dust"
+        assert mb6["expect"] == "absent"
+
+    def test_mb5_and_mb6_not_both_generated_simultaneously(self):
+        """A matrix cannot trigger both MB5 and MB6: different impact classes."""
+        from soken_review.tools.challenge import _basis_items
+
+        # incorrect_accounting triggers MB5 but not MB6 (different impact class)
+        items5 = _basis_items(_GBLIN_CALLBACK_VIEWS_MATRIX)
+        ids5 = [i["id"] for i in items5]
+        assert "MB5" in ids5
+        assert "MB6" not in ids5
+
+        # yield_or_fee_loss bounded triggers MB6 (and MB0, MB3) but not MB5
+        items6 = _basis_items(_GBLIN_ORACLE_ARB_MATRIX)
+        ids6 = [i["id"] for i in items6]
+        assert "MB6" in ids6
+        assert "MB5" not in ids6

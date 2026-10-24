@@ -3,9 +3,16 @@
 Registered via @handler("review_finalize").
 
 Finalize checks F1-F6, F8 (03 §4.14 table, 04 §13 table).
-On pass: auto-close Low/Info analyzer leads, recompute effective severity (phase finalize),
+On pass: run the full text-gate pre-freeze check (same function as render-time check_strings),
+then auto-close Low/Info analyzer leads, recompute effective severity (phase finalize),
 assign final ids per severity/finding_no order, set finalized, queue render.
 Idempotent: returns stored result if already finalized.
+
+render_failed recovery: calling review_finalize on a render_failed job resets the job to
+ready (state machine: render_failed -> ready) and returns E_RENDER_FAILED with the stored
+gate error so the model knows which text to fix.  report_at and report_id are cleared by
+render.py when the failure is recorded, so the quota refund happens automatically and the
+next finalize re-issues them under the advisory lock.
 
 Also exports `compute_finalize_checks(conn, job_id)` used by review_status (03 §4.2
 finalize_checks[]) so both share one implementation.
@@ -26,16 +33,20 @@ from psycopg.rows import dict_row
 from .. import quota
 from ..db.job_repo import JobRepo
 from ..db.pool import get_pool
+from ..engine.injection import check_echo
+from ..engine.numbers import lex_numbers
 from ..engine.severity import SeverityContext, compute_severity
+from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
 from ..mapping.semantic_evm import detect_token_review, units_holding
+from ..mapping.step import load_flags
 from ..report.render import queue_render
 from ..server import handler
 from .context import JobContext
 from .coverage import EnumsLoadError, category_allowed_na_reasons, compute_coverage_rows
 from .set_section import _check_na_predicate_for_section
-from .submit import _category_info, _family_from_chain
+from .submit import _category_info, _family_from_chain, _iter_text_fields
 
 _pool: psycopg_pool.AsyncConnectionPool | None = None
 _ctx: JobContext | None = None
@@ -271,6 +282,10 @@ def _final_id(prefix: str, n: int) -> str:
     return f"{prefix}-{n:03d}"
 
 
+# Failed renders after which a job is no longer reset to ready by review_finalize.
+_MAX_RENDER_RESETS = 3
+
+
 async def _assign_final_ids(
     conn: psycopg.AsyncConnection, job_id: str
 ) -> tuple[dict[str, str], list[dict[str, Any]], int]:
@@ -503,6 +518,287 @@ async def _assign_final_ids(
     return final_ids, carried_leads, leads_not_reviewed
 
 
+# ── Pre-freeze text gate ──────────────────────────────────────────────────────
+
+async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, profile: str) -> list[dict[str, Any]]:
+    """Run the FULL model-scope text gate on all report text before freezing (04 §11.4).
+
+    Queries every accepted finding's prose fields and every section's text fields from the
+    DB and calls ``check_model_field`` with NO rule-skipping so enforcement is never weaker
+    than write-time.  ``absence_claims`` are extracted from the stored finding content to
+    provide T24 its binding context.
+
+    Also runs V4 echo check and V6 number check on the same text blocks, using
+    ``_iter_text_fields`` (shared walker with submit.py) so the two gates cannot drift.
+
+    The render builder (``build.check_strings``) is the only place ``LATE_GATE_SKIP`` is
+    applied; this pre-freeze gate is not the render builder.
+
+    Returns a list of error envelope dicts (empty = clean).
+    """
+    errors: list[dict[str, Any]] = []
+
+    # Load J1 flags once for the echo check (V4) across all findings.
+    # FileNotFoundError = no map run yet; no J1 spans to check (same degradation as submit-time V4).
+    try:
+        pin_root = _get_ctx().get_pin_root()
+        _raw_flags = load_flags(pin_root, job_id) or []
+    except (FileNotFoundError, ReviewError):
+        _raw_flags = []
+    except (OSError, ValueError) as exc:
+        raise ReviewError("E_INTERNAL", incident=f"flags.json unreadable at finalize: {exc!s:.80}") from exc
+    j1_flags = [f for f in _raw_flags if f.get("rule") == "J1"]
+
+    # ── Finding text ──────────────────────────────────────────────────────────
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """select d.draft_key, d.finding_no, r.content
+               from finding_drafts d
+               join finding_revisions r
+                 on r.job_id = d.job_id and r.draft_key = d.draft_key
+                    and r.revision = d.current_revision
+               where d.job_id = %s and d.status in ('accepted', 'needs_challenge')""",
+            (job_id,),
+        )
+        drafts = await cur.fetchall()
+
+    for d in drafts:
+        content = d["content"] or {}
+        finding_ref = f"F-{d['finding_no']:02d}"
+        # Extract absence_claims from stored content so T24 can bind them (04 §7.6).
+        absence_claims: list[dict[str, str]] = content.get("absence_claims") or []
+
+        # ── V4: echo check using shared walker (same surface as submit-time V4) ──
+        combined_text = "\n".join(t for _, t in _iter_text_fields(content))
+        for v in check_echo(combined_text, j1_flags):
+            errors.append(ReviewError(
+                v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                pos=v.span[0], token=v.match[:40],
+                hint=f"{finding_ref}: echo rule {v.rule_id} on {v.match!r:.40}",
+            ).envelope())
+
+        # ── V6: number check on all prose fields via shared walker ───────────
+        for field_name, field_text in _iter_text_fields(content):
+            for v in lex_numbers(field_text):
+                errors.append(ReviewError(
+                    v.code, rule=v.rule_id,
+                    match=v.match[:80] if v.match else "",
+                    token=v.match[:40] if v.match else "",
+                    field=field_name,
+                    cp=(v.match[:5] if v.match else ""),
+                    pos=v.span[0],
+                    hint=f"{finding_ref}.{field_name}: number rule {v.rule_id}",
+                ).envelope())
+
+        # ── V5: text gate (check_model_field) on every prose block ───────────
+        # title
+        if title := content.get("title"):
+            for v in check_model_field(title, field="title", profile=profile,
+                                       absence_claims=absence_claims):
+                errors.append(ReviewError(
+                    v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                    pos=v.span[0], token=v.match[:40],
+                    hint=f"{finding_ref}.title: rule {v.rule_id} on {v.match!r:.40}",
+                ).envelope())
+        # body fields: description, impact, recommendation — cover p, ul, and table cells
+        body = content.get("body") or {}
+        for field_name in ("description", "impact", "recommendation"):
+            for block in (body.get(field_name) or []):
+                text = block.get("p") or ""
+                if text:
+                    for v in check_model_field(text, field=field_name, profile=profile,
+                                               absence_claims=absence_claims):
+                        errors.append(ReviewError(
+                            v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                            pos=v.span[0], token=v.match[:40],
+                            hint=f"{finding_ref}.{field_name}: rule {v.rule_id} on {v.match!r:.40}",
+                        ).envelope())
+                for item in block.get("ul") or []:
+                    for v in check_model_field(str(item), field=field_name, profile=profile,
+                                               is_list_item=True, absence_claims=absence_claims):
+                        errors.append(ReviewError(
+                            v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                            pos=v.span[0], token=v.match[:40],
+                            hint=f"{finding_ref}.{field_name}[ul]: rule {v.rule_id} on {v.match!r:.40}",
+                        ).envelope())
+                tbl = block.get("table")
+                if isinstance(tbl, dict):
+                    for cell in tbl.get("head") or []:
+                        for v in check_model_field(str(cell), field=field_name, profile=profile,
+                                                   absence_claims=absence_claims):
+                            errors.append(ReviewError(
+                                v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                pos=v.span[0], token=v.match[:40],
+                                hint=f"{finding_ref}.{field_name}[table.head]: rule {v.rule_id} on {v.match!r:.40}",
+                            ).envelope())
+                    for row in tbl.get("rows") or []:
+                        for cell in row:
+                            if not cell:
+                                continue
+                            for v in check_model_field(str(cell), field=field_name, profile=profile,
+                                                       absence_claims=absence_claims):
+                                errors.append(ReviewError(
+                                    v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                    pos=v.span[0], token=v.match[:40],
+                                    hint=f"{finding_ref}.{field_name}[table.row]: rule {v.rule_id} on {v.match!r:.40}",
+                                ).envelope())
+        # attack_steps
+        for step in (content.get("attack_steps") or []):
+            text = step.get("text") or ""
+            if text:
+                for v in check_model_field(text, field="attack_steps", profile=profile,
+                                           absence_claims=absence_claims):
+                    errors.append(ReviewError(
+                        v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                        pos=v.span[0], token=v.match[:40],
+                        hint=f"{finding_ref}.attack_steps: rule {v.rule_id} on {v.match!r:.40}",
+                    ).envelope())
+        # notes (top-level notes in body) — cover p, ul, and table cells
+        for note in (body.get("notes") or []):
+            text = note.get("p") or ""
+            if text:
+                for v in check_model_field(text, field="notes", profile=profile,
+                                           absence_claims=absence_claims):
+                    errors.append(ReviewError(
+                        v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                        pos=v.span[0], token=v.match[:40],
+                        hint=f"{finding_ref}.notes: rule {v.rule_id} on {v.match!r:.40}",
+                    ).envelope())
+            for item in note.get("ul") or []:
+                for v in check_model_field(str(item), field="notes", profile=profile,
+                                           is_list_item=True, absence_claims=absence_claims):
+                    errors.append(ReviewError(
+                        v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                        pos=v.span[0], token=v.match[:40],
+                        hint=f"{finding_ref}.notes[ul]: rule {v.rule_id} on {v.match!r:.40}",
+                    ).envelope())
+            tbl = note.get("table")
+            if isinstance(tbl, dict):
+                for cell in tbl.get("head") or []:
+                    for v in check_model_field(str(cell), field="notes", profile=profile,
+                                               absence_claims=absence_claims):
+                        errors.append(ReviewError(
+                            v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                            pos=v.span[0], token=v.match[:40],
+                            hint=f"{finding_ref}.notes[table.head]: rule {v.rule_id} on {v.match!r:.40}",
+                        ).envelope())
+                for row in tbl.get("rows") or []:
+                    for cell in row:
+                        if not cell:
+                            continue
+                        for v in check_model_field(str(cell), field="notes", profile=profile,
+                                                   absence_claims=absence_claims):
+                            errors.append(ReviewError(
+                                v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                pos=v.span[0], token=v.match[:40],
+                                hint=f"{finding_ref}.notes[table.row]: rule {v.rule_id} on {v.match!r:.40}",
+                            ).envelope())
+
+    # ── Section text ──────────────────────────────────────────────────────────
+    # sections: roles_notes and context_notes contain model prose; out_of_scope_reasons
+    # is also model prose.  coverage content is structured (N/A rows), not prose.
+    _SEC_FIELD: dict[str, str] = {
+        "roles_notes": "notes",
+        "context_notes": "notes",
+        "out_of_scope_reasons": "notes",
+    }
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """select section, content from sections
+               where job_id = %s and section = any(%s)
+               order by revision desc""",
+            (job_id, list(_SEC_FIELD.keys())),
+        )
+        all_sec = await cur.fetchall()
+
+    seen_sections: set[str] = set()
+    for sec in all_sec:
+        sec_name = sec["section"]
+        if sec_name in seen_sections:
+            continue  # only the latest revision counts
+        seen_sections.add(sec_name)
+        field = _SEC_FIELD[sec_name]
+        for block in (sec["content"] or []):
+            if not isinstance(block, dict):
+                continue
+            if "ul" in block:
+                for item in block["ul"] or []:
+                    for v in check_model_field(str(item), field=field, profile=profile, is_list_item=True):
+                        errors.append(ReviewError(
+                            v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                            pos=v.span[0], token=v.match[:40],
+                            hint=f"{sec_name}[ul]: rule {v.rule_id} on {v.match!r:.40}",
+                        ).envelope())
+                    for v in lex_numbers(str(item)):
+                        errors.append(ReviewError(
+                            v.code, rule=v.rule_id,
+                            match=v.match[:80] if v.match else "",
+                            token=v.match[:40] if v.match else "",
+                            field=f"{sec_name}[ul]",
+                            cp=(v.match[:5] if v.match else ""),
+                            pos=v.span[0],
+                        ).envelope())
+                continue
+            if "table" in block:
+                tbl = block["table"]
+                if isinstance(tbl, dict):
+                    for cell in tbl.get("head") or []:
+                        for v in check_model_field(str(cell), field=field, profile=profile):
+                            errors.append(ReviewError(
+                                v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                pos=v.span[0], token=v.match[:40],
+                                hint=f"{sec_name}[table.head]: rule {v.rule_id} on {v.match!r:.40}",
+                            ).envelope())
+                        for v in lex_numbers(str(cell)):
+                            errors.append(ReviewError(
+                                v.code, rule=v.rule_id,
+                                match=v.match[:80] if v.match else "",
+                                token=v.match[:40] if v.match else "",
+                                field=f"{sec_name}[table.head]",
+                                cp=(v.match[:5] if v.match else ""),
+                                pos=v.span[0],
+                            ).envelope())
+                    for row in tbl.get("rows") or []:
+                        for cell in row:
+                            if not cell:
+                                continue
+                            for v in check_model_field(str(cell), field=field, profile=profile):
+                                errors.append(ReviewError(
+                                    v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                                    pos=v.span[0], token=v.match[:40],
+                                    hint=f"{sec_name}[table.row]: rule {v.rule_id} on {v.match!r:.40}",
+                                ).envelope())
+                            for v in lex_numbers(str(cell)):
+                                errors.append(ReviewError(
+                                    v.code, rule=v.rule_id,
+                                    match=v.match[:80] if v.match else "",
+                                    token=v.match[:40] if v.match else "",
+                                    field=f"{sec_name}[table.row]",
+                                    cp=(v.match[:5] if v.match else ""),
+                                    pos=v.span[0],
+                                ).envelope())
+                continue
+            text = block.get("p") or block.get("reason") or ""
+            if text:
+                for v in check_model_field(text, field=field, profile=profile):
+                    errors.append(ReviewError(
+                        v.code, rule=v.rule_id, match=v.match[:80], cp=v.match[:5],
+                        pos=v.span[0], token=v.match[:40],
+                        hint=f"{sec_name}: rule {v.rule_id} on {v.match!r:.40}",
+                    ).envelope())
+                for v in lex_numbers(text):
+                    errors.append(ReviewError(
+                        v.code, rule=v.rule_id,
+                        match=v.match[:80] if v.match else "",
+                        token=v.match[:40] if v.match else "",
+                        field=sec_name,
+                        cp=(v.match[:5] if v.match else ""),
+                        pos=v.span[0],
+                    ).envelope())
+
+    return errors
+
+
 # ── Main handler ──────────────────────────────────────────────────────────────
 
 @handler("review_finalize")
@@ -511,6 +807,10 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
 
     Per 03 §7.1: open items return a rejection (accepted: false) with E_FINALIZE_OPEN.
     Idempotent: if already finalized (or beyond), returns the stored result.
+
+    render_failed recovery: if called on a render_failed job, resets the job to ready
+    and returns E_RENDER_FAILED with the stored gate error so the model can revise the
+    text and call review_finalize again.
     """
     job_id: str = args["job_id"]
     pool = _get_pool()
@@ -526,8 +826,49 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
 
         state = job["state"]
 
+        # ── render_failed recovery (03 §4.14 recovery path) ──────────
+        # Calling review_finalize on a render_failed job resets it to ready so the
+        # model can revise the flagged text and finalize again.  The stored gate error
+        # is surfaced here; report_at and report_id were already cleared in render.py.
+        if state == "render_failed":
+            # At most _MAX_RENDER_RESETS resets per job; after that the job stays failed.
+            # Use jobs.render_resets column (incremented each time we do this reset) rather
+            # than counting job_steps rows, which miscount because each retry inserts a new row.
+            render_resets = job.get("render_resets") or 0
+            stored_detail = job.get("error_detail") or {}
+            # Only the failure kind and, for a gate failure, the rule and matched phrase go back.
+            shown = {"detail": str(stored_detail.get("detail", ""))[:40]}
+            if stored_detail.get("detail") == "late_gate":
+                shown["rule"] = str(stored_detail.get("note", ""))[:120]
+            if render_resets >= _MAX_RENDER_RESETS:
+                return {"accepted": False, "state": "render_failed",
+                        "errors": [ReviewError("E_JOB_TERMINAL", state="render_failed",
+                                               exit_code="E_RENDER_FAILED").envelope()]}
+            # Increment the counter atomically before transitioning to ready.
+            await conn.execute(
+                "update jobs set render_resets = render_resets + 1 where job_id = %s",
+                (job_id,),
+            )
+            repo = JobRepo(conn)
+            await repo.transition(job_id, "ready")
+            # Undo what finalize froze, so the revised job finalizes from a clean slate: final ids
+            # are re-assigned and leads finalize closed as not reviewed are open again.
+            await conn.execute("update finding_drafts set final_id = null where job_id = %s", (job_id,))
+            await conn.execute("update leads set state = 'open' where job_id = %s and state = 'not_reviewed'",
+                               (job_id,))
+            return {
+                "accepted": False,
+                "state": "ready",
+                "errors": [ReviewError("E_RENDER_FAILED",
+                                       detail=json.dumps(shown)).envelope()],
+                "hint": (
+                    "Job reset to ready; revise the flagged text (see 'detail') "
+                    "and call review_finalize again."
+                ),
+            }
+
         # ── Idempotent replay (ambiguity SF-008) ──────────────────────
-        if state in ("finalized", "render_queued", "rendering", "rendered", "render_failed"):
+        if state in ("finalized", "render_queued", "rendering", "rendered"):
             return await _stored_finalize_result(conn, job_id, state)
 
         # ── State check ───────────────────────────────────────────────
@@ -553,6 +894,20 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
                 "accepted": False,
                 "errors": [ReviewError("E_FINALIZE_OPEN", items=str([c["id"] for c in open_checks[:40]])).envelope()],
                 "items": items,
+            }
+
+        # ── Pre-freeze text gate (04 §11.4 render parity) ─────────────
+        # Run the full model-scope text gate on all report prose before freezing so
+        # a render-time late_gate failure can never happen on text that passed write
+        # time (e.g. a T27 phrase added to the rule list after the finding was submitted).
+        job_profile = "owner" if job.get("ownership_proven") else "public_review"
+        gate_errors = await _check_gate_violations(conn, job_id, job_profile)
+        if gate_errors:
+            return {
+                "accepted": False,
+                "errors": [ReviewError("E_FINALIZE_OPEN",
+                                       items="gate_violations").envelope()],
+                "gate_violations": gate_errors[:40],
             }
 
         # ── All checks pass: finalize ──────────────────────────────────

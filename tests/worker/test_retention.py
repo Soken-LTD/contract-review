@@ -212,7 +212,7 @@ def test_expired_report_is_gone_for_review_report_before_the_sweep() -> None:
     from soken_review.tools import report as T
 
     src = Path(T.__file__).read_text()
-    assert 'rep["expires_at"] <= datetime.now(UTC)' in src and '_status_only("expired", job)' in src
+    assert 'rep["expires_at"] <= datetime.now(UTC)' in src and '_status_only("expired", job,' in src
 
 
 @ASYNC

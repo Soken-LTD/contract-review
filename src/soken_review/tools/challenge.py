@@ -230,6 +230,59 @@ def _basis_items(matrix: dict[str, Any]) -> list[dict[str, Any]]:
             "na": [],
         })
 
+    # MB5: integration-only scope — incorrect_accounting_no_fund_effect
+    # Fires when the chosen impact class is incorrect_accounting_no_fund_effect.
+    # If no transaction participant (vault user, vault state) is harmed — only a
+    # hypothetical third-party contract reading protocol views during a callback
+    # window would see the transient inconsistency — the impact is effectively a
+    # documentation/hardening note (best_practice, I0).  If a real participant IS
+    # affected the item is answered present and the original class is kept.
+    if impact == "incorrect_accounting_no_fund_effect":
+        items.append({
+            "id": "MB5", "kind": "basis",
+            "condition": (
+                "A participant in this transaction — a vault user, a holder, or the "
+                "vault's own state — loses funds, receives wrong state, or holds a "
+                "position that changes adversely (not only a third-party contract "
+                "reading protocol views during a callback window)."
+            ),
+            "scope": "entry_function",
+            "expect": "present",
+            "fallback_field": "impact_class",
+            "fallback_value": "best_practice",
+            "auto": None,
+            "na": [],
+        })
+
+    # MB6: fee-bounded magnitude — yield_or_fee_loss bounded
+    # Fires when the chosen impact is yield_or_fee_loss with bounded magnitude.
+    # If a protocol fee, Chainlink deviation threshold, or equivalent spread is
+    # the hard ceiling on per-cycle gain (the exploit is net-negative unless the
+    # oracle lag clears that quoted threshold), the effective exposure is dust-
+    # level: profit only materialises during an intermittent market condition and
+    # is bounded above by the threshold minus the fee.  The model must quote the
+    # specific fee or threshold line AND the line that prevents repetition inside one
+    # price window; a per-cycle ceiling alone does not bound the total extracted from
+    # holders.  If either is missing the item is absent and bounded magnitude is kept.
+    if impact == "yield_or_fee_loss" and magnitude == "bounded":
+        items.append({
+            "id": "MB6", "kind": "basis",
+            "condition": (
+                "A protocol fee, documented deviation threshold, or equivalent spread "
+                "at a quoted line is the hard ceiling on per-cycle gain, AND a quoted "
+                "line stops the cycle from being repeated inside the same price window "
+                "(a cooldown that cannot be bypassed, a per-block or per-account cap, or "
+                "a price update forced by the trade itself). Quote both lines; a fee "
+                "ceiling alone does not bound the total, since repeated cycles add up."
+            ),
+            "scope": "entry_function",
+            "expect": "absent",
+            "fallback_field": "magnitude",
+            "fallback_value": "dust",
+            "auto": None,
+            "na": [],
+        })
+
     return items
 
 

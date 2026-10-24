@@ -1413,6 +1413,46 @@ class Supervisor:
                                                          doc, unit_id)
                 facts.extend(onchain)
                 added = len(onchain)
+                # State-parameter probes + related-contract classification
+                # (feat/context-related-state): degrade gracefully on any error.
+                try:
+                    from ..mapping.related import (
+                        classify_related_contracts,
+                        state_parameter_facts,
+                        write_related_contracts,
+                    )
+                    state_fs = await state_parameter_facts(
+                        rpc_pool_pinned, cs["address"], int(cs["block"]), doc, unit_id,
+                    )
+                    if state_fs:
+                        facts.extend(state_fs)
+                    related = await classify_related_contracts(
+                        rpc_pool_pinned, int(cs["block"]), onchain,
+                        chain_id=int(job["chain_id"]),
+                    )
+                    # Expose related.<label>.verified facts
+                    for entry in related:
+                        label = entry.get("role") or "related"
+                        verified = entry.get("verified")
+                        if verified is not None:
+                            facts.append({
+                                "key": f"related.{label}.verified",
+                                "value": str(verified).lower(),  # "true" / "false"
+                                "source": "sourcify",
+                                "unit_id": unit_id,
+                            })
+                    # Re-check deleted state before writing (security review 2026-10-24, Issue 8):
+                    # review_delete_job may have run while the probe phase was executing.
+                    async with self._pool.connection() as _del_conn:
+                        _del_row = await (await _del_conn.execute(
+                            "select state from jobs where job_id = %s", (job_id,)
+                        )).fetchone()
+                    if _del_row is None or _del_row[0] == "deleted":
+                        logger.info("job %s: deleted during chain_state phase, discarding related/facts", job_id[-8:])
+                        return
+                    write_related_contracts(self._pin_root, job_id, related)
+                except Exception:
+                    logger.info("job %s: related/state facts skipped", job_id[-8:], exc_info=True)
                 _facts_mod.write_facts(self._pin_root, job_id, facts)
         flags = _map_step.load_flags(self._pin_root, job_id) or []
         async with self._pool.connection() as conn:

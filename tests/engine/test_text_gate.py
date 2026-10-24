@@ -520,15 +520,34 @@ class TestT27Promotion:
     def test_t27_in_public_scope(self):
         assert "T27" in rules("book a call today", "public")
 
-    def test_pricing_rejected(self):
-        assert "T27" in rules("See our pricing page.", "model")
+    # T27 is multi-word only (plan 04 §11.2: "multi-word only; 'book', 'paid', 'contact'
+    # are protocol vocabulary").  Single-word "pricing" and "discount" are valid in
+    # security findings ("mint pricing oracle", "no discount to face value") — both ways:
 
-    def test_discount_rejected(self):
-        assert "T27" in rules("Use the discount code.", "model")
+    def test_pricing_standalone_passes_model(self):
+        # "pricing" alone is now allowed — it is technical vocabulary in security findings.
+        assert "T27" not in rules("The pricing oracle is stale.", "model")
+
+    def test_pricing_in_technical_context_passes(self):
+        # "mint pricing" or "price feed" must not be blocked.
+        assert "T27" not in rules("The mint pricing mechanism uses a TWAP.", "model")
+
+    def test_pricing_standalone_passes_public(self):
+        # Also passes in public scope.
+        assert "T27" not in rules("The pricing oracle rounds down.", "public")
+
+    def test_discount_standalone_passes(self):
+        # "discount" alone is valid ("no discount to face value applies").
+        assert "T27" not in rules("There is no discount mechanism.", "model")
+
+    def test_cta_phrases_still_rejected(self):
+        # These remain banned — they are unambiguous commercial CTAs.
+        assert "T27" in rules("Reach out to our team.", "model")
+        assert "T27" in rules("Upgrade to a full review.", "model")
+        assert "T27" in rules("We offer a paid plan.", "model")
 
     def test_book_standalone_passes(self):
         # "book" alone is not in the list; only multi-word "book a call" etc.
-        # But "book" is not in the phrase list as a standalone phrase
         assert "T27" not in rules("The book describes the protocol.", "model")
 
 
@@ -742,3 +761,96 @@ class TestUnicodeEdgeCases:
         t26 = [v for v in vs if v.rule_id == "T26"]
         # Without tlds.txt no T26 violations
         assert not t26
+
+
+# ── Write-time parity: check_model_field must be >= render gate ───────────────
+#
+# Coordinator requirement (2026-10-24): "the write-time gate must not be weaker
+# than the render-time gate."  LATE_GATE_SKIP (T24, T29, T31) must NOT be applied
+# at write time — only the render builder may skip them.  These tests prove
+# check_model_field enforces the FULL rule set, and that LATE_GATE_SKIP rules are
+# caught at write time so they can never sneak through to render_failed.
+
+
+class TestWriteTimeParityWithLateGate:
+    """check_model_field enforces all rules (no LATE_GATE_SKIP at write time)."""
+
+    def test_check_model_field_no_skip_imported(self):
+        """LATE_GATE_SKIP is a module-level constant; check_model_field does NOT apply it."""
+        from soken_review.engine.text_gate import LATE_GATE_SKIP, check_model_field
+        # Sanity: the constant must contain the canonical three rules.
+        assert LATE_GATE_SKIP == frozenset({"T24", "T29", "T31"})
+        # check_model_field on clean text → no violations.
+        assert check_model_field("The contract uses SafeMath for overflow protection.") == []
+
+    def test_t29_typed_id_caught_at_write_time(self):
+        """T29 fires on raw typed ids (e.g. C-001) in prose — caught by check_model_field."""
+        from soken_review.engine.text_gate import check_model_field
+        vs = check_model_field("The vulnerability is tracked as C-001 in our system.")
+        rule_ids = {v.rule_id for v in vs}
+        assert "T29" in rule_ids, (
+            "check_model_field must fire T29 on raw typed ids; "
+            "LATE_GATE_SKIP must not be applied at write time"
+        )
+
+    def test_t31_call_syntax_caught_at_write_time(self):
+        """T31 fires on call syntax outside code spans — caught by check_model_field."""
+        from soken_review.engine.text_gate import check_model_field
+        # transfer() outside a backtick span
+        vs = check_model_field("The attacker calls transfer() to drain funds.")
+        rule_ids = {v.rule_id for v in vs}
+        assert "T31" in rule_ids, (
+            "check_model_field must fire T31 on call syntax outside code spans; "
+            "LATE_GATE_SKIP must not be applied at write time"
+        )
+
+    def test_t31_call_in_code_span_passes_write_time(self):
+        """T31 exempts backtick-wrapped call syntax (write-time parity with render time)."""
+        from soken_review.engine.text_gate import check_model_field
+        vs = check_model_field("The attacker calls `transfer()` to drain funds.")
+        t31 = [v for v in vs if v.rule_id == "T31"]
+        assert not t31
+
+    def test_render_builder_applies_late_gate_skip(self):
+        """build.check_strings filters LATE_GATE_SKIP from model hits (render-only skip)."""
+        # Behavioral check: check_model_field must return T29 violations (full scope).
+        # If LATE_GATE_SKIP were applied inside check_model_field, T29 would be absent.
+        from soken_review.engine.text_gate import LATE_GATE_SKIP, check_model_field
+        text_with_t29 = "The issue is tracked as C-001 in our registry."
+        vs = check_model_field(text_with_t29)
+        rule_ids = {v.rule_id for v in vs}
+        assert "T29" in rule_ids, (
+            "check_model_field must NOT suppress T29 — "
+            "LATE_GATE_SKIP must only be applied by the render builder"
+        )
+        # Verify the constant exists and contains the expected rules.
+        assert "T24" in LATE_GATE_SKIP and "T29" in LATE_GATE_SKIP and "T31" in LATE_GATE_SKIP
+        # Verify check_strings source references LATE_GATE_SKIP (render-only filter location).
+        import inspect
+
+        import soken_review.report.kit.build as build_mod
+        src = inspect.getsource(build_mod.check_strings)
+        assert "LATE_GATE_SKIP" in src, (
+            "check_strings must filter LATE_GATE_SKIP from model hits; "
+            "render builder is the only caller that applies the skip"
+        )
+
+    def test_t27_pricing_technical_passes_write_time(self):
+        """T27 narrowed to multi-word CTAs: 'pricing oracle' technical use passes check_model_field."""
+        from soken_review.engine.text_gate import check_model_field
+        vs = check_model_field(
+            "The mint pricing oracle can be manipulated to undervalue redemptions.",
+            field="description",
+        )
+        t27 = [v for v in vs if v.rule_id == "T27"]
+        assert not t27, f"T27 must not fire on technical 'pricing oracle': {t27}"
+
+    def test_t27_cta_phrase_rejected_write_time(self):
+        """T27 multi-word CTA phrases are still rejected at write time."""
+        from soken_review.engine.text_gate import check_model_field
+        vs = check_model_field(
+            "Book a call with our team to discuss remediation options.",
+            field="recommendation",
+        )
+        t27 = [v for v in vs if v.rule_id == "T27"]
+        assert t27, "T27 must fire on 'book a call' CTA phrase at write time"
