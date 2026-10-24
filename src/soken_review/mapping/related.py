@@ -176,14 +176,20 @@ async def _classify(
             entry["kind"] = "multisig"
             # Read owners and threshold
             try:
-                raw_owners = await rpc.eth_call(address, _SAFE_GET_OWNERS, block=block)
+                # Owners list: larger response bound (64 owners = 4224 hex chars incl. ABI header).
+                raw_owners = await rpc.eth_call_probe(address, _SAFE_GET_OWNERS, block, gas=_PROBE_GAS_CAP,
+                                                      timeout_s=_PROBE_PER_CALL_S, max_response_hex_chars=16384,
+                                                      min_response_bytes=64)
                 owners = _decode_address_array(bytes.fromhex(raw_owners[2:]) if raw_owners and raw_owners.startswith("0x") else b"", 0)
                 entry["owners"] = owners
                 entry["owners_count"] = len(owners)
             except Exception as exc:  # noqa: BLE001
                 logger.info("getOwners %s: %s", address, type(exc).__name__)
             try:
-                raw_th = await rpc.eth_call(address, _SAFE_GET_THRESHOLD, block=block)
+                raw_th = await rpc.eth_call_probe(address, _SAFE_GET_THRESHOLD, block, gas=_PROBE_GAS_CAP,
+                                                  timeout_s=_PROBE_PER_CALL_S,
+                                                  max_response_hex_chars=_PROBE_MAX_HEX,
+                                                  min_response_bytes=_PROBE_MIN_BYTES)
                 th = _decode_uint(raw_th)
                 if th is not None:
                     entry["threshold"] = th
@@ -195,17 +201,11 @@ async def _classify(
     # Use eth_call_probe (single attempt, no retry chain, gas-capped, response-size-capped)
     # so a hostile or slow contract cannot stall the analysis for up to 3×30 s.
     # The label makes clear this is a point-in-time read, not a guarantee.
-    probe_fn = getattr(rpc, "eth_call_probe", None)
-    if probe_fn is not None:
-        raw_delay = await probe_fn(address, _GET_MIN_DELAY_SEL, block,
-                                   gas=2_000_000, timeout_s=5.0)
-    else:
-        # Fallback for test doubles that only expose eth_call
-        try:
-            raw_delay = await rpc.eth_call(address, _GET_MIN_DELAY_SEL, block=block)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("getMinDelay %s: %s", address, type(exc).__name__)
-            raw_delay = None
+    # Probe limits are required (rpc must provide eth_call_probe); no uncapped fallback.
+    raw_delay = await rpc.eth_call_probe(address, _GET_MIN_DELAY_SEL, block,
+                                         gas=_PROBE_GAS_CAP, timeout_s=_PROBE_PER_CALL_S,
+                                         max_response_hex_chars=_PROBE_MAX_HEX,
+                                         min_response_bytes=_PROBE_MIN_BYTES)
     if raw_delay is not None:
         delay = _decode_uint(raw_delay)
         if delay is not None and delay > 0:
@@ -328,8 +328,6 @@ async def state_parameter_facts(
     probes_done = 0
     deadline = time.monotonic() + _PROBE_TOTAL_DEADLINE_S
 
-    probe_fn = getattr(rpc, "eth_call_probe", None)
-
     for name in sorted(names):
         if probes_done >= MAX_STATE_PROBES:
             break
@@ -339,21 +337,13 @@ async def state_parameter_facts(
         sel = getter_selector(name)
         probes_done += 1
 
-        if probe_fn is not None:
-            raw = await probe_fn(
-                address, sel, block,
-                gas=_PROBE_GAS_CAP,
-                timeout_s=_PROBE_PER_CALL_S,
-                max_response_hex_chars=_PROBE_MAX_HEX,
-                min_response_bytes=_PROBE_MIN_BYTES,
-            )
-        else:
-            # Fallback for test doubles that only expose eth_call
-            try:
-                raw = await rpc.eth_call(address, sel, block=block)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("eth_call %s() failed: %s", name, type(exc).__name__)
-                raw = None
+        raw = await rpc.eth_call_probe(
+            address, sel, block,
+            gas=_PROBE_GAS_CAP,
+            timeout_s=_PROBE_PER_CALL_S,
+            max_response_hex_chars=_PROBE_MAX_HEX,
+            min_response_bytes=_PROBE_MIN_BYTES,
+        )
 
         if raw is None:
             continue

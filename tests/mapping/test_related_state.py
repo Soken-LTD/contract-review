@@ -8,6 +8,21 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+
+def _probe(rpc):
+    """Give a test double the capped probe the code requires: delegate to its eth_call stub,
+    None on error or on fewer than 32 bytes of return data (RpcClient.eth_call_probe rules)."""
+    async def eth_call_probe(address, data, block=None, **_limits):
+        try:
+            raw = await rpc.eth_call(address, data, block=block)
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(raw, str) or not raw.startswith("0x") or len(raw) - 2 < 64:
+            return None
+        return raw
+    rpc.eth_call_probe = eth_call_probe
+
+
 import pytest
 
 from soken_review.mapping.related import (
@@ -80,9 +95,10 @@ async def test_classify_eoa():
 @pytest.mark.asyncio
 async def test_classify_generic_contract():
     """Non-Safe bytecode → kind = contract."""
-    rpc = AsyncMock(spec=["get_code", "eth_call"])
+    rpc = AsyncMock(spec=["get_code", "eth_call", "eth_call_probe"])
     rpc.get_code = AsyncMock(return_value="0x6080604052")  # standard EVM init bytecode
     rpc.eth_call = AsyncMock(return_value="0x" + "0" * 64)  # getMinDelay returns 0 → no entry
+    _probe(rpc)
     facts = _facts(owner=OWNER)
     results = await classify_related_contracts(rpc, 100, facts)
     assert results[0]["kind"] == "contract"
@@ -92,7 +108,7 @@ async def test_classify_generic_contract():
 async def test_classify_contract_with_min_delay():
     """Contract whose getMinDelay() returns non-zero: min_delay_s is set."""
     delay = 86400  # 1 day
-    rpc = AsyncMock(spec=["get_code", "eth_call"])
+    rpc = AsyncMock(spec=["get_code", "eth_call", "eth_call_probe"])
     rpc.get_code = AsyncMock(return_value="0x6080604052")
     # eth_call returns non-zero delay only for the getMinDelay selector
     async def _call(address, data, block=None):
@@ -100,6 +116,7 @@ async def test_classify_contract_with_min_delay():
             return "0x" + format(delay, "064x")
         return "0x" + "0" * 64
     rpc.eth_call = AsyncMock(side_effect=_call)
+    _probe(rpc)
     results = await classify_related_contracts(rpc, 100, _facts(owner=OWNER))
     assert results[0]["kind"] == "contract"
     assert results[0].get("min_delay_s") == delay
@@ -130,9 +147,10 @@ async def test_classify_deduplicates_addresses():
         {"key": "onchain.owner", "value": OWNER},
         {"key": "onchain.governance", "value": OWNER},  # same address
     ]
-    rpc = AsyncMock(spec=["get_code", "eth_call"])
+    rpc = AsyncMock(spec=["get_code", "eth_call", "eth_call_probe"])
     rpc.get_code = AsyncMock(return_value="0x")
     rpc.eth_call = AsyncMock(return_value="0x" + "0" * 64)
+    _probe(rpc)
     results = await classify_related_contracts(rpc, 100, facts)
     # Deduplication: only one entry, first role wins
     assert len(results) == 1
@@ -163,10 +181,11 @@ async def test_classify_safe_multisig_reads_owners_and_threshold():
             return "0x" + format(1, "064x")
         return "0x" + "0" * 64
 
-    rpc = AsyncMock(spec=["get_code", "get_storage_at", "eth_call"])
+    rpc = AsyncMock(spec=["get_code", "get_storage_at", "eth_call", "eth_call_probe"])
     rpc.get_code = AsyncMock(return_value=safe_code)
     rpc.get_storage_at = AsyncMock(return_value=singleton_padded)
     rpc.eth_call = AsyncMock(side_effect=_call)
+    _probe(rpc)
 
     results = await classify_related_contracts(rpc, 100, _facts(owner=OWNER))
     entry = results[0]
@@ -195,9 +214,10 @@ def _encode_address_array(addresses: list[str]) -> bytes:
 @pytest.mark.asyncio
 async def test_state_parameter_facts_reads_new_getter():
     """A getter not in HOLDER_GETTERS is probed and recorded as state.<snake>."""
-    rpc = AsyncMock(spec=["eth_call"])
+    rpc = AsyncMock(spec=["eth_call", "eth_call_probe"])
     fee_value = 500  # 500 bps
     rpc.eth_call = AsyncMock(return_value="0x" + format(fee_value, "064x"))
+    _probe(rpc)
 
     map_doc = _map("assetListingDelay", "oracleTimeout")
     facts = await state_parameter_facts(rpc, "0x" + "a" * 40, 100, map_doc, None)
@@ -210,8 +230,9 @@ async def test_state_parameter_facts_reads_new_getter():
 async def test_state_parameter_facts_skips_already_read_getters():
     """owner, totalSupply, decimals and all HOLDER_GETTERS must not be re-probed."""
     from soken_review.mapping.related import _ALREADY_READ
-    rpc = AsyncMock(spec=["eth_call"])
+    rpc = AsyncMock(spec=["eth_call", "eth_call_probe"])
     rpc.eth_call = AsyncMock(return_value="0x" + "0" * 64)
+    _probe(rpc)
 
     already = list(_ALREADY_READ)[:5]
     map_doc = _map(*already)
@@ -223,8 +244,9 @@ async def test_state_parameter_facts_skips_already_read_getters():
 @pytest.mark.asyncio
 async def test_state_parameter_facts_zero_return_skipped():
     """A getter returning all-zero (the Solidity default) produces no fact."""
-    rpc = AsyncMock(spec=["eth_call"])
+    rpc = AsyncMock(spec=["eth_call", "eth_call_probe"])
     rpc.eth_call = AsyncMock(return_value="0x" + "0" * 64)
+    _probe(rpc)
     map_doc = _map("sellCooldown")
     facts = await state_parameter_facts(rpc, "0x" + "a" * 40, 100, map_doc, None)
     assert not facts
@@ -234,8 +256,9 @@ async def test_state_parameter_facts_zero_return_skipped():
 async def test_state_parameter_facts_address_like_value_decoded():
     """A return value that looks like an address is decoded as an address."""
     addr_value = "0x" + "0" * 24 + "ab" * 20  # top 12 bytes zero, bottom 20 non-zero
-    rpc = AsyncMock(spec=["eth_call"])
+    rpc = AsyncMock(spec=["eth_call", "eth_call_probe"])
     rpc.eth_call = AsyncMock(return_value=addr_value)
+    _probe(rpc)
     map_doc = _map("fillAgent")
     facts = await state_parameter_facts(rpc, "0x" + "a" * 40, 100, map_doc, None)
     f = next((f for f in facts if f["key"] == "state.fill_agent"), None)
@@ -247,8 +270,9 @@ async def test_state_parameter_facts_address_like_value_decoded():
 @pytest.mark.asyncio
 async def test_state_parameter_facts_bool_naming_convention():
     """is*/paused returns 'true'/'false' for bool-like values."""
-    rpc = AsyncMock(spec=["eth_call"])
+    rpc = AsyncMock(spec=["eth_call", "eth_call_probe"])
     rpc.eth_call = AsyncMock(return_value="0x" + "0" * 63 + "1")  # value = 1
+    _probe(rpc)
     map_doc = _map("paused", "isActive")
     facts = await state_parameter_facts(rpc, "0x" + "a" * 40, 100, map_doc, None)
     for f in facts:
@@ -258,8 +282,9 @@ async def test_state_parameter_facts_bool_naming_convention():
 @pytest.mark.asyncio
 async def test_state_parameter_facts_rpc_failure_is_graceful():
     """A failed eth_call for a getter produces no fact, never raises."""
-    rpc = AsyncMock(spec=["eth_call"])
+    rpc = AsyncMock(spec=["eth_call", "eth_call_probe"])
     rpc.eth_call = AsyncMock(side_effect=RuntimeError("rpc down"))
+    _probe(rpc)
     map_doc = _map("assetListingDelay")
     facts = await state_parameter_facts(rpc, "0x" + "a" * 40, 100, map_doc, None)
     assert facts == []
@@ -268,8 +293,9 @@ async def test_state_parameter_facts_rpc_failure_is_graceful():
 @pytest.mark.asyncio
 async def test_state_parameter_facts_capped_at_max():
     """No more than MAX_STATE_PROBES eth_call calls are made."""
-    rpc = AsyncMock(spec=["eth_call"])
+    rpc = AsyncMock(spec=["eth_call", "eth_call_probe"])
     rpc.eth_call = AsyncMock(return_value="0x" + format(1, "064x"))
+    _probe(rpc)
     # Many names to probe
     names = [f"getter{i}" for i in range(MAX_STATE_PROBES + 20)]
     map_doc = _map(*names)
@@ -446,3 +472,21 @@ def test_review_status_detailed_includes_suggested_context(tmp_path: Path):
     out = _build_status_response(job, "detailed")
     assert "suggested_context_items" in out
     assert out["suggested_context_items"] == suggested
+
+
+@pytest.mark.asyncio
+async def test_pool_probe_is_capped_and_fails_over(monkeypatch):
+    """Production passes an RpcClientPool: it must expose the capped probe and try each endpoint once."""
+    from soken_review.adapters.evm import rpc as R
+
+    seen: list[tuple[str, dict]] = []
+
+    async def fake_probe(self, to, data, block=None, **limits):
+        seen.append((self._url, limits))
+        return None if self._url.endswith("a") else "0x" + "0" * 63 + "1"
+
+    monkeypatch.setattr(R.RpcClient, "eth_call_probe", fake_probe)
+    pool = R.RpcClientPool(["https://rpc.example/a", "https://rpc.example/b"])
+    out = await pool.eth_call_probe("0x" + "1" * 40, "0x12345678", 100, gas=2_000_000, timeout_s=5.0)
+    assert out.endswith("1") and [u for u, _ in seen] == ["https://rpc.example/a", "https://rpc.example/b"]
+    assert all(lim["gas"] == 2_000_000 for _, lim in seen)

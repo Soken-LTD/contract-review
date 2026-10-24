@@ -352,6 +352,16 @@ class RpcClientPool:
     ) -> str:
         return await self._try_call("eth_call", "eth_call", to, data, block, state_override)
 
+    async def eth_call_probe(self, to: str, data: str, block: int | str | None = None, **limits: Any) -> str | None:
+        """Best-effort probe: each endpoint once with the probe limits of RpcClient.eth_call_probe
+        (gas cap, timeout, response size bounds); the first usable answer wins, else None."""
+        for client in self._clients():
+            result = await client.eth_call_probe(to, data, block, **limits)
+            if result is not None:
+                self.answered_by = _redact(client._url)
+                return result
+        return None
+
     def with_block(self, block: int | str) -> RpcClientPool:
         """Return a new pool pinned to *block* (shares the same URL list)."""
         return RpcClientPool(self._urls, block=block)
