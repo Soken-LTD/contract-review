@@ -97,6 +97,19 @@ def _is_safe_proxy(code_bytes: bytes) -> bool:
 # ABI helpers for Safe reads (mirrors proxy.py without circular import)
 # ---------------------------------------------------------------------------
 
+def _decode_address_array_strict(raw: bytes) -> list[str] | None:
+    """Like _decode_address_array, but None unless every declared element decoded (truncated or
+    malformed return data must read as unknown, never as a shorter owner list)."""
+    if len(raw) < 64:
+        return None
+    arr_off = int.from_bytes(raw[0:32], "big")
+    if arr_off + 32 > len(raw):
+        return None
+    declared = int.from_bytes(raw[arr_off : arr_off + 32], "big")
+    owners = _decode_address_array(raw, 0)
+    return owners if declared and len(owners) == declared else None
+
+
 def _decode_address_array(raw: bytes, offset: int) -> list[str]:
     """Decode a dynamic bytes32-array of addresses starting at `offset`."""
     if len(raw) < offset + 32:
@@ -180,9 +193,11 @@ async def _classify(
                 raw_owners = await rpc.eth_call_probe(address, _SAFE_GET_OWNERS, block, gas=_PROBE_GAS_CAP,
                                                       timeout_s=_PROBE_PER_CALL_S, max_response_hex_chars=16384,
                                                       min_response_bytes=64)
-                owners = _decode_address_array(bytes.fromhex(raw_owners[2:]) if raw_owners and raw_owners.startswith("0x") else b"", 0)
-                entry["owners"] = owners
-                entry["owners_count"] = len(owners)
+                owners = (_decode_address_array_strict(bytes.fromhex(raw_owners[2:]))
+                          if isinstance(raw_owners, str) and raw_owners.startswith("0x") else None)
+                if owners is not None:   # unknown stays absent, never printed as zero owners
+                    entry["owners"] = owners
+                    entry["owners_count"] = len(owners)
             except Exception as exc:  # noqa: BLE001
                 logger.info("getOwners %s: %s", address, type(exc).__name__)
             try:

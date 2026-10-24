@@ -490,3 +490,14 @@ async def test_pool_probe_is_capped_and_fails_over(monkeypatch):
     out = await pool.eth_call_probe("0x" + "1" * 40, "0x12345678", 100, gas=2_000_000, timeout_s=5.0)
     assert out.endswith("1") and [u for u, _ in seen] == ["https://rpc.example/a", "https://rpc.example/b"]
     assert all(lim["gas"] == 2_000_000 for _, lim in seen)
+
+
+def test_strict_owner_decode_unknown_on_truncation():
+    from soken_review.mapping.related import _decode_address_array_strict
+
+    word = lambda n: n.to_bytes(32, "big")
+    owner = b"\x00" * 12 + b"\x11" * 20
+    full = word(32) + word(2) + owner + owner
+    assert _decode_address_array_strict(full) == ["0x" + "11" * 20] * 2
+    assert _decode_address_array_strict(word(32) + word(3) + owner + owner) is None   # declared 3, got 2
+    assert _decode_address_array_strict(b"") is None
