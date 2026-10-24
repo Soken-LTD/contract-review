@@ -170,3 +170,46 @@ def test_run_map_step_no_crash_when_no_urls(tmp_path: Path):
     PinnedSource.from_files({"contracts/Empty.sol": source.encode()}).persist(tmp_path, job_id)
     # Should not raise
     run_map_step(tmp_path, job_id, solc_output_path=None, build_ok=False, build_detail="no build")
+
+
+# ---------------------------------------------------------------------------
+# Security: untrusted URL gates (injection + strict charset)
+# ---------------------------------------------------------------------------
+
+def test_javascript_scheme_url_is_dropped():
+    """A javascript: URL must be dropped by the strict-charset gate."""
+    files = {
+        "Token.sol": "/// @custom:website javascript:alert(1)\ncontract T {}\n"
+    }
+    results = discover_project_urls(files)
+    assert results == [], "javascript: scheme must be rejected before injection scan"
+
+
+def test_query_string_url_is_dropped():
+    """A URL with a query string must be dropped (strict charset forbids '?')."""
+    files = {
+        "Token.sol": "/// @custom:website https://example.com/?ref=hack&x=y\ncontract T {}\n"
+    }
+    results = discover_project_urls(files)
+    assert results == [], "URLs with query strings must be dropped by strict-charset gate"
+
+
+def test_fragment_url_is_dropped():
+    """A URL with a fragment must be dropped (strict charset forbids '#')."""
+    files = {
+        "Token.sol": "/// @custom:website https://example.com/page#section\ncontract T {}\n"
+    }
+    results = discover_project_urls(files)
+    assert results == [], "URLs with fragments must be dropped by strict-charset gate"
+
+
+def test_origin_and_status_on_discovered_item():
+    """Every discovered item must carry origin='source_code_untrusted' and status='suggested'."""
+    files = {
+        "Token.sol": "/// @custom:website https://myprotocol.example.com/\ncontract T {}\n"
+    }
+    results = discover_project_urls(files)
+    assert results, "Expected at least one item"
+    for item in results:
+        assert item.get("origin") == "source_code_untrusted", item
+        assert item.get("status") == "suggested", item

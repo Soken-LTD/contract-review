@@ -23,6 +23,7 @@ from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
 from ..mapping.build import load_map
 from ..mapping.facts import load_facts
+from ..mapping.related import load_related_contracts
 from ..pinning.store import PinnedSource
 from .architecture import architecture_block, role_rows
 from .kit.build import SEV_PREFIX, SEVS, build_date_text, check_strings, counts, kit_texts, out_name, validate
@@ -397,6 +398,100 @@ async def _rows(conn: Any, sql: str, params: tuple) -> list[dict[str, Any]]:
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(sql, params)
         return list(await cur.fetchall())
+
+
+# ------------------------------------------------------------------ related contracts (feat/context-related-state)
+
+_ADDR_SHORT_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+_UNVERIFIED_NOTE = "Source not verified; behaviour cannot be checked."
+
+
+def _short_addr_related(addr: str) -> str:
+    """Shorten an address for the related contracts table: ``0xABCD...1234`` (14 chars)."""
+    if _ADDR_SHORT_RE.match(addr):
+        return f"{addr[:6]}...{addr[-4:]}"
+    return addr[:20]
+
+
+def _kind_label(entry: dict[str, Any]) -> str:
+    k = entry.get("kind", "unknown")
+    return {"eoa": "EOA", "multisig": "Multisig", "contract": "Contract"}.get(k, "Unknown")
+
+
+def _verified_label(entry: dict[str, Any]) -> str:
+    v = entry.get("verified")
+    if v is True:
+        return "Verified"
+    if v is False:
+        return "Unverified"
+    return "Unknown"
+
+
+def _related_note(entry: dict[str, Any], verified_label: str) -> str | None:
+    """Build a server note for the related contract row."""
+    parts: list[str] = []
+    # Unverified notice first (security-relevant; auditor must see it)
+    if verified_label == "Unverified":
+        parts.append(_UNVERIFIED_NOTE)
+    kind = entry.get("kind")
+    if kind == "multisig":
+        owners = entry.get("owners_count")
+        threshold = entry.get("threshold")
+        if threshold is not None and owners is not None:
+            parts.append(f"{threshold}-of-{owners} Safe.")
+    delay = entry.get("min_delay_s")
+    if delay is not None and delay > 0:
+        h = delay // 3600
+        parts.append(f"Min delay {h} h." if h else f"Min delay {delay} s.")
+    combined = " ".join(parts)
+    return combined[:120] if combined else None
+
+
+def related_contract_rows(
+    pin_root: Path,
+    job_id: str,
+) -> list[dict[str, Any]]:
+    """Build ``roles.related_contracts`` rows from the pin-root related_contracts.json.
+
+    Unverified entries sort first so reviewers see the highest-risk rows at the top.
+    Empty list when the file is absent or contains no entries.
+    """
+    entries = load_related_contracts(pin_root, job_id)
+    if not entries:
+        return []
+    rows = []
+    for entry in entries:
+        addr = entry.get("address") or ""
+        label = entry.get("role") or entry.get("name") or "?"
+        kind_label = _kind_label(entry)
+        verified_label = _verified_label(entry)
+        note = _related_note(entry, verified_label)
+        row: dict[str, Any] = {
+            "label": label[:80],
+            "address": _short_addr_related(addr),
+            "kind": kind_label,
+            "verified": verified_label,
+        }
+        if note:
+            row["note"] = note
+        rows.append(row)
+    # Unverified first, then Unknown, then Verified; within each group preserve original order
+    _order = {"Unverified": 0, "Unknown": 1, "Verified": 2}
+    rows.sort(key=lambda r: _order.get(r["verified"], 1))
+    return rows[:20]
+
+
+def _roles_related(pin_root: Path, job_id: str) -> dict[str, Any]:
+    """Return ``{"related_contracts": rows}`` or ``{}`` when there are no related contracts.
+
+    The empty-dict branch means the roles dict never gains a ``related_contracts: []`` key
+    when there is nothing to show, keeping the JSON diff-clean and matching the optional
+    schema field.
+    """
+    rows = related_contract_rows(pin_root, job_id)
+    if rows:
+        return {"related_contracts": rows}
+    return {}
 
 
 def _json(path: Path, default: Any) -> Any:
@@ -826,7 +921,11 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         "scope": {"head": ["Unit", "File", "nSLOC", "Address"], "files": scope_files[:400], "out_of_scope": oos[:40]},
         "context": ctx,
         "architecture": architecture_block(map_doc, facts, job, deployment),
-        "roles": {"rows": role_rows(map_doc, facts, job), "notes": _model_blocks(roles_notes.get("notes", []))[:8]},
+        "roles": {
+            "rows": role_rows(map_doc, facts, job),
+            "notes": _model_blocks(roles_notes.get("notes", []))[:8],
+            **_roles_related(pin_root, job_id),
+        },
         "method": method,
         "severity_scale": [{"severity": s, "text": t["severity_scale"][s.lower()]} for s in SEVS],
         "findings": findings,

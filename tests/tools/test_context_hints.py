@@ -12,10 +12,12 @@ from __future__ import annotations
 import re
 
 import pytest
+import pytest_asyncio
 from mcp import Client
 
 import soken_review.tools  # noqa: F401 – register @handler decorators
 from soken_review.server import SokenServer
+from soken_review.tools.start_status import set_pool
 
 pytestmark = pytest.mark.anyio
 
@@ -26,23 +28,34 @@ async def _call(tool: str, **args):
 
 
 # ---------------------------------------------------------------------------
+# DB-wired client fixture (same pattern as test_status_tails.py)
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture()
+async def wired_client(db_pool):
+    """MCP client with a live DB pool injected via set_pool."""
+    set_pool(db_pool)
+    try:
+        async with Client(SokenServer()) as c:
+            yield c
+    finally:
+        set_pool(None)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
 # review_start: next_action present / absent
 # ---------------------------------------------------------------------------
 
-async def test_review_start_carries_next_action_when_no_context():
+async def test_review_start_carries_next_action_when_no_context(wired_client):
     source = {
         "kind": "files",
         "language": "solidity",
         "files": [{"path": "A.sol", "content": "contract A {}"}],
     }
-    res = await _call("review_start", source=source)
-    # E_INTERNAL = no DB pool wired in this test environment; skip gracefully.
-    if res.is_error:
-        pytest.skip("DB not wired (E_INTERNAL); skipping review_start accepted-path assertion")
+    res = await wired_client.call_tool("review_start", {"source": source})
+    assert not res.is_error, getattr(res.content[0], "text", repr(res))
     body = res.structured_content
-    # Rejection channel (accepted=False) also means the job was not created.
-    if body is None or not body.get("accepted"):
-        pytest.skip("DB not wired; skipping accepted-path assertion")
+    assert body is not None and body.get("accepted"), f"Expected accepted job; got: {body!r}"
     assert "next_action" in body, "next_action should be present when no context"
     hint = body["next_action"]
     assert isinstance(hint, str) and len(hint) > 20
@@ -57,19 +70,17 @@ async def test_review_start_carries_next_action_when_no_context():
     )
 
 
-async def test_review_start_no_next_action_when_context_provided():
+async def test_review_start_no_next_action_when_context_provided(wired_client):
     source = {
         "kind": "files",
         "language": "solidity",
         "files": [{"path": "A.sol", "content": "contract A {}"}],
     }
     ctx = {"items": [{"kind": "website", "url": "https://example.com/"}]}
-    res = await _call("review_start", source=source, context=ctx)
-    if res.is_error:
-        pytest.skip("DB not wired (E_INTERNAL); skipping review_start accepted-path assertion")
+    res = await wired_client.call_tool("review_start", {"source": source, "context": ctx})
+    assert not res.is_error, getattr(res.content[0], "text", repr(res))
     body = res.structured_content
-    if body is None or not body.get("accepted"):
-        pytest.skip("DB not wired")
+    assert body is not None and body.get("accepted"), f"Expected accepted job; got: {body!r}"
     assert "next_action" not in body, (
         "next_action must be absent when context items are provided"
     )

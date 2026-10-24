@@ -1428,7 +1428,19 @@ class Supervisor:
                         facts.extend(state_fs)
                     related = await classify_related_contracts(
                         rpc_pool_pinned, int(cs["block"]), onchain,
+                        chain_id=int(job["chain_id"]),
                     )
+                    # Expose related.<label>.verified facts
+                    for entry in related:
+                        label = entry.get("role") or "related"
+                        verified = entry.get("verified")
+                        if verified is not None:
+                            facts.append({
+                                "key": f"related.{label}.verified",
+                                "value": str(verified).lower(),  # "true" / "false"
+                                "source": "sourcify",
+                                "unit_id": unit_id,
+                            })
                     write_related_contracts(self._pin_root, job_id, related)
                 except Exception:
                     logger.info("job %s: related/state facts skipped", job_id[-8:], exc_info=True)

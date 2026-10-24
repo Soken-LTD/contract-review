@@ -210,12 +210,21 @@ async def classify_related_contracts(
     rpc: Any,
     block: int,
     onchain_fact_list: list[dict[str, Any]],
+    chain_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """Classify all unique non-zero addresses from ``onchain_facts`` output.
+
+    For each address of kind ``contract`` or ``multisig``, checks Sourcify for
+    verified source (requires ``chain_id``).  The ``verified`` field is:
+    - ``True``  – Sourcify has an exact_match or match
+    - ``False`` – Sourcify returned 404 (not verified)
+    - ``None``  – unknown (no chain_id supplied, or network error)
 
     Returns a list of classification dicts, one per unique address, de-duplicated
     and ordered by the fact key they were first seen under.
     """
+    from .verify import check_sourcify_verified  # lazy import to avoid circular at module level
+
     # Collect (role, address) pairs from holder facts and EIP-1967 slots
     role_map: dict[str, str] = {}  # address (lower) -> first role name seen
     for f in onchain_fact_list:
@@ -243,6 +252,20 @@ async def classify_related_contracts(
     for address, role in role_map.items():
         entry = await _classify(rpc, address, block)
         entry["role"] = role
+
+        # Check source verification for contracts/multisigs when chain_id is known
+        if chain_id is not None and entry["kind"] in ("contract", "multisig"):
+            try:
+                verified, name = await check_sourcify_verified(chain_id, address)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("verify: check failed for %s: %s", address, type(exc).__name__)
+                verified, name = None, None
+            entry["verified"] = verified
+            if name:
+                entry["name"] = name
+        else:
+            entry["verified"] = None  # EOA or unknown chain
+
         results.append(entry)
 
     return results

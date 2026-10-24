@@ -1,2137 +1,2192 @@
 {
- "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "https://soken.dev/schema/report.automated.json",
- "title": "Automated report.json (plan-v4 part 08)",
- "description": "Contract between assemble_report and report-kit build() in automated mode. Every string carries x-text-class (model, server, kit, src; part 08 1.5). The stored report is always complete; build() projects it per meta.profile (04 4.1).",
- "type": "object",
- "additionalProperties": false,
- "required": [
-  "meta",
-  "facts",
-  "summary",
-  "scope",
-  "architecture",
-  "roles",
-  "method",
-  "severity_scale",
-  "findings",
-  "review_coverage"
- ],
- "properties": {
-  "meta": {
-   "$ref": "#/$defs/meta"
-  },
-  "facts": {
-   "type": "object",
-   "description": "Server facts referenced by {{fact:key}} and {{calc:...}} in model strings, which stay in placeholder form in report.json. check_strings() runs on the placeholder form; project() (08 2.4) substitutes value, or kit withheld_value for amount_at_risk under public_review (04 4.1 effect 4), and drops the matching Figures used rows",
-   "propertyNames": {
-    "$ref": "#/$defs/fact_key"
-   },
-   "additionalProperties": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "value",
-     "unit",
-     "amount_at_risk"
-    ],
-    "properties": {
-     "value": {
-      "type": "string",
-      "maxLength": 80,
-      "x-text-class": "server"
-     },
-     "unit": {
-      "type": [
-       "string",
-       "null"
-      ],
-      "maxLength": 40,
-      "description": "units.yaml unit word; null for unitless facts",
-      "x-text-class": "server"
-     },
-     "amount_at_risk": {
-      "type": "boolean",
-      "description": "04 6.3 tag from units.yaml"
-     }
-    }
-   }
-  },
-  "summary": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "kpis"
-   ],
-   "properties": {
-    "kpis": {
-     "type": "array",
-     "minItems": 6,
-     "maxItems": 7,
-     "items": {
-      "$ref": "#/$defs/kpi"
-     },
-     "description": "Six server KPIs, plus `documents` when at least one project document was retrieved (context ingestion spec 7)"
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://soken.dev/schema/report.automated.json",
+  "title": "Automated report.json (plan-v4 part 08)",
+  "description": "Contract between assemble_report and report-kit build() in automated mode. Every string carries x-text-class (model, server, kit, src; part 08 1.5). The stored report is always complete; build() projects it per meta.profile (04 4.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "meta",
+    "facts",
+    "summary",
+    "scope",
+    "architecture",
+    "roles",
+    "method",
+    "severity_scale",
+    "findings",
+    "review_coverage"
+  ],
+  "properties": {
+    "meta": {
+      "$ref": "#/$defs/meta"
     },
-    "dismissed_leads": {
-     "$ref": "#/$defs/dismissed_leads"
-    }
-   }
-  },
-  "scope": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "head",
-    "files",
-    "out_of_scope"
-   ],
-   "properties": {
-    "head": {
-     "type": "array",
-     "minItems": 4,
-     "maxItems": 4,
-     "items": {
-      "type": "string",
-      "maxLength": 24,
-      "x-text-class": "server"
-     }
-    },
-    "files": {
-     "type": "array",
-     "minItems": 1,
-     "maxItems": 400,
-     "items": {
-      "$ref": "#/$defs/scope_file"
-     }
-    },
-    "out_of_scope": {
-     "type": "array",
-     "maxItems": 40,
-     "items": {
+    "facts": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-       "path",
-       "reason",
-       "by"
-      ],
-      "properties": {
-       "path": {
-        "$ref": "#/$defs/src_text"
-       },
-       "reason": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200,
-        "description": "Server rows: fixed reason words. Model rows (by = model): MODEL, part 04 text gate",
-        "x-text-class": "model"
-       },
-       "by": {
-        "enum": [
-         "server",
-         "model"
-        ]
-       }
-      }
-     }
-    }
-   }
-  },
-  "architecture": {
-   "$ref": "#/$defs/architecture"
-  },
-  "roles": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "rows",
-    "notes"
-   ],
-   "properties": {
-    "rows": {
-     "type": "array",
-     "maxItems": 30,
-     "items": {
-      "$ref": "#/$defs/role_row"
-     }
-    },
-    "notes": {
-     "type": "array",
-     "maxItems": 8,
-     "items": {
-      "$ref": "#/$defs/model_block"
-     }
-    },
-    "figures": {
-     "type": "array",
-     "maxItems": 30,
-     "items": {
-      "$ref": "#/$defs/figure"
-     },
-     "description": "Placeholders in roles rows and notes, one table under the roles table"
-    }
-   }
-  },
-  "method": {
-   "type": "array",
-   "minItems": 1,
-   "maxItems": 20,
-   "items": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "step",
-     "detail"
-    ],
-    "properties": {
-     "step": {
-      "type": "string",
-      "maxLength": 60,
-      "description": "Kit constant",
-      "x-text-class": "kit"
-     },
-     "detail": {
-      "type": "string",
-      "maxLength": 400,
-      "description": "Server text from the run manifest: analyzer name and version, checklist id, disproof pass count",
-      "x-text-class": "server"
-     }
-    }
-   }
-  },
-  "severity_scale": {
-   "type": "array",
-   "minItems": 5,
-   "maxItems": 5,
-   "items": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-     "severity",
-     "text"
-    ],
-    "properties": {
-     "severity": {
-      "$ref": "#/$defs/severity"
-     },
-     "text": {
-      "type": "string",
-      "maxLength": 400,
-      "description": "Kit text",
-      "x-text-class": "kit"
-     }
-    }
-   }
-  },
-  "findings": {
-   "type": "array",
-   "maxItems": 60,
-   "items": {
-    "$ref": "#/$defs/finding"
-   }
-  },
-  "verification": {
-   "type": "array",
-   "maxItems": 6,
-   "description": "Server tables from verify_deployment; present for tier A and C only",
-   "items": {
-    "$ref": "#/$defs/server_block"
-   }
-  },
-  "review_coverage": {
-   "$ref": "#/$defs/review_coverage"
-  },
-  "context": {
-   "$ref": "#/$defs/context"
-  }
- },
- "$defs": {
-  "severity": {
-   "enum": [
-    "Critical",
-    "High",
-    "Medium",
-    "Low",
-    "Informational"
-   ]
-  },
-  "report_id": {
-   "type": "string",
-   "pattern": "^[a-z2-7]{26}$",
-   "x-text-class": "server"
-  },
-  "report_id_short": {
-   "type": "string",
-   "pattern": "^[a-z2-7]{10}$",
-   "x-text-class": "server"
-  },
-  "src_text": {
-   "type": "string",
-   "minLength": 1,
-   "maxLength": 300,
-   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-   "x-text-class": "src"
-  },
-  "address": {
-   "type": "string",
-   "minLength": 20,
-   "maxLength": 130,
-   "pattern": "^[0-9A-Za-z:_.-]+$",
-   "x-text-class": "src"
-  },
-  "date_text": {
-   "type": "string",
-   "pattern": "^[1-9][0-9]? (January|February|March|April|May|June|July|August|September|October|November|December) 20[0-9]{2}$",
-   "x-text-class": "server"
-  },
-  "fact_key": {
-   "type": "string",
-   "pattern": "^[a-z][a-z0-9_.]{0,79}$",
-   "x-text-class": "server"
-  },
-  "meta": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "report_type",
-    "kind",
-    "subject",
-    "subject_source",
-    "chain",
-    "network",
-    "explorer",
-    "addr_url",
-    "deployed_noun",
-    "source_id_label",
-    "provenance",
-    "report_id",
-    "report_id_short",
-    "ownership_proven",
-    "profile",
-    "requested_by",
-    "date",
-    "expires",
-    "out_name"
-   ],
-   "properties": {
-    "report_type": {
-     "const": "automated",
-     "x-text-class": "kit"
-    },
-    "kind": {
-     "const": "Smart contract security review",
-     "x-text-class": "kit"
-    },
-    "subject": {
-     "type": "string",
-     "minLength": 1,
-     "maxLength": 60,
-     "description": "After the subject gate 8.3.3",
-     "x-text-class": "server"
-    },
-    "subject_source": {
-     "enum": [
-      "verified_name",
-      "repo_name",
-      "repo_at_commit",
-      "address_short",
-      "largest_unit",
-      "kit_fallback"
-     ]
-    },
-    "chain": {
-     "enum": [
-      "evm",
-      "hyperevm",
-      "tron",
-      "solana",
-      "ton",
-      "sui",
-      "aptos",
-      "starknet"
-     ]
-    },
-    "network": {
-     "type": "string",
-     "maxLength": 60,
-     "x-text-class": "server"
-    },
-    "chain_id": {
-     "type": [
-      "integer",
-      "string",
-      "null"
-     ],
-     "description": "Numeric for EVM and HyperEVM, cluster name or null elsewhere (chains.json)",
-     "x-text-class": "server"
-    },
-    "explorer": {
-     "type": [
-      "string",
-      "null"
-     ],
-     "pattern": "^https://[a-z0-9.-]+(/[A-Za-z0-9._~/-]*)?$",
-     "x-text-class": "server"
-    },
-    "addr_url": {
-     "type": [
-      "string",
-      "null"
-     ],
-     "pattern": "^https://[^\\s\"'<>]*\\{a\\}[^\\s\"'<>]*$",
-     "description": "null when the chain template has not passed the 8.3.5 test; addresses then render as plain monospace",
-     "x-text-class": "server"
-    },
-    "deployed_noun": {
-     "enum": [
-      "contract",
-      "program",
-      "package",
-      "module",
-      "class"
-     ]
-    },
-    "source_id_label": {
-     "enum": [
-      "Commit",
-      "Code hash",
-      "Class hash",
-      "Package",
-      "Bytecode hash",
-      "Files sha256"
-     ]
-    },
-    "provenance": {
-     "$ref": "#/$defs/provenance"
-    },
-    "report_id": {
-     "$ref": "#/$defs/report_id"
-    },
-    "report_id_short": {
-     "$ref": "#/$defs/report_id_short"
-    },
-    "ownership_proven": {
-     "type": "boolean"
-    },
-    "profile": {
-     "enum": [
-      "public_review",
-      "owner"
-     ],
-     "description": "owner iff ownership_proven (04 4.1)"
-    },
-    "requested_by": {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "role",
-      "label"
-     ],
-     "description": "Part 02 D-ROLE: effective requester_role (default third_party_public_code) and its kit label; printed as 'Authorization declared by requester, not verified by SOKEN LTD: <label>'",
-     "properties": {
-      "role": {
-       "enum": [
-        "owner",
-        "authorized",
-        "third_party_public_code"
-       ]
+      "description": "Server facts referenced by {{fact:key}} and {{calc:...}} in model strings, which stay in placeholder form in report.json. check_strings() runs on the placeholder form; project() (08 2.4) substitutes value, or kit withheld_value for amount_at_risk under public_review (04 4.1 effect 4), and drops the matching Figures used rows",
+      "propertyNames": {
+        "$ref": "#/$defs/fact_key"
       },
-      "label": {
-       "enum": [
-        "Code owner or its team",
-        "Party authorized by the code owner",
-        "Third party reviewing public code"
-       ]
-      }
-     }
-    },
-    "date": {
-     "$ref": "#/$defs/date_text"
-    },
-    "expires": {
-     "type": "string",
-     "format": "date",
-     "x-text-class": "server"
-    },
-    "out_name": {
-     "type": "string",
-     "pattern": "^[A-Za-z0-9_-]{1,76}\\.pdf$",
-     "x-text-class": "server"
-    },
-    "previous_report_id": {
-     "$ref": "#/$defs/report_id"
-    }
-   }
-  },
-  "provenance": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "tier",
-    "label",
-    "source_hash",
-    "label_key"
-   ],
-   "properties": {
-    "tier": {
-     "enum": [
-      "A",
-      "B",
-      "C"
-     ]
-    },
-    "label": {
-     "type": "string",
-     "maxLength": 140,
-     "description": "Kit text tier_labels with server values filled",
-     "x-text-class": "server"
-    },
-    "label_key": {
-     "enum": [
-      "tier_a",
-      "tier_b_commit",
-      "tier_b_third_party",
-      "tier_b_files",
-      "tier_b_proxy_unmatched",
-      "tier_c",
-      "tier_b_not_checked",
-      "tier_b_deployer_source"
-     ]
-    },
-    "source_hash": {
-     "type": "string",
-     "pattern": "^[0-9A-Za-z:_-]{6,130}$",
-     "x-text-class": "server"
-    },
-    "repo": {
-     "type": "string",
-     "maxLength": 200,
-     "x-text-class": "server"
-    },
-    "commit": {
-     "type": "string",
-     "pattern": "^[0-9a-f]{7,40}$",
-     "x-text-class": "server"
-    },
-    "address": {
-     "$ref": "#/$defs/address"
-    },
-    "code_hash": {
-     "type": "string",
-     "maxLength": 130,
-     "x-text-class": "server"
-    },
-    "source_attribution": {
-     "type": "string",
-     "maxLength": 80,
-     "description": "Provider licence text (09) when the source came from a licensed provider, e.g. Etherscan getsourcecode under etherscan_licence: \"Powered by Etherscan.io APIs\"; absent otherwise",
-     "x-text-class": "server"
-    },
-    "as_of": {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "block_or_slot",
-      "date"
-     ],
-     "properties": {
-      "block_or_slot": {
-       "type": "integer",
-       "minimum": 0
-      },
-      "date": {
-       "$ref": "#/$defs/date_text"
-      }
-     }
-    },
-    "upgrade_authority": {
-     "oneOf": [
-      {
-       "type": "object",
-       "additionalProperties": false,
-       "required": [
-        "addr"
-       ],
-       "properties": {
-        "addr": {
-         "$ref": "#/$defs/address"
-        }
-       }
-      },
-      {
-       "const": "Renounced",
-       "x-text-class": "kit"
-      },
-      {
-       "const": "Frozen",
-       "x-text-class": "kit"
-      },
-      {
-       "const": "NotChecked",
-       "x-text-class": "kit",
-       "description": "No on-chain evidence about an upgrade path was read; the kit prints its not-checked text"
-      }
-     ]
-    },
-    "upgradeable": {
-     "type": "boolean"
-    }
-   },
-   "allOf": [
-    {
-     "if": {
-      "properties": {
-       "tier": {
-        "const": "A",
-        "x-text-class": "kit"
-       }
-      }
-     },
-     "then": {
-      "required": [
-       "address",
-       "code_hash",
-       "as_of",
-       "upgrade_authority"
-      ]
-     }
-    }
-   ]
-  },
-  "kpi": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "key",
-    "value",
-    "label"
-   ],
-   "properties": {
-    "key": {
-     "enum": [
-      "files",
-      "nsloc",
-      "leads",
-      "promoted",
-      "areas_returned",
-      "deployed_code",
-      "documents"
-     ]
-    },
-    "value": {
-     "oneOf": [
-      {
-       "type": "integer",
-       "minimum": 0
-      },
-      {
-       "type": "string",
-       "maxLength": 24,
-       "pattern": "^([0-9]{1,4} of [0-9]{1,4}|Matched|Not checked|Does not match)$",
-       "x-text-class": "server"
-      }
-     ]
-    },
-    "label": {
-     "type": "string",
-     "maxLength": 60,
-     "description": "Kit constant",
-     "x-text-class": "kit"
-    }
-   }
-  },
-  "dismissed_leads": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "rows",
-    "remainder"
-   ],
-   "description": "Server data, shown when 0 Critical and 0 High (8.2.3)",
-   "properties": {
-    "rows": {
-     "type": "array",
-     "maxItems": 10,
-     "items": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-       "detector",
-       "severity_class",
-       "location",
-       "reason"
-      ],
-      "properties": {
-       "detector": {
-        "type": "string",
-        "maxLength": 80,
-        "x-text-class": "src"
-       },
-       "severity_class": {
-        "$ref": "#/$defs/severity"
-       },
-       "location": {
-        "$ref": "#/$defs/code_ref"
-       },
-       "reason": {
-        "type": "string",
-        "enum": [
-         "fp_guarded",
-         "fp_unreachable",
-         "not_a_vulnerability",
-         "duplicate_of",
-         "fixed",
-         "out_of_scope",
-         "disproved_by_challenge",
-         "not_reviewed"
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "value",
+          "unit",
+          "amount_at_risk"
         ],
-        "description": "dismissal_reason (rubric enums), model or server; the audit note never prints"
-       }
-      }
-     }
-    },
-    "remainder": {
-     "type": "integer",
-     "minimum": 0
-    }
-   }
-  },
-  "scope_file": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "name",
-    "file",
-    "nsloc"
-   ],
-   "properties": {
-    "name": {
-     "$ref": "#/$defs/src_text"
-    },
-    "file": {
-     "$ref": "#/$defs/src_text"
-    },
-    "nsloc": {
-     "type": "integer",
-     "minimum": 0
-    },
-    "addr": {
-     "$ref": "#/$defs/address"
-    }
-   }
-  },
-  "architecture": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "title",
-    "cols",
-    "rows",
-    "nodes",
-    "edges"
-   ],
-   "properties": {
-    "title": {
-     "type": "string",
-     "maxLength": 80,
-     "description": "Kit text architecture_title",
-     "x-text-class": "kit"
-    },
-    "cols": {
-     "type": "integer",
-     "minimum": 4,
-     "maximum": 5
-    },
-    "rows": {
-     "type": "integer",
-     "minimum": 1,
-     "maximum": 4
-    },
-    "row_height": {
-     "type": "integer",
-     "minimum": 80,
-     "maximum": 120
-    },
-    "nodes": {
-     "type": "array",
-     "minItems": 1,
-     "maxItems": 16,
-     "items": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-       "id",
-       "label",
-       "kind",
-       "col",
-       "row"
-      ],
-      "properties": {
-       "id": {
-        "type": "string",
-        "pattern": "^[a-z0-9_]{1,24}$",
-        "x-text-class": "server"
-       },
-       "label": {
-        "$ref": "#/$defs/src_text"
-       },
-       "sub": {
-        "type": "string",
-        "maxLength": 24,
-        "x-text-class": "server"
-       },
-       "kind": {
-        "enum": [
-         "actor",
-         "scope",
-         "ext"
-        ]
-       },
-       "col": {
-        "type": "number",
-        "minimum": 0
-       },
-       "row": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 3
-       },
-       "span": {
-        "type": "number",
-        "minimum": 1,
-        "maximum": 2
-       }
-      }
-     }
-    },
-    "edges": {
-     "type": "array",
-     "maxItems": 14,
-     "items": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-       "a",
-       "b"
-      ],
-      "properties": {
-       "a": {
-        "type": "string",
-        "pattern": "^[a-z0-9_]{1,24}$",
-        "x-text-class": "server"
-       },
-       "b": {
-        "type": "string",
-        "pattern": "^[a-z0-9_]{1,24}$",
-        "x-text-class": "server"
-       },
-       "label": {
-        "$ref": "#/$defs/src_text"
-       },
-       "both": {
-        "type": "boolean"
-       },
-       "lpos": {
-        "type": "number",
-        "minimum": 0.1,
-        "maximum": 0.9
-       }
-      }
-     }
-    }
-   }
-  },
-  "role_row": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "role",
-    "holder",
-    "type",
-    "gated_functions"
-   ],
-   "properties": {
-    "role": {
-     "$ref": "#/$defs/src_text"
-    },
-    "holder": {
-     "oneOf": [
-      {
-       "type": "object",
-       "additionalProperties": false,
-       "required": [
-        "addr"
-       ],
-       "properties": {
-        "addr": {
-         "$ref": "#/$defs/address"
-        }
-       }
-      },
-      {
-       "enum": [
-        "Not set",
-        "Renounced",
-        "Unknown"
-       ]
-      }
-     ]
-    },
-    "type": {
-     "enum": [
-      "EOA",
-      "Multisig",
-      "Timelock",
-      "Contract",
-      "Program",
-      "Governance",
-      "Unknown"
-     ]
-    },
-    "gated_functions": {
-     "type": "array",
-     "maxItems": 40,
-     "items": {
-      "$ref": "#/$defs/src_text"
-     }
-    },
-    "risk_note": {
-     "type": "string",
-     "maxLength": 300,
-     "description": "MODEL, part 04 text gate and number check",
-     "x-text-class": "model"
-    }
-   }
-  },
-  "code_ref": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "path",
-    "start",
-    "end"
-   ],
-   "properties": {
-    "path": {
-     "$ref": "#/$defs/src_text"
-    },
-    "start": {
-     "type": "integer",
-     "minimum": 1
-    },
-    "end": {
-     "type": "integer",
-     "minimum": 1
-    }
-   }
-  },
-  "model_block": {
-   "description": "MODEL blocks: part 04 text gate T1 to T28 and number check (5.2, 5.3) at submit and again at assembly; strings hold {{fact}}, {{calc}} and {{finding}} placeholders unexpanded, expanded only by project() (08 2.4)",
-   "oneOf": [
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "p"
-     ],
-     "properties": {
-      "p": {
-       "type": "string",
-       "minLength": 1,
-       "maxLength": 1200,
-       "x-text-class": "model"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "ul"
-     ],
-     "properties": {
-      "ul": {
-       "type": "array",
-       "minItems": 1,
-       "maxItems": 12,
-       "items": {
-        "type": "string",
-        "maxLength": 400,
-        "x-text-class": "model"
-       }
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "table"
-     ],
-     "properties": {
-      "table": {
-       "$ref": "#/$defs/model_table"
-      }
-     }
-    }
-   ]
-  },
-  "code_block": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "code"
-   ],
-   "properties": {
-    "code": {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "ref",
-      "lines"
-     ],
-     "properties": {
-      "ref": {
-       "$ref": "#/$defs/code_ref"
-      },
-      "lines": {
-       "type": "array",
-       "minItems": 1,
-       "maxItems": 40,
-       "items": {
-        "type": "array",
-        "prefixItems": [
-         {
-          "type": "integer",
-          "minimum": 1
-         },
-         {
-          "type": "string",
-          "maxLength": 2000,
-          "x-text-class": "src"
-         }
-        ],
-        "minItems": 2,
-        "maxItems": 2
-       }
-      }
-     }
-    }
-   }
-  },
-  "server_block": {
-   "oneOf": [
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "table"
-     ],
-     "properties": {
-      "table": {
-       "$ref": "#/$defs/server_table"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "p"
-     ],
-     "properties": {
-      "p": {
-       "type": "string",
-       "maxLength": 600,
-       "x-text-class": "server"
-      }
-     }
-    }
-   ]
-  },
-  "finding": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "id",
-    "severity",
-    "evidence_level",
-    "title",
-    "component",
-    "location",
-    "category",
-    "recommendation",
-    "evidence"
-   ],
-   "properties": {
-    "id": {
-     "type": "string",
-     "pattern": "^[CHMLI]-[0-9]{3}$",
-     "x-text-class": "server"
-    },
-    "attack_steps": {
-     "type": "array",
-     "maxItems": 10,
-     "description": "MODEL text, rendered only when meta.profile is owner (04 2.3, K8)",
-     "items": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-       "text",
-       "ref"
-      ],
-      "properties": {
-       "text": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 300,
-        "x-text-class": "model"
-       },
-       "ref": {
-        "$ref": "#/$defs/code_ref"
-       }
-      }
-     }
-    },
-    "severity": {
-     "$ref": "#/$defs/severity"
-    },
-    "evidence_level": {
-     "enum": [
-      "analyzer_and_reasoning",
-      "reasoning_challenged",
-      "reasoning_only"
-     ]
-    },
-    "title": {
-     "type": "string",
-     "minLength": 10,
-     "maxLength": 110,
-     "x-text-class": "model"
-    },
-    "component": {
-     "$ref": "#/$defs/src_text"
-    },
-    "location": {
-     "$ref": "#/$defs/code_ref"
-    },
-    "category": {
-     "type": "string",
-     "maxLength": 60,
-     "description": "Label of the closed category enum (part 04 7.3); the enum key is validated at submit",
-     "x-text-class": "server"
-    },
-    "category_key": {
-     "type": "string",
-     "pattern": "^[a-z0-9_.]{1,60}$",
-     "description": "id from rubric/enums.yaml (part 04 7.3.0), e.g. evm.upgradeability.initialization",
-     "x-text-class": "server"
-    },
-    "status": {
-     "enum": [
-      "Open",
-      "Fixed",
-      "Not verified as fixed"
-     ],
-     "x-text-class": "server",
-     "description": "Open, Fixed or Not verified as fixed on every card iff meta.previous_report_id (S5); set only by re-review from the review_start snapshot (03 4.1). Fixed cards are outside the severity counts; Not verified as fixed cards carry the earlier card text and location quotes as earlier-pin code blocks, are counted, and are carried again by the next re-review (08 2.3)"
-    },
-    "tier_c_line": {
-     "type": "boolean"
-    },
-    "description": {
-     "type": "array",
-     "minItems": 0,
-     "maxItems": 6,
-     "items": {
-      "$ref": "#/$defs/model_block"
-     }
-    },
-    "impact": {
-     "type": "array",
-     "minItems": 0,
-     "maxItems": 4,
-     "items": {
-      "$ref": "#/$defs/model_block"
-     }
-    },
-    "recommendation": {
-     "type": "array",
-     "minItems": 0,
-     "maxItems": 4,
-     "items": {
-      "$ref": "#/$defs/model_block"
-     }
-    },
-    "evidence": {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "code",
-      "basis",
-      "challenge",
-      "lead"
-     ],
-     "properties": {
-      "code": {
-       "type": "array",
-       "maxItems": 3,
-       "items": {
-        "$ref": "#/$defs/code_block"
-       }
-      },
-      "compact": {
-       "type": "boolean",
-       "description": "true when compact_evidence dropped the code blocks (Low and Informational only)"
-      },
-      "basis": {
-       "$ref": "#/$defs/server_table"
-      },
-      "challenge": {
-       "oneOf": [
-        {
-         "$ref": "#/$defs/server_table"
-        },
-        {
-         "type": "null"
-        }
-       ]
-      },
-      "lead": {
-       "oneOf": [
-        {
-         "type": "null"
-        },
-        {
-         "type": "object",
-         "additionalProperties": false,
-         "required": [
-          "analyzer",
-          "rule_id"
-         ],
-         "properties": {
-          "analyzer": {
-           "type": "string",
-           "maxLength": 40,
-           "x-text-class": "server"
+        "properties": {
+          "value": {
+            "type": "string",
+            "maxLength": 80,
+            "x-text-class": "server"
           },
-          "rule_id": {
-           "type": "string",
-           "maxLength": 80,
-           "x-text-class": "src"
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "description": "units.yaml unit word; null for unitless facts",
+            "x-text-class": "server"
+          },
+          "amount_at_risk": {
+            "type": "boolean",
+            "description": "04 6.3 tag from units.yaml"
           }
-         }
         }
-       ]
-      },
-      "further": {
-       "type": "array",
-       "maxItems": 20,
-       "items": {
-        "$ref": "#/$defs/code_ref"
-       },
-       "description": "Quoted ranges beyond the block cap, printed as 'Further quoted lines'"
-      },
-      "figures": {
-       "type": "array",
-       "maxItems": 30,
-       "items": {
-        "$ref": "#/$defs/figure"
-       }
       }
-     }
     },
-    "no_map_line": {
-     "type": "boolean"
-    },
-    "documented_intent": {
-     "$ref": "#/$defs/code_ref"
-    }
-   },
-   "allOf": [
-    {
-     "if": {
-      "properties": {
-       "evidence_level": {
-        "const": "reasoning_only",
-        "x-text-class": "kit"
-       },
-       "status": {
-        "not": {
-         "const": "Fixed"
-        }
-       }
-      }
-     },
-     "then": {
-      "properties": {
-       "severity": {
-        "enum": [
-         "Low",
-         "Informational"
-        ]
-       },
-       "evidence": {
-        "properties": {
-         "challenge": {
-          "type": "null"
-         }
-        }
-       }
-      }
-     }
-    },
-    {
-     "if": {
-      "properties": {
-       "evidence_level": {
-        "const": "analyzer_and_reasoning",
-        "x-text-class": "kit"
-       }
-      }
-     },
-     "then": {
-      "properties": {
-       "evidence": {
-        "properties": {
-         "lead": {
-          "type": "object"
-         }
-        }
-       }
-      }
-     }
-    },
-    {
-     "if": {
-      "properties": {
-       "severity": {
-        "enum": [
-         "Low",
-         "Informational"
-        ]
-       }
-      }
-     },
-     "then": {
-      "properties": {
-       "evidence": {
-        "properties": {
-         "code": {
-          "maxItems": 1
-         }
-        }
-       }
-      }
-     }
-    },
-    {
-     "description": "Fixed cards carry no model body, at least one dismissal quote and the challenge table with the kill item (08 2.3); every other card carries description, impact and a recommendation. report.json always holds full data; withholding happens only in project() at build (08 2.4)",
-     "if": {
-      "properties": {
-       "status": {
-        "const": "Fixed",
-        "x-text-class": "kit"
-       }
-      },
-      "required": [
-       "status"
-      ]
-     },
-     "else": {
-      "properties": {
-       "recommendation": {
-        "minItems": 1
-       }
-      },
-      "required": [
-       "description",
-       "impact"
-      ]
-     },
-     "then": {
-      "properties": {
-       "evidence": {
-        "properties": {
-         "code": {
-          "minItems": 1
-         },
-         "challenge": {
-          "$ref": "#/$defs/server_table"
-         }
-        }
-       }
-      }
-     }
-    },
-    {
-     "description": "Not verified as fixed cards keep their location quotes as code blocks of the earlier pin (compact_evidence excepted, Low and Informational), so the next re-review carries them (08 2.3)",
-     "if": {
-      "properties": {
-       "status": {
-        "const": "Not verified as fixed",
-        "x-text-class": "kit"
-       }
-      },
-      "required": [
-       "status"
-      ]
-     },
-     "then": {
-      "properties": {
-       "evidence": {
-        "anyOf": [
-         {
-          "properties": {
-           "code": {
-            "minItems": 1
-           }
-          }
-         },
-         {
-          "required": [
-           "compact"
-          ],
-          "properties": {
-           "compact": {
-            "const": true
-           }
-          }
-         }
-        ]
-       }
-      }
-     }
-    }
-   ]
-  },
-  "review_coverage": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "areas",
-    "leads",
-    "withdrawn",
-    "injection_flags"
-   ],
-   "properties": {
-    "areas": {
-     "type": "array",
-     "minItems": 1,
-     "maxItems": 60,
-     "items": {
+    "summary": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-       "area_id",
-       "area",
-       "code_returned",
-       "result"
+        "kpis"
       ],
       "properties": {
-       "area_id": {
-        "type": "string",
-        "pattern": "^[a-z0-9_.-]{1,40}$",
-        "x-text-class": "server"
-       },
-       "area": {
-        "type": "string",
-        "maxLength": 80,
-        "description": "Checklist label, reference data",
-        "x-text-class": "server"
-       },
-       "code_returned": {
-        "enum": [
-         "Yes",
-         "Partly",
-         "No",
-         "Not applicable"
-        ]
-       },
-       "units_returned": {
-        "type": "integer",
-        "minimum": 0
-       },
-       "units_total": {
-        "type": "integer",
-        "minimum": 0
-       },
-       "result": {
-        "oneOf": [
-         {
+        "kpis": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 7,
+          "items": {
+            "$ref": "#/$defs/kpi"
+          },
+          "description": "Six server KPIs, plus `documents` when at least one project document was retrieved (context ingestion spec 7)"
+        },
+        "dismissed_leads": {
+          "$ref": "#/$defs/dismissed_leads"
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "head",
+        "files",
+        "out_of_scope"
+      ],
+      "properties": {
+        "head": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "string",
+            "maxLength": 24,
+            "x-text-class": "server"
+          }
+        },
+        "files": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 400,
+          "items": {
+            "$ref": "#/$defs/scope_file"
+          }
+        },
+        "out_of_scope": {
+          "type": "array",
+          "maxItems": 40,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "reason",
+              "by"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/src_text"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Server rows: fixed reason words. Model rows (by = model): MODEL, part 04 text gate",
+                "x-text-class": "model"
+              },
+              "by": {
+                "enum": [
+                  "server",
+                  "model"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "architecture": {
+      "$ref": "#/$defs/architecture"
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rows",
+        "notes"
+      ],
+      "properties": {
+        "rows": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "$ref": "#/$defs/role_row"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/model_block"
+          }
+        },
+        "figures": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "$ref": "#/$defs/figure"
+          },
+          "description": "Placeholders in roles rows and notes, one table under the roles table"
+        },
+        "related_contracts": {
+          "type": "array",
           "maxItems": 20,
           "items": {
-           "type": "string",
-           "pattern": "^[CHMLI]-[0-9]{3}$",
-           "x-text-class": "server"
-          }
-         },
-         {
-          "enum": [
-           "No finding submitted",
-           "Not applicable (marked by the requester's session)",
-           "Not covered"
-          ]
-         }
-        ]
-       },
-       "note": {
-        "type": "string",
-        "maxLength": 300,
-        "description": "MODEL, only with code_returned = Not applicable",
-        "x-text-class": "model"
-       }
-      },
-      "allOf": [
-       {
-        "if": {
-         "properties": {
-          "code_returned": {
-           "const": "Partly",
-           "x-text-class": "kit"
-          }
-         }
-        },
-        "then": {
-         "required": [
-          "units_returned",
-          "units_total"
-         ]
+            "$ref": "#/$defs/related_contract_row"
+          },
+          "description": "External contracts the reviewed contract interacts with via privileged roles"
         }
-       },
-       {
-        "if": {
-         "properties": {
-          "code_returned": {
-           "const": "Not applicable",
-           "x-text-class": "kit"
-          }
-         }
-        },
-        "then": {
-         "required": [
-          "note"
-         ]
-        }
-       }
-      ]
-     }
-    },
-    "leads": {
-     "type": "array",
-     "maxItems": 20,
-     "items": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-       "analyzer",
-       "version",
-       "leads",
-       "promoted",
-       "dismissed"
-      ],
-      "properties": {
-       "analyzer": {
-        "type": "string",
-        "maxLength": 40,
-        "x-text-class": "server"
-       },
-       "version": {
-        "type": "string",
-        "maxLength": 40,
-        "x-text-class": "server"
-       },
-       "leads": {
-        "type": "integer",
-        "minimum": 0
-       },
-       "promoted": {
-        "type": "integer",
-        "minimum": 0
-       },
-       "dismissed": {
-        "type": "integer",
-        "minimum": 0
-       }
       }
-     }
     },
-    "withdrawn": {
-     "type": "array",
-     "maxItems": 60,
-     "items": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-       "candidate",
-       "category",
-       "withdrawn_by",
-       "lines"
-      ],
-      "properties": {
-       "candidate": {
-        "type": "string",
-        "pattern": "^F-[0-9]{2,3}$",
-        "x-text-class": "server"
-       },
-       "category": {
-        "type": "string",
-        "maxLength": 60,
-        "x-text-class": "server"
-       },
-       "item_id": {
-        "type": "string",
-        "maxLength": 40,
-        "x-text-class": "server"
-       },
-       "condition": {
-        "type": "string",
-        "maxLength": 300,
-        "description": "Rubric text, reference data",
-        "x-text-class": "server"
-       },
-       "lines": {
-        "$ref": "#/$defs/code_ref"
-       },
-       "withdrawn_by": {
-        "enum": [
-         "model",
-         "challenge"
+    "method": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "step",
+          "detail"
         ],
-        "description": "Printed with kit withdrawn_by.<value> (03 4.11)"
-       }
+        "properties": {
+          "step": {
+            "type": "string",
+            "maxLength": 60,
+            "description": "Kit constant",
+            "x-text-class": "kit"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 400,
+            "description": "Server text from the run manifest: analyzer name and version, checklist id, disproof pass count",
+            "x-text-class": "server"
+          }
+        }
+      }
+    },
+    "severity_scale": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "severity",
+          "text"
+        ],
+        "properties": {
+          "severity": {
+            "$ref": "#/$defs/severity"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 400,
+            "description": "Kit text",
+            "x-text-class": "kit"
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 60,
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "verification": {
+      "type": "array",
+      "maxItems": 6,
+      "description": "Server tables from verify_deployment; present for tier A and C only",
+      "items": {
+        "$ref": "#/$defs/server_block"
+      }
+    },
+    "review_coverage": {
+      "$ref": "#/$defs/review_coverage"
+    },
+    "context": {
+      "$ref": "#/$defs/context"
+    }
+  },
+  "$defs": {
+    "severity": {
+      "enum": [
+        "Critical",
+        "High",
+        "Medium",
+        "Low",
+        "Informational"
+      ]
+    },
+    "report_id": {
+      "type": "string",
+      "pattern": "^[a-z2-7]{26}$",
+      "x-text-class": "server"
+    },
+    "report_id_short": {
+      "type": "string",
+      "pattern": "^[a-z2-7]{10}$",
+      "x-text-class": "server"
+    },
+    "src_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "x-text-class": "src"
+    },
+    "address": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 130,
+      "pattern": "^[0-9A-Za-z:_.-]+$",
+      "x-text-class": "src"
+    },
+    "date_text": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]? (January|February|March|April|May|June|July|August|September|October|November|December) 20[0-9]{2}$",
+      "x-text-class": "server"
+    },
+    "fact_key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]{0,79}$",
+      "x-text-class": "server"
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report_type",
+        "kind",
+        "subject",
+        "subject_source",
+        "chain",
+        "network",
+        "explorer",
+        "addr_url",
+        "deployed_noun",
+        "source_id_label",
+        "provenance",
+        "report_id",
+        "report_id_short",
+        "ownership_proven",
+        "profile",
+        "requested_by",
+        "date",
+        "expires",
+        "out_name"
+      ],
+      "properties": {
+        "report_type": {
+          "const": "automated",
+          "x-text-class": "kit"
+        },
+        "kind": {
+          "const": "Smart contract security review",
+          "x-text-class": "kit"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "After the subject gate 8.3.3",
+          "x-text-class": "server"
+        },
+        "subject_source": {
+          "enum": [
+            "verified_name",
+            "repo_name",
+            "repo_at_commit",
+            "address_short",
+            "largest_unit",
+            "kit_fallback"
+          ]
+        },
+        "chain": {
+          "enum": [
+            "evm",
+            "hyperevm",
+            "tron",
+            "solana",
+            "ton",
+            "sui",
+            "aptos",
+            "starknet"
+          ]
+        },
+        "network": {
+          "type": "string",
+          "maxLength": 60,
+          "x-text-class": "server"
+        },
+        "chain_id": {
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "description": "Numeric for EVM and HyperEVM, cluster name or null elsewhere (chains.json)",
+          "x-text-class": "server"
+        },
+        "explorer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^https://[a-z0-9.-]+(/[A-Za-z0-9._~/-]*)?$",
+          "x-text-class": "server"
+        },
+        "addr_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^https://[^\\s\"'<>]*\\{a\\}[^\\s\"'<>]*$",
+          "description": "null when the chain template has not passed the 8.3.5 test; addresses then render as plain monospace",
+          "x-text-class": "server"
+        },
+        "deployed_noun": {
+          "enum": [
+            "contract",
+            "program",
+            "package",
+            "module",
+            "class"
+          ]
+        },
+        "source_id_label": {
+          "enum": [
+            "Commit",
+            "Code hash",
+            "Class hash",
+            "Package",
+            "Bytecode hash",
+            "Files sha256"
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "report_id": {
+          "$ref": "#/$defs/report_id"
+        },
+        "report_id_short": {
+          "$ref": "#/$defs/report_id_short"
+        },
+        "ownership_proven": {
+          "type": "boolean"
+        },
+        "profile": {
+          "enum": [
+            "public_review",
+            "owner"
+          ],
+          "description": "owner iff ownership_proven (04 4.1)"
+        },
+        "requested_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "role",
+            "label"
+          ],
+          "description": "Part 02 D-ROLE: effective requester_role (default third_party_public_code) and its kit label; printed as 'Authorization declared by requester, not verified by SOKEN LTD: <label>'",
+          "properties": {
+            "role": {
+              "enum": [
+                "owner",
+                "authorized",
+                "third_party_public_code"
+              ]
+            },
+            "label": {
+              "enum": [
+                "Code owner or its team",
+                "Party authorized by the code owner",
+                "Third party reviewing public code"
+              ]
+            }
+          }
+        },
+        "date": {
+          "$ref": "#/$defs/date_text"
+        },
+        "expires": {
+          "type": "string",
+          "format": "date",
+          "x-text-class": "server"
+        },
+        "out_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,76}\\.pdf$",
+          "x-text-class": "server"
+        },
+        "previous_report_id": {
+          "$ref": "#/$defs/report_id"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tier",
+        "label",
+        "source_hash",
+        "label_key"
+      ],
+      "properties": {
+        "tier": {
+          "enum": [
+            "A",
+            "B",
+            "C"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 140,
+          "description": "Kit text tier_labels with server values filled",
+          "x-text-class": "server"
+        },
+        "label_key": {
+          "enum": [
+            "tier_a",
+            "tier_b_commit",
+            "tier_b_third_party",
+            "tier_b_files",
+            "tier_b_proxy_unmatched",
+            "tier_c",
+            "tier_b_not_checked",
+            "tier_b_deployer_source"
+          ]
+        },
+        "source_hash": {
+          "type": "string",
+          "pattern": "^[0-9A-Za-z:_-]{6,130}$",
+          "x-text-class": "server"
+        },
+        "repo": {
+          "type": "string",
+          "maxLength": 200,
+          "x-text-class": "server"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$",
+          "x-text-class": "server"
+        },
+        "address": {
+          "$ref": "#/$defs/address"
+        },
+        "code_hash": {
+          "type": "string",
+          "maxLength": 130,
+          "x-text-class": "server"
+        },
+        "source_attribution": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Provider licence text (09) when the source came from a licensed provider, e.g. Etherscan getsourcecode under etherscan_licence: \"Powered by Etherscan.io APIs\"; absent otherwise",
+          "x-text-class": "server"
+        },
+        "as_of": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "block_or_slot",
+            "date"
+          ],
+          "properties": {
+            "block_or_slot": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "date": {
+              "$ref": "#/$defs/date_text"
+            }
+          }
+        },
+        "upgrade_authority": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "addr"
+              ],
+              "properties": {
+                "addr": {
+                  "$ref": "#/$defs/address"
+                }
+              }
+            },
+            {
+              "const": "Renounced",
+              "x-text-class": "kit"
+            },
+            {
+              "const": "Frozen",
+              "x-text-class": "kit"
+            },
+            {
+              "const": "NotChecked",
+              "x-text-class": "kit",
+              "description": "No on-chain evidence about an upgrade path was read; the kit prints its not-checked text"
+            }
+          ]
+        },
+        "upgradeable": {
+          "type": "boolean"
+        }
       },
       "allOf": [
-       {
-        "if": {
-         "properties": {
-          "withdrawn_by": {
-           "const": "challenge",
-           "x-text-class": "kit"
+        {
+          "if": {
+            "properties": {
+              "tier": {
+                "const": "A",
+                "x-text-class": "kit"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "address",
+              "code_hash",
+              "as_of",
+              "upgrade_authority"
+            ]
           }
-         }
-        },
-        "then": {
-         "required": [
-          "item_id",
-          "condition"
-         ]
         }
-       }
       ]
-     }
     },
-    "injection_flags": {
-     "type": "array",
-     "maxItems": 100,
-     "items": {
+    "kpi": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-       "file",
-       "line"
+        "key",
+        "value",
+        "label"
       ],
       "properties": {
-       "file": {
-        "$ref": "#/$defs/src_text"
-       },
-       "line": {
-        "type": "integer",
-        "minimum": 1
-       }
+        "key": {
+          "enum": [
+            "files",
+            "nsloc",
+            "leads",
+            "promoted",
+            "areas_returned",
+            "deployed_code",
+            "documents"
+          ]
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "maxLength": 24,
+              "pattern": "^([0-9]{1,4} of [0-9]{1,4}|Matched|Not checked|Does not match)$",
+              "x-text-class": "server"
+            }
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "Kit constant",
+          "x-text-class": "kit"
+        }
       }
-     }
-    }
-   }
-  },
-  "model_cell": {
-   "oneOf": [
-    {
-     "type": "string",
-     "maxLength": 600,
-     "x-text-class": "model"
     },
-    {
-     "type": "integer"
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "addr"
-     ],
-     "properties": {
-      "addr": {
-       "$ref": "#/$defs/address"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "sev"
-     ],
-     "properties": {
-      "sev": {
-       "$ref": "#/$defs/severity"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "code"
-     ],
-     "properties": {
-      "code": {
-       "$ref": "#/$defs/code_ref"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "src"
-     ],
-     "properties": {
-      "src": {
-       "$ref": "#/$defs/src_text"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "fact",
-      "value",
-      "unit"
-     ],
-     "description": "Produced by assembly from a {{fact:key}} cell; never sent by the model",
-     "properties": {
-      "fact": {
-       "$ref": "#/$defs/fact_key"
-      },
-      "value": {
-       "type": "string",
-       "maxLength": 80,
-       "x-text-class": "server"
-      },
-      "unit": {
-       "type": "string",
-       "maxLength": 24,
-       "x-text-class": "server"
-      }
-     }
-    }
-   ]
-  },
-  "server_cell": {
-   "oneOf": [
-    {
-     "type": "string",
-     "maxLength": 600,
-     "x-text-class": "server"
-    },
-    {
-     "type": "integer"
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "addr"
-     ],
-     "properties": {
-      "addr": {
-       "$ref": "#/$defs/address"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "sev"
-     ],
-     "properties": {
-      "sev": {
-       "$ref": "#/$defs/severity"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "code"
-     ],
-     "properties": {
-      "code": {
-       "$ref": "#/$defs/code_ref"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "src"
-     ],
-     "properties": {
-      "src": {
-       "$ref": "#/$defs/src_text"
-      }
-     }
-    },
-    {
-     "type": "object",
-     "additionalProperties": false,
-     "required": [
-      "fact",
-      "value",
-      "unit"
-     ],
-     "description": "Produced by assembly from a {{fact:key}} cell; never sent by the model",
-     "properties": {
-      "fact": {
-       "$ref": "#/$defs/fact_key"
-      },
-      "value": {
-       "type": "string",
-       "maxLength": 80,
-       "x-text-class": "server"
-      },
-      "unit": {
-       "type": "string",
-       "maxLength": 24,
-       "x-text-class": "server"
-      }
-     }
-    }
-   ]
-  },
-  "model_table": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "head",
-    "rows"
-   ],
-   "properties": {
-    "head": {
-     "type": "array",
-     "minItems": 1,
-     "maxItems": 8,
-     "items": {
-      "type": "string",
-      "maxLength": 60,
-      "x-text-class": "model"
-     }
-    },
-    "rows": {
-     "type": "array",
-     "maxItems": 60,
-     "items": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 8,
-      "items": {
-       "$ref": "#/$defs/model_cell"
-      }
-     }
-    },
-    "widths": {
-     "type": "array",
-     "maxItems": 8,
-     "items": {
-      "type": "string",
-      "pattern": "^([0-9]{1,2}%)?$",
-      "x-text-class": "server"
-     }
-    },
-    "num": {
-     "type": "array",
-     "maxItems": 8,
-     "items": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 7
-     }
-    }
-   }
-  },
-  "server_table": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "head",
-    "rows"
-   ],
-   "properties": {
-    "head": {
-     "type": "array",
-     "minItems": 1,
-     "maxItems": 8,
-     "items": {
-      "type": "string",
-      "maxLength": 60,
-      "x-text-class": "server"
-     }
-    },
-    "rows": {
-     "type": "array",
-     "maxItems": 60,
-     "items": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 8,
-      "items": {
-       "$ref": "#/$defs/server_cell"
-      }
-     }
-    },
-    "widths": {
-     "type": "array",
-     "maxItems": 8,
-     "items": {
-      "type": "string",
-      "pattern": "^([0-9]{1,2}%)?$",
-      "x-text-class": "server"
-     }
-    },
-    "num": {
-     "type": "array",
-     "maxItems": 8,
-     "items": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 7
-     }
-    }
-   }
-  },
-  "figure": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "figure",
-    "operands"
-   ],
-   "description": "04 6.4: one row per {{fact}} or {{calc}}; value, expression, each operand's source. Omitted under public_review when any operand fact is tagged amount_at_risk (04 4.1 effect 4)",
-   "properties": {
-    "figure": {
-     "type": "string",
-     "maxLength": 80,
-     "x-text-class": "server"
-    },
-    "expression": {
-     "type": "string",
-     "maxLength": 200,
-     "x-text-class": "server",
-     "description": "calc only, rebuilt by the server from the 04 grammar"
-    },
-    "operands": {
-     "type": "array",
-     "minItems": 1,
-     "maxItems": 2,
-     "items": {
+    "dismissed_leads": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-       "value",
-       "source"
+        "rows",
+        "remainder"
       ],
+      "description": "Server data, shown when 0 Critical and 0 High (8.2.3)",
       "properties": {
-       "value": {
-        "type": "string",
-        "maxLength": 80,
-        "x-text-class": "server"
-       },
-       "source": {
-        "oneOf": [
-         {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-           "line"
-          ],
-          "properties": {
-           "line": {
-            "$ref": "#/$defs/code_ref"
-           }
+        "rows": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "detector",
+              "severity_class",
+              "location",
+              "reason"
+            ],
+            "properties": {
+              "detector": {
+                "type": "string",
+                "maxLength": 80,
+                "x-text-class": "src"
+              },
+              "severity_class": {
+                "$ref": "#/$defs/severity"
+              },
+              "location": {
+                "$ref": "#/$defs/code_ref"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "fp_guarded",
+                  "fp_unreachable",
+                  "not_a_vulnerability",
+                  "duplicate_of",
+                  "fixed",
+                  "out_of_scope",
+                  "disproved_by_challenge",
+                  "not_reviewed"
+                ],
+                "description": "dismissal_reason (rubric enums), model or server; the audit note never prints"
+              }
+            }
           }
-         },
-         {
+        },
+        "remainder": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "scope_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "file",
+        "nsloc"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/src_text"
+        },
+        "file": {
+          "$ref": "#/$defs/src_text"
+        },
+        "nsloc": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "addr": {
+          "$ref": "#/$defs/address"
+        }
+      }
+    },
+    "architecture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "cols",
+        "rows",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Kit text architecture_title",
+          "x-text-class": "kit"
+        },
+        "cols": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 5
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "row_height": {
+          "type": "integer",
+          "minimum": 80,
+          "maximum": 120
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "kind",
+              "col",
+              "row"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,24}$",
+                "x-text-class": "server"
+              },
+              "label": {
+                "$ref": "#/$defs/src_text"
+              },
+              "sub": {
+                "type": "string",
+                "maxLength": 24,
+                "x-text-class": "server"
+              },
+              "kind": {
+                "enum": [
+                  "actor",
+                  "scope",
+                  "ext"
+                ]
+              },
+              "col": {
+                "type": "number",
+                "minimum": 0
+              },
+              "row": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              },
+              "span": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 2
+              }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 14,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "a",
+              "b"
+            ],
+            "properties": {
+              "a": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,24}$",
+                "x-text-class": "server"
+              },
+              "b": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,24}$",
+                "x-text-class": "server"
+              },
+              "label": {
+                "$ref": "#/$defs/src_text"
+              },
+              "both": {
+                "type": "boolean"
+              },
+              "lpos": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 0.9
+              }
+            }
+          }
+        }
+      }
+    },
+    "role_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "holder",
+        "type",
+        "gated_functions"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/src_text"
+        },
+        "holder": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "addr"
+              ],
+              "properties": {
+                "addr": {
+                  "$ref": "#/$defs/address"
+                }
+              }
+            },
+            {
+              "enum": [
+                "Not set",
+                "Renounced",
+                "Unknown"
+              ]
+            }
+          ]
+        },
+        "type": {
+          "enum": [
+            "EOA",
+            "Multisig",
+            "Timelock",
+            "Contract",
+            "Program",
+            "Governance",
+            "Unknown"
+          ]
+        },
+        "gated_functions": {
+          "type": "array",
+          "maxItems": 40,
+          "items": {
+            "$ref": "#/$defs/src_text"
+          }
+        },
+        "risk_note": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "MODEL, part 04 text gate and number check",
+          "x-text-class": "model"
+        }
+      }
+    },
+    "code_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/src_text"
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "model_block": {
+      "description": "MODEL blocks: part 04 text gate T1 to T28 and number check (5.2, 5.3) at submit and again at assembly; strings hold {{fact}}, {{calc}} and {{finding}} placeholders unexpanded, expanded only by project() (08 2.4)",
+      "oneOf": [
+        {
           "type": "object",
           "additionalProperties": false,
           "required": [
-           "fact",
-           "method",
-           "block_or_slot"
+            "p"
           ],
           "properties": {
-           "fact": {
-            "$ref": "#/$defs/fact_key"
-           },
-           "method": {
+            "p": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1200,
+              "x-text-class": "model"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ul"
+          ],
+          "properties": {
+            "ul": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 12,
+              "items": {
+                "type": "string",
+                "maxLength": 400,
+                "x-text-class": "model"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "table"
+          ],
+          "properties": {
+            "table": {
+              "$ref": "#/$defs/model_table"
+            }
+          }
+        }
+      ]
+    },
+    "code_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ref",
+            "lines"
+          ],
+          "properties": {
+            "ref": {
+              "$ref": "#/$defs/code_ref"
+            },
+            "lines": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 40,
+              "items": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "x-text-class": "src"
+                  }
+                ],
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    "server_block": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "table"
+          ],
+          "properties": {
+            "table": {
+              "$ref": "#/$defs/server_table"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "p"
+          ],
+          "properties": {
+            "p": {
+              "type": "string",
+              "maxLength": 600,
+              "x-text-class": "server"
+            }
+          }
+        }
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "severity",
+        "evidence_level",
+        "title",
+        "component",
+        "location",
+        "category",
+        "recommendation",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[CHMLI]-[0-9]{3}$",
+          "x-text-class": "server"
+        },
+        "attack_steps": {
+          "type": "array",
+          "maxItems": 10,
+          "description": "MODEL text, rendered only when meta.profile is owner (04 2.3, K8)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text",
+              "ref"
+            ],
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+                "x-text-class": "model"
+              },
+              "ref": {
+                "$ref": "#/$defs/code_ref"
+              }
+            }
+          }
+        },
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "evidence_level": {
+          "enum": [
+            "analyzer_and_reasoning",
+            "reasoning_challenged",
+            "reasoning_only"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 110,
+          "x-text-class": "model"
+        },
+        "component": {
+          "$ref": "#/$defs/src_text"
+        },
+        "location": {
+          "$ref": "#/$defs/code_ref"
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "Label of the closed category enum (part 04 7.3); the enum key is validated at submit",
+          "x-text-class": "server"
+        },
+        "category_key": {
+          "type": "string",
+          "pattern": "^[a-z0-9_.]{1,60}$",
+          "description": "id from rubric/enums.yaml (part 04 7.3.0), e.g. evm.upgradeability.initialization",
+          "x-text-class": "server"
+        },
+        "status": {
+          "enum": [
+            "Open",
+            "Fixed",
+            "Not verified as fixed"
+          ],
+          "x-text-class": "server",
+          "description": "Open, Fixed or Not verified as fixed on every card iff meta.previous_report_id (S5); set only by re-review from the review_start snapshot (03 4.1). Fixed cards are outside the severity counts; Not verified as fixed cards carry the earlier card text and location quotes as earlier-pin code blocks, are counted, and are carried again by the next re-review (08 2.3)"
+        },
+        "tier_c_line": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/model_block"
+          }
+        },
+        "impact": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/model_block"
+          }
+        },
+        "recommendation": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/model_block"
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "basis",
+            "challenge",
+            "lead"
+          ],
+          "properties": {
+            "code": {
+              "type": "array",
+              "maxItems": 3,
+              "items": {
+                "$ref": "#/$defs/code_block"
+              }
+            },
+            "compact": {
+              "type": "boolean",
+              "description": "true when compact_evidence dropped the code blocks (Low and Informational only)"
+            },
+            "basis": {
+              "$ref": "#/$defs/server_table"
+            },
+            "challenge": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/server_table"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lead": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "analyzer",
+                    "rule_id"
+                  ],
+                  "properties": {
+                    "analyzer": {
+                      "type": "string",
+                      "maxLength": 40,
+                      "x-text-class": "server"
+                    },
+                    "rule_id": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "x-text-class": "src"
+                    }
+                  }
+                }
+              ]
+            },
+            "further": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/$defs/code_ref"
+              },
+              "description": "Quoted ranges beyond the block cap, printed as 'Further quoted lines'"
+            },
+            "figures": {
+              "type": "array",
+              "maxItems": 30,
+              "items": {
+                "$ref": "#/$defs/figure"
+              }
+            }
+          }
+        },
+        "no_map_line": {
+          "type": "boolean"
+        },
+        "documented_intent": {
+          "$ref": "#/$defs/code_ref"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evidence_level": {
+                "const": "reasoning_only",
+                "x-text-class": "kit"
+              },
+              "status": {
+                "not": {
+                  "const": "Fixed"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "enum": [
+                  "Low",
+                  "Informational"
+                ]
+              },
+              "evidence": {
+                "properties": {
+                  "challenge": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evidence_level": {
+                "const": "analyzer_and_reasoning",
+                "x-text-class": "kit"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "properties": {
+                  "lead": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "severity": {
+                "enum": [
+                  "Low",
+                  "Informational"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "properties": {
+                  "code": {
+                    "maxItems": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "Fixed cards carry no model body, at least one dismissal quote and the challenge table with the kill item (08 2.3); every other card carries description, impact and a recommendation. report.json always holds full data; withholding happens only in project() at build (08 2.4)",
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Fixed",
+                "x-text-class": "kit"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "else": {
+            "properties": {
+              "recommendation": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "description",
+              "impact"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "properties": {
+                  "code": {
+                    "minItems": 1
+                  },
+                  "challenge": {
+                    "$ref": "#/$defs/server_table"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "Not verified as fixed cards keep their location quotes as code blocks of the earlier pin (compact_evidence excepted, Low and Informational), so the next re-review carries them (08 2.3)",
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Not verified as fixed",
+                "x-text-class": "kit"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "code": {
+                        "minItems": 1
+                      }
+                    }
+                  },
+                  {
+                    "required": [
+                      "compact"
+                    ],
+                    "properties": {
+                      "compact": {
+                        "const": true
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "review_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "areas",
+        "leads",
+        "withdrawn",
+        "injection_flags"
+      ],
+      "properties": {
+        "areas": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 60,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "area_id",
+              "area",
+              "code_returned",
+              "result"
+            ],
+            "properties": {
+              "area_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]{1,40}$",
+                "x-text-class": "server"
+              },
+              "area": {
+                "type": "string",
+                "maxLength": 80,
+                "description": "Checklist label, reference data",
+                "x-text-class": "server"
+              },
+              "code_returned": {
+                "enum": [
+                  "Yes",
+                  "Partly",
+                  "No",
+                  "Not applicable"
+                ]
+              },
+              "units_returned": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "units_total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "result": {
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[CHMLI]-[0-9]{3}$",
+                      "x-text-class": "server"
+                    }
+                  },
+                  {
+                    "enum": [
+                      "No finding submitted",
+                      "Not applicable (marked by the requester's session)",
+                      "Not covered"
+                    ]
+                  }
+                ]
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 300,
+                "description": "MODEL, only with code_returned = Not applicable",
+                "x-text-class": "model"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "code_returned": {
+                      "const": "Partly",
+                      "x-text-class": "kit"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "units_returned",
+                    "units_total"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "code_returned": {
+                      "const": "Not applicable",
+                      "x-text-class": "kit"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "note"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "leads": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "analyzer",
+              "version",
+              "leads",
+              "promoted",
+              "dismissed"
+            ],
+            "properties": {
+              "analyzer": {
+                "type": "string",
+                "maxLength": 40,
+                "x-text-class": "server"
+              },
+              "version": {
+                "type": "string",
+                "maxLength": 40,
+                "x-text-class": "server"
+              },
+              "leads": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "promoted": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "dismissed": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "withdrawn": {
+          "type": "array",
+          "maxItems": 60,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "candidate",
+              "category",
+              "withdrawn_by",
+              "lines"
+            ],
+            "properties": {
+              "candidate": {
+                "type": "string",
+                "pattern": "^F-[0-9]{2,3}$",
+                "x-text-class": "server"
+              },
+              "category": {
+                "type": "string",
+                "maxLength": 60,
+                "x-text-class": "server"
+              },
+              "item_id": {
+                "type": "string",
+                "maxLength": 40,
+                "x-text-class": "server"
+              },
+              "condition": {
+                "type": "string",
+                "maxLength": 300,
+                "description": "Rubric text, reference data",
+                "x-text-class": "server"
+              },
+              "lines": {
+                "$ref": "#/$defs/code_ref"
+              },
+              "withdrawn_by": {
+                "enum": [
+                  "model",
+                  "challenge"
+                ],
+                "description": "Printed with kit withdrawn_by.<value> (03 4.11)"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "withdrawn_by": {
+                      "const": "challenge",
+                      "x-text-class": "kit"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "item_id",
+                    "condition"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "injection_flags": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "file",
+              "line"
+            ],
+            "properties": {
+              "file": {
+                "$ref": "#/$defs/src_text"
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "model_cell": {
+      "oneOf": [
+        {
+          "type": "string",
+          "maxLength": 600,
+          "x-text-class": "model"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "addr"
+          ],
+          "properties": {
+            "addr": {
+              "$ref": "#/$defs/address"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sev"
+          ],
+          "properties": {
+            "sev": {
+              "$ref": "#/$defs/severity"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code"
+          ],
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/code_ref"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "src"
+          ],
+          "properties": {
+            "src": {
+              "$ref": "#/$defs/src_text"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fact",
+            "value",
+            "unit"
+          ],
+          "description": "Produced by assembly from a {{fact:key}} cell; never sent by the model",
+          "properties": {
+            "fact": {
+              "$ref": "#/$defs/fact_key"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 80,
+              "x-text-class": "server"
+            },
+            "unit": {
+              "type": "string",
+              "maxLength": 24,
+              "x-text-class": "server"
+            }
+          }
+        }
+      ]
+    },
+    "server_cell": {
+      "oneOf": [
+        {
+          "type": "string",
+          "maxLength": 600,
+          "x-text-class": "server"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "addr"
+          ],
+          "properties": {
+            "addr": {
+              "$ref": "#/$defs/address"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sev"
+          ],
+          "properties": {
+            "sev": {
+              "$ref": "#/$defs/severity"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code"
+          ],
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/code_ref"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "src"
+          ],
+          "properties": {
+            "src": {
+              "$ref": "#/$defs/src_text"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fact",
+            "value",
+            "unit"
+          ],
+          "description": "Produced by assembly from a {{fact:key}} cell; never sent by the model",
+          "properties": {
+            "fact": {
+              "$ref": "#/$defs/fact_key"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 80,
+              "x-text-class": "server"
+            },
+            "unit": {
+              "type": "string",
+              "maxLength": 24,
+              "x-text-class": "server"
+            }
+          }
+        }
+      ]
+    },
+    "model_table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "head",
+        "rows"
+      ],
+      "properties": {
+        "head": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 60,
+            "x-text-class": "model"
+          }
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 60,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/model_cell"
+            }
+          }
+        },
+        "widths": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "pattern": "^([0-9]{1,2}%)?$",
+            "x-text-class": "server"
+          }
+        },
+        "num": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7
+          }
+        }
+      }
+    },
+    "server_table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "head",
+        "rows"
+      ],
+      "properties": {
+        "head": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
             "type": "string",
             "maxLength": 60,
             "x-text-class": "server"
-           },
-           "block_or_slot": {
-            "type": "integer",
-            "minimum": 0
-           }
           }
-         }
-        ]
-       }
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 60,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/server_cell"
+            }
+          }
+        },
+        "widths": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "pattern": "^([0-9]{1,2}%)?$",
+            "x-text-class": "server"
+          }
+        },
+        "num": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7
+          }
+        }
       }
-     }
+    },
+    "figure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "figure",
+        "operands"
+      ],
+      "description": "04 6.4: one row per {{fact}} or {{calc}}; value, expression, each operand's source. Omitted under public_review when any operand fact is tagged amount_at_risk (04 4.1 effect 4)",
+      "properties": {
+        "figure": {
+          "type": "string",
+          "maxLength": 80,
+          "x-text-class": "server"
+        },
+        "expression": {
+          "type": "string",
+          "maxLength": 200,
+          "x-text-class": "server",
+          "description": "calc only, rebuilt by the server from the 04 grammar"
+        },
+        "operands": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value",
+              "source"
+            ],
+            "properties": {
+              "value": {
+                "type": "string",
+                "maxLength": 80,
+                "x-text-class": "server"
+              },
+              "source": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "line"
+                    ],
+                    "properties": {
+                      "line": {
+                        "$ref": "#/$defs/code_ref"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "fact",
+                      "method",
+                      "block_or_slot"
+                    ],
+                    "properties": {
+                      "fact": {
+                        "$ref": "#/$defs/fact_key"
+                      },
+                      "method": {
+                        "type": "string",
+                        "maxLength": 60,
+                        "x-text-class": "server"
+                      },
+                      "block_or_slot": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documents",
+        "comparison",
+        "notes"
+      ],
+      "description": "Project context (context ingestion spec 7): documents ingested for the job, declared-vs-observed rows computed by the server at assembly, and the reviewer's context_notes blocks. Empty documents print the kit empty line, never an empty table",
+      "properties": {
+        "documents": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/context_document"
+          }
+        },
+        "comparison": {
+          "type": "array",
+          "maxItems": 40,
+          "items": {
+            "$ref": "#/$defs/context_row"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/model_block"
+          }
+        }
+      }
+    },
+    "context_document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "title",
+        "host",
+        "retrieved",
+        "sha256_short",
+        "status"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "whitepaper",
+            "website",
+            "app",
+            "docs",
+            "terms",
+            "privacy",
+            "other"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Document title as extracted; untrusted web text, SRC class (escaped, never gated)",
+          "x-text-class": "src"
+        },
+        "host": {
+          "type": "string",
+          "maxLength": 253,
+          "description": "Host of the final URL; empty for inline documents (the kit prints its inline label)",
+          "x-text-class": "src"
+        },
+        "retrieved": {
+          "$ref": "#/$defs/date_text"
+        },
+        "sha256_short": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{12})?$",
+          "description": "First 12 hex digits of sha256_raw; empty when the fetch failed",
+          "x-text-class": "server"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "failed"
+          ]
+        }
+      }
+    },
+    "context_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim",
+        "declared",
+        "declared_source",
+        "observed",
+        "observed_source",
+        "status"
+      ],
+      "description": "One declared-vs-observed row (context ingestion spec 6). claim is server text from the fixed claim set; declared and its source come from the document (SRC); observed and its source may carry contract names and addresses (SRC)",
+      "properties": {
+        "claim": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "x-text-class": "server"
+        },
+        "declared": {
+          "type": "string",
+          "maxLength": 300,
+          "x-text-class": "src"
+        },
+        "declared_source": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "context/<kind>-<n>.md:<line>, or empty",
+          "x-text-class": "src"
+        },
+        "observed": {
+          "type": "string",
+          "maxLength": 300,
+          "x-text-class": "src"
+        },
+        "observed_source": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Fact source (RPC method and block), map reference or job field; empty when nothing was observed",
+          "x-text-class": "src"
+        },
+        "status": {
+          "enum": [
+            "matches",
+            "differs",
+            "not_checkable"
+          ]
+        }
+      }
+    },
+    "related_contract_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "address",
+        "kind",
+        "verified"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 80,
+          "x-text-class": "server",
+          "description": "getter name or role label"
+        },
+        "address": {
+          "type": "string",
+          "maxLength": 20,
+          "x-text-class": "server",
+          "description": "short-form address (0xABCD...1234)"
+        },
+        "kind": {
+          "enum": [
+            "EOA",
+            "Multisig",
+            "Contract",
+            "Unknown"
+          ],
+          "description": "classification from eth_getCode + Safe proxy check"
+        },
+        "verified": {
+          "enum": [
+            "Verified",
+            "Unverified",
+            "Unknown"
+          ],
+          "description": "Sourcify source verification status"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 120,
+          "x-text-class": "server",
+          "description": "threshold/owner count (Safe), min delay (Timelock), or unverified notice"
+        }
+      }
     }
-   }
-  },
-  "context": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "documents",
-    "comparison",
-    "notes"
-   ],
-   "description": "Project context (context ingestion spec 7): documents ingested for the job, declared-vs-observed rows computed by the server at assembly, and the reviewer's context_notes blocks. Empty documents print the kit empty line, never an empty table",
-   "properties": {
-    "documents": {
-     "type": "array",
-     "maxItems": 12,
-     "items": {
-      "$ref": "#/$defs/context_document"
-     }
-    },
-    "comparison": {
-     "type": "array",
-     "maxItems": 40,
-     "items": {
-      "$ref": "#/$defs/context_row"
-     }
-    },
-    "notes": {
-     "type": "array",
-     "maxItems": 8,
-     "items": {
-      "$ref": "#/$defs/model_block"
-     }
-    }
-   }
-  },
-  "context_document": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "kind",
-    "title",
-    "host",
-    "retrieved",
-    "sha256_short",
-    "status"
-   ],
-   "properties": {
-    "kind": {
-     "enum": [
-      "whitepaper",
-      "website",
-      "app",
-      "docs",
-      "terms",
-      "privacy",
-      "other"
-     ]
-    },
-    "title": {
-     "type": "string",
-     "maxLength": 200,
-     "description": "Document title as extracted; untrusted web text, SRC class (escaped, never gated)",
-     "x-text-class": "src"
-    },
-    "host": {
-     "type": "string",
-     "maxLength": 253,
-     "description": "Host of the final URL; empty for inline documents (the kit prints its inline label)",
-     "x-text-class": "src"
-    },
-    "retrieved": {
-     "$ref": "#/$defs/date_text"
-    },
-    "sha256_short": {
-     "type": "string",
-     "pattern": "^([0-9a-f]{12})?$",
-     "description": "First 12 hex digits of sha256_raw; empty when the fetch failed",
-     "x-text-class": "server"
-    },
-    "status": {
-     "enum": [
-      "ok",
-      "failed"
-     ]
-    }
-   }
-  },
-  "context_row": {
-   "type": "object",
-   "additionalProperties": false,
-   "required": [
-    "claim",
-    "declared",
-    "declared_source",
-    "observed",
-    "observed_source",
-    "status"
-   ],
-   "description": "One declared-vs-observed row (context ingestion spec 6). claim is server text from the fixed claim set; declared and its source come from the document (SRC); observed and its source may carry contract names and addresses (SRC)",
-   "properties": {
-    "claim": {
-     "type": "string",
-     "minLength": 1,
-     "maxLength": 120,
-     "x-text-class": "server"
-    },
-    "declared": {
-     "type": "string",
-     "maxLength": 300,
-     "x-text-class": "src"
-    },
-    "declared_source": {
-     "type": "string",
-     "maxLength": 120,
-     "description": "context/<kind>-<n>.md:<line>, or empty",
-     "x-text-class": "src"
-    },
-    "observed": {
-     "type": "string",
-     "maxLength": 300,
-     "x-text-class": "src"
-    },
-    "observed_source": {
-     "type": "string",
-     "maxLength": 200,
-     "description": "Fact source (RPC method and block), map reference or job field; empty when nothing was observed",
-     "x-text-class": "src"
-    },
-    "status": {
-     "enum": [
-      "matches",
-      "differs",
-      "not_checkable"
-     ]
-    }
-   }
   }
- }
 }
