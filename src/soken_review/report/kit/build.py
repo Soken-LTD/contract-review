@@ -924,6 +924,17 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
                           f'<td>{inl(x.get("risk_note", ""), ctx)}</td></tr>')
             arch_html += (f'<h3>Privileged roles</h3><table><tr><th style="width:15%">Role</th><th style="width:20%">Holder</th>'
                           f'<th style="width:11%">Type</th><th>Gated functions</th><th style="width:26%">Risk note</th></tr>{rrows}</table>')
+        related = roles.get("related_contracts", [])
+        if related:
+            rrel = ""
+            for x in related:
+                rrel += (f'<tr><td>{esc(x["label"])}</td><td>{esc(x["address"])}</td>'
+                         f'<td>{esc(x["kind"])}</td><td>{esc(x["verified"])}</td>'
+                         f'<td>{esc(x.get("note", ""))}</td></tr>')
+            arch_html += (f'<h3>Related contracts</h3><table>'
+                          f'<tr><th style="width:20%">Label</th><th style="width:16%">Address</th>'
+                          f'<th style="width:11%">Kind</th><th style="width:12%">Verified</th>'
+                          f'<th>Notes</th></tr>{rrel}</table>')
         arch_html += blocks(roles["notes"], ctx, m) + figures_table(roles.get("figures", []), ctx, m)
     architecture = f'<section>{h2("architecture", ctx)}{arch_html}</section>'
 
