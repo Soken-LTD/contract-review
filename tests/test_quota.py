@@ -116,3 +116,21 @@ async def test_x_real_ip_reaches_the_handler(monkeypatch):
             assert r.status_code == 200, r.text
     # With the header: the client; without it, the loopback peer is the proxy, not a user.
     assert seen == ["203.0.113.7", None]
+
+
+def test_relay_cidrs_file_is_read_and_reloaded(monkeypatch, tmp_path):
+    f = tmp_path / "relay.txt"
+    f.write_text("# openai: 1\n20.0.0.0/24\nnot-a-cidr\n", encoding="utf-8")
+    monkeypatch.setenv("SOKEN_RELAY_CIDRS_FILE", str(f))
+    monkeypatch.delenv("SOKEN_RELAY_CIDRS", raising=False)
+    tok = Q.CLIENT_IP.set("20.0.0.9")
+    try:
+        assert Q.limit_key(target="evm:0xabc", job_id="j").startswith("relay:")
+        import os
+        f.write_text("21.0.0.0/24\n", encoding="utf-8")
+        os.utime(f, (1, 1))                                   # new mtime: reloaded
+        assert Q.limit_key(target="evm:0xabc", job_id="j").startswith("ip:")
+        Q.CLIENT_IP.set("160.79.106.1")                       # Anthropic default still relay
+        assert Q.limit_key(target="evm:0xabc", job_id="j").startswith("relay:")
+    finally:
+        Q.CLIENT_IP.reset(tok)

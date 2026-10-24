@@ -1,0 +1,7 @@
+[Unit]
+Description=Soken contract-review relay CIDR refresh (AI provider egress lists for the daily quota)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/soken-audit-test/public-export/scripts/ops/refresh_relay_cidrs.py /etc/soken/relay-cidrs.txt

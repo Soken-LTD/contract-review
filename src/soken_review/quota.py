@@ -2,8 +2,9 @@
 
 There is no user account on the connector, so "user" is approximated:
   - a direct client (Claude Code, Cursor, any MCP client) is its IP address: `ip:<addr>`;
-  - a request relayed by Anthropic's claude.ai infrastructure (SOKEN_RELAY_CIDRS) carries an
-    Anthropic egress IP shared by every claude.ai user and rotating between calls, so the key is
+  - a request relayed by an AI provider's infrastructure (claude.ai, ChatGPT connectors:
+    SOKEN_RELAY_CIDRS + SOKEN_RELAY_CIDRS_FILE) carries an egress IP shared by every user of that
+    product and rotating between calls, so the key is
     the reviewed target instead: `relay:<target_key>`, and all relayed reports together share one
     daily cap (SOKEN_DAILY_REPORTS_RELAY_TOTAL).
 
@@ -50,6 +51,40 @@ def _cidrs(name: str, default: str) -> list[ipaddress.IPv4Network | ipaddress.IP
             except ValueError:
                 continue
     return out
+
+
+_FILE_CACHE: dict[str, tuple[float, list]] = {}
+
+
+def _relay_cidrs() -> list:
+    """SOKEN_RELAY_CIDRS plus the ranges in SOKEN_RELAY_CIDRS_FILE (one CIDR per line, `#`
+    comments), re-read when the file changes: refresh_relay_cidrs.py rewrites it daily from
+    the operators' published egress lists (Anthropic, OpenAI chatgpt-connectors.json)."""
+    nets = _cidrs("SOKEN_RELAY_CIDRS", "160.79.104.0/21")
+    path = os.environ.get("SOKEN_RELAY_CIDRS_FILE", "")
+    if not path:
+        return nets
+    try:
+        mtime = os.stat(path).st_mtime
+    except OSError:
+        return nets
+    cached = _FILE_CACHE.get(path)
+    if cached is None or cached[0] != mtime:
+        parsed = []
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    part = line.split("#", 1)[0].strip()
+                    if part:
+                        try:
+                            parsed.append(ipaddress.ip_network(part, strict=False))
+                        except ValueError:
+                            continue
+        except OSError:
+            return nets
+        cached = (mtime, parsed)
+        _FILE_CACHE[path] = cached
+    return nets + cached[1]
 
 
 def _in(ip: str, nets: list) -> bool:
@@ -120,7 +155,7 @@ def limit_key(*, target: str | None, job_id: str) -> str | None:
     ip = CLIENT_IP.get()
     if ip and _in(ip, _cidrs("SOKEN_QUOTA_EXEMPT_CIDRS", "")):
         return None
-    if ip and _in(ip, _cidrs("SOKEN_RELAY_CIDRS", "160.79.104.0/21")):
+    if ip and _in(ip, _relay_cidrs()):
         return f"relay:{_h(target or 'job:' + job_id)}"
     if ip:
         return f"ip:{_h(_user_of(ip))}"
