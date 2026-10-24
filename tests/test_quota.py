@@ -29,6 +29,14 @@ def test_limit_key_direct_relay_exempt(monkeypatch):
         direct = Q.limit_key(target="evm:0xabc", job_id="j1")
         assert direct.startswith("ip:") and "95.47" not in direct          # hashed, not the raw IP
         assert Q.limit_key(target="evm:0xdef", job_id="j2") == direct      # per user, not per target
+        Q.CLIENT_IP.set("2001:db8:1:2::a")
+        v6 = Q.limit_key(target=None, job_id="j3")
+        Q.CLIENT_IP.set("2001:db8:1:2:ffff::1")                             # same /64, rotated host
+        assert Q.limit_key(target=None, job_id="j4") == v6
+        Q.CLIENT_IP.set("2001:db8:1:3::a")
+        assert Q.limit_key(target=None, job_id="j5") != v6
+        Q.CLIENT_IP.set("::ffff:95.47.113.11")                              # IPv4-mapped = the IPv4 user
+        assert Q.limit_key(target=None, job_id="j6") == direct
         Q.CLIENT_IP.set("160.79.106.164")                                   # Anthropic relay
         relay = Q.limit_key(target="evm:0xabc", job_id="j1")
         assert relay.startswith("relay:") and relay != Q.limit_key(target="evm:0xdef", job_id="j1")

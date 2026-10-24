@@ -18,6 +18,7 @@ The quota is checked at `review_start` (early refusal) and enforced under an adv
 from __future__ import annotations
 
 import hashlib
+import hmac
 import ipaddress
 import os
 from contextvars import ContextVar
@@ -87,7 +88,25 @@ def target_key(*, chain: str | None, address: str | None, repo_url: str | None,
 
 
 def _h(value: str) -> str:
-    return hashlib.sha256(value.encode()).hexdigest()[:24]
+    """Keyed hash: a plain SHA of an IPv4 address or a public contract is reversible by search.
+    Key: SOKEN_QUOTA_SECRET, else report key V1 (both outside the database)."""
+    from .tools.report import key as report_key
+
+    secret = os.environ.get("SOKEN_QUOTA_SECRET", "").encode() or report_key(1)
+    return hmac.new(secret, b"soken-quota:" + value.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def _user_of(ip: str) -> str:
+    """One quota user per IPv4 address or IPv6 /64 (a host can rotate inside its /64 for free)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if isinstance(addr, ipaddress.IPv6Address):
+        if addr.ipv4_mapped:
+            return str(addr.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    return str(addr)
 
 
 def limit_key(*, target: str | None, job_id: str) -> str | None:
@@ -101,7 +120,7 @@ def limit_key(*, target: str | None, job_id: str) -> str | None:
     if ip and _in(ip, _cidrs("SOKEN_RELAY_CIDRS", "160.79.104.0/21")):
         return f"relay:{_h(target or 'job:' + job_id)}"
     if ip:
-        return f"ip:{_h(ip)}"
+        return f"ip:{_h(_user_of(ip))}"
     return f"target:{_h(target)}" if target else None
 
 

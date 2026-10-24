@@ -171,7 +171,7 @@ def _verify_owner(report_id: str, report: dict[str, Any], args: dict[str, Any]) 
     """
     provided = args.get("manage_key")
     expected = _report_manage_key(report_id, report["key_version"])
-    if not isinstance(provided, str) or not hmac.compare_digest(provided, expected):
+    if not isinstance(provided, str) or not hmac.compare_digest(provided.encode(), expected.encode()):
         raise ReviewError("E_PUBLISH_NOT_OWNER", report_id=report_id)
 
 
@@ -194,7 +194,8 @@ def _offer_response(report: dict[str, Any], filename: str | None = None, replace
         "disclaimer": (
             "This report will be published automatically, without review by SOKEN LTD, and stay "
             "public at the URL above and on soken.dev/audits, labelled " + PUBLISH_LABEL + "."
-            + replaced + " To proceed, call this tool again with a consent object containing: "
+            + replaced + " Deleting the job later does not withdraw the published copy; removal is by "
+            "takedown request (mcp.soken.dev/takedown.html). To proceed, call this tool again with a consent object containing: "
             "party (your organisation name), name (authorising person), "
             "statement (explicit consent text), and timestamp (ISO-8601)."
         ),

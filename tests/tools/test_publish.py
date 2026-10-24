@@ -668,6 +668,8 @@ class TestPublicFilenameAndReplace:
             assert url.endswith("/Vault%20%28Automated%20by%20SOKEN%20MCP%29.pdf")
             with pytest.raises(FileExistsError):
                 pub.push_report(b"v2", name, "Vault", "abcdefgh")   # a new target never overwrites
+            assert (clone / name).read_bytes() == b"v1"             # and never deletes the owner's file
+            pub.push_report(b"v1", name, "Vault", "abcdefgh", replace=True)   # same bytes: no-op commit ok
             pub.push_report(b"v2", name, "Vault", "abcdefgh", replace=True)
             assert (clone / name).read_bytes() == b"v2"
             shown = subprocess.run(["git", "--git-dir", str(origin), "show", f"main:{name}"],

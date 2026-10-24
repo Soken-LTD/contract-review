@@ -213,6 +213,7 @@ class EnvGitPublisher(GitPublisher):
         else:
             askpass = None
 
+        created = False
         try:
             def _run(*argv: str) -> None:
                 result = subprocess.run(
@@ -232,6 +233,7 @@ class EnvGitPublisher(GitPublisher):
             # (O_EXCL; legacy manual reports share the directory); a replacement overwrites its own.
             flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_TRUNC if replace else os.O_EXCL)
             fd = os.open(str(pdf_dest), flags, 0o644)
+            created = not replace
             try:
                 os.write(fd, pdf_bytes)
             finally:
@@ -245,23 +247,27 @@ class EnvGitPublisher(GitPublisher):
 
             # Commit with fixed author identity.
             verb = "Update" if replace else "Add"
-            _run(
-                "git", "-C", str(repo),
-                "-c", f"user.name={author_name}",
-                "-c", f"user.email={author_email}",
-                "commit", "--no-gpg-sign",
-                "-m", f"{verb} automated review {safe_filename}",
-            )
+            staged = subprocess.run(["git", "-C", str(repo), "diff", "--cached", "--quiet"],
+                                    cwd=str(repo), env=env, capture_output=True, check=False)
+            if staged.returncode != 0:      # a retry of an already pushed replacement has nothing new
+                _run(
+                    "git", "-C", str(repo),
+                    "-c", f"user.name={author_name}",
+                    "-c", f"user.email={author_email}",
+                    "commit", "--no-gpg-sign",
+                    "-m", f"{verb} automated review {safe_filename}",
+                )
 
             # Push to origin main.
             _run("git", "-C", str(repo), "push", "origin", "main")
 
         except Exception:
             # Leave the clone equal to origin so a retry starts clean: drop the unpushed commit and
-            # a new file it added (a replaced file is restored by the reset).
+            # the new file this call wrote (a replaced file is restored by the reset; a file that
+            # O_EXCL refused belongs to someone else and stays).
             try:
                 _run("git", "-C", str(repo), "reset", "--hard", "origin/main")
-                if not replace and pdf_dest.exists():
+                if created and pdf_dest.exists():   # only a file this call created
                     pdf_dest.unlink()
             except Exception:
                 logger.exception("publish: could not reset the clone after a failed push")
@@ -444,14 +450,14 @@ class PublishWorker:
                      set last_report_id = excluded.last_report_id, last_published_at = now()""",
                 (target, safe_filename, report_id, report_id),
             )
-        public_url_ = public
-
-        # Trigger site refresh.
-        self._site.trigger_fetch()
-
-        # Mark published.
-        await self._mark(request_id, "published", public_url=public_url_)
-        logger.info("published report %s -> %s", report_id, public_url_)
+        # Published once the push and the DB rows are in; the site refresh is best effort (the
+        # 8 h fetch-audits cron picks the file up anyway).
+        await self._mark(request_id, "published", public_url=public)
+        logger.info("published report %s -> %s", report_id, public)
+        try:
+            self._site.trigger_fetch()
+        except Exception:
+            logger.exception("publish: site refresh failed for %s; the cron will pick it up", report_id)
 
     async def _choose_filename(self, target: str, subject: str, report_id: str) -> tuple[str, bool]:
         """(filename, replace): the target's existing file, else a fresh labelled name; the report

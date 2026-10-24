@@ -34,12 +34,14 @@ jobs:
               echo "ok=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            detail="try $i: HTTP ${code:-none} ${json:0:300}"
+            # Public issue: status code and failing checks only, never the response body.
+            checks=$(printf '%s' "$json" | jq -r '[if .db != "ok" then "db" else empty end, if (.workers // 0) < 1 then "worker" else empty end] | join(",")' 2>/dev/null || echo "unparsed")
+            detail="try $i: HTTP ${code:-none} failing=${checks:-none}"
             echo "$detail"
             [ "$i" -lt 3 ] && sleep 20
           done
           echo "ok=false" >> "$GITHUB_OUTPUT"
-          { echo "detail<<EOF"; echo "$detail"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          echo "detail=$(printf '%s' "$detail" | tr -cd 'A-Za-z0-9 :=,._-')" >> "$GITHUB_OUTPUT"
 
       - name: Open or close the alert issue
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
