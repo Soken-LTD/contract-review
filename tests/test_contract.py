@@ -29,7 +29,7 @@ HINTS = {
     "review_add_context": (False, False, True, True),   # mutates the job, never destructive; fetches public URLs
     "review_finalize": (False, True, True, False),
     "review_delete_job": (False, True, True, False),
-    "review_publish": (False, False, True, False),
+    "review_publish": (False, True, True, False),   # public and replaces the target's file
 }
 READ_ONLY = (True, False, True, False)
 
