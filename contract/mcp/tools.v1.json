@@ -1007,6 +1007,20 @@
        "done",
        "failed"
       ]
+     },
+     "publish_status": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Publication status: queued, publishing, published, failed, or null if not yet enqueued."
+     },
+     "public_url": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Public URL of the published report, 'publishing' while in progress, or null."
      }
     }
    }
@@ -2537,6 +2551,20 @@
      "summary_text": {
       "type": "string",
       "maxLength": 2000
+     },
+     "publish_status": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Publication status: queued, publishing, published, failed, or null if not yet enqueued."
+     },
+     "public_url": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Public URL of the published report, 'publishing' while in progress, or null."
      }
     }
    },
@@ -2623,7 +2651,7 @@
   {
    "name": "review_publish",
    "title": "Publish review report",
-   "description": "Publishes a rendered report on our public website and public report repository, labelled as automated, on explicit consent and without a human check. One public report per reviewed target: a later report of the same contract or repository replaces it. Phase 1 (no consent): returns what will be published and the future public URL. Phase 2 (consent provided): logs consent and queues the publish job. Idempotent: a second call with the same report_id returns the current status. The report PDF is taken from our object store; no client content is published.",
+   "description": "Returns the publication status for a rendered report, including its public URL once live. Reports are published automatically on successful render. Optionally accepts a consent object (party, name, statement, timestamp) to record an explicit consent entry in the log; this does not affect when publication happens. One file per reviewed target: a later report replaces it. Idempotent: repeated calls return the current status. Report content comes from our object store; no client-supplied bytes are published.",
    "annotations": {
     "title": "Publish review report",
     "readOnlyHint": false,

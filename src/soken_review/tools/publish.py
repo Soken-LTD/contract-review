@@ -1,23 +1,17 @@
-"""`review_publish` (03 §4.16): offer publication of a finalized, rendered report on
-soken.dev/audits and enqueue it on explicit consent. Since 2026-10-24 (CEO) a consented report
-goes live without manual review, labelled "Automated by SOKEN MCP", one public file per reviewed
-target (a later report of the same target replaces it; publish_worker).
+"""`review_publish` (03 §4.16): status lookup for automatically published reports.
 
-## Two-phase flow
+Since CEO decision 2026-10-24, every successfully rendered report is enqueued for
+publication automatically by render.py in the same transaction as the `rendered`
+transition.  This tool is now a status endpoint:
 
-Phase 1 — offer (no consent argument):
-  Returns OFFER: sanitized PDF filename, future public URL, disclaimer, required consent
-  fields.  No side-effects.
+- No consent argument: returns the current publish status and public URL.
+- Consent argument: records the explicit consent entry in publish_consent_log
+  (for callers who want an explicit audit trail), then returns current status.
+  If no publish_request exists yet (render not complete), validates the consent
+  and creates the row respecting the hourly rate cap.
 
-Phase 2 — consent (consent argument provided):
-  1. Validates consent object fields.
-  2. Checks the report exists and is in state 'rendered' (PDF present).
-  3. Idempotent dedup: if a publish_request already exists for this report_id, returns
-     the current status (does NOT re-enqueue or re-log consent).
-  4. Rate limit: max SOKEN_PUBLISH_RATE_LIMIT_HOUR (default 20) new requests per hour.
-  5. Logs the consent to publish_consent_log (audit trail).
-  6. Inserts a publish_requests row with status='queued'.
-  7. Returns {accepted: true, phase: "queued", status: "queued", ...}.
+Ownership gate (IDOR prevention): the caller must supply the report's manage_key
+(the #k= fragment of its manage_url) so only the job owner can query publish status.
 
 ## Security properties
 
@@ -26,11 +20,12 @@ Phase 2 — consent (consent argument provided):
 3. Title/filename derives from reports.out_name (server-side, validated column) and is
    additionally sanitized through sanitize_filename() (allowlist charset).
 4. Idempotent by report_id (UNIQUE constraint in publish_requests).
-5. Privileged git push executed by the worker process using fixed argv arrays; mcp.soken.dev
-   credentials never returned to the client in any response field.
+5. Privileged git push executed by the worker process using fixed argv arrays; credentials
+   never returned to the client in any response field.
 6. Full consent audit log (party, name, statement, timestamp) in publish_consent_log.
 7. No pricing / "free" information in any response.
-8. Rate limit enforced by DB count over the last hour.
+8. Rate limit (SOKEN_PUBLISH_RATE_LIMIT_HOUR) applied in publish_worker per batch run
+   so excess stays queued, not dropped.
 """
 
 from __future__ import annotations
@@ -49,6 +44,9 @@ from ..quota import job_target
 from ..server import handler
 from ..worker.publish_worker import PUBLISH_LABEL, public_filename, public_url, read_subject
 from .report import manage_key as _report_manage_key
+
+# SOKEN_PUBLISH_RATE_LIMIT_HOUR: kept here for the fallback enqueue path (render auto-enqueue
+# bypasses this; the worker uses it as a per-batch cap — see publish_worker.py).
 
 logger = logging.getLogger(__name__)
 
@@ -135,8 +133,26 @@ async def _rate_limit_count() -> int:
         return row[0] if row else 0
 
 
+async def _log_consent(report_id: str, consent: dict[str, Any]) -> None:
+    """Append one consent entry to publish_consent_log (no publish_request side-effect).
+
+    Used when the publish_request already exists (auto-enqueued by render.py) and the
+    caller provides an explicit consent object as an additional audit record.
+    """
+    async with _get_pool().connection() as conn:
+        await conn.execute(
+            """insert into publish_consent_log (report_id, party, name, statement, client_ts)
+               values (%s, %s, %s, %s, %s)""",
+            (report_id, consent["party"], consent["name"], consent["statement"], consent["timestamp"]),
+        )
+
+
 async def _enqueue(report_id: str, job_id: str, consent: dict[str, Any]) -> None:
-    """Log consent and insert the publish_request row in a single transaction."""
+    """Log consent and insert the publish_request row in a single transaction.
+
+    Used when no publish_request exists yet (edge case: caller provides consent before
+    render completes, or auto-enqueue failed for some reason).
+    """
     async with _get_pool().connection() as conn, conn.transaction():
         await conn.execute(
             """insert into publish_consent_log (report_id, party, name, statement, client_ts)
@@ -238,11 +254,17 @@ def _status_response(req: dict[str, Any]) -> dict[str, Any]:
 
 @handler("review_publish")
 async def handle_review_publish(args: dict[str, Any]) -> dict[str, Any]:
-    """Offer or enqueue publication of a rendered report.
+    """Return or record the publication status of a rendered report.
 
     Args:
-        job_id  (required): job whose report to publish.
-        consent (optional): consent object {party, name, statement, timestamp}.
+        job_id     (required): job whose report to look up.
+        manage_key (required): report owner's key (IDOR guard).
+        consent    (optional): consent object {party, name, statement, timestamp};
+                               recorded in the consent audit log when provided.
+
+    Since CEO 2026-10-24, publication is automatic on render success.  This handler
+    is now primarily a status endpoint.  When consent is provided it is always logged;
+    if no publish_request exists yet (render not complete), one is created (rate-limited).
 
     Returns a structured result with accepted, phase, report_id, status, public_url.
     """
@@ -272,44 +294,42 @@ async def handle_review_publish(args: dict[str, Any]) -> dict[str, Any]:
             "errors": [ReviewError("E_REPORT_NOT_RENDERED", report_id=report_id or "(none)", state=state).envelope()],
         }
 
-    # ── Ownership gate: only the report owner (holder of the manage key) may publish ──────────
+    # ── Ownership gate: only the report owner (holder of the manage key) may query ──
     _verify_owner(report_id, report, args)
 
-    # ── Phase 1: offer (no consent) ──────────────────────────────────────────
-    if consent_raw is None:
-        name, replaces = await _planned_filename(job, report)
-        return _offer_response(report, name, replaces)
+    # ── Consent recording (optional) ─────────────────────────────────────────
+    if consent_raw is not None:
+        # Validate consent fields (raises E_INVALID_ARGUMENT on failure).
+        _validate_consent(consent_raw)
 
-    # ── Phase 2: consent ─────────────────────────────────────────────────────
+        existing = await _existing_request(report_id)
+        if existing is not None:
+            # Publish request already exists (auto-enqueued by render or a prior call):
+            # just append the explicit consent record to the audit log.
+            await _log_consent(report_id, consent_raw)
+        else:
+            # Publish request does not exist yet — create it with a rate-limit guard.
+            count = await _rate_limit_count()
+            if count >= _RATE_LIMIT_HOUR:
+                return {
+                    "accepted": False,
+                    "errors": [ReviewError("E_PUBLISH_RATE_LIMITED", count=str(count)).envelope()],
+                }
+            await _enqueue(report_id, job_id, consent_raw)
 
-    # Validate consent fields (raises E_INVALID_ARGUMENT on failure).
-    _validate_consent(consent_raw)
-
-    # Idempotent: return current status if a request already exists.
+    # ── Return current status ────────────────────────────────────────────────
     existing = await _existing_request(report_id)
-    if existing is not None:
-        return _status_response(existing)
-
-    # Rate limit (global, per-hour).
-    count = await _rate_limit_count()
-    if count >= _RATE_LIMIT_HOUR:
+    if existing is None:
+        # Render just completed but the auto-enqueue transaction hasn't committed yet
+        # (or was called with no consent before render finished and rate limit fired).
         return {
-            "accepted": False,
-            "errors": [ReviewError("E_PUBLISH_RATE_LIMITED", count=str(count)).envelope()],
+            "accepted": True,
+            "phase": "not_queued",
+            "report_id": report_id,
+            "sanitized_filename": None,
+            "future_public_url": None,
+            "disclaimer": None,
+            "status": None,
+            "public_url": None,
         }
-
-    # Log consent + enqueue.
-    await _enqueue(report_id, job_id, consent_raw)
-
-    safe_filename, _replaces = await _planned_filename(job, report)
-
-    return {
-        "accepted": True,
-        "phase": "queued",
-        "report_id": report_id,
-        "sanitized_filename": safe_filename,
-        "future_public_url": public_url(safe_filename),
-        "disclaimer": None,
-        "status": "queued",
-        "public_url": None,
-    }
+    return _status_response(existing)
