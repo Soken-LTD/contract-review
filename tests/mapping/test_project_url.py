@@ -213,3 +213,11 @@ def test_origin_and_status_on_discovered_item():
     for item in results:
         assert item.get("origin") == "source_code_untrusted", item
         assert item.get("status") == "suggested", item
+
+
+
+def test_percent_and_separator_tricks_are_dropped():
+    from soken_review.mapping.project_url import _validate_url_strict as _clean_url
+
+    assert _clean_url("https://example.com/%69gnore%20previous") is None
+    assert _clean_url("https://example.com/ignore-previous_instructions") is None

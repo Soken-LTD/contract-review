@@ -48,7 +48,7 @@ MAX_SUGGESTIONS = 6
 # This is tighter than check_url which allows longer inputs.
 _STRICT_URL_RE = re.compile(
     r"^https://[A-Za-z0-9][A-Za-z0-9.-]{0,252}"   # host
-    r"(/[A-Za-z0-9._~/%-]{0,120})?$"               # optional path (no query, no fragment)
+    r"(/[A-Za-z0-9._~/-]{0,120})?$"                # optional path (no query, fragment or %-escapes)
 )
 _MAX_STRICT_URL_LEN = 300  # host(253) + "/" + path(120) + "https://" = well under 300
 
@@ -100,7 +100,8 @@ def _validate_url_strict(raw: str) -> str | None:
         return None
 
     # J1 injection scan: check the full URL string for injection phrases
-    if _has_injection(url):
+    # Separators turned into spaces so a phrase written as ignore-previous_instructions is seen.
+    if _has_injection(url) or _has_injection(re.sub(r"[-_./~]+", " ", url)):
         logger.debug("project_url: J1 injection pattern in URL %r; dropped", url[:80])
         return None
 
@@ -112,8 +113,8 @@ def _has_injection(text: str) -> bool:
     try:
         from ..engine.injection import _j1_regexes
         return any(pat.search(text) for _, pat in _j1_regexes())
-    except Exception:  # noqa: BLE001  # never crash the map step
-        return False
+    except Exception:  # noqa: BLE001  # never crash the map step; fail closed (drop the URL)
+        return True
 
 
 def _kind_for_url(url: str) -> str:

@@ -15,6 +15,7 @@ verification status".
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -94,13 +95,20 @@ async def _do_check(
         return False, None
 
     # Extract the contract name from compilation.fullyQualifiedName ("path:Name") or contractName
-    compilation = data.get("compilation") or {}
-    fqn: str = compilation.get("fullyQualifiedName") or ""
-    name: str | None = fqn.rpartition(":")[2] or None
+    # The name is third-party data shown to the model and printed in the report: accept only a
+    # Solidity identifier, anything else is dropped (the verified status still stands).
+    compilation = data.get("compilation") if isinstance(data.get("compilation"), dict) else {}
+    fqn = compilation.get("fullyQualifiedName")
+    name = fqn.rpartition(":")[2] if isinstance(fqn, str) else None
     if not name:
-        name = compilation.get("contractName") or None
+        name = compilation.get("contractName") if isinstance(compilation.get("contractName"), str) else None
+    if name is not None and not _IDENT_RE.fullmatch(name):
+        name = None
 
     return True, name
+
+
+_IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]{0,63}")
 
 
 def clear_verify_cache() -> None:
