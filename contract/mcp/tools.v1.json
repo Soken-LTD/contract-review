@@ -1021,6 +1021,25 @@
        "null"
       ],
       "description": "Public URL of the published report, 'publishing' while in progress, or null."
+     },
+     "publication": {
+      "type": [
+       "object",
+       "null"
+      ],
+      "description": "Whether the report is published automatically or stays private. outcome: automatic | private; reason: one-line explanation.",
+      "properties": {
+       "outcome": {
+        "type": "string",
+        "enum": [
+         "automatic",
+         "private"
+        ]
+       },
+       "reason": {
+        "type": "string"
+       }
+      }
      }
     }
    }
@@ -2565,6 +2584,25 @@
        "null"
       ],
       "description": "Public URL of the published report, 'publishing' while in progress, or null."
+     },
+     "publication": {
+      "type": [
+       "object",
+       "null"
+      ],
+      "description": "Whether the report is published automatically or stays private. outcome: automatic | private; reason: one-line explanation.",
+      "properties": {
+       "outcome": {
+        "type": "string",
+        "enum": [
+         "automatic",
+         "private"
+        ]
+       },
+       "reason": {
+        "type": "string"
+       }
+      }
      }
     }
    },
