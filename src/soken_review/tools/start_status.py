@@ -36,6 +36,7 @@ from ..errors import ReviewError
 from ..families import require_enabled
 from ..mapping.project_url import load_suggested_context
 from ..mapping.related import load_related_contracts
+from ..networks import publication_outcome
 from ..server import handler
 from .git_probe import GitLsRemoteProbe
 from .listen import RECHECK_S, job_hash, listener_for
@@ -855,6 +856,10 @@ def _build_status_response(
     # Publish info (CEO 2026-10-24): present for rendered jobs; null for pre-render.
     out["publish_status"] = pub_status
     out["public_url"] = pub_url
+
+    # Publication outcome: what automatic-publish will do for this job (CEO 2026-10-24).
+    _profile = (out.get("provenance") or {}).get("profile") or ("owner" if job.get("ownership_proven") else None)
+    out["publication"] = publication_outcome(job, _profile)
 
     return out
 

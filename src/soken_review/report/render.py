@@ -31,6 +31,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from ..db.job_repo import JobRepo
+from ..networks import auto_publish_enabled, is_mainnet
 from ..sandbox.profile import StepLimits, docker_argv, locked_image, sandbox_writable_dir
 from .assemble import AssemblyError, assemble_report
 from .kit.build import BuildError, build
@@ -319,9 +320,14 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
     but the publish_requests dedup (UNIQUE report_id) prevents a duplicate request.
 
     Skipped when any of the following conditions hold:
+    - ``SOKEN_AUTOPUBLISH`` is set to off/0/false (global kill switch for blind-test runs
+      or when a live mainnet contract under review has an unfixed High finding).
     - ``source_kind`` is not in AUTO_PUBLISH_SOURCE_KINDS (i.e. not deployed or repo).
       ``upload`` (private code through a one-time link) and ``files`` (code pasted into the
       conversation) may be private, and the report quotes that code.
+    - ``has_deployment`` is False — a repo review without a live deployment is not a
+      public on-chain artifact.
+    - ``is_mainnet(job)`` is False — testnet/devnet deployments stay private.
     - The job has any inline context item (``url`` is None), meaning the requester supplied
       private content that may be quoted in the report context section.
     - The report profile is ``owner`` — the requester is the contract owner and has not
@@ -329,15 +335,26 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
     In all such cases the report is published only when the owner calls review_publish with
     the manage key.
     """
+    # Global kill switch: SOKEN_AUTOPUBLISH=off (blind-test mode, live unfixed High, etc.)
+    if not auto_publish_enabled():
+        return
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
-            "select source_kind, context_items, terms_accepted_at from jobs where job_id = %s",
+            "select source_kind, context_items, terms_accepted_at,"
+            " chain, chain_id, source_args, has_deployment"
+            " from jobs where job_id = %s",
             (job_id,),
         )
         row = await cur.fetchone()
     if row is None:
         return
     if row["source_kind"] not in AUTO_PUBLISH_SOURCE_KINDS:
+        return
+    # Skip if no on-chain deployment recorded (repo reviews without a deployment).
+    if not row["has_deployment"]:
+        return
+    # Skip if the deployment is on a testnet/devnet rather than a production mainnet.
+    if not is_mainnet(row):
         return
     # Skip if any context item was supplied inline (url is None = pasted content, not a URL fetch).
     context_items: list[dict[str, Any]] = row["context_items"] or []
