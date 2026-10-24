@@ -75,7 +75,10 @@ _ALREADY_READ: frozenset[str] = frozenset(
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 # Match int/uint types with optional bit-width (e.g. int256, uint8)
-_INT_TYPE_RE = re.compile(r"^(u?int)(\d*)$")
+# Only widths Solidity allows (8..256 in steps of 8); an ABI is third-party data and an
+# arbitrary width would make the sign arithmetic below unbounded.
+_INT_TYPE_RE = re.compile(
+    r"^(u?int)(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)?$")
 
 
 def _snake(name: str) -> str:
@@ -393,11 +396,17 @@ async def classify_related_contracts(
     # functions (e.g. WETH() on a vault contract).
     if target_address and abi_list:
         abi_type_map = _abi_zero_arg_view_map(abi_list)
+        probes = 0
+        deadline = time.monotonic() + _PROBE_TOTAL_DEADLINE_S
         for getter_name, out_type in sorted(abi_type_map.items()):
             if out_type != "address":
                 continue
             if getter_name in _ALREADY_READ:
                 continue
+            # Same bounds as state_parameter_facts: a hostile ABI cannot fan out unbounded calls.
+            if probes >= _MAX_ADDRESS_PROBES or time.monotonic() >= deadline or len(role_map) >= _MAX_RELATED:
+                break
+            probes += 1
             sel = getter_selector(getter_name)
             try:
                 raw = await rpc.eth_call_probe(
@@ -422,7 +431,7 @@ async def classify_related_contracts(
                 role_map[addr_lower] = getter_name  # label = getter name, never None
 
     results: list[dict[str, Any]] = []
-    for address, role in role_map.items():
+    for address, role in list(role_map.items())[:_MAX_RELATED]:
         entry = await _classify(rpc, address, block)
         entry["role"] = role
 
@@ -461,6 +470,8 @@ _PROBE_PER_CALL_S = 5.0          # per-call timeout for each probe
 _PROBE_GAS_CAP = 2_000_000       # gas limit passed in eth_call to cap node resources
 _PROBE_MAX_HEX = 4096            # reject hex responses longer than this (~ 2 KiB decoded)
 _PROBE_MIN_BYTES = 32            # require at least one uint256 slot before decoding
+_MAX_ADDRESS_PROBES = 16          # address-typed ABI getters probed for related contracts
+_MAX_RELATED = 32                 # related contracts classified (each costs code + Sourcify reads)
 
 
 async def state_parameter_facts(

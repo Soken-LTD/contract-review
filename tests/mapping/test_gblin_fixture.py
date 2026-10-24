@@ -478,3 +478,11 @@ class TestDecodeByAbiType:
 
         word = format(18, "064x")
         assert _decode_by_abi_type(word, "uint8") == "18"
+
+
+def test_abi_int_width_must_be_a_solidity_width():
+    from soken_review.mapping.related import _decode_by_abi_type, _is_scalar_abi_type
+
+    assert _is_scalar_abi_type("int256") and _is_scalar_abi_type("uint8") and _is_scalar_abi_type("int")
+    assert not _is_scalar_abi_type("int999999") and not _is_scalar_abi_type("uint7") and not _is_scalar_abi_type("int0")
+    assert _decode_by_abi_type("f" * 64, "int999999") is None or _decode_by_abi_type("f" * 64, "int999999") == "0x" + "f" * 64
