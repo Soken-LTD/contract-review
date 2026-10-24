@@ -261,16 +261,19 @@ def _basis_items(matrix: dict[str, Any]) -> list[dict[str, Any]]:
     # oracle lag clears that quoted threshold), the effective exposure is dust-
     # level: profit only materialises during an intermittent market condition and
     # is bounded above by the threshold minus the fee.  The model must quote the
-    # specific fee or threshold line.  If no such bound exists the item is absent
-    # and the original bounded magnitude is kept.
+    # specific fee or threshold line AND the line that prevents repetition inside one
+    # price window; a per-cycle ceiling alone does not bound the total extracted from
+    # holders.  If either is missing the item is absent and bounded magnitude is kept.
     if impact == "yield_or_fee_loss" and magnitude == "bounded":
         items.append({
             "id": "MB6", "kind": "basis",
             "condition": (
                 "A protocol fee, documented deviation threshold, or equivalent spread "
-                "at a quoted line is the hard ceiling on per-cycle gain: the exploit "
-                "is net-negative unless the oracle lag or market gap exceeds the "
-                "quoted threshold (quote the fee/threshold value and line)."
+                "at a quoted line is the hard ceiling on per-cycle gain, AND a quoted "
+                "line stops the cycle from being repeated inside the same price window "
+                "(a cooldown that cannot be bypassed, a per-block or per-account cap, or "
+                "a price update forced by the trade itself). Quote both lines; a fee "
+                "ceiling alone does not bound the total, since repeated cycles add up."
             ),
             "scope": "entry_function",
             "expect": "absent",
