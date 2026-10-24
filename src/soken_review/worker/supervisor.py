@@ -1421,14 +1421,23 @@ class Supervisor:
                         state_parameter_facts,
                         write_related_contracts,
                     )
+                    # Load verified ABI from the solc output copy so state facts
+                    # are decoded by type (int256 sign-extends, bytes32 as hex,
+                    # address without entropy guessing) and related contracts include
+                    # all zero-arg address-returning public getters.
+                    entry_contract = (cands[0] if cands else {}).get("entry_contract")
+                    abi_list = _extract_abi_from_solc_output(out_dir, entry_contract)
                     state_fs = await state_parameter_facts(
                         rpc_pool_pinned, cs["address"], int(cs["block"]), doc, unit_id,
+                        abi_list=abi_list,
                     )
                     if state_fs:
                         facts.extend(state_fs)
                     related = await classify_related_contracts(
                         rpc_pool_pinned, int(cs["block"]), onchain,
                         chain_id=int(job["chain_id"]),
+                        abi_list=abi_list,
+                        target_address=cs["address"],
                     )
                     # Expose related.<label>.verified facts
                     for entry in related:
@@ -1740,3 +1749,62 @@ def _build_result_from_disk(out_dir: Path, result: dict[str, Any]) -> BuildResul
 def _std_input_meta(out_dir: Path) -> dict[str, Any] | None:
     path = out_dir / "std_input_0.json"
     return json.loads(path.read_text()).get("std_json_input") if path.exists() else None
+
+
+def _extract_abi_from_solc_output(
+    out_dir: Path,
+    entry_contract: str | None = None,
+) -> list[dict[str, Any]] | None:
+    """Extract the ABI for ``entry_contract`` from the job-dir solc output copy.
+
+    The ABI lives in ``contracts[src][name]["metadata"]`` (JSON string) under
+    ``output.abi``.  Sourcify always populates metadata; a bare solc output
+    without metadata is tried as a fallback (``contracts[src][name]["abi"]``).
+
+    Returns a non-empty list on success; None when the file is absent, the build
+    failed, or no ABI can be found.  Reads at most ``_MAX_SOLC_OUTPUT_BYTES`` and
+    never raises (degradation: chain_state continues without ABI-aware decoding).
+    """
+    path = out_dir / _SOLC_OUTPUT_COPY
+    if not path.is_file():
+        return None
+    try:
+        raw = path.read_bytes()
+        if len(raw) > _MAX_SOLC_OUTPUT_BYTES:
+            return None
+        data = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    contracts = data.get("contracts") or {}
+
+    # Helper: extract ABI from a single contract data dict.
+    def _abi_from_contract(c: dict[str, Any]) -> list | None:
+        # Try metadata.output.abi first (Sourcify populates this).
+        meta_raw = c.get("metadata")
+        if meta_raw:
+            try:
+                meta = json.loads(meta_raw) if isinstance(meta_raw, str) else meta_raw
+                abi = (meta.get("output") or {}).get("abi") or []
+                if abi:
+                    return abi
+            except (ValueError, AttributeError):
+                pass
+        # Fallback: bare abi key (not always present).
+        abi = c.get("abi") or []
+        return abi if abi else None
+
+    # First try: exact match on entry_contract ("src/Foo.sol:Foo").
+    if entry_contract:
+        src, _, name = entry_contract.rpartition(":")
+        if src and name and src in contracts and name in contracts[src]:
+            abi = _abi_from_contract(contracts[src][name])
+            if abi:
+                return abi
+
+    # Fallback: return the first non-empty ABI we find.
+    for ctrs in contracts.values():
+        for c_data in ctrs.values():
+            abi = _abi_from_contract(c_data)
+            if abi:
+                return abi
+    return None

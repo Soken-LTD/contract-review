@@ -1,0 +1,44 @@
+{
+ "contract": "0xc2181d975c05c8c724b334bcED0764c0b86B1D53",
+ "chain_id": 8453,
+ "block": 53027085,
+ "note": "Recorded from Base mainnet at block 53027085 for regression tests (no live network in tests).",
+ "calls": {
+  "WETH": {
+   "selector": "0xad5c4648",
+   "raw": "0x0000000000000000000000004200000000000000000000000000000000000006",
+   "abi_type": "address",
+   "decoded": "0x4200000000000000000000000000000000000006"
+  },
+  "auctionPremiumBps": {
+   "selector": "0x4e0cb834",
+   "raw": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c",
+   "abi_type": "int256",
+   "decoded": "-100"
+  },
+  "DOMAIN_SEPARATOR": {
+   "selector": "0x3644e515",
+   "raw": "0x07f5b29d4ae7d4529ef4b1185b7e4afbbc4b525aa29f56522cacf3aa9916a2d3",
+   "abi_type": "bytes32",
+   "decoded": "0x07f5b29d4ae7d4529ef4b1185b7e4afbbc4b525aa29f56522cacf3aa9916a2d3"
+  },
+  "owner": {
+   "selector": "0x8da5cb5b",
+   "raw": "0x0000000000000000000000006abec8716ffeecf7c3d6e68255b4797113e8e5dd",
+   "abi_type": "address",
+   "decoded": "0x6abec8716ffeecf7c3d6e68255b4797113e8e5dd"
+  },
+  "currentDriftEth": {
+   "selector": "0xb9d77005",
+   "raw": "0x000000000000000000000000000000000000000000000000002d71220cb58d96",
+   "abi_type": "uint256",
+   "decoded": "12749053741674902"
+  },
+  "isNavReliable": {
+   "selector": "0xe0acacf1",
+   "raw": "0x0000000000000000000000000000000000000000000000000000000000000001",
+   "abi_type": "bool",
+   "decoded": "true"
+  }
+ }
+}
