@@ -155,7 +155,7 @@ async def purge_job(conn: psycopg.AsyncConnection, job_id: str, *, reason: str,
         """
         update jobs set source_args = '{}'::jsonb, error_detail = null, previous_snapshot = null,
                source_pin = null, resolved_commit = null, code_hash = null, upload_id = null,
-               upload_sha256 = null, address = null, report_id = null
+               upload_sha256 = null, address = null, report_id = null, target_key = null
         where job_id = %s
         """,
         (job_id,),

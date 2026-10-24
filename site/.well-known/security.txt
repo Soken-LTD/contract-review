@@ -1,0 +1,4 @@
+Contact: mailto:hello@soken.dev
+Policy: https://mcp.soken.dev/security.html
+Preferred-Languages: en
+Expires: 2027-10-24T00:00:00Z

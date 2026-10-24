@@ -1,5 +1,7 @@
 """`review_publish` (03 §4.16): offer publication of a finalized, rendered report on
-soken.dev/audits and enqueue it on explicit consent.
+soken.dev/audits and enqueue it on explicit consent. Since 2026-10-24 (CEO) a consented report
+goes live without manual review, labelled "Automated by SOKEN MCP", one public file per reviewed
+target (a later report of the same target replaces it; publish_worker).
 
 ## Two-phase flow
 
@@ -43,8 +45,9 @@ from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
 from ..errors import ReviewError
+from ..quota import job_target
 from ..server import handler
-from ..worker.publish_worker import GITHUB_RAW_BASE, sanitize_filename
+from ..worker.publish_worker import PUBLISH_LABEL, public_filename, public_url, read_subject
 from .report import manage_key as _report_manage_key
 
 logger = logging.getLogger(__name__)
@@ -168,7 +171,7 @@ def _verify_owner(report_id: str, report: dict[str, Any], args: dict[str, Any]) 
     """
     provided = args.get("manage_key")
     expected = _report_manage_key(report_id, report["key_version"])
-    if not isinstance(provided, str) or not hmac.compare_digest(provided, expected):
+    if not isinstance(provided, str) or not hmac.compare_digest(provided.encode(), expected.encode()):
         raise ReviewError("E_PUBLISH_NOT_OWNER", report_id=report_id)
 
 
@@ -176,28 +179,43 @@ def _verify_owner(report_id: str, report: dict[str, Any], args: dict[str, Any]) 
 # Offer helpers
 # ---------------------------------------------------------------------------
 
-def _offer_response(report: dict[str, Any]) -> dict[str, Any]:
-    """Build the Phase-1 offer payload."""
+def _offer_response(report: dict[str, Any], filename: str | None = None, replaces: bool = False) -> dict[str, Any]:
+    """Build the Phase-1 offer payload. `filename`: the planned public name (default: from out_name)."""
     report_id: str = report["report_id"]
-    out_name: str = report["out_name"]
-    base_title = out_name.removesuffix(".pdf")
-    safe_filename = sanitize_filename(base_title, report_id)
-    future_url = f"{GITHUB_RAW_BASE}/{safe_filename}"
+    safe_filename = filename or public_filename(report["out_name"].removesuffix(".pdf"))
+    replaced = (" This target already has a published report; it will be replaced by this one, "
+                "not listed twice.") if replaces else ""
     return {
         "accepted": True,
         "phase": "offer",
         "report_id": report_id,
         "sanitized_filename": safe_filename,
-        "future_public_url": future_url,
+        "future_public_url": public_url(safe_filename),
         "disclaimer": (
-            "This report will become permanently public at the URL above. "
-            "To proceed, call this tool again with a consent object containing: "
+            "This report will be published automatically, without review by SOKEN LTD, and stay "
+            "public at the URL above and on soken.dev/audits, labelled " + PUBLISH_LABEL + "."
+            + replaced + " Deleting the job later does not withdraw the published copy; removal is by "
+            "takedown request (mcp.soken.dev/takedown.html). To proceed, call this tool again with a consent object containing: "
             "party (your organisation name), name (authorising person), "
             "statement (explicit consent text), and timestamp (ISO-8601)."
         ),
         "status": None,
         "public_url": None,
     }
+
+
+async def _planned_filename(job: dict[str, Any], report: dict[str, Any]) -> tuple[str, bool]:
+    """(name, replaces): the target's existing public file, else the labelled name for its subject.
+    The worker makes the final choice (it may append the report id on a name clash)."""
+    target = job_target(job)
+    if target:
+        async with _get_pool().connection() as conn, conn.cursor() as cur:
+            await cur.execute("select safe_filename from published_targets where target_key = %s", (target,))
+            row = await cur.fetchone()
+        if row:
+            return row[0], True
+    subject = read_subject(report.get("object_prefix") or "", report["out_name"].removesuffix(".pdf"))
+    return public_filename(subject), False
 
 
 def _status_response(req: dict[str, Any]) -> dict[str, Any]:
@@ -207,9 +225,7 @@ def _status_response(req: dict[str, Any]) -> dict[str, Any]:
         "phase": req["status"],  # queued | publishing | published | failed
         "report_id": req["report_id"],
         "sanitized_filename": req.get("safe_filename"),
-        "future_public_url": (
-            f"{GITHUB_RAW_BASE}/{req['safe_filename']}" if req.get("safe_filename") else None
-        ),
+        "future_public_url": public_url(req["safe_filename"]) if req.get("safe_filename") else None,
         "disclaimer": None,
         "status": req["status"],
         "public_url": req.get("public_url"),
@@ -261,7 +277,8 @@ async def handle_review_publish(args: dict[str, Any]) -> dict[str, Any]:
 
     # ── Phase 1: offer (no consent) ──────────────────────────────────────────
     if consent_raw is None:
-        return _offer_response(report)
+        name, replaces = await _planned_filename(job, report)
+        return _offer_response(report, name, replaces)
 
     # ── Phase 2: consent ─────────────────────────────────────────────────────
 
@@ -284,17 +301,14 @@ async def handle_review_publish(args: dict[str, Any]) -> dict[str, Any]:
     # Log consent + enqueue.
     await _enqueue(report_id, job_id, consent_raw)
 
-    # Build filename for the response.
-    out_name: str = report["out_name"]
-    base_title = out_name.removesuffix(".pdf")
-    safe_filename = sanitize_filename(base_title, report_id)
+    safe_filename, _replaces = await _planned_filename(job, report)
 
     return {
         "accepted": True,
         "phase": "queued",
         "report_id": report_id,
         "sanitized_filename": safe_filename,
-        "future_public_url": f"{GITHUB_RAW_BASE}/{safe_filename}",
+        "future_public_url": public_url(safe_filename),
         "disclaimer": None,
         "status": "queued",
         "public_url": None,

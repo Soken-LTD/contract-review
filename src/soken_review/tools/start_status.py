@@ -24,6 +24,7 @@ from typing import Any, Protocol
 
 import psycopg_pool
 
+from .. import quota
 from ..context.items import check_cap, status_counts, validate_items
 from ..context.store import ContextStore
 from ..db.job_repo import JobRepo, new_job_id
@@ -366,8 +367,19 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
     except RuntimeError as exc:
         raise ReviewError("E_INTERNAL", incident="no_db_pool") from exc
 
+    target = quota.target_key(chain=chain, address=address,
+                              repo_url=source.get("repo_url") if kind == "repo" else None,
+                              subdir=source.get("subdir") if kind == "repo" else None)
+    limit_key = quota.limit_key(target=target, job_id=job_id)
+
     async with pool.connection() as conn:
         repo = JobRepo(conn)
+        try:
+            # Early refusal: the caller already holds today's reports (quota.py; enforced again,
+            # under a lock, at review_finalize where the report is issued).
+            await quota.check(conn, limit_key)
+        except ReviewError as exc:
+            return {"accepted": False, "errors": [exc.envelope()]}
         async with conn.transaction():
             await repo.create(
                 job_id=job_id,
@@ -387,6 +399,8 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
                 guide_version=_GUIDE_VERSION,
                 rubric_version=_RUBRIC_VERSION,
             )
+            await conn.execute("update jobs set target_key = %s, limit_key = %s where job_id = %s",
+                               (target, limit_key, job_id))
             if context_items:
                 await repo.append_context_items(job_id, context_items)   # fresh row: no cap or duplicate possible
             # Insert the first step for queued jobs (09 section 3.3); upload jobs wait for

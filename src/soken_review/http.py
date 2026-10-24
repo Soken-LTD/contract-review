@@ -12,6 +12,8 @@ from typing import Any
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .quota import CLIENT_IP
+
 MODERN = "2026-07-28"
 HANDSHAKE_ERA = ("2025-11-25", "2025-06-18")
 SUPPORTED = (MODERN, *HANDSHAKE_ERA)
@@ -40,6 +42,12 @@ class ProtocolRules:
         if scope["method"] != "POST":
             await _respond(send, 405, None, headers=[(b"allow", b"POST")])
             return
+        # Client address for the daily report quota (quota.py). nginx sets X-Real-IP; uvicorn binds
+        # 127.0.0.1, so the header is ours. Without it a non-loopback peer is the client; a loopback
+        # peer is the proxy itself and must not become one shared key for every caller.
+        peer = (scope.get("client") or (None, None))[0]
+        real = (_header(scope, b"x-real-ip") or "").strip()
+        CLIENT_IP.set(real or (peer if peer and peer not in ("127.0.0.1", "::1") else None))
 
         declared = _header(scope, b"content-length")
         if declared is not None and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
