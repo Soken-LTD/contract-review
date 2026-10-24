@@ -934,7 +934,12 @@ class TestAutoPublishEnqueue:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_auto_enqueue_public_sources_only(self, db_pool):
-        """Deployed and repo reports are queued once (idempotent); upload and files are not."""
+        """Mainnet-deployed and repo+mainnet-deployment reports are queued (idempotent).
+
+        CEO 2026-10-24 rule: automatic publication requires has_deployment=True AND
+        is_mainnet=True. source_kinds 'upload' and 'files' are always private.
+        A repo job without a deployment is also private.
+        """
         from soken_review.db.job_repo import JobRepo, new_job_id
         from soken_review.report.render import _auto_enqueue_publish
 
@@ -942,30 +947,85 @@ class TestAutoPublishEnqueue:
             tx = conn.transaction(force_rollback=True)
             async with tx:
                 rids = {}
-                for kind, rid in (("deployed", "aaaaaaaaaaaaaaaaaaaaaaaaaa"), ("repo", "bbbbbbbbbbbbbbbbbbbbbbbbbb"),
-                                  ("upload", "cccccccccccccccccccccccccc"), ("files", "dddddddddddddddddddddddddd")):
+                # "deployed" on Base mainnet (chain_id=8453): should be published automatically.
+                # "repo" with a mainnet deployment: should be published automatically.
+                # "repo_no_dep": repo without a deployment: private.
+                # "upload" and "files": always private.
+                cases = [
+                    ("deployed", "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                     {"has_deployment": True, "chain": "evm", "chain_id": 8453}),
+                    ("repo", "bbbbbbbbbbbbbbbbbbbbbbbbbb",
+                     {"has_deployment": True, "chain": "evm", "chain_id": 8453}),
+                    ("repo", "eeeeeeeeeeeeeeeeeeeeeeeeee",
+                     {"has_deployment": False, "chain": None, "chain_id": None}),  # no deployment
+                    ("upload", "cccccccccccccccccccccccccc",
+                     {"has_deployment": False, "chain": None, "chain_id": None}),
+                    ("files", "dddddddddddddddddddddddddd",
+                     {"has_deployment": False, "chain": None, "chain_id": None}),
+                ]
+                for kind, rid, extra in cases:
                     jid = new_job_id()
-                    await JobRepo(conn).create(job_id=jid, principal_key="p", surface="plugin", state="queued",
-                                               requester_role="third_party_public_code", source_kind=kind,
-                                               source_args={}, has_deployment=kind == "deployed", chain="evm")
+                    await JobRepo(conn).create(
+                        job_id=jid, principal_key="p", surface="plugin", state="queued",
+                        requester_role="third_party_public_code", source_kind=kind,
+                        source_args={}, **extra,
+                    )
                     await conn.execute(
                         """insert into reports (report_id, report_id_short, job_id, profile, object_prefix, out_name,
                            pdf_sha256s, subject_candidates, key_version, rendered_at, expires_at)
                            values (%s, %s, %s, 'public_review', %s, 'R.pdf', array[repeat('0',64)]::char(64)[],
                                    '[]'::jsonb, 1, now(), now() + interval '30 days')""",
                         (rid, rid[:10], jid, f"reports/{rid}/1/"))
-                    rids[kind] = (rid, jid)
-                for kind, (rid, jid) in rids.items():
+                    rids[(kind, rid)] = (rid, jid)
+                for rid, jid in rids.values():
                     await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T00:00:00+00:00")
                     await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T01:00:00+00:00")   # re-render
                 got = {}
-                for kind, (rid, _jid) in rids.items():
+                for kind, rid in rids:
                     row = await (await conn.execute(
                         "select (select count(*) from publish_requests where report_id = %s),"
                         " (select count(*) from publish_consent_log where report_id = %s)", (rid, rid))).fetchone()
-                    got[kind] = tuple(row)
-        assert got["deployed"] == (1, 2) and got["repo"] == (1, 2)
-        assert got["upload"] == (0, 0) and got["files"] == (0, 0)
+                    got[rid] = (tuple(row), kind)
+
+        # deployed + mainnet chain_id → queued (1 request, 2 consent entries)
+        assert got["aaaaaaaaaaaaaaaaaaaaaaaaaa"] == ((1, 2), "deployed")
+        # repo + mainnet deployment → queued
+        assert got["bbbbbbbbbbbbbbbbbbbbbbbbbb"] == ((1, 2), "repo")
+        # repo without deployment → private
+        assert got["eeeeeeeeeeeeeeeeeeeeeeeeee"] == ((0, 0), "repo")
+        # upload and files → private
+        assert got["cccccccccccccccccccccccccc"] == ((0, 0), "upload")
+        assert got["dddddddddddddddddddddddddd"] == ((0, 0), "files")
+
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_autopublish_off_skips_enqueue(self, db_pool, monkeypatch):
+        """SOKEN_AUTOPUBLISH=off → no publish_requests row even for a mainnet deployment."""
+        from soken_review.db.job_repo import JobRepo, new_job_id
+        from soken_review.report.render import _auto_enqueue_publish
+
+        monkeypatch.setenv("SOKEN_AUTOPUBLISH", "off")
+        rid = "ffffffffffffffffffffffffff"
+        async with db_pool.connection() as conn:
+            tx = conn.transaction(force_rollback=True)
+            async with tx:
+                jid = new_job_id()
+                await JobRepo(conn).create(
+                    job_id=jid, principal_key="p", surface="plugin", state="queued",
+                    requester_role="third_party_public_code", source_kind="deployed",
+                    source_args={}, has_deployment=True, chain="evm", chain_id=8453,
+                )
+                await conn.execute(
+                    """insert into reports (report_id, report_id_short, job_id, profile, object_prefix, out_name,
+                       pdf_sha256s, subject_candidates, key_version, rendered_at, expires_at)
+                       values (%s, %s, %s, 'public_review', %s, 'R.pdf', array[repeat('0',64)]::char(64)[],
+                               '[]'::jsonb, 1, now(), now() + interval '30 days')""",
+                    (rid, rid[:10], jid, f"reports/{rid}/1/"))
+                await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T00:00:00+00:00")
+                row = await (await conn.execute(
+                    "select (select count(*) from publish_requests where report_id = %s),"
+                    " (select count(*) from publish_consent_log where report_id = %s)", (rid, rid))).fetchone()
+        assert tuple(row) == (0, 0), "SOKEN_AUTOPUBLISH=off must suppress automatic enqueue"
 
 
 class TestAutoPublishRateGuard:

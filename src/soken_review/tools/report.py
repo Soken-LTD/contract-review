@@ -24,6 +24,7 @@ from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
 from ..errors import ReviewError
+from ..networks import publication_outcome
 from ..report.kit.build import SEVS, counts, kit_texts, project
 from ..report.render import current_key_version, store_root
 from ..server import handler
@@ -197,10 +198,12 @@ def _status_only(status: str, job: dict[str, Any], code: str | None = None,
     t = kit_texts()
     profile = "owner" if job["ownership_proven"] else "public_review"
     line = t["card_status"].get("render_pending" if status == "render_pending" else status, "")
+    pub = publication_outcome(job, profile)
     return {"accepted": True, "status": status, "code": code, "report_id": job.get("report_id"), "url": None,
             "pdf_url": None, "manage_url": None, "expires": None, "subject": None, "chain": None, "network": None,
             "provenance": None, "profile": profile, "counts": None, "top": None, "eta_s": None, "pages": None,
-            "summary_text": line, "publish_status": publish_status, "public_url": public_url}
+            "summary_text": line, "publish_status": publish_status, "public_url": public_url,
+            "publication": pub}
 
 
 @handler("review_report")
@@ -257,6 +260,7 @@ async def handle_review_report(args: dict[str, Any]) -> dict[str, Any]:
         "counts": c, "top": top, "eta_s": None, "pages": (step or {}).get("provenance", {}).get("pages") if step else None,
         "summary_text": summary_text(projected, c, lk, expires),
         "publish_status": pub_status, "public_url": pub_url,
+        "publication": publication_outcome(job, profile),
     }
     if page >= 1:
         out["rows"] = rows[(page - 1) * ROWS_PER_PAGE: page * ROWS_PER_PAGE]
