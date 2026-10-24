@@ -159,6 +159,11 @@ def _topic_context() -> list[str]:
     kinds = ", ".join(enums.get("context_kind", []))
     out = [("Project context: review_start.context or review_add_context ingest the project's own documents beside"
             " the code so declared facts can be read, quoted and compared with the code and the chain.")]
+    out.append("Step 1 (before reading code): ask the user for the project website, whitepaper, documentation,"
+                " terms of use, and privacy policy URLs, then pass them via review_add_context."
+                " Spec-vs-code issues (README, docs, whitepaper claims that the code contradicts)"
+                " cannot be detected without these documents. Skipping this step means the report will say"
+                " 'No project documents were supplied' and any documentation mismatch goes unreported.")
     out.append(f"Kinds: {kinds}. Items are {{kind, url}} (https, named host, no credentials) or {{kind, path, content}}"
                " for inline text; at most 12 documents per job, 8 per call; the same URL again returns the existing"
                " document. Fetching runs after the code and never delays ready; review_status reports context"
