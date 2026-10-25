@@ -12,7 +12,7 @@
  "tier_labels": {
   "tier_a": "Source matched to deployed code at {unit} {n} ({date})",
   "tier_b_commit": "Source at commit {commit}; deployment not checked",
-  "tier_b_third_party": "Source verified by a third party; rebuild not matched",
+  "tier_b_third_party": "Source verified by a third party; rebuild not confirmed",
   "tier_b_not_checked": "Deployment given; match to the deployed code could not be checked",
   "tier_b_deployer_source": "Source published by the deployer; rebuild not confirmed",
   "tier_b_files": "Source supplied by the requester; not linked to a repository or deployment",

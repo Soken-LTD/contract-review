@@ -657,17 +657,23 @@ async def _registry_get_ipfs_link(
     return _parse_string_cell(item_val if isinstance(item_val, dict) else {})
 
 
+# The verifier operator's own gateway: content served from it is attested by the same party that
+# signs the on-chain registry. Third-party gateways serve the bytes but attest nothing.
+_VERIFIER_GATEWAY = "https://files.orbs.network/ipfs/"
+
+
 async def _ipfs_fetch_bytes(
     client: httpx.AsyncClient,
     cid: str,
     max_bytes: int,
+    gateways: tuple[str, ...] | None = None,
 ) -> bytes | None:
     """Fetch raw bytes for an IPFS CID, trying each gateway in turn.
 
     Uses the "ipfs" rate-limiter bucket (limits.yaml outbound.ipfs 2/s).
     Only hostnames in _VERIFIER_DOWNLOAD_ALLOWLIST are contacted (SSRF protection).
     """
-    for gateway in _IPFS_GATEWAYS:
+    for gateway in gateways or _IPFS_GATEWAYS:
         url = gateway + cid
         if _validate_download_url(url) is None:
             continue
@@ -688,6 +694,7 @@ async def _ipfs_fetch_manifest(
     client: httpx.AsyncClient,
     ipfs_url: str,
     code_hash: str,
+    gateways: tuple[str, ...] | None = None,
 ) -> dict[str, Any] | None:
     """Fetch the IPFS sources JSON manifest and verify it matches code_hash.
 
@@ -697,7 +704,7 @@ async def _ipfs_fetch_manifest(
     if not ipfs_url.startswith("ipfs://"):
         return None
     cid = ipfs_url[len("ipfs://"):]
-    raw = await _ipfs_fetch_bytes(client, cid, _MAX_MANIFEST_BYTES)
+    raw = await _ipfs_fetch_bytes(client, cid, _MAX_MANIFEST_BYTES, gateways)
     if raw is None:
         return None
     try:
@@ -748,6 +755,8 @@ def _registry_find_entrypoint(manifest: dict[str, Any], source_filenames: list[s
 async def _registry_download_files(
     client: httpx.AsyncClient,
     manifest: dict[str, Any],
+    gateways: tuple[str, ...] | None = None,
+    missing: list[str] | None = None,
 ) -> dict[str, str]:
     """Download source files referenced in the IPFS manifest.
 
@@ -759,6 +768,11 @@ async def _registry_download_files(
     result: dict[str, str] = {}
     total_bytes = 0
     sources = manifest.get("sources") or []
+    if not isinstance(sources, list) or len(sources) > _MAX_TOTAL_INODES:
+        logger.warning("_registry_download_files: %s sources listed; refused", len(sources) if isinstance(sources, list) else "?")
+        if missing is not None:
+            missing.append("(manifest sources list refused)")
+        return {}
     for entry in sources:
         filename = entry.get("filename") if isinstance(entry, dict) else None
         ipfs_url = entry.get("url") if isinstance(entry, dict) else None
@@ -771,24 +785,44 @@ async def _registry_download_files(
             continue
         if len(result) >= _MAX_TOTAL_INODES:
             logger.warning("_registry_download_files: inode cap reached")
+            if missing is not None:
+                missing.append(filename)
             break
         if not ipfs_url.startswith("ipfs://"):
+            if missing is not None:
+                missing.append(filename)
             continue
         cid = ipfs_url[len("ipfs://"):]
-        raw = await _ipfs_fetch_bytes(client, cid, _MAX_FILE_BYTES)
+        raw = await _ipfs_fetch_bytes(client, cid, _MAX_FILE_BYTES, gateways)
         if raw is None:
             logger.debug("_registry_download_files: failed to fetch %s", filename)
+            if missing is not None:
+                missing.append(filename)
             continue
         if total_bytes + len(raw) > _MAX_TOTAL_FETCH_BYTES:
             logger.warning("_registry_download_files: total byte budget exceeded at %s", filename)
+            if missing is not None:
+                missing.append(filename)
             break
         try:
             content = raw.decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001
             logger.debug("_registry_download_files: decode failed for %s: %s", filename, exc)
+            if missing is not None:
+                missing.append(filename)
             continue
         result[filename] = content
         total_bytes += len(raw)
+    if missing is not None:
+        # Listed sources never reached after a cap break also count as missing.
+        listed = [e.get("filename") for e in sources if isinstance(e, dict) and isinstance(e.get("filename"), str)
+                  and _Path(e["filename"]).suffix.lower() in _REGISTRY_SOURCE_EXTS
+                  and _Path(e["filename"]).suffix.lower() not in _BINARY_SOURCE_EXTS]
+        seen = set(missing)
+        for f in listed:
+            if f not in result and f not in seen:
+                missing.append(f)
+                seen.add(f)
     return result
 
 
@@ -827,11 +861,22 @@ async def fetch_source_from_registry(
         if not ipfs_url:
             logger.debug("registry: empty ipfs link for %s / %s", code_hash[:12], verifier_id)
             continue
-        manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash)
+        # Attested only when the manifest and EVERY listed source come from the verifier's own
+        # gateway; otherwise the same content from third-party gateways is used unattested (tier D
+        # unless an exact rebuild matches).
+        attested = True
+        manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash, (_VERIFIER_GATEWAY,))
+        if manifest is None:
+            attested = False
+            manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash)
         if manifest is None:
             logger.debug("registry: manifest fetch/verify failed for %s / %s", code_hash[:12], verifier_id)
             continue
-        raw_files = await _registry_download_files(client, manifest)
+        missing: list[str] = []
+        raw_files = await _registry_download_files(
+            client, manifest, (_VERIFIER_GATEWAY,) if attested else None, missing)
+        if missing:
+            attested = False
         if not raw_files:
             logger.warning("registry: no source files downloaded for %s / %s", code_hash[:12], verifier_id)
             continue
@@ -853,11 +898,16 @@ async def fetch_source_from_registry(
             version=version,
             params_raw=compiler_settings.get("parameters"),
         )
+        # hash_attested: the manifest["hash"] == code_hash check was already performed
+        # by _ipfs_fetch_manifest (cryptographic chain: on-chain registry → IPFS CID →
+        # manifest hash field).  Recorded here so provenance.resolve_provenance can
+        # accept a toolchain-gap candidate as tier B without trusting a container hash.
         settings: dict[str, Any] = {
             "entry": entry,
             "verifier": {
                 "verifier_id": verifier_id,
                 "code_hash": code_hash,
+                "hash_attested": attested,
                 "ipfs_manifest_url": ipfs_url,
                 "compiler": _compiler_norm,
                 "compiler_settings": compiler_settings,
@@ -1006,11 +1056,15 @@ async def fetch_source_from_verifier(
         version=version,
         params_raw=_legacy_params,
     )
+    # hash_attested: fetch_verifier_bundle verified data["code_hash"] == code_hash
+    # (the server's verified=true claim + the code_hash field match).
     settings: dict[str, Any] = {
         "entry": entry,
         "func_targets": targets,
         "verifier": {
             "code_hash": code_hash,
+            # Legacy HTTP bundle: the server's own claim, no on-chain binding; never attested.
+            "hash_attested": False,
             "source_bundle_hash": bundle.get("source_bundle_hash"),
             "storage_revision": bundle.get("storage_revision"),
             "verified_at": bundle.get("verified_at"),

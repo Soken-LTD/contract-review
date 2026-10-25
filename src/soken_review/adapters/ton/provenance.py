@@ -24,11 +24,13 @@ NO_DEPLOYED_CODE = "NO_DEPLOYED_CODE"
 NO_SOURCE_FOUND = "NO_SOURCE_FOUND"
 NO_CHECKABLE_SOURCE = "NO_CHECKABLE_SOURCE"
 SOURCE_NOT_OWNER_LINKED = "SOURCE_NOT_OWNER_LINKED"
+SOURCE_TOOLCHAIN_GAP = "SOURCE_TOOLCHAIN_GAP"
 
 # 04 tier per reason (08 tier_labels keys in the comment)
 _TIER = {
     MATCH_REBUILD: "A",            # tier_a
     NO_DEPLOYMENT_GIVEN: "B",      # tier_b_commit / tier_b_files
+    SOURCE_TOOLCHAIN_GAP: "B",     # tier_b_third_party (verifier-attested, rebuild skipped)
     NO_DEPLOYED_CODE: "D",         # section 9
     NO_SOURCE_FOUND: "D",
     NO_CHECKABLE_SOURCE: "D",
@@ -132,6 +134,38 @@ def resolve_provenance(
                 return Out(i, "exact", MATCH_REBUILD, tried=tried, matched_target=target,
                            dep_hash=dep.hash, build_hash=h)
     build_hash = next((h for a in tried for h in a.hashes.values()), None)
+
+    # Toolchain-gap promotion (06 2.4 exception).
+    #
+    # When every failed attempt is due only to an unsupported compiler version
+    # (no successful rebuild exists, no untrusted inputs), AND a ton_verifier
+    # candidate carries a fetch-time attestation that the manifest hash equals
+    # the deployed code hash (hash_attested=True, code_hash==dep.hash), accept
+    # that candidate as tier B third-party-verified.  Every other failure type
+    # (hash mismatch, untrusted_args, build error) keeps the existing behaviour.
+    if not any(a.status == "ok" for a in tried):
+        for i, (c, a) in enumerate(zip(cands, tried)):
+            if (
+                a.status == "unsupported_toolchain"
+                and c.provider == "ton_verifier"
+                and not c.untrusted_inputs
+                and not a.untrusted_inputs
+            ):
+                verifier = (c.settings or {}).get("verifier") or {}
+                if verifier.get("hash_attested") is True and verifier.get("code_hash") == dep.hash:
+                    compiler_info = verifier.get("compiler") or {}
+                    ver = (
+                        compiler_info.get("version") or "unknown"
+                    ) if isinstance(compiler_info, dict) else "unknown"
+                    vid = verifier.get("verifier_id") or "ton_verifier"
+                    sitem = verifier.get("source_item_address") or "unknown"
+                    why = (
+                        f"rebuild not attempted: {c.language} {ver} not installed; "
+                        f"attested by verifier_id {vid!r} via registry item {sitem!r}"
+                    )
+                    return Out(i, None, SOURCE_TOOLCHAIN_GAP, tried=tried,
+                               dep_hash=dep.hash, why=why)
+
     return Out(None, None, SOURCE_NOT_OWNER_LINKED, tried=tried, dep_hash=dep.hash,
                build_hash=build_hash, why=_why(tried))
 

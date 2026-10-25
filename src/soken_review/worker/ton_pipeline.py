@@ -217,6 +217,7 @@ async def _fetch(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
             "compiler": asdict(c.compiler) if c.compiler else None,
             "entry_contract": c.entry_contract, "source_url": c.source_url,
             "files": sorted(c.files), "fetched_at": c.fetched_at,
+            "explorer_verified": c.explorer_verified,
             "verifier": (c.settings or {}).get("verifier"),
         }
         for c in cands
