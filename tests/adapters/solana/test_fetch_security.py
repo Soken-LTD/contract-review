@@ -25,10 +25,10 @@ class TestSandboxFailClosed:
 
         direct_calls: list[str] = []
 
-        def _fake_sandbox(src_url, commit, work_dir):
+        def _fake_sandbox(src_url, commit, work_dir, subdir=None):
             return None  # simulate sandbox failure
 
-        def _fake_direct(src_url, commit, clone_dir):
+        def _fake_direct(src_url, commit, clone_dir, subdir=None):
             direct_calls.append(src_url)
             return {}  # would succeed if called
 
@@ -53,10 +53,10 @@ class TestSandboxFailClosed:
         direct_calls: list[str] = []
         sandbox_calls: list[str] = []
 
-        def _fake_sandbox(src_url, commit, work_dir):
+        def _fake_sandbox(src_url, commit, work_dir, subdir=None):
             sandbox_calls.append(src_url)
 
-        def _fake_direct(src_url, commit, clone_dir):
+        def _fake_direct(src_url, commit, clone_dir, subdir=None):
             direct_calls.append(src_url)
             return {"Cargo.toml": "[package]\nname=\"x\"\nversion=\"0.1.0\""}
 
