@@ -853,11 +853,16 @@ async def fetch_source_from_registry(
             version=version,
             params_raw=compiler_settings.get("parameters"),
         )
+        # hash_attested: the manifest["hash"] == code_hash check was already performed
+        # by _ipfs_fetch_manifest (cryptographic chain: on-chain registry → IPFS CID →
+        # manifest hash field).  Recorded here so provenance.resolve_provenance can
+        # accept a toolchain-gap candidate as tier B without trusting a container hash.
         settings: dict[str, Any] = {
             "entry": entry,
             "verifier": {
                 "verifier_id": verifier_id,
                 "code_hash": code_hash,
+                "hash_attested": True,
                 "ipfs_manifest_url": ipfs_url,
                 "compiler": _compiler_norm,
                 "compiler_settings": compiler_settings,
@@ -1006,11 +1011,14 @@ async def fetch_source_from_verifier(
         version=version,
         params_raw=_legacy_params,
     )
+    # hash_attested: fetch_verifier_bundle verified data["code_hash"] == code_hash
+    # (the server's verified=true claim + the code_hash field match).
     settings: dict[str, Any] = {
         "entry": entry,
         "func_targets": targets,
         "verifier": {
             "code_hash": code_hash,
+            "hash_attested": True,
             "source_bundle_hash": bundle.get("source_bundle_hash"),
             "storage_revision": bundle.get("storage_revision"),
             "verified_at": bundle.get("verified_at"),
