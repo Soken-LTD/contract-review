@@ -64,6 +64,11 @@ def run_map_step(
     semantic layer resolves lines against them, not against the LF pin."""
     pin = PinnedSource.load(pin_root, job_id)
     files = {p: "\n".join(pin.read_all(p)) + ("\n" if pin.line_count(p) else "") for p in pin.entries}
+    # Bug 7 fix (2026-10-25): for non-EVM families (TON, TRON, Solana) the build toolchain may
+    # not report nsloc, or may return 0.  Fall back to counting lines from the pin so that
+    # source.nsloc is never 0 for jobs with pinned files.
+    if not nsloc and pin.entries:
+        nsloc = sum(pin.line_count(p) for p in pin.entries) or None
     output = None
     compiled_texts: dict[str, str] | None = None
     if build_ok and solc_output_path is not None and solc_output_path.exists():

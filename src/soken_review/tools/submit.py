@@ -116,16 +116,23 @@ def _iter_text_fields(args: dict[str, Any]) -> list[tuple[str, str]]:
     return result
 
 
-def _violation_to_error(v: Any) -> dict[str, Any]:
-    """Convert a Violation (text_gate or numbers) to a ReviewError envelope dict."""
-    return ReviewError(
-        v.code,
-        rule=v.rule_id,
-        match=v.match[:80] if v.match else "",
-        cp=(v.match[:5] if v.match else ""),
-        pos=v.span[0],
-        token=(v.match[:40] if v.match else ""),
-    ).envelope()
+def _violation_to_error(v: Any, field: str | None = None) -> dict[str, Any]:
+    """Convert a Violation (text_gate or numbers) to a ReviewError envelope dict.
+
+    Bug 6c fix (2026-10-25): pass field= so E_ABSENCE_UNRESOLVED (and any V5 violation)
+    names the prose field where the violation occurred.  The ReviewError envelope already
+    surfaces ``field`` as a top-level key when present.
+    """
+    kwargs: dict[str, Any] = {
+        "rule": v.rule_id,
+        "match": v.match[:80] if v.match else "",
+        "cp": (v.match[:5] if v.match else ""),
+        "pos": v.span[0],
+        "token": (v.match[:40] if v.match else ""),
+    }
+    if field is not None:
+        kwargs["field"] = field
+    return ReviewError(v.code, **kwargs).envelope()
 
 
 # ── Enums cache ────────────────────────────────────────────────────────────────
@@ -599,7 +606,7 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             sd_text_args: dict[str, Any] = {"title": title, "body": body_sd}
             for field_name, field_text in _iter_text_fields(sd_text_args):
                 for v in check_model_field(field_text, field=field_name, profile=job_profile):
-                    violations.append(_violation_to_error(v))
+                    violations.append(_violation_to_error(v, field=field_name))
         else:
             # Model draft: full field requirements
             category: str = args.get("category", "")
@@ -686,7 +693,7 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                     field_text, field=field_name, profile=job_profile,
                     absence_claims=finding_absence_claims,
                 ):
-                    violations.append(_violation_to_error(v))
+                    violations.append(_violation_to_error(v, field=field_name))
 
             # V6: number check on every prose field
             for field_name, field_text in _iter_text_fields(args):

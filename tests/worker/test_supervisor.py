@@ -1391,3 +1391,63 @@ async def test_render_exception_does_not_fail_job(tmp_path: Path) -> None:
 
     # Render exceptions must NOT transition the job (render is non-gating)
     repo_mock.transition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ton_render_step_uses_generic_handler(tmp_path: Path) -> None:
+    """Bug 1 regression (2026-10-25): TON jobs must use the generic render runner.
+
+    Before the fix, supervisor._run_step routed a TON render step into ton_pipeline.run_step
+    which had no render handler and would log a warning then mark the step done without
+    actually rendering.  This left the job stuck in render_queued forever.
+
+    After the fix, render is checked BEFORE the family dispatch, so ton_pipeline is never
+    called for render steps.
+    """
+    store = FakeStore()
+    # A TON job: chain="ton"
+    job = store.add_job("job_TON_RENDER1", chain_id=None, address=None)
+    job_dict = job.as_dict()
+    job_dict["chain"] = "ton"
+    job_dict["state"] = "render_queued"
+
+    step_dict = {
+        "id": 99, "job_id": "job_TON_RENDER1", "step": "render", "seq": 0,
+        "container": True, "units": 1, "ram_mb": 1024,
+        "attempt": 1, "max_attempts": 1, "lease_owner": "test-worker",
+    }
+    sup = _make_supervisor(store, tmp_path)
+
+    render_called = []
+
+    async def _fake_render(pool, step, pin_root):
+        render_called.append(step["id"])
+
+    ton_run_step_called = []
+
+    async def _fake_ton_run_step(sup_arg, step_arg, job_arg):
+        ton_run_step_called.append(step_arg["step"])
+
+    conn_ctx = AsyncMock()
+    conn_ctx.__aenter__ = AsyncMock(return_value=conn_ctx)
+    conn_ctx.__aexit__ = AsyncMock(return_value=False)
+    repo_mock = AsyncMock()
+    repo_mock.retry_step = AsyncMock()
+    repo_mock.complete_step = AsyncMock()
+    repo_mock.transition = AsyncMock()
+    conn_ctx.transaction = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=AsyncMock()),
+        __aexit__=AsyncMock(return_value=False),
+    ))
+
+    with patch("soken_review.worker.supervisor.JobRepo", return_value=repo_mock), \
+         patch.object(sup, "_get_job", new=AsyncMock(return_value=job_dict)), \
+         patch("soken_review.worker.supervisor._render_mod.run_render_step", new=_fake_render), \
+         patch("soken_review.worker.ton_pipeline.run_step", new=_fake_ton_run_step), \
+         patch.object(sup, "_maybe_queue_context", new=AsyncMock()):
+
+        sup._pool.connection = MagicMock(return_value=conn_ctx)
+        await sup._run_step(step_dict)
+
+    assert render_called == [99], "Generic render handler must be called for TON render steps"
+    assert ton_run_step_called == [], "ton_pipeline.run_step must NOT be called for render steps"

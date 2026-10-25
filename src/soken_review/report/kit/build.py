@@ -992,7 +992,10 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     # overflow columns to the right (layout_overflow on tier A reports with verification tables).
     coverage = f'<section class="brk">{h2("coverage", ctx)}{cov_html}</section>'
 
-    disclaimer = (f'<section class="keep">{h2("disclaimer", ctx)}<p class="disc">{esc(t["disclaimer"].format(date=m["date"]))}</p>'
+    # Bug 2 fix (2026-10-25): removed class="keep" from disclaimer.  A server-owned section must
+    # never overflow a page; keep prevents paged.js from splitting across pages, causing
+    # layout_overflow on long disclaimer text (job_8ZSAGKD2S7RA8T0YD9NZWHKBJ6 incident).
+    disclaimer = (f'<section>{h2("disclaimer", ctx)}<p class="disc">{esc(t["disclaimer"].format(date=m["date"]))}</p>'
                   f'<p class="disc">{esc(t["responsible_disclosure"])}</p></section>')
     return cover + summary + scope + context + architecture + method + findings + verification + coverage + disclaimer
 

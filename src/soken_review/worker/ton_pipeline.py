@@ -69,7 +69,10 @@ async def run_step(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -
     elif name == "map":
         await _map(sup, step, job)
     else:
-        logger.warning("ton: no handler for step %s; marking done", name)
+        # Family-agnostic steps (render, context, purge, proof) are intercepted by the
+        # supervisor BEFORE reaching this function.  Any step that arrives here without a
+        # handler is unexpected; log and skip so the job does not stall.
+        logger.warning("ton: unexpected step %s (should have been handled by supervisor); marking done", name)
         await sup._mark_step(step["id"], "done")
 
 

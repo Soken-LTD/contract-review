@@ -80,8 +80,14 @@ async def test_read_code_unknown_context_path_names_closest_document(ctx: Memory
 
 @pytest.mark.asyncio
 async def test_read_code_range_and_detailed_on_context(ctx: MemoryJobContext) -> None:
+    # Bug 5 fix (2026-10-25): end past EOF now clamped, not rejected.
     res = await _call("review_read_code", job_id=JOB_ID, path="context/whitepaper-1.md", start_line=1, end_line=999)
-    assert json.loads(res.content[0].text)["errors"][0]["code"] == "E_RANGE_INVALID"
+    assert not res.is_error
+    assert "clamped" in res.content[0].text  # meta notes the clamp
+    # start past EOF is still an error
+    res_invalid = await _call("review_read_code", job_id=JOB_ID, path="context/whitepaper-1.md",
+                               start_line=9999, end_line=10000)
+    assert json.loads(res_invalid.content[0].text)["errors"][0]["code"] == "E_RANGE_INVALID"
     res = await _call("review_read_code", job_id=JOB_ID, path="context/whitepaper-1.md", start_line=7, end_line=9,
                       response_format="detailed")
     assert not res.is_error and "map markers" not in res.content[0].text

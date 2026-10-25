@@ -865,9 +865,16 @@ def _build_status_response(
 
 
 def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
-    """Additional fields for ``response_format=detailed``: related contracts and suggested URLs."""
+    """Additional fields for ``response_format=detailed``: related contracts, suggested URLs, build.
+
+    Bug 8 fix (2026-10-25): the map tool emits "see review_status build" when the build fails,
+    but review_status had no build section.  Added: build.status, build.version (compiler), and
+    build.error (first 300 chars of the build-detail string from map/status.json).
+    """
     extras: dict[str, Any] = {}
     try:
+        from ..mapping.build import load_map_status
+        from ..mapping.facts import load_facts
         from .read import _get_ctx
         pin_root = _get_ctx().get_pin_root()
         job_id = job["job_id"]
@@ -877,6 +884,17 @@ def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
         suggested = load_suggested_context(pin_root, job_id)
         if suggested:
             extras["suggested_context_items"] = suggested
+        # Build section: status from job row + compiler version + build error from status.json
+        map_status_doc = load_map_status(pin_root, job_id)
+        build_detail = map_status_doc.get("build_detail")
+        facts = load_facts(pin_root, job_id) or []
+        compiler_version = next((f["value"] for f in facts if f["key"] == "compiler.version"), None)
+        build_info: dict[str, Any] = {"status": job.get("map_status") or "none"}
+        if compiler_version:
+            build_info["version"] = compiler_version
+        if build_detail:
+            build_info["error"] = str(build_detail)[:300]
+        extras["build"] = build_info
     except Exception as exc:  # noqa: BLE001
         logger.debug("_detailed_extras: %s", type(exc).__name__)
     return extras

@@ -118,9 +118,13 @@ async def compute_finalize_checks(
         row = await cur.fetchone()
         tier = row[0] if row else None
     f1_open = tier is None or tier == "D"
-    # F1 has no closing tool (tier is set externally); omit key entirely (schema: string, not nullable)
-    # open is integer per schema (1=open, 0=closed)
-    checks.append({"id": "F1", "open": int(f1_open)})
+    # F1 has no closing tool (tier is set externally); include a reason so the model knows what
+    # to do.  Bug 4 fix (2026-10-25): the previous "Close each item with the named tool" message
+    # was misleading because F1 has no tool field and no tool can directly change the tier.
+    checks.append({"id": "F1", "open": int(f1_open), **(
+        {"reason": "tier is D or not yet set; supply a verified source match or a repo URL so the build can assign a higher tier"}
+        if f1_open else {}
+    )})
 
     # F2: open High/Medium analyzer leads + broken duplicate chains
     async with conn.cursor() as cur:
@@ -262,6 +266,29 @@ async def compute_finalize_checks(
         unresolved_count = (await cur.fetchone())[0]
     f6_open = unresolved_count > 0
     checks.append({"id": "F6", "open": int(f6_open), **({"tool": "review_submit_finding"} if f6_open else {})})
+
+    # F7: roles_notes required when ownership/access-control patterns are present (J2, J3, J4).
+    # Bug 4b fix (2026-10-25): TON/TRON jobs with privileged roles were silently finalizing without
+    # roles_notes, freezing the job before the reviewer could add role documentation.
+    try:
+        _pin_root_f7 = _get_ctx().get_pin_root()
+        _f7_flags = load_flags(_pin_root_f7, job_id) or []
+    except Exception:  # noqa: BLE001  # missing flags = map not run yet; fail open
+        _f7_flags = []
+    _f7_has_priv_roles = any(f.get("rule") in ("J2", "J3", "J4") for f in _f7_flags)
+    if _f7_has_priv_roles:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select 1 from sections where job_id = %s and section = 'roles_notes' limit 1",
+                (job_id,),
+            )
+            _f7_row = await cur.fetchone()
+        f7_open = _f7_row is None
+    else:
+        f7_open = False
+    checks.append({"id": "F7", "open": int(f7_open), **(
+        {"tool": "review_set_section", "section": "roles_notes"} if f7_open else {}
+    )})
 
     # F8: findings in needs_text
     async with conn.cursor() as cur:

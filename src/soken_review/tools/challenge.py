@@ -1331,9 +1331,12 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 # context/basis items allow unbound quotes (fallback applied conservatively).
                 if (not scope_not_covered_item and scope_ranges
                         and not _quote_in_scope_ranges(q_file, q_start, q_end, scope_ranges)):
+                    # Bug 6b fix (2026-10-25): name the offending quote and the allowed scope so
+                    # the model can identify which quote is out of range without guessing.
+                    _allowed = ", ".join(scope_ranges[:5])
                     violations.append(ReviewError(
                         "E_CHALLENGE_SCOPE", item=item_id,
-                        ranges=", ".join(scope_ranges[:5]),
+                        ranges=f"quote {q_file}:{q_start}-{q_end} is outside the scope [{_allowed}]",
                     ).envelope())
 
             # Record kill/downgrade only when no violations raised yet

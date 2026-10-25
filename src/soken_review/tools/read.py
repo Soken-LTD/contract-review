@@ -173,14 +173,23 @@ async def _read_code(args: dict[str, Any]) -> str:
         raise ReviewError("E_FILE_UNKNOWN", path=path, paths=", ".join(closest))
 
     total = entry.lines
+    # Bug 5 fix (2026-10-25): when only end > total, clamp silently instead of raising
+    # E_RANGE_INVALID.  Hard invalid cases (wrong types, start < 1, start > total,
+    # end < start) still reject — only an overlong window is clamped.
     if not isinstance(start, int) or not isinstance(end, int) or start < 1 or end < start \
-            or start > total or end > total:
+            or start > total:
         raise ReviewError("E_RANGE_INVALID", path=path, lines=total)
+    end_clamped = end > total
+    end_original = end if end_clamped else None
+    if end_clamped:
+        end = total
     end = min(end, start + 399)  # at most 400 lines (03 4.4)
 
     lines = source.read_lines(path, start, end)
     sha_short = str(entry.sha256_lf)[:8]
     meta = f"{path} sha256:{sha_short} lines {start}-{end} of {total}"
+    if end_clamped:
+        meta += f" (end clamped from {end_original} to {total}: file has {total} lines)"
     root = _get_ctx().get_pin_root()
     job_flags = load_flags(root, job_id)
     if job_flags is None:
