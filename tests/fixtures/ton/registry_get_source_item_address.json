@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "result": {
+    "@type": "smc.runResult",
+    "gas_used": 3942,
+    "stack": [
+      [
+        "cell",
+        {
+          "bytes": "te6cckEBAQEAJAAAQ4AFGHTPOVvIZL9fcW7Il5SnJoQfN81qLwtc+9hvs7uShrACjuLH",
+          "object": {
+            "data": {
+              "b64": "gAUYdM85W8hkv19xbsiXlKcmhB83zWovC1z72G+zu5KGsA==",
+              "len": 267
+            },
+            "refs": [],
+            "special": false
+          }
+        }
+      ]
+    ],
+    "exit_code": 0,
+    "block_id": {
+      "@type": "ton.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 101229417,
+      "root_hash": "iEqbgBLhtpGUJPVLwiXp8xyCtFty0ZUBRWUpTjMGhzQ=",
+      "file_hash": "4TaBgxxySTrXPIrJOezaQnwoCodSEe/GR/5rrvzXBaI="
+    },
+    "last_transaction_id": {
+      "@type": "internal.transactionId",
+      "lt": "103434808000005",
+      "hash": "PxEPvh+YfBdl94WQa6G3EnHuZrVAunxKwoZqwDwZCY4="
+    }
+  },
+  "@extra": "1792916231:2:25.763"
+}
