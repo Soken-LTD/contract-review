@@ -74,9 +74,115 @@ _ALREADY_READ: frozenset[str] = frozenset(
 # Convert camelCase → snake_case (same helper as in mapping.facts)
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
+# Match int/uint types with optional bit-width (e.g. int256, uint8)
+# Only widths Solidity allows (8..256 in steps of 8); an ABI is third-party data and an
+# arbitrary width would make the sign arithmetic below unbounded.
+_INT_TYPE_RE = re.compile(
+    r"^(u?int)(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)?$")
+
 
 def _snake(name: str) -> str:
     return _CAMEL_RE.sub("_", name).lower()
+
+
+# ---------------------------------------------------------------------------
+# ABI-type helpers
+# ---------------------------------------------------------------------------
+
+def _abi_zero_arg_view_map(abi_list: list[dict[str, Any]] | None) -> dict[str, str]:
+    """Build {function_name: output_type} for zero-arg view/pure functions with a single output.
+
+    Only scalar-decodable output types are included (uint*, int*, bool, address, bytes32).
+    String, bytes, tuple and array types are excluded since their encoding spans more than one
+    32-byte word and cannot be decoded from a capped eth_call response.
+
+    Returns an empty dict when ``abi_list`` is None or empty.
+    """
+    if not abi_list:
+        return {}
+    result: dict[str, str] = {}
+    for item in abi_list:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "function":
+            continue
+        if item.get("stateMutability") not in ("view", "pure"):
+            continue
+        if item.get("inputs"):       # must have zero inputs
+            continue
+        outputs = item.get("outputs") or []
+        if len(outputs) != 1:        # exactly one return value
+            continue
+        fn_name = item.get("name", "")
+        if not fn_name or not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", fn_name):
+            continue
+        abi_type = outputs[0].get("type", "")
+        # Only scalar types that decode in 32 bytes
+        if _is_scalar_abi_type(abi_type):
+            result[fn_name] = abi_type
+    return result
+
+
+def _is_scalar_abi_type(abi_type: str) -> bool:
+    """True for types whose ABI encoding fits in exactly 32 bytes (head word only)."""
+    if abi_type in ("address", "bool", "bytes32"):
+        return True
+    if _INT_TYPE_RE.match(abi_type):
+        return True
+    # bytes1..bytes31 also fit in 32 bytes
+    return bool(re.match(r"^bytes([1-9]|[12]\d|3[01])$", abi_type))
+
+
+def _decode_by_abi_type(word: str, abi_type: str) -> str | None:
+    """Decode a 64-hex-char ABI word strictly according to ``abi_type``.
+
+    Returns a canonical string value or None when the value is not interesting
+    (zero / empty) or the type is not decodable from a single word.
+
+    Types handled:
+    - ``address`` — 0x + 40 hex chars; zero address → None
+    - ``bool``    — "true" / "false"; other values → None
+    - ``bytes32`` / ``bytes1``..``bytes31`` — "0x" + hex; all-zero → None
+    - ``uint*``   — decimal string of unsigned value; zero → None
+    - ``int*``    — decimal string of two's-complement signed value; zero → None
+    """
+    try:
+        n = int(word, 16)
+    except ValueError:
+        return None
+
+    if abi_type == "address":
+        # Top 12 bytes must be zero for a valid ABI-encoded address
+        if int(word[:24], 16) != 0:
+            return None  # malformed / not an address
+        if n == 0:
+            return None  # zero address: not interesting
+        return "0x" + word[24:]
+
+    if abi_type == "bool":
+        if n == 0:
+            return "false"
+        if n == 1:
+            return "true"
+        return None  # malformed bool
+
+    if abi_type == "bytes32" or re.match(r"^bytes([1-9]|[12]\d|3[01])$", abi_type):
+        if n == 0:
+            return None  # all-zero bytes: not interesting
+        return "0x" + word
+
+    m = _INT_TYPE_RE.match(abi_type)
+    if m:
+        signed = m.group(1) == "int"
+        bits_str = m.group(2)
+        bits = int(bits_str) if bits_str else 256
+        if signed and n >= (1 << (bits - 1)):
+            n -= 1 << bits
+        if n == 0:
+            return None
+        return str(n)
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -239,8 +345,16 @@ async def classify_related_contracts(
     block: int,
     onchain_fact_list: list[dict[str, Any]],
     chain_id: int | None = None,
+    abi_list: list[dict[str, Any]] | None = None,
+    target_address: str | None = None,
 ) -> list[dict[str, Any]]:
     """Classify all unique non-zero addresses from ``onchain_facts`` output.
+
+    Additionally probes every zero-arg view/pure ABI function whose single output
+    type is ``address`` (from ``abi_list`` when provided) on ``target_address``,
+    skipping functions already covered by ``onchain_facts`` (HOLDER_GETTERS +
+    owner/totalSupply/decimals).  Results are labelled with the getter name;
+    label is never None.
 
     For each address of kind ``contract`` or ``multisig``, checks Sourcify for
     verified source (requires ``chain_id``).  The ``verified`` field is:
@@ -249,7 +363,7 @@ async def classify_related_contracts(
     - ``None``  – unknown (no chain_id supplied, or network error)
 
     Returns a list of classification dicts, one per unique address, de-duplicated
-    and ordered by the fact key they were first seen under.
+    and ordered by the fact key / getter name they were first seen under.
     """
     from .verify import check_sourcify_verified  # lazy import to avoid circular at module level
 
@@ -276,8 +390,48 @@ async def classify_related_contracts(
             role_label = _role_label_from_key(key)
             role_map[addr_lower] = role_label
 
+    # Additionally probe zero-arg address-returning getters from the ABI that are
+    # not already covered by onchain_facts.  This surfaces addresses held in
+    # internal/private state variables that nonetheless have public getter
+    # functions (e.g. WETH() on a vault contract).
+    if target_address and abi_list:
+        abi_type_map = _abi_zero_arg_view_map(abi_list)
+        probes = 0
+        deadline = time.monotonic() + _PROBE_TOTAL_DEADLINE_S
+        for getter_name, out_type in sorted(abi_type_map.items()):
+            if out_type != "address":
+                continue
+            if getter_name in _ALREADY_READ:
+                continue
+            # Same bounds as state_parameter_facts: a hostile ABI cannot fan out unbounded calls.
+            if probes >= _MAX_ADDRESS_PROBES or time.monotonic() >= deadline or len(role_map) >= _MAX_RELATED:
+                break
+            probes += 1
+            sel = getter_selector(getter_name)
+            try:
+                raw = await rpc.eth_call_probe(
+                    target_address,
+                    sel,
+                    block,
+                    gas=_PROBE_GAS_CAP,
+                    timeout_s=_PROBE_PER_CALL_S,
+                    max_response_hex_chars=_PROBE_MAX_HEX,
+                    min_response_bytes=_PROBE_MIN_BYTES,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("classify_related_contracts: %s() probe failed: %s", getter_name, exc)
+                continue
+            if raw is None:
+                continue
+            addr_val = _decode_by_abi_type(raw[2:].zfill(64)[:64], "address")
+            if addr_val is None:
+                continue
+            addr_lower = addr_val.lower()
+            if addr_lower not in role_map:
+                role_map[addr_lower] = getter_name  # label = getter name, never None
+
     results: list[dict[str, Any]] = []
-    for address, role in role_map.items():
+    for address, role in list(role_map.items())[:_MAX_RELATED]:
         entry = await _classify(rpc, address, block)
         entry["role"] = role
 
@@ -316,6 +470,8 @@ _PROBE_PER_CALL_S = 5.0          # per-call timeout for each probe
 _PROBE_GAS_CAP = 2_000_000       # gas limit passed in eth_call to cap node resources
 _PROBE_MAX_HEX = 4096            # reject hex responses longer than this (~ 2 KiB decoded)
 _PROBE_MIN_BYTES = 32            # require at least one uint256 slot before decoding
+_MAX_ADDRESS_PROBES = 16          # address-typed ABI getters probed for related contracts
+_MAX_RELATED = 32                 # related contracts classified (each costs code + Sourcify reads)
 
 
 async def state_parameter_facts(
@@ -324,21 +480,28 @@ async def state_parameter_facts(
     block: int,
     map_doc: dict[str, Any] | None,
     unit_id: str | None,
+    *,
+    abi_list: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Probe public zero-arg view/pure functions not already read by ``onchain_facts``.
 
-    Returns ``state.<snake_name>`` facts for each successful read.  The value is
-    decoded as: address (top-12 bytes zero, bottom-20 non-zero), uint, or uint
-    (bool is a subtype of uint in this representation).  Boolean values (0 or 1)
-    that fit in a uint8 are stored as the string ``"true"`` / ``"false"`` when the
-    function name starts with ``is`` / ``has`` / ``can`` / ``paused`` / ``enabled``
-    (naming convention); all others are stored as decimal strings.
+    Returns ``state.<snake_name>`` facts for each successful read.
+
+    When ``abi_list`` is provided the output type for each function is taken from
+    the ABI and decoded strictly (see ``_decode_by_abi_type``).  The ABI type is
+    stored in the fact as a ``"type"`` field.  Functions with non-scalar outputs
+    (string, bytes, tuple, array) are skipped because a capped 32-byte response
+    cannot represent them faithfully.
+
+    When no ABI is available decoding falls back to heuristic order: bool (by
+    naming convention), address (top-12 zero + entropy ≥4), uint.
 
     Capped at ``MAX_STATE_PROBES`` calls total and by a 20 s total deadline.  Uses
     ``eth_call_probe`` (single attempt, gas-capped, no 3×30 s retry chain) so a
     slow or hostile getter cannot stall the analysis.
     """
-    names = _getter_names_to_probe(map_doc, unit_id)
+    abi_type_map = _abi_zero_arg_view_map(abi_list)
+    names = _getter_names_to_probe(map_doc, unit_id, abi_type_map=abi_type_map or None)
     out: list[dict[str, Any]] = []
     probes_done = 0
     deadline = time.monotonic() + _PROBE_TOTAL_DEADLINE_S
@@ -362,36 +525,62 @@ async def state_parameter_facts(
 
         if raw is None:
             continue
-        value = _decode_state_value(raw, name)
+
+        abi_type = abi_type_map.get(name)
+        if abi_type is not None:
+            # ABI-aware decoding: strict, no guessing
+            hex_data = raw[2:]
+            if len(hex_data) < 64:
+                hex_data = hex_data.zfill(64)
+            value = _decode_by_abi_type(hex_data[:64], abi_type)
+        else:
+            # Heuristic decoding (no ABI available)
+            value = _decode_state_value(raw, name)
         if value is None:
             continue
         key = f"state.{_snake(name)}"
         # Validate key grammar
         if not re.fullmatch(r"[a-z][a-z0-9_.]*", key):
             continue
-        out.append(fact(key, value, unit=None, unit_id=unit_id,
-                        source=f"eth_call {name}() at block {block}"))
+        f_dict = fact(key, value, unit=None, unit_id=unit_id,
+                      source=f"eth_call {name}() at block {block}")
+        if abi_type is not None:
+            f_dict["type"] = abi_type
+        out.append(f_dict)
     return out
 
 
 def _getter_names_to_probe(
     map_doc: dict[str, Any] | None,
     unit_id: str | None,  # reserved for future unit-scoping
+    *,
+    abi_type_map: dict[str, str] | None = None,
 ) -> set[str]:
     """Names to probe: public zero-arg view/pure ABI functions + public state vars, minus already-read ones.
 
-    When the map_doc contains an ``abi`` list (from Sourcify or the build artifact), only
-    functions with ``stateMutability`` of ``view`` or ``pure`` AND zero inputs are included.
-    This prevents probing payable, non-view, or parameterised functions which could modify
-    state or fail with unexpected input.
+    When ``abi_type_map`` is provided (built by ``_abi_zero_arg_view_map``), only
+    names present in it are probed.  This is more precise than the legacy map_doc-
+    based ABI check: it also filters by scalar return type (non-scalar returns
+    cannot be decoded from a capped 32-byte response) and takes precedence.
 
-    Without ABI data (ABI not yet available) we fall back to the semantic functions list,
-    which is already limited to entry points.
+    When ``abi_type_map`` is None the fallback is the semantic functions list from
+    map_doc (already limited to entry points), further filtered by the legacy
+    ``map_doc["abi"]`` allowlist if present.
+
+    Without any ABI data we fall back to the semantic functions list, which is
+    already limited to entry points.
     """
     sem = (map_doc or {}).get("semantic") or {}
     spans = {s["id"]: s for s in (map_doc or {}).get("spans") or []}
 
-    # Build an allowlist of zero-arg view/pure names from the ABI when available.
+    # Primary path: an explicit abi_type_map (scalar-typed, zero-arg view/pure only).
+    # Include ALL functions in it (not just those present in the semantic map), so
+    # the probing benefits from a full verified ABI even when the semantic layer is
+    # partial or absent.
+    if abi_type_map is not None:
+        return set(abi_type_map.keys()) - _ALREADY_READ
+
+    # Legacy fallback: build an allowlist from map_doc["abi"] when present.
     abi_zero_arg_view: set[str] | None = None
     abi_list = (map_doc or {}).get("abi")
     if isinstance(abi_list, list):
