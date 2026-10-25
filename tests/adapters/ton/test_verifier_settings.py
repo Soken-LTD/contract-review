@@ -81,18 +81,18 @@ class TestNormaliseVerifierCompiler:
         assert result["version"] == "0.4.4"
         assert result["params"] == {"compiler_version": "0.4.4"}
 
-    def test_invalid_json_string_yields_none_params(self):
+    def test_invalid_json_string_is_marked_invalid(self):
         result = _normalise_verifier_compiler("tact", "1.6.5", "not-valid-json{{{")
-        assert result["params"] is None
+        assert "__invalid__" in result["params"]
 
-    def test_oversized_json_string_yields_none_params(self):
+    def test_oversized_json_string_is_marked_invalid(self):
         big = json.dumps({"entrypoint": "a.tact", "data": "x" * 5000})
         result = _normalise_verifier_compiler("tact", "1.6.5", big)
-        assert result["params"] is None
+        assert "__invalid__" in result["params"]
 
-    def test_non_dict_json_yields_none_params(self):
+    def test_non_dict_json_is_marked_invalid(self):
         result = _normalise_verifier_compiler("tact", "1.6.5", json.dumps(["list", "not", "dict"]))
-        assert result["params"] is None
+        assert "__invalid__" in result["params"]
 
     def test_name_is_lowercased(self):
         result = _normalise_verifier_compiler("TACT", "1.6.5", None)
@@ -423,3 +423,14 @@ def test_registry_manifest_rebuild_matches_deployed_hash(tmp_path: Path) -> None
 
     out = resolve_provenance(dep, [cand], attempt_fn)
     assert out.reason == MATCH_REBUILD, f"expected MATCH_REBUILD, got {out.reason}"
+
+
+def test_unparseable_params_fail_closed():
+    from soken_review.adapters.ton.fetch import _normalise_verifier_compiler
+    from soken_review.adapters.ton.trust_scan import scan_params
+
+    for raw in ("{not json", "[1,2]", "x" * 5000, 42):
+        params = _normalise_verifier_compiler("tact", "1.6.5", raw)["params"]
+        assert scan_params(params), raw  # rejected, never treated as "no params"
+    assert _normalise_verifier_compiler("tact", "1.6.5", None)["params"] is None
+    assert _normalise_verifier_compiler("tact", "1.6.5", "")["params"] is None

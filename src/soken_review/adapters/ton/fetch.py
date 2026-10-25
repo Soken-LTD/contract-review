@@ -168,19 +168,23 @@ def _normalise_verifier_compiler(
     as this shape so that build.py and trust_scan.scan_params always receive a dict, never a bare
     string.  `params_raw` is the compilerSettings.parameters field from the registry manifest
     (a JSON string) or the legacy bundle's compiler.params dict.  Invalid JSON and oversized
-    strings produce params=None; build.py then marks the candidate untrusted_args via scan_params.
+    strings produce an `__invalid__` marker that scan_params rejects (untrusted_args).
     """
+    # Fail closed: params that are present but cannot become a dict are kept as a marker that
+    # trust_scan.scan_params rejects ("outside the allowlist"), never dropped as "no params".
     params: dict[str, Any] | None = None
-    if isinstance(params_raw, str):
-        if len(params_raw) <= _MAX_PARAMS_JSON:
-            try:
-                parsed = json.loads(params_raw)
-                if isinstance(parsed, dict):
-                    params = parsed
-            except (json.JSONDecodeError, ValueError):
-                pass  # invalid JSON; scan_params will raise untrusted_args
+    if params_raw is None or params_raw == "":
+        params = None
     elif isinstance(params_raw, dict):
         params = params_raw
+    elif isinstance(params_raw, str) and len(params_raw) <= _MAX_PARAMS_JSON:
+        try:
+            parsed = json.loads(params_raw)
+        except (json.JSONDecodeError, ValueError):
+            parsed = None
+        params = parsed if isinstance(parsed, dict) else {"__invalid__": "params are not a JSON object"}
+    else:
+        params = {"__invalid__": "params are oversized or of an unexpected type"}
     return {
         "name": (name or "").lower() if isinstance(name, str) else "",
         "version": version if isinstance(version, str) and version else None,
