@@ -65,7 +65,7 @@ outbound:                      # politeness, supervisor only; rate_buckets out:s
   quicknode: {per_s: 40}
   sourcify: {per_s: 2}         # 05 R4; value set by 05 UV5-02
   eth_bytecode_db: {per_s: 2}  # SCOPE 8 step 2, bytecode-only sources:search; never sources:search-all; UV5-02
-  ipfs: {per_s: 2}             # SCOPE 8 step 4; one bucket per gateway host (out:s:ipfs:<host>): Filebase, Lighthouse, Pinata, 4everland, delegated-ipfs.dev
+  ipfs: {per_s: 2}             # SCOPE 8 step 4 + TON on-chain registry (2026-10-25); hosts: files.orbs.network, gateway.pinata.cloud, ipfs.ton.live; one bucket shared across all IPFS gateways
   etherscan: {per_s: 10}       # SCOPE 8 step 5, getsourcecode only; callable only with etherscan_licence on (Advanced, 20/s)
   tronscan: {per_s: 2}         # 05 R4; UV5-02
   trongrid: {per_s: 2}         # 05 R4; UV5-02

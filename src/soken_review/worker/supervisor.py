@@ -387,7 +387,27 @@ class Supervisor:
                     await _fail_job(repo, job_id, "E_HOST_CAPACITY", exc.detail())
         except Exception:
             logger.exception("step %s/%s failed for job %s", step_name, step["seq"], job_id[-8:])
-            await self._mark_step(step_id, "failed", error_code="E_INTERNAL")
+            if step_name in ("render", "context"):
+                # Non-gating steps: mark the step failed but leave the job state unchanged.
+                await self._mark_step(step_id, "failed", error_code="E_INTERNAL")
+            else:
+                # Any other step failure → fail the job so it never gets stuck in a
+                # non-terminal state with no runnable steps (e.g. map raises FileNotFoundError
+                # when TRON fetch wrote no pin; job_state stays `analyzing` forever).
+                try:
+                    async with self._pool.connection() as conn:
+                        repo = JobRepo(conn)
+                        async with conn.transaction():
+                            await repo.complete_step(step_id, "failed", error_code="E_INTERNAL")
+                            await _fail_job(
+                                repo, job_id, "E_INTERNAL",
+                                {"stage": step_name, "reason": "unexpected_exception"},
+                            )
+                except Exception:
+                    logger.exception(
+                        "double fault on job %s step %s; falling back to mark-only",
+                        job_id[-8:], step_name,
+                    )
         finally:
             self._free_units += step["units"]
             self._free_ram_mb += step["ram_mb"]
@@ -647,6 +667,20 @@ class Supervisor:
             if candidates is None:
                 # Already handled terminal/transient outcome; return immediately.
                 return
+        elif job.get("chain") == "tron":
+            # TRON deployed-address job: TronScan + Sourcify (05 4.2 TRON, UV5-02).
+            # TRON addresses are base58check (T...) with no EVM chain RPC; the EVM fetch path
+            # would write empty candidates and transition to building (via _after_fetch), leaving
+            # the map step with no pin.  Always call the TRON-specific fetcher so a verified
+            # source is pinned, or the job ends insufficient_source.
+            from ..adapters.tron.fetch import fetch_source_tron
+
+            tron_addr = address or ""
+            if tron_addr:
+                _tron_cands, _runtime_hex, _creation_hex = await fetch_source_tron(tron_addr)
+                candidates = _tron_cands
+            else:
+                candidates = []
         elif not chain_id or not address:
             # Not a deployed job; no candidates possible this way
             candidates_path.write_text("[]", encoding="utf-8")

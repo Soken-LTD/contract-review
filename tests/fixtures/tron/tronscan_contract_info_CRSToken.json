@@ -1,0 +1,19 @@
+{
+  "code": 200,
+  "data": {
+    "contract_code": [
+      {
+        "name": "CRSToken.sol",
+        "code": "Ly8gU1BEWC1MaWNlbnNlLUlkZW50aWZpZXI6IE1JVApwcmFnbWEgc29saWRpdHkgXjAuNi4wOwpjb250cmFjdCBDUlNUb2tlbiB7fQo="
+      }
+    ],
+    "compiler": "tron_0.6.2_Plato_v4.2",
+    "contract_name": "CRSToken",
+    "optimizer": 1,
+    "optimizer_runs": 200,
+    "evm_version": "default",
+    "via_ir": null,
+    "constructor_params": "",
+    "status": 2
+  }
+}

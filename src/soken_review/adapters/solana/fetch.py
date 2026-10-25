@@ -62,6 +62,31 @@ _COMMIT_RE = re.compile(r'^[0-9a-f]{40}$', re.IGNORECASE)
 _TAG_RE = re.compile(r'^[A-Za-z0-9._/-]{1,80}$')
 
 
+
+def _resolve_subdir(root: Path, subdir: str | None) -> Path | None:
+    """The clone root, or `root/subdir` when subdir is a safe relative path to a real directory
+    inside the clone (no `..`, absolute paths, backslashes or symlinked components). None when an
+    unsafe or missing subdir was requested: the fetch then fails instead of walking another tree."""
+    if not subdir:
+        return root
+    from .units import safe_store_path
+
+    rel = safe_store_path(subdir.strip("/"))
+    if rel is None:
+        logger.warning("fetch: unsafe subdir %r refused", subdir[:80])
+        return None
+    base = root.resolve()
+    cur = root
+    for part in rel.split("/"):
+        cur = cur / part
+        if cur.is_symlink():
+            logger.warning("fetch: subdir %r goes through a symlink; refused", subdir[:80])
+            return None
+    if not cur.is_dir() or not cur.resolve().is_relative_to(base):
+        logger.warning("fetch: subdir %r not found in the clone", subdir[:80])
+        return None
+    return cur
+
 def _sha256_candidate(files: dict[str, str]) -> str:
     """Canonical SHA-256 over sorted (path, content_sha256) pairs."""
     parts = []
@@ -148,7 +173,8 @@ def _safe_repo_url(url: str) -> str | None:
     return url.strip()
 
 
-def _clone_repo(repo_url: str, commit: str | None, work_dir: Path) -> dict[str, str] | None:
+def _clone_repo(repo_url: str, commit: str | None, work_dir: Path,
+                subdir: str | None = None) -> dict[str, str] | None:
     """Materialize a repo commit in the sandbox and return source files as {path: content}.
 
     Production (SOKEN_SOLANA_DIRECT not set): soken-fetch (09 5.2) in the git-fetch image on the
@@ -163,15 +189,16 @@ def _clone_repo(repo_url: str, commit: str | None, work_dir: Path) -> dict[str, 
     if os.environ.get("SOKEN_SOLANA_DIRECT") == "1":
         clone_dir = work_dir / "clone"
         sandbox_writable_dir(clone_dir)
-        return _clone_direct(src_url, commit, clone_dir)
+        return _clone_direct(src_url, commit, clone_dir, subdir=subdir)
 
-    result = _clone_in_sandbox(src_url, commit, work_dir)
+    result = _clone_in_sandbox(src_url, commit, work_dir, subdir=subdir)
     if result is None:
         logger.warning("sandboxed fetch failed for %s; failing closed (no direct fallback)", src_url)
     return result
 
 
-def _clone_in_sandbox(src_url: str, commit: str | None, work_dir: Path) -> dict[str, str] | None:
+def _clone_in_sandbox(src_url: str, commit: str | None, work_dir: Path,
+                      subdir: str | None = None) -> dict[str, str] | None:
     """soken-fetch of the pinned commit (or the remote HEAD when none is known) into work_dir/src.
 
     No checkout, no hooks, depth 1 with a 5 MiB blob filter, submodules by our own policy
@@ -185,10 +212,14 @@ def _clone_in_sandbox(src_url: str, commit: str | None, work_dir: Path) -> dict[
         logger.warning("soken-fetch exit %d (%s): %s", res.exit_code, res.error_code,
                        str((res.manifest or {}).get("error"))[:300])
         return None
-    return _walk_source_files(res.src_dir)
+    src_root = _resolve_subdir(Path(res.src_dir), subdir)
+    if src_root is None:
+        return None
+    return _walk_source_files(src_root)
 
 
-def _clone_direct(src_url: str, commit: str | None, clone_dir: Path) -> dict[str, str] | None:
+def _clone_direct(src_url: str, commit: str | None, clone_dir: Path,
+                  subdir: str | None = None) -> dict[str, str] | None:
     """Direct git clone on host (dev/fallback only; NOT for production)."""
     try:
         if commit and _COMMIT_RE.match(commit):
@@ -227,7 +258,10 @@ def _clone_direct(src_url: str, commit: str | None, clone_dir: Path) -> dict[str
         logger.warning("git clone failed for %s: %s", src_url, exc)
         return None
 
-    return _walk_source_files(clone_dir)
+    walk_root = _resolve_subdir(clone_dir, subdir)
+    if walk_root is None:
+        return None
+    return _walk_source_files(walk_root)
 
 
 class SourceFiles(dict):
@@ -431,27 +465,38 @@ def resolve_provenance(
 def fetch_source(job: Any, cs: dict[str, Any]) -> list[Any]:
     """Fetch source bundles for a Solana program (06 §3.1, 3.2).
 
-    job must have .address (base58 program ID) or .repo_url.
-    cs (chain state) may contain upgrade_authority.
+    job may be a dict (from supervisor) or an object with attributes.
+    cs (chain state) is the raw chain_state dict and may contain upgrade_authority.
     """
     from soken_review.adapters.base import SourceBundle, Target
     from soken_review.adapters.solana.detect import detect_framework_from_files
     from soken_review.adapters.solana.units import is_solana_address, make_unit_label
 
+    # Normalise: accept both plain dicts (supervisor path) and objects with attributes
+    # (direct adapter calls). Same pattern as the Aptos and Sui adapters.
+    j: dict[str, Any] = job if isinstance(job, dict) else vars(job)
+
     program_id: str | None = None
     repo_url: str | None = None
     commit: str | None = None
+    subdir: str | None = None
 
-    if hasattr(job, "address") and job.address:
-        raw = str(job.address).strip()
-        if is_solana_address(raw):
-            program_id = raw
-    if hasattr(job, "repo_url") and job.repo_url:
-        repo_url = str(job.repo_url).strip()
-    if hasattr(job, "commit") and job.commit:
-        raw_commit = str(job.commit).strip()
+    raw_addr = j.get("address") or ""
+    if raw_addr:
+        raw_addr = str(raw_addr).strip()
+        if is_solana_address(raw_addr):
+            program_id = raw_addr
+    raw_repo = j.get("repo_url") or ""
+    if raw_repo:
+        repo_url = str(raw_repo).strip()
+    raw_commit = j.get("commit") or ""
+    if raw_commit:
+        raw_commit = str(raw_commit).strip()
         if _COMMIT_RE.match(raw_commit):
             commit = raw_commit
+    raw_subdir = j.get("subdir") or j.get("package_dir") or ""
+    if raw_subdir:
+        subdir = str(raw_subdir).strip("/") or None
 
     if program_id is None and repo_url is None:
         logger.warning("fetch_source: no program_id and no repo_url")
@@ -491,7 +536,7 @@ def fetch_source(job: Any, cs: dict[str, Any]) -> list[Any]:
     _SBX_ROOT.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=_SBX_ROOT) as tmp:
         work_dir = Path(tmp)
-        files = _clone_repo(repo_url, commit, work_dir)
+        files = _clone_repo(repo_url, commit, work_dir, subdir=subdir)
 
     if not files:
         logger.warning("fetch_source: empty file set from repo %s", repo_url)

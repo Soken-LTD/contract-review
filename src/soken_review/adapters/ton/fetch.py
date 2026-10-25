@@ -2,7 +2,8 @@
 
 Fetch order per plan 06 4.2:
   1. User source (repo or files), when provided
-  2. TON verifier bundle for the unit's code hash (body hash when library-coded)
+  2. TON verifier bundle for the unit's code hash, via on-chain registry (primary)
+     or legacy HTTP API (fallback).
 
 State reads (plan 06 4.3, F38), supervisor only:
   - Pin:     toncenter v2 getMasterchainInfo  -> mc_seqno
@@ -12,15 +13,37 @@ State reads (plan 06 4.3, F38), supervisor only:
 Every hash (account code, library body) is computed in this process by `cell.root_info`;
 no container reports a hash (09 3.5).
 
-TON verifier: GET https://verifier.ton.org/api/v1/verification/source?code_hash=<hex>, files
-inline; each file's sha256 must equal its `content_hash`.
+TON verifier (on-chain registry, primary path — replaces broken /api/v1/verification/source):
+  Two-step TonCenter v2 runGetMethod lookup:
+  1. POST toncenter.com/api/v2/runGetMethod
+       address : SOURCES_REGISTRY (EQD-BJSVUJviud_Qv7Ymfd3qzXdrmV525e3YDzWQoHIAiInL)
+       method  : get_source_item_address
+       stack   : [["num", sha256_int(verifier_id)], ["num", code_hash_int]]
+     Returns addr_std cell → source item address.
+  2. POST toncenter.com/api/v2/runGetMethod
+       address : source_item_address
+       method  : get_source_item_data
+       stack   : []
+     Returns stack[3] cell → version_byte(1) + ipfs_url string.
+  3. Fetch IPFS manifest JSON from gateway (files.orbs.network, gateway.pinata.cloud, ipfs.ton.live).
+  4. For each source entry in the manifest: fetch file text from IPFS (same gateway chain).
+  5. Verify: base64.decode(manifest["hash"]) must equal bytes.fromhex(code_hash).
+  Verifiers tried in order: "orbs.com", "verifier.ton.org".
 
-Rate limiter per plan 06 2.10 / limits.yaml: toncenter 10/s (keyless 1/s), ton_verifier 2/s.
+TON verifier (legacy HTTP API, fallback):
+  GET https://verifier.ton.org/api/v1/verification/source?code_hash=<hex>
+  Files inline; each file's sha256 must equal its `content_hash`.
+  This endpoint returns 404 for many verified contracts (2026-10-25 incident); the on-chain
+  registry path is authoritative.
+
+Rate limiter per plan 06 2.10 / limits.yaml: toncenter 10/s (keyless 1/s), ton_verifier 2/s,
+ipfs 2/s.
 
 Security (RULES.md §3):
   - Per-file and total size caps; binary blobs (.boc/.cell/.fif) never enter a candidate.
   - All file names pass filter_candidate_files (safe_store_path gate).
   - Repo archives: github.com only, fixed URL, size caps.
+  - IPFS gateways: only hosts in _VERIFIER_DOWNLOAD_ALLOWLIST (SSRF protection).
 """
 
 from __future__ import annotations
@@ -58,6 +81,31 @@ _MAX_BUNDLE_BYTES = 8 * 1024 * 1024
 _TONCENTER_RETRIES = 5
 _TONCENTER_PER_S = 10.0 if os.environ.get("SOKEN_TONCENTER_API_KEY") else 1.0
 
+# ── on-chain registry (primary verified-source path) ─────────────────────
+
+# Mainnet sources registry contract (ton-community/contract-verifier-sdk, SOURCES_REGISTRY).
+_SOURCES_REGISTRY_MAINNET = "EQD-BJSVUJviud_Qv7Ymfd3qzXdrmV525e3YDzWQoHIAiInL"
+
+# Verifier IDs tried in priority order.  The on-chain registry is keyed by
+# sha256(verifier_id) as a 256-bit integer. "orbs.com" is the primary submitter
+# (all contracts verified via verifier.ton.org UI are registered under orbs.com first).
+_REGISTRY_VERIFIER_IDS: tuple[str, ...] = ("orbs.com", "verifier.ton.org")
+
+# IPFS gateway base URLs, tried in order until one responds.
+# Rate-limited under the "ipfs" bucket (limits.yaml outbound.ipfs 2/s).
+_IPFS_GATEWAYS: tuple[str, ...] = (
+    "https://files.orbs.network/ipfs/",
+    "https://gateway.pinata.cloud/ipfs/",
+    "https://ipfs.ton.live/ipfs/",
+)
+
+_MAX_MANIFEST_BYTES = 1 * 1024 * 1024    # 1 MiB for the sources JSON manifest
+_IPFS_PER_S = 2.0                         # matches outbound.ipfs in limits.yaml
+
+# Source file extensions from the IPFS manifest that are kept in the Candidate.
+# ABI (.abi), package (.pkg) and binary blob extensions are excluded.
+_REGISTRY_SOURCE_EXTS = frozenset({".tact", ".fc", ".func", ".tolk", ".json", ".toml"})
+
 # Allowlist for downloading source files from verifier bundles.
 # Only these hostnames may serve source files (SSRF protection).
 # Ref: plan 09 4.3 provider rows + outbound rows in limits.yaml.
@@ -67,7 +115,9 @@ _VERIFIER_DOWNLOAD_ALLOWLIST: frozenset[str] = frozenset([
     # Common GitHub raw file hosts for open-source bundles
     "raw.githubusercontent.com",
     "github.com",
-    # TON verifier IPFS gateway (only if needed)
+    # IPFS gateways for on-chain registry source fetch (2026-10-25)
+    "files.orbs.network",
+    "gateway.pinata.cloud",
     "ipfs.ton.live",
 ])
 
@@ -102,6 +152,97 @@ _MAX_TOTAL_INODES = 200_000  # max number of individual source files
 
 _TIMEOUT = httpx.Timeout(30.0)
 _MAX_RETRIES = 3
+
+
+# ── on-chain registry helpers ─────────────────────────────────────────────
+
+
+def _crc16_xmodem(data: bytes) -> int:
+    """CRC-16/XMODEM used in TON user-friendly address encoding."""
+    crc = 0
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = (crc << 1) ^ 0x1021
+            else:
+                crc <<= 1
+            crc &= 0xFFFF
+    return crc
+
+
+def _ton_address_b64(workchain: int, hash_bytes: bytes) -> str:
+    """Encode a (workchain, 32-byte hash) pair as a bounceable TON address (base64url)."""
+    tag = 0x11  # bounceable addr_std
+    msg = bytes([tag, workchain & 0xFF]) + hash_bytes
+    crc = _crc16_xmodem(msg)
+    full = msg + bytes([crc >> 8, crc & 0xFF])
+    return base64.urlsafe_b64encode(full).decode()
+
+
+def _parse_addr_std_cell(obj: dict[str, Any]) -> tuple[int, bytes] | None:
+    """Parse a TonCenter cell object as an addr_std, returning (workchain, hash_bytes).
+
+    TonCenter runGetMethod returns cells as::
+
+        {"bytes": "<boc_b64>", "object": {"data": {"b64": "<bits_b64>", "len": <n_bits>}}}
+
+    addr_std TL-B: addr_std$10 anycast:(Maybe Anycast) workchain_id:int8 address:bits256
+    = 267 bits (no anycast).
+    """
+    try:
+        cell_data = obj.get("object", {}).get("data", {})
+        b64 = cell_data.get("b64")
+        num_bits = cell_data.get("len")
+        if not isinstance(b64, str) or not isinstance(num_bits, int) or num_bits < 267:
+            return None
+        raw = base64.b64decode(b64)
+        # bits are MSB-first; strip trailing padding bits
+        total_bits = len(raw) * 8
+        value = int.from_bytes(raw, "big") >> (total_bits - num_bits)
+        # addr_std$10 = top two bits == 0b10
+        if (value >> (num_bits - 2)) & 0b11 != 0b10:
+            return None
+        # anycast bit must be 0 (no anycast support)
+        if (value >> (num_bits - 3)) & 1:
+            return None
+        # workchain = bits 3-10 (int8)
+        wc = (value >> (num_bits - 11)) & 0xFF
+        if wc >= 128:
+            wc -= 256
+        # address = bottom 256 bits
+        addr_int = value & ((1 << 256) - 1)
+        return wc, addr_int.to_bytes(32, "big")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _parse_string_cell(obj: dict[str, Any]) -> str | None:
+    """Parse a TonCenter cell object as a snake-encoded string (version_byte + UTF-8).
+
+    Used by get_source_item_data stack[3] which encodes an ipfs:// URL as:
+      0x01 <utf-8 bytes>  (version = 1, rest is the string).
+    The cell data must be byte-aligned (len % 8 == 0).
+    """
+    try:
+        cell_data = obj.get("object", {}).get("data", {})
+        b64 = cell_data.get("b64")
+        num_bits = cell_data.get("len")
+        if not isinstance(b64, str) or not isinstance(num_bits, int):
+            return None
+        if num_bits % 8 != 0:
+            return None
+        raw = base64.b64decode(b64)[: num_bits // 8]
+        if not raw or raw[0] != 1:  # version byte must be 1
+            return None
+        return raw[1:].decode("utf-8")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _registry_verifier_sha256_int(verifier_id: str) -> int:
+    """SHA-256 of verifier_id string as a big-endian 256-bit integer (registry key format)."""
+    return int.from_bytes(hashlib.sha256(verifier_id.encode()).digest(), "big")
 
 
 def _is_internal_ip(addr: str) -> bool:
@@ -372,6 +513,342 @@ def _b64_bytes(b64: str | None) -> bytes | None:
         return None
 
 
+# ── on-chain registry source fetch (primary path, replaces broken HTTP API) ──
+
+
+async def _run_get_method(
+    client: httpx.AsyncClient,
+    address: str,
+    method: str,
+    stack: list[list[Any]],
+) -> list[Any] | None:
+    """Call TonCenter v2 runGetMethod; return the result stack list or None.
+
+    Uses the "toncenter" rate-limiter bucket (same as other v2 calls).
+    Raises RuntimeError on persistent HTTP errors so callers can mark unavailable.
+    """
+    url = f"{TONCENTER_V2}/runGetMethod"
+    payload = {"address": address, "method": method, "stack": stack}
+    for attempt in range(_MAX_RETRIES):
+        try:
+            await _limiter("toncenter", _TONCENTER_PER_S).wait()
+            r = await client.post(url, json=payload, headers=_toncenter_headers(None))
+            if r.status_code == 200:
+                data = r.json()
+                if not data.get("ok"):
+                    logger.debug("runGetMethod %s.%s ok=false: %s", address[:12], method, str(data.get("error"))[:80])
+                    return None
+                result = data.get("result") or {}
+                if result.get("exit_code", -1) != 0:
+                    logger.debug("runGetMethod %s.%s exit_code=%s", address[:12], method, result.get("exit_code"))
+                    return None
+                return result.get("stack") or []
+            if r.status_code not in (429, 500, 502, 503, 504):
+                return None  # permanent client error
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("runGetMethod attempt %d failed: %s", attempt, exc)
+        if attempt < _MAX_RETRIES - 1:
+            await asyncio.sleep(1.5 * (attempt + 1))
+    raise RuntimeError(f"runGetMethod {method} on {address[:20]} failed after {_MAX_RETRIES} retries")
+
+
+async def _registry_get_source_item_address(
+    client: httpx.AsyncClient,
+    code_hash: str,
+    verifier_id: str,
+) -> str | None:
+    """Step 1: call get_source_item_address on the sources registry.
+
+    Exact request::
+
+        POST https://toncenter.com/api/v2/runGetMethod
+        {"address": "<SOURCES_REGISTRY>",
+         "method": "get_source_item_address",
+         "stack": [["num", "<sha256(verifier_id) as int>"],
+                   ["num", "<code_hash_hex as int>"]]}
+
+    Returns the source item address in bounceable base64url form, or None.
+    """
+    verifier_int = _registry_verifier_sha256_int(verifier_id)
+    code_hash_int = int(code_hash, 16)
+    stack = await _run_get_method(
+        client,
+        _SOURCES_REGISTRY_MAINNET,
+        "get_source_item_address",
+        [["num", str(verifier_int)], ["num", str(code_hash_int)]],
+    )
+    if not stack:
+        return None
+    # stack[0] is an addr_std cell
+    item_type, item_val = stack[0][0], stack[0][1] if len(stack[0]) > 1 else {}
+    if item_type != "cell":
+        return None
+    parsed = _parse_addr_std_cell(item_val if isinstance(item_val, dict) else {})
+    if parsed is None:
+        return None
+    wc, hash_bytes = parsed
+    return _ton_address_b64(wc, hash_bytes)
+
+
+async def _registry_get_ipfs_link(
+    client: httpx.AsyncClient,
+    source_item_address: str,
+) -> str | None:
+    """Step 2: call get_source_item_data on the source item contract.
+
+    Exact request::
+
+        POST https://toncenter.com/api/v2/runGetMethod
+        {"address": "<source_item_address>",
+         "method": "get_source_item_data",
+         "stack": []}
+
+    Returns the ipfs:// URL from stack[3], or None.
+    Stack layout (from contract-verifier-sdk):
+      [0] verifier_id hash (num)
+      [1] code_hash (num)
+      [2] verifier address (cell)
+      [3] ipfs link cell: 0x01 <utf-8 ipfs:// URL>
+    """
+    stack = await _run_get_method(client, source_item_address, "get_source_item_data", [])
+    if not stack or len(stack) < 4:
+        return None
+    item_type, item_val = stack[3][0], stack[3][1] if len(stack[3]) > 1 else {}
+    if item_type != "cell":
+        return None
+    return _parse_string_cell(item_val if isinstance(item_val, dict) else {})
+
+
+async def _ipfs_fetch_bytes(
+    client: httpx.AsyncClient,
+    cid: str,
+    max_bytes: int,
+) -> bytes | None:
+    """Fetch raw bytes for an IPFS CID, trying each gateway in turn.
+
+    Uses the "ipfs" rate-limiter bucket (limits.yaml outbound.ipfs 2/s).
+    Only hostnames in _VERIFIER_DOWNLOAD_ALLOWLIST are contacted (SSRF protection).
+    """
+    for gateway in _IPFS_GATEWAYS:
+        url = gateway + cid
+        if _validate_download_url(url) is None:
+            continue
+        try:
+            await _limiter("ipfs", _IPFS_PER_S).wait()
+            r = await client.get(url, follow_redirects=False)
+            if r.status_code == 200:
+                if len(r.content) > max_bytes:
+                    logger.warning("_ipfs_fetch_bytes: %s over cap (%d > %d)", cid[:20], len(r.content), max_bytes)
+                    return None
+                return r.content
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("_ipfs_fetch_bytes gateway %s cid %s: %s", gateway, cid[:20], exc)
+    return None
+
+
+async def _ipfs_fetch_manifest(
+    client: httpx.AsyncClient,
+    ipfs_url: str,
+    code_hash: str,
+) -> dict[str, Any] | None:
+    """Fetch the IPFS sources JSON manifest and verify it matches code_hash.
+
+    The manifest "hash" field is base64 of the 32-byte code cell hash.
+    Returns the parsed manifest dict, or None on failure.
+    """
+    if not ipfs_url.startswith("ipfs://"):
+        return None
+    cid = ipfs_url[len("ipfs://"):]
+    raw = await _ipfs_fetch_bytes(client, cid, _MAX_MANIFEST_BYTES)
+    if raw is None:
+        return None
+    try:
+        manifest = json.loads(raw.decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    # Verify the manifest hash matches the requested code hash.
+    hash_b64 = manifest.get("hash")
+    if not isinstance(hash_b64, str):
+        logger.debug("_ipfs_fetch_manifest: missing hash field for %s", code_hash[:12])
+        return None
+    try:
+        declared_hash = base64.b64decode(hash_b64 + "==").hex()  # tolerate missing padding
+    except Exception:  # noqa: BLE001
+        return None
+    if declared_hash != code_hash:
+        logger.warning(
+            "_ipfs_fetch_manifest: hash mismatch for %s: manifest declares %s",
+            code_hash[:12], declared_hash[:12],
+        )
+        return None
+    return manifest
+
+
+def _registry_find_entrypoint(manifest: dict[str, Any], source_filenames: list[str]) -> str | None:
+    """Resolve the entrypoint from compilerSettings.parameters within the IPFS filenames.
+
+    parameters JSON: {"entrypoint": "contracts/ft_master.tact", ...}
+    IPFS filenames may include a directory prefix (e.g. "contract/contracts/ft_master.tact").
+    Returns the IPFS filename that ends with "/<entrypoint>" or equals it exactly.
+    """
+    params_raw = (manifest.get("compilerSettings") or {}).get("parameters")
+    if not isinstance(params_raw, str):
+        return None
+    try:
+        params = json.loads(params_raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    entry = params.get("entrypoint")
+    if not isinstance(entry, str) or not entry:
+        return None
+    for fn in source_filenames:
+        if fn == entry or fn.endswith("/" + entry):
+            return fn
+    return None
+
+
+async def _registry_download_files(
+    client: httpx.AsyncClient,
+    manifest: dict[str, Any],
+) -> dict[str, str]:
+    """Download source files referenced in the IPFS manifest.
+
+    Only files with extensions in _REGISTRY_SOURCE_EXTS are fetched (skips .abi, .pkg).
+    Binary blob extensions are never written (planted-artifact protection).
+    Returns a {filename: content} mapping for the accepted files.
+    """
+    from pathlib import Path as _Path
+    result: dict[str, str] = {}
+    total_bytes = 0
+    sources = manifest.get("sources") or []
+    for entry in sources:
+        filename = entry.get("filename") if isinstance(entry, dict) else None
+        ipfs_url = entry.get("url") if isinstance(entry, dict) else None
+        if not isinstance(filename, str) or not isinstance(ipfs_url, str):
+            continue
+        ext = _Path(filename).suffix.lower()
+        if ext not in _REGISTRY_SOURCE_EXTS:
+            continue
+        if ext in _BINARY_SOURCE_EXTS:
+            continue
+        if len(result) >= _MAX_TOTAL_INODES:
+            logger.warning("_registry_download_files: inode cap reached")
+            break
+        if not ipfs_url.startswith("ipfs://"):
+            continue
+        cid = ipfs_url[len("ipfs://"):]
+        raw = await _ipfs_fetch_bytes(client, cid, _MAX_FILE_BYTES)
+        if raw is None:
+            logger.debug("_registry_download_files: failed to fetch %s", filename)
+            continue
+        if total_bytes + len(raw) > _MAX_TOTAL_FETCH_BYTES:
+            logger.warning("_registry_download_files: total byte budget exceeded at %s", filename)
+            break
+        try:
+            content = raw.decode("utf-8", errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("_registry_download_files: decode failed for %s: %s", filename, exc)
+            continue
+        result[filename] = content
+        total_bytes += len(raw)
+    return result
+
+
+async def fetch_source_from_registry(
+    client: httpx.AsyncClient,
+    code_hash: str,
+) -> Candidate | None:
+    """Fetch verified sources via the TON on-chain sources registry (primary path).
+
+    Replaces the broken ``GET /api/v1/verification/source`` endpoint (2026-10-25 incident).
+    Tries each verifier ID in _REGISTRY_VERIFIER_IDS until one resolves a source item.
+
+    The fetched manifest's ``hash`` field is verified against ``code_hash`` before use.
+    Individual source files are downloaded from IPFS with size caps; the build step
+    recompiles and checks the output hash against the on-chain dep_hash (tier logic).
+
+    Returns a ``ton_verifier`` Candidate, or None if no verified source is found or
+    a network error prevents resolution.
+    """
+    if not _HEX64.match(code_hash):
+        return None
+    for verifier_id in _REGISTRY_VERIFIER_IDS:
+        try:
+            source_item_addr = await _registry_get_source_item_address(client, code_hash, verifier_id)
+        except RuntimeError as exc:
+            logger.warning("registry get_source_item_address failed (%s): %s", verifier_id, exc)
+            raise  # propagate to mark the whole verifier call as unavailable
+        if source_item_addr is None:
+            logger.debug("registry: no source item for %s / %s", code_hash[:12], verifier_id)
+            continue
+        try:
+            ipfs_url = await _registry_get_ipfs_link(client, source_item_addr)
+        except RuntimeError as exc:
+            logger.warning("registry get_source_item_data failed (%s/%s): %s", code_hash[:12], verifier_id, exc)
+            continue
+        if not ipfs_url:
+            logger.debug("registry: empty ipfs link for %s / %s", code_hash[:12], verifier_id)
+            continue
+        manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash)
+        if manifest is None:
+            logger.debug("registry: manifest fetch/verify failed for %s / %s", code_hash[:12], verifier_id)
+            continue
+        raw_files = await _registry_download_files(client, manifest)
+        if not raw_files:
+            logger.warning("registry: no source files downloaded for %s / %s", code_hash[:12], verifier_id)
+            continue
+        language_raw = (manifest.get("compiler") or "").lower()
+        language = {"fift": "func"}.get(language_raw, language_raw)
+        if language not in ("func", "tact", "tolk"):
+            logger.debug("registry: unsupported compiler %r for %s", language_raw, code_hash[:12])
+            continue
+        compiler_settings = manifest.get("compilerSettings") or {}
+        version = compiler_settings.get("tactVersion") or compiler_settings.get("compilerVersion")
+        entry = _registry_find_entrypoint(manifest, list(raw_files))
+        if entry is None and language == "tact":
+            logger.debug("registry: no entrypoint found for tact contract %s", code_hash[:12])
+            # still proceed; build may work without an explicit entry if there is only one .tact file
+        settings: dict[str, Any] = {
+            "entry": entry,
+            "verifier": {
+                "verifier_id": verifier_id,
+                "code_hash": code_hash,
+                "ipfs_manifest_url": ipfs_url,
+                "compiler": manifest.get("compiler"),
+                "compiler_settings": compiler_settings,
+                "verification_date": manifest.get("verificationDate"),
+                "source_item_address": source_item_addr,
+            },
+        }
+        cand = _make_ton_candidate(
+            provider="ton_verifier",
+            raw_files=raw_files,
+            language=language,
+            compiler_version=version,
+            compiler_pinned_by="ton_verifier",
+            entry_contract=entry,
+            source_url=f"https://verifier.ton.org/{code_hash}",
+            source_bundle=settings,
+        )
+        bad = bundle_paths_error(entry, [], cand.files, language)
+        if bad and entry is not None:
+            logger.warning("registry: bundle paths error for %s: %s", code_hash[:12], bad)
+            # entry path check failed but files are present; clear entry and continue
+            cand = _make_ton_candidate(
+                provider="ton_verifier",
+                raw_files=raw_files,
+                language=language,
+                compiler_version=version,
+                compiler_pinned_by="ton_verifier",
+                entry_contract=None,
+                source_url=f"https://verifier.ton.org/{code_hash}",
+                source_bundle={**settings, "entry": None},
+            )
+        logger.info("registry: found verified source for %s via %s (%d files)", code_hash[:12], verifier_id, len(cand.files))
+        return cand
+    return None
+
+
 # ── TON verifier source fetch (plan 06 4.2, 4.3, F13) ─────────────────────
 
 
@@ -445,11 +922,27 @@ async def fetch_source_from_verifier(
     client: httpx.AsyncClient,
     code_hash: str,
 ) -> Candidate | None:
-    """Verifier bundle for a code hash as a `ton_verifier` candidate (06 4.2).
+    """Verified source for a code hash as a ``ton_verifier`` Candidate (06 4.2).
 
-    Not owner-linked (06 2.3: the registry is pay-to-submit); it reaches tier A only when the
-    supervisor's rebuild hash equals the on-chain hash.
+    Primary path: on-chain registry via ``fetch_source_from_registry()``.
+    The GET /api/v1/verification/source endpoint was removed/broken (2026-10-25 incident;
+    returns 404 for verified contracts).  The registry is now authoritative.
+
+    Fallback: legacy HTTP API bundle (kept for resilience in case the registry
+    lookup fails due to a transient TonCenter outage).
+
+    Not owner-linked (06 2.3: the registry is pay-to-submit); reaches tier A only when
+    the supervisor's rebuild hash equals the on-chain hash.
     """
+    # Primary: on-chain registry
+    try:
+        cand = await fetch_source_from_registry(client, code_hash)
+        if cand is not None:
+            return cand
+    except (RuntimeError, httpx.HTTPError, ValueError) as exc:
+        logger.warning("ton registry lookup failed for %s: %s; trying legacy API", code_hash[:12], exc)
+
+    # Fallback: legacy HTTP bundle API
     bundle = await fetch_verifier_bundle(client, code_hash)
     if not bundle:
         return None

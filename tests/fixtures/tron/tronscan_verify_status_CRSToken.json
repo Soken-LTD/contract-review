@@ -1,0 +1,10 @@
+{
+  "status": {"code": 0, "message": "SUCCESS"},
+  "data": [
+    {
+      "address": "TRegosVaS1o3DHG85nnW8xYzczPm3xL76K",
+      "verify_status": 2,
+      "name": "CRSToken"
+    }
+  ]
+}

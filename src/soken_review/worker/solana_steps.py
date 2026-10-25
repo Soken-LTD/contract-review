@@ -27,7 +27,6 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ..adapters.base import ChainValue
 from ..adapters.solana import onchain
 from ..adapters.solana.mint import mint_safety_leads, mint_source
 from ..db.job_repo import JobRepo
@@ -173,15 +172,24 @@ async def _fetch_program(sup: Any, step: dict[str, Any], job: dict[str, Any], ou
     args = _args(job)
     cs_file = out_dir / "chain_state.json"
     cs = json.loads(cs_file.read_text()) if cs_file.exists() else {}
+    # Build the job-dict that fetch_source expects: address (program ID) plus
+    # repo_url/commit/subdir for repo jobs.  fetch_source normalises dict vs
+    # object via isinstance check, so a plain dict is the canonical form here.
     j: dict[str, Any] = {"address": job.get("address"), "work_dir": str(out_dir / "fetch")}
     if job.get("source_kind") == "repo":
-        j |= {"repo_url": args.get("repo_url"), "commit": args.get("commit") or args.get("ref")}
+        j |= {
+            "repo_url": args.get("repo_url"),
+            "commit": job.get("resolved_commit") or args.get("commit") or args.get("ref"),
+            "subdir": (args.get("subdir") or "").strip("/") or None,
+        }
     elif job.get("source_kind") == "files":
         j["files"] = {f["path"]: f["content"] for f in args.get("files", [])}
 
     loop = asyncio.get_event_loop()
+    # Pass the raw chain_state dict directly; fetch_source reads cs.get("upgrade_authority")
+    # from it.  Wrapping in ChainValue here served no purpose and hid the upgrade_authority key.
     bundles = await loop.run_in_executor(
-        None, lambda: SolanaAdapter().fetch_source(j, {"solana": ChainValue(cs, "pinned")}))
+        None, lambda: SolanaAdapter().fetch_source(j, cs))
     if not bundles or not bundles[0].candidates:
         (out_dir / "candidates.json").write_text("[]", encoding="utf-8")
         await _terminal(sup, step, "insufficient_source", error_code="E_SOURCE_NOT_FOUND")
