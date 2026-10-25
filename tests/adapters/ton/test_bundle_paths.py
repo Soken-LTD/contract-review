@@ -44,7 +44,13 @@ async def test_bad_bundle_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_bundle(client, code_hash):
         return bundle
 
+    # Registry is tried first in fetch_source_from_verifier; disable it so the
+    # legacy-bundle path is exercised here (the registry is tested separately).
+    async def no_registry(client, code_hash):
+        return None
+
     monkeypatch.setattr(f, "fetch_verifier_bundle", fake_bundle)
+    monkeypatch.setattr(f, "fetch_source_from_registry", no_registry)
     async with httpx.AsyncClient() as client:
         assert await f.fetch_source_from_verifier(client, BUNDLE["code_hash"]) is None
         bundle["entrypoint"] = BUNDLE["bundle"]["entrypoint"]

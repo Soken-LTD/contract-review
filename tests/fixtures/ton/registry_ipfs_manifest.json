@@ -1,0 +1,28 @@
+{
+  "compilerSettings": {
+    "tactVersion": "1.6.5",
+    "parameters": "{\"entrypoint\": \"contracts/ft_master.tact\", \"options\": {\"debug\": false}}"
+  },
+  "compiler": "tact",
+  "hash": "yEWRfaSkzhyyKqAPZagsN3XkxqPHRFP5NS6W2NFPv+o=",
+  "verificationDate": 1745917200000,
+  "sources": [
+    {
+      "url": "ipfs://QmRozD9NrHamsUqnpEVRgTS1kZdJYLU7BnnDLRZp5nC7t6",
+      "filename": "contract/contracts/ft_master.tact"
+    },
+    {
+      "url": "ipfs://QmdQKug6aZWnhqW4fM2HBPoC9a3nHuAy5Mg1sSr3GYCWpG",
+      "filename": "contract/contracts/messages.tact"
+    },
+    {
+      "url": "ipfs://Qmb22Yfj9eVkB516c6UFBtw4bCFksxF25d7aRnLieSVgrr",
+      "filename": "output/verifier_FtSquad.abi"
+    },
+    {
+      "url": "ipfs://QmQoxy25kzRCWv4Jg7myj7T9ttLpsLdSa5Zx1uDYG12KnR",
+      "filename": "output/verifier_FtSquad.pkg"
+    }
+  ],
+  "knownContractAddress": "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ"
+}

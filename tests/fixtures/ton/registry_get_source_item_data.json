@@ -1,0 +1,58 @@
+{
+  "ok": true,
+  "result": {
+    "@type": "smc.runResult",
+    "gas_used": 1094,
+    "stack": [
+      [
+        "num",
+        "0x6aaf20fed58ba5e6db692909e78e5c5c6525e28d1cfa8bd22dc216729b4841b3"
+      ],
+      [
+        "num",
+        "0xc845917da4a4ce1cb22aa00f65a82c3775e4c6a3c74453f9352e96d8d14fbfea"
+      ],
+      [
+        "cell",
+        {
+          "bytes": "te6cckEBAQEAJAAAQ4AfwJKSqhN8Vzv6F/bEz7u9Wa7tcyvO3L27AeayFA5AERAEFXCp",
+          "object": {
+            "data": {
+              "b64": "gB/AkpKqE3xXO/oX9sTPu71Zru1zK87cvbsB5rIUDkAREA==",
+              "len": 267
+            },
+            "refs": [],
+            "special": false
+          }
+        }
+      ],
+      [
+        "cell",
+        {
+          "bytes": "te6cckEBAQEAOAAAbAFpcGZzOi8vUW1kQ1hjNmR5RUpuamVwa295ZFQ0YTE1Skp0dEthdExoU3JSN2RQcWFaa0F3b6ax0Hw=",
+          "object": {
+            "data": {
+              "b64": "AWlwZnM6Ly9RbWRDWGM2ZHlFSm5qZXBrb3lkVDRhMTVKSnR0S2F0TGhTclI3ZFBxYVprQXdv",
+              "len": 432
+            },
+            "refs": [],
+            "special": false
+          }
+        }
+      ]
+    ],
+    "exit_code": 0,
+    "block_id": {
+      "@type": "ton.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 101229475
+    },
+    "last_transaction_id": {
+      "@type": "internal.transactionId",
+      "lt": "56591243000001",
+      "hash": "XecAbtNvVEwL/loqjz46Uxm9kgY6zeN0O85oDdjTgN0="
+    }
+  },
+  "@extra": "1792916256:8:24.096"
+}
