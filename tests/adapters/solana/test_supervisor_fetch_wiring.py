@@ -377,3 +377,20 @@ async def test_repo_fetch_honours_subdir_with_local_fixture(tmp_path: Path, monk
     assert bundles[0].target.commit == sha, (
         f"commit not pinned: expected {sha!r}, got {bundles[0].target.commit!r}"
     )
+
+
+def test_subdir_traversal_and_symlink_refused(tmp_path):
+    from soken_review.adapters.solana.fetch import _resolve_subdir
+
+    root = tmp_path / "clone"
+    (root / "programs" / "locker").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "link").symlink_to(outside)
+    assert _resolve_subdir(root, None) == root
+    assert _resolve_subdir(root, "programs/locker") == root / "programs" / "locker"
+    assert _resolve_subdir(root, "../outside") is None
+    assert _resolve_subdir(root, "/etc") is None
+    assert _resolve_subdir(root, "programs\\locker") is None
+    assert _resolve_subdir(root, "link") is None
+    assert _resolve_subdir(root, "missing/dir") is None

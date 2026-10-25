@@ -62,6 +62,31 @@ _COMMIT_RE = re.compile(r'^[0-9a-f]{40}$', re.IGNORECASE)
 _TAG_RE = re.compile(r'^[A-Za-z0-9._/-]{1,80}$')
 
 
+
+def _resolve_subdir(root: Path, subdir: str | None) -> Path | None:
+    """The clone root, or `root/subdir` when subdir is a safe relative path to a real directory
+    inside the clone (no `..`, absolute paths, backslashes or symlinked components). None when an
+    unsafe or missing subdir was requested: the fetch then fails instead of walking another tree."""
+    if not subdir:
+        return root
+    from .units import safe_store_path
+
+    rel = safe_store_path(subdir.strip("/"))
+    if rel is None:
+        logger.warning("fetch: unsafe subdir %r refused", subdir[:80])
+        return None
+    base = root.resolve()
+    cur = root
+    for part in rel.split("/"):
+        cur = cur / part
+        if cur.is_symlink():
+            logger.warning("fetch: subdir %r goes through a symlink; refused", subdir[:80])
+            return None
+    if not cur.is_dir() or not cur.resolve().is_relative_to(base):
+        logger.warning("fetch: subdir %r not found in the clone", subdir[:80])
+        return None
+    return cur
+
 def _sha256_candidate(files: dict[str, str]) -> str:
     """Canonical SHA-256 over sorted (path, content_sha256) pairs."""
     parts = []
@@ -187,13 +212,9 @@ def _clone_in_sandbox(src_url: str, commit: str | None, work_dir: Path,
         logger.warning("soken-fetch exit %d (%s): %s", res.exit_code, res.error_code,
                        str((res.manifest or {}).get("error"))[:300])
         return None
-    src_root = Path(res.src_dir)
-    if subdir:
-        sub = src_root / subdir.strip("/")
-        if sub.is_dir():
-            src_root = sub
-        else:
-            logger.warning("subdir %r not found in cloned repo %s; walking root", subdir, src_url)
+    src_root = _resolve_subdir(Path(res.src_dir), subdir)
+    if src_root is None:
+        return None
     return _walk_source_files(src_root)
 
 
@@ -237,13 +258,9 @@ def _clone_direct(src_url: str, commit: str | None, clone_dir: Path,
         logger.warning("git clone failed for %s: %s", src_url, exc)
         return None
 
-    walk_root = clone_dir
-    if subdir:
-        sub = clone_dir / subdir.strip("/")
-        if sub.is_dir():
-            walk_root = sub
-        else:
-            logger.warning("subdir %r not found in cloned repo %s; walking root", subdir, src_url)
+    walk_root = _resolve_subdir(clone_dir, subdir)
+    if walk_root is None:
+        return None
     return _walk_source_files(walk_root)
 
 
