@@ -780,8 +780,12 @@ async def _registry_download_files(
             continue
         if len(result) >= _MAX_TOTAL_INODES:
             logger.warning("_registry_download_files: inode cap reached")
+            if missing is not None:
+                missing.append(filename)
             break
         if not ipfs_url.startswith("ipfs://"):
+            if missing is not None:
+                missing.append(filename)
             continue
         cid = ipfs_url[len("ipfs://"):]
         raw = await _ipfs_fetch_bytes(client, cid, _MAX_FILE_BYTES, gateways)
@@ -792,14 +796,24 @@ async def _registry_download_files(
             continue
         if total_bytes + len(raw) > _MAX_TOTAL_FETCH_BYTES:
             logger.warning("_registry_download_files: total byte budget exceeded at %s", filename)
+            if missing is not None:
+                missing.append(filename)
             break
         try:
             content = raw.decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001
             logger.debug("_registry_download_files: decode failed for %s: %s", filename, exc)
+            if missing is not None:
+                missing.append(filename)
             continue
         result[filename] = content
         total_bytes += len(raw)
+    if missing is not None:
+        # Listed sources never reached after a cap break also count as missing.
+        listed = [e.get("filename") for e in sources if isinstance(e, dict) and isinstance(e.get("filename"), str)
+                  and _Path(e["filename"]).suffix.lower() in _REGISTRY_SOURCE_EXTS
+                  and _Path(e["filename"]).suffix.lower() not in _BINARY_SOURCE_EXTS]
+        missing.extend(f for f in listed if f not in result and f not in missing)
     return result
 
 
