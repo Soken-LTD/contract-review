@@ -145,9 +145,23 @@ async def test_one_giant_line_is_cut_and_progresses(tmp_path: Path):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(("start", "end"), [(0, 1), (-5, 2), (3, 2), (2, 99), (99, 100)])
+# Bug 5 fix (2026-10-25): (2, 99) removed — end > total is now clamped, not rejected.
+# (99, 100) remains: start=99 > total=3 is still E_RANGE_INVALID.
+@pytest.mark.parametrize(("start", "end"), [(0, 1), (-5, 2), (3, 2), (99, 100)])
 async def test_invalid_ranges_rejected(tmp_path: Path, start: int, end: int):
     _pin(tmp_path, {"src/S.sol": "a\nb\nc\n"})
     r = await _read({"path": "src/S.sol", "start_line": start, "end_line": end})
     body = json.loads(r.content[0].text)
     assert body["errors"][0]["code"] in ("E_RANGE_INVALID", "E_INVALID_ARGUMENT")
+
+
+@pytest.mark.anyio
+async def test_end_past_eof_clamped(tmp_path: Path):
+    """Bug 5 regression: end > total is clamped to total, not rejected (2026-10-25)."""
+    _pin(tmp_path, {"src/S.sol": "a\nb\nc\n"})
+    r = await _read({"path": "src/S.sol", "start_line": 2, "end_line": 99})
+    assert not r.is_error
+    text = r.content[0].text
+    assert "clamped" in text
+    assert "2| b" in text
+    assert "3| c" in text

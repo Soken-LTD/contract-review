@@ -175,7 +175,8 @@ def _collect_text_fields(section: str, content: Any) -> list[tuple[str, str]]:
     elif section == "roles_notes":
         if isinstance(content, list):
             for i, row in enumerate(content):
-                for field in ("role_name", "risk_note", "notes"):
+                # tools.v1 schema uses "role" (not "role_name"); "notes" is a legacy alias
+                for field in ("role", "risk_note", "notes"):
                     val = row.get(field, "")
                     if val:
                         result.append((f"roles_notes[{i}].{field}", str(val)))
@@ -206,6 +207,14 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
     content: Any = args.get("content")
     if content is None and section == "context_notes" and isinstance(args.get("context_notes"), dict):
         content = args["context_notes"].get("notes")  # tools.v1 shape: {section: "context_notes", context_notes: {notes: [...]}}
+    # Bug 3 fix (2026-10-25): tools.v1 shape for roles_notes, coverage, out_of_scope_reasons
+    # is {section: "...", <section>: {rows: [...]}}, not {section: "...", content: [...]}.
+    # Previously these three sections always returned E_SECTION_INVALID "content must be an array"
+    # because args.get("content") was always None.
+    if content is None and section in ("roles_notes", "coverage", "out_of_scope_reasons"):
+        section_arg = args.get(section)
+        if isinstance(section_arg, dict):
+            content = section_arg.get("rows")
     pool = _get_pool()
 
     # State check — quick unlocked read before we do any work (map, text-gate, etc.)
@@ -237,14 +246,24 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
             ReviewError("E_SECTION_INVALID", detail=f"unknown section '{section}'").envelope()
         ]}
 
-    # Content must be a non-empty list
+    # Content must be a non-empty list.
+    # Bug 3 fix (2026-10-25): include a real section-specific example in the error so the model
+    # can correct its call immediately rather than guessing the shape.
+    _SECTION_EXAMPLES: dict[str, str] = {
+        "roles_notes": '[{"role": "owner", "risk_note": "Can pause all transfers."}]',
+        "coverage": '[{"area_id": "AC", "status": "partially_read"}]',
+        "out_of_scope_reasons": '[{"item_id": "X-001", "reason": "Vendored dependency, not audited."}]',
+        "context_notes": '[{"p": "The project is a token bridge."}]',
+    }
     if not isinstance(content, list):
+        example = _SECTION_EXAMPLES.get(section, "[]")
         return {"accepted": False, "errors": [
-            ReviewError("E_SECTION_INVALID", detail="content must be an array").envelope()
+            ReviewError("E_SECTION_INVALID", detail="content must be an array", example=example).envelope()
         ]}
     if not content:
+        example = _SECTION_EXAMPLES.get(section, "[]")
         return {"accepted": False, "errors": [
-            ReviewError("E_SECTION_INVALID", detail="content must have at least one row").envelope()
+            ReviewError("E_SECTION_INVALID", detail="content must have at least one row", example=example).envelope()
         ]}
     if section == "context_notes":
         detail = _check_context_blocks(content)

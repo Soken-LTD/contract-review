@@ -145,7 +145,9 @@ def quote_match(
     if not segments:
         # Quote is all empty/elision; P must also be empty
         if P:
-            raise QuoteMatchError("E_QUOTE_MISMATCH", path=path, start=start, end=end)
+            # Bug 6a fix (2026-10-25): E_QUOTE_MISMATCH template uses {range}, not {start}/{end}.
+            # All raises now pass range=f"{start}-{end}" so the error message is not blank.
+            raise QuoteMatchError("E_QUOTE_MISMATCH", path=path, range=f"{start}-{end}")
         return
 
     # Match: first segment starts at P[0], last segment ends at P[-1].
@@ -156,14 +158,13 @@ def quote_match(
         if is_first:
             # Must match starting at pos=0
             if len(segment) > len(P):
-                raise QuoteMatchError("E_QUOTE_MISMATCH", path=path, start=start, end=end)
+                raise QuoteMatchError("E_QUOTE_MISMATCH", path=path, range=f"{start}-{end}")
             for i, expected in enumerate(segment):
                 if P[i] != expected:
                     raise QuoteMatchError(
                         "E_QUOTE_MISMATCH",
                         path=path,
-                        start=start,
-                        end=end,
+                        range=f"{start}-{end}",
                         first_diff_quote=expected,
                         first_diff_pinned=P[i],
                     )
@@ -171,9 +172,9 @@ def quote_match(
         else:
             found = _find_segment(P, segment, pos)
             if found == -1:
-                raise QuoteMatchError("E_QUOTE_MISMATCH", path=path, start=start, end=end)
+                raise QuoteMatchError("E_QUOTE_MISMATCH", path=path, range=f"{start}-{end}")
             pos = found + len(segment)
 
     # Last segment must have consumed through P[-1]
     if pos != len(P):
-        raise QuoteMatchError("E_QUOTE_MISMATCH", path=path, start=start, end=end)
+        raise QuoteMatchError("E_QUOTE_MISMATCH", path=path, range=f"{start}-{end}")

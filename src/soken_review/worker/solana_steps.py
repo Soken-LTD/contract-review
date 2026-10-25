@@ -70,7 +70,9 @@ async def run_step(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
     elif name == "map":
         await _map(sup, step, job)
     else:
-        # chain_state seq 1 and any other row: the mint and program flows finish at map; nothing to do.
+        # chain_state seq 1 and any other row: the mint and program flows finish at map; nothing
+        # to do.  Family-agnostic steps (render, context) are intercepted by the supervisor
+        # before this function; they should never arrive here.
         await sup._mark_step(step["id"], "done")
 
 

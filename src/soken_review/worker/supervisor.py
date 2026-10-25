@@ -320,6 +320,12 @@ class Supervisor:
                 # Project documents (context ingestion spec 3): family-independent, runs at `ready`
                 # and never gates it; failures are per document.
                 await self._run_context(step)
+            elif step_name == "render":
+                # Bug 1 fix (2026-10-25): render is family-agnostic and must run the generic handler
+                # regardless of chain.  Previously this check appeared AFTER the family-dispatch
+                # branches, so TON / Solana / Move / Starknet jobs logged "no handler for step
+                # render; marking done" and stayed in render_queued forever.
+                await _render_mod.run_render_step(self._pool, step, self._pin_root)
             elif job is not None and ton_pipeline.is_ton_job(job):
                 await ton_pipeline.run_step(self, step, job)
             elif job is not None and job.get("chain") == "starknet" and (
@@ -343,8 +349,6 @@ class Supervisor:
                 await self._run_build(step)
             elif step_name == "analyze":
                 await self._run_analyze(step)
-            elif step_name == "render":
-                await _render_mod.run_render_step(self._pool, step, self._pin_root)
             elif step_name == "map":
                 await self._run_map(step)
             elif step_name == "chain_state" and step["seq"] == 1:

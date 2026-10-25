@@ -160,15 +160,26 @@ async def test_read_code_without_flags_file_is_internal_error(server: SokenServe
 
 
 async def test_read_code_out_of_range(server: SokenServer) -> None:
-    """Past EOF returns E_RANGE_INVALID rejection."""
+    """end past EOF is clamped to total lines and noted in the meta (Bug 5 fix 2026-10-25).
+    start past EOF still returns E_RANGE_INVALID."""
     async with Client(server) as client:
+        # end > total: clamp succeeds
         result = await client.call_tool(
             "review_read_code",
             {"job_id": JOB_ID, "path": "src/Vault.sol", "start_line": 1, "end_line": 9999},
         )
-    assert not result.is_error  # rejection channel (errors.yaml, 03 3.5)
-    body = json.loads(result.content[0].text)
-    assert body["errors"][0]["code"] == "E_RANGE_INVALID"
+    assert not result.is_error
+    text = result.content[0].text
+    # Must not be a JSON rejection (plain text body means success)
+    assert "clamped" in text
+    # start past total still rejects
+    async with Client(server) as client:
+        result2 = await client.call_tool(
+            "review_read_code",
+            {"job_id": JOB_ID, "path": "src/Vault.sol", "start_line": 9999, "end_line": 10000},
+        )
+    body2 = json.loads(result2.content[0].text)
+    assert body2["errors"][0]["code"] == "E_RANGE_INVALID"
 
 
 async def test_read_code_unknown_path(server: SokenServer) -> None:
@@ -211,17 +222,18 @@ async def test_read_code_job_not_found(server: SokenServer) -> None:
     assert body["errors"][0]["code"] == "E_JOB_NOT_FOUND"
 
 
-async def test_read_code_past_eof_is_error(server: SokenServer) -> None:
-    """Requesting lines past EOF returns E_RANGE_INVALID (03 4.4)."""
+async def test_read_code_past_eof_clamped(server: SokenServer) -> None:
+    """end past EOF is clamped to file total and noted in the meta (Bug 5 fix 2026-10-25)."""
     async with Client(server) as client:
         result = await client.call_tool(
             "review_read_code",
-            # Long.sol has 50 lines; asking for line 200 is past EOF
+            # Long.sol has 50 lines; asking for line 200 is past EOF → clamped to 50
             {"job_id": JOB_ID, "path": "src/Long.sol", "start_line": 1, "end_line": 200},
         )
-    assert not result.is_error  # rejection channel (errors.yaml, 03 3.5)
-    body = json.loads(result.content[0].text)
-    assert body["errors"][0]["code"] == "E_RANGE_INVALID"
+    assert not result.is_error
+    text = result.content[0].text
+    assert "clamped" in text
+    assert "50" in text  # total lines noted
 
 
 async def test_read_code_size_budget_within_bounds(server: SokenServer, pin_root: Path, ctx: MemoryJobContext) -> None:
