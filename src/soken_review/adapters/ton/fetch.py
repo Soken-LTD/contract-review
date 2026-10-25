@@ -659,6 +659,52 @@ async def _registry_get_ipfs_link(
 
 # The verifier operator's own gateway: content served from it is attested by the same party that
 # signs the on-chain registry. Third-party gateways serve the bytes but attest nothing.
+
+# ── IPFS content check (CIDv0, single-chunk UnixFS file) ─────────────────────
+# A gateway only transports bytes; the CID binds them. For a CIDv0 (Qm...) of a file added with the
+# default chunker and <= 256 KiB (one block), the CID is sha256 over the dag-pb node
+# PBNode{Data: UnixFS{Type: File, Data: content, filesize}}; recomputed here, so content from any
+# gateway is accepted only if it is exactly what the registry pointed at. Other CID forms (CIDv1,
+# multi-block files) are not checked and therefore never attested.
+_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+_CIDV0_MAX_BYTES = 256 * 1024
+
+
+def _pb_varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def _pb_field(num: int, wire: int, payload: bytes) -> bytes:
+    key = _pb_varint((num << 3) | wire)
+    return key + (_pb_varint(len(payload)) + payload if wire == 2 else payload)
+
+
+def cidv0_of_file(content: bytes) -> str:
+    """CIDv0 of `content` as a single-block UnixFS file (what `ipfs add` prints for <= 256 KiB)."""
+    unixfs = _pb_field(1, 0, _pb_varint(2))
+    if content:
+        unixfs += _pb_field(2, 2, content)
+    unixfs += _pb_field(3, 0, _pb_varint(len(content)))
+    digest = hashlib.sha256(_pb_field(1, 2, unixfs)).digest()
+    n = int.from_bytes(b"\x12\x20" + digest, "big")
+    out = ""
+    while n:
+        n, r = divmod(n, 58)
+        out = _B58[r] + out
+    return out
+
+
+def cid_matches(cid: str, content: bytes) -> bool:
+    """True only for a checkable CIDv0 whose recomputed value equals `cid`."""
+    return (cid.startswith("Qm") and len(cid) == 46 and len(content) <= _CIDV0_MAX_BYTES
+            and cidv0_of_file(content) == cid)
+
 _VERIFIER_GATEWAY = "https://files.orbs.network/ipfs/"
 
 
@@ -684,6 +730,11 @@ async def _ipfs_fetch_bytes(
                 if len(r.content) > max_bytes:
                     logger.warning("_ipfs_fetch_bytes: %s over cap (%d > %d)", cid[:20], len(r.content), max_bytes)
                     return None
+                if (cid.startswith("Qm") and len(r.content) <= _CIDV0_MAX_BYTES
+                        and not cid_matches(cid, r.content)):
+                    logger.warning("_ipfs_fetch_bytes: %s from %s does not match its CID; next gateway",
+                                   cid[:20], gateway)
+                    continue
                 return r.content
         except Exception as exc:  # noqa: BLE001
             logger.debug("_ipfs_fetch_bytes gateway %s cid %s: %s", gateway, cid[:20], exc)
@@ -707,6 +758,7 @@ async def _ipfs_fetch_manifest(
     raw = await _ipfs_fetch_bytes(client, cid, _MAX_MANIFEST_BYTES, gateways)
     if raw is None:
         return None
+    manifest_cid_ok = cid_matches(cid, raw)
     try:
         manifest = json.loads(raw.decode("utf-8"))
     except Exception:  # noqa: BLE001
@@ -726,6 +778,7 @@ async def _ipfs_fetch_manifest(
             code_hash[:12], declared_hash[:12],
         )
         return None
+    manifest["_soken_cid_verified"] = manifest_cid_ok
     return manifest
 
 
@@ -794,6 +847,8 @@ async def _registry_download_files(
             continue
         cid = ipfs_url[len("ipfs://"):]
         raw = await _ipfs_fetch_bytes(client, cid, _MAX_FILE_BYTES, gateways)
+        if raw is not None and not cid_matches(cid, raw) and missing is not None:
+            missing.append(filename + " (CID not checkable)")
         if raw is None:
             logger.debug("_registry_download_files: failed to fetch %s", filename)
             if missing is not None:
@@ -861,20 +916,14 @@ async def fetch_source_from_registry(
         if not ipfs_url:
             logger.debug("registry: empty ipfs link for %s / %s", code_hash[:12], verifier_id)
             continue
-        # Attested only when the manifest and EVERY listed source come from the verifier's own
-        # gateway; otherwise the same content from third-party gateways is used unattested (tier D
-        # unless an exact rebuild matches).
-        attested = True
-        manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash, (_VERIFIER_GATEWAY,))
+        # Attested only when the manifest and EVERY listed source match their registry CIDs
+        # (recomputed locally, so the serving gateway does not matter) and nothing is missing.
+        manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash)
+        attested = bool(manifest) and manifest.get("_soken_cid_verified") is True
         if manifest is None:
-            attested = False
-            manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash)
-        if manifest is None:
-            logger.debug("registry: manifest fetch/verify failed for %s / %s", code_hash[:12], verifier_id)
             continue
         missing: list[str] = []
-        raw_files = await _registry_download_files(
-            client, manifest, (_VERIFIER_GATEWAY,) if attested else None, missing)
+        raw_files = await _registry_download_files(client, manifest, None, missing)
         if missing:
             attested = False
         if not raw_files:
