@@ -1157,3 +1157,237 @@ async def test_build_result_json_carries_b4_diagnostics(tmp_path: Path) -> None:
     assert br["forge_rc"] == 0 and br["forge_stderr_head"].startswith("warning[unsafe-typecast]")
     assert br["forge_version_mismatch"] is True
     assert "scratch" not in br                                     # the allowlist still applies
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: TRON fetch routing (fix/tron-fetch-and-stuck-map)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tron_fetch_calls_fetch_source_tron_and_pins(tmp_path: Path) -> None:
+    """TRON job fetch step calls fetch_source_tron, pins the files, and proceeds to build.
+
+    Before the fix, TRON jobs had no chain_id, fell into the 'not a deployed job' branch,
+    wrote empty candidates.json, and transitioned to building — never calling fetch_source_tron
+    and never writing a pin.  The map step then failed with FileNotFoundError on the missing
+    manifest.json.
+    """
+    store = FakeStore()
+    # TRON job: chain="tron", no chain_id (TRON has no EVM chain RPC)
+    job = store.add_job("job_TRON01", chain_id=None, address="TRegosVaS1o3DHG85nnW8xYzczPm3xL76K")
+    job_dict = job.as_dict()
+    job_dict["chain"] = "tron"
+
+    step_dict = {
+        "id": 50, "job_id": "job_TRON01", "step": "fetch", "seq": 0,
+        "container": False, "units": 0, "ram_mb": 0,
+        "attempt": 1, "max_attempts": 3, "lease_owner": "test-worker",
+    }
+    sup = _make_supervisor(store, tmp_path)
+
+    fake_cand = Candidate(
+        provider="tronscan",
+        files={"CRSToken.sol": "// SPDX-License-Identifier: MIT\npragma solidity ^0.6.0;\ncontract CRSToken {}"},
+        sha256="cc" * 32,
+        language="solidity",
+        compiler=Compiler(version="tron_0.6.2_Plato_v4.2", version_pinned_by="tronscan"),
+        settings={"optimizer": {"enabled": True, "runs": 200}},
+        std_json_input=None,
+        entry_contract="CRSToken.sol:CRSToken",
+        explorer_verified=True,
+    )
+
+    repo_mock = AsyncMock()
+    repo_mock.update_job_fields = AsyncMock()
+    repo_mock.transition = AsyncMock()
+    repo_mock.insert_step = AsyncMock()
+    repo_mock.complete_step = AsyncMock()
+
+    conn_ctx = AsyncMock()
+    conn_ctx.__aenter__ = AsyncMock(return_value=conn_ctx)
+    conn_ctx.__aexit__ = AsyncMock(return_value=False)
+    txn_ctx = AsyncMock()
+    txn_ctx.__aenter__ = AsyncMock(return_value=txn_ctx)
+    txn_ctx.__aexit__ = AsyncMock(return_value=False)
+    conn_ctx.transaction = MagicMock(return_value=txn_ctx)
+
+    # fetch_source_tron returns (candidates, runtime_hex, creation_hex)
+    tron_fetch_result = ([fake_cand], "0xdeadbeef", None)
+
+    with patch("soken_review.worker.supervisor.JobRepo", return_value=repo_mock), \
+         patch("soken_review.adapters.tron.fetch.fetch_source_tron",
+               new=AsyncMock(return_value=tron_fetch_result)), \
+         patch.object(sup, "_get_job", new=AsyncMock(return_value=job_dict)), \
+         patch.object(sup, "_mark_step", new=AsyncMock()) as mock_mark, \
+         patch.object(sup, "_after_fetch", new=AsyncMock()) as mock_after_fetch:
+
+        sup._pool.connection = MagicMock(return_value=conn_ctx)
+        await sup._run_fetch(step_dict)
+
+    # Pin must have been written — map step needs manifest.json
+    pin_dir = tmp_path / "job_TRON01" / "pin"
+    assert pin_dir.exists(), "pin dir not created for TRON job"
+    assert (pin_dir / "manifest.json").exists(), "manifest.json missing for TRON job"
+
+    # candidates.json must list the tronscan candidate (not empty)
+    out_dir = tmp_path.parent / "work" / "job_TRON01"
+    cands_path = out_dir / "candidates.json"
+    assert cands_path.exists(), "candidates.json not written"
+    cands = json.loads(cands_path.read_text())
+    assert len(cands) == 1, f"expected 1 candidate, got {len(cands)}"
+    assert cands[0]["provider"] == "tronscan"
+
+    # Must proceed to building, not stop at insufficient_source
+    repo_mock.transition.assert_not_awaited()  # insufficient_source would call this
+    mock_after_fetch.assert_awaited_once()
+    mock_mark.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_tron_fetch_no_source_is_insufficient_source(tmp_path: Path) -> None:
+    """TRON job with no verified source → insufficient_source E_SOURCE_NOT_FOUND, never builds."""
+    store = FakeStore()
+    job = store.add_job("job_TRON02", chain_id=None, address="TFakeUnverifiedContract00000000001")
+    job_dict = job.as_dict()
+    job_dict["chain"] = "tron"
+
+    step_dict = {
+        "id": 51, "job_id": "job_TRON02", "step": "fetch", "seq": 0,
+        "container": False, "units": 0, "ram_mb": 0,
+        "attempt": 1, "max_attempts": 3, "lease_owner": "test-worker",
+    }
+    sup = _make_supervisor(store, tmp_path)
+
+    repo_mock = AsyncMock()
+    repo_mock.complete_step = AsyncMock()
+    repo_mock.transition = AsyncMock()
+
+    conn_ctx = AsyncMock()
+    conn_ctx.__aenter__ = AsyncMock(return_value=conn_ctx)
+    conn_ctx.__aexit__ = AsyncMock(return_value=False)
+    txn_ctx = AsyncMock()
+    txn_ctx.__aenter__ = AsyncMock(return_value=txn_ctx)
+    txn_ctx.__aexit__ = AsyncMock(return_value=False)
+    conn_ctx.transaction = MagicMock(return_value=txn_ctx)
+
+    # fetch_source_tron returns empty candidates (unverified contract)
+    with patch("soken_review.worker.supervisor.JobRepo", return_value=repo_mock), \
+         patch("soken_review.adapters.tron.fetch.fetch_source_tron",
+               new=AsyncMock(return_value=([], None, None))), \
+         patch.object(sup, "_get_job", new=AsyncMock(return_value=job_dict)), \
+         patch.object(sup, "_after_fetch", new=AsyncMock()) as mock_after_fetch:
+
+        sup._pool.connection = MagicMock(return_value=conn_ctx)
+        await sup._run_fetch(step_dict)
+
+    # Must end insufficient_source, never proceed to build
+    repo_mock.transition.assert_awaited_with(
+        "job_TRON02", "insufficient_source", error_code="E_SOURCE_NOT_FOUND"
+    )
+    mock_after_fetch.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: stuck job when terminal supervisor step fails (fix/tron-fetch-and-stuck-map)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_map_exception_fails_job(tmp_path: Path) -> None:
+    """map step that raises an exception → job transitions to failed (never stuck in analyzing).
+
+    Before the fix, a FileNotFoundError in run_map_step (pin manifest missing) only marked
+    the step as failed but left the job in `analyzing` forever.
+    """
+    store = FakeStore()
+    job = store.add_job("job_STUCK01", chain_id=1, address="0xabcd")
+    job_dict = job.as_dict()
+    job_dict["state"] = "analyzing"
+
+    step_dict = {
+        "id": 60, "job_id": "job_STUCK01", "step": "map", "seq": 0,
+        "container": False, "units": 0, "ram_mb": 0,
+        "attempt": 1, "max_attempts": 2, "lease_owner": "test-worker",
+    }
+    sup = _make_supervisor(store, tmp_path)
+
+    transitions: list[str] = []
+
+    def _capture_transition(job_id: str, new_state: str, **kwargs: Any) -> None:
+        transitions.append(new_state)
+
+    repo_mock = AsyncMock()
+    repo_mock.get = AsyncMock(return_value=job_dict)
+    repo_mock.complete_step = AsyncMock()
+    repo_mock.transition = AsyncMock(side_effect=_capture_transition)
+
+    conn_ctx = AsyncMock()
+    conn_ctx.__aenter__ = AsyncMock(return_value=conn_ctx)
+    conn_ctx.__aexit__ = AsyncMock(return_value=False)
+    txn_ctx = AsyncMock()
+    txn_ctx.__aenter__ = AsyncMock(return_value=txn_ctx)
+    txn_ctx.__aexit__ = AsyncMock(return_value=False)
+    conn_ctx.transaction = MagicMock(return_value=txn_ctx)
+
+    # _run_map raises FileNotFoundError (pin manifest missing — the TRON bug scenario)
+    with patch("soken_review.worker.supervisor.JobRepo", return_value=repo_mock), \
+         patch.object(sup, "_get_job", new=AsyncMock(return_value=job_dict)), \
+         patch.object(sup, "_run_map", new=AsyncMock(side_effect=FileNotFoundError(
+             ".sbx/pins/job_STUCK01/pin/manifest.json"
+         ))), \
+         patch.object(sup, "_maybe_queue_context", new=AsyncMock()):
+
+        sup._pool.connection = MagicMock(return_value=conn_ctx)
+        await sup._run_step(step_dict)
+
+    # Step must be marked failed (complete_step called with status=failed)
+    assert repo_mock.complete_step.await_count >= 1
+    cs_call = repo_mock.complete_step.call_args_list[-1]
+    assert cs_call[0][1] == "failed" or cs_call[1].get("status") == "failed" or \
+           "failed" in str(cs_call), f"complete_step not called with failed: {cs_call}"
+
+    # Job must be transitioned to failed — NOT left in analyzing
+    assert "failed" in transitions, (
+        f"Expected job to transition to 'failed' after map exception, got: {transitions}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_render_exception_does_not_fail_job(tmp_path: Path) -> None:
+    """render step exception → step marked failed, job state NOT changed (render is non-gating)."""
+    store = FakeStore()
+    job = store.add_job("job_STUCK02", chain_id=1, address="0xabcd")
+    job_dict = job.as_dict()
+    job_dict["state"] = "ready"
+
+    step_dict = {
+        "id": 70, "job_id": "job_STUCK02", "step": "render", "seq": 0,
+        "container": True, "units": 1, "ram_mb": 1024,
+        "attempt": 1, "max_attempts": 1, "lease_owner": "test-worker",
+    }
+    sup = _make_supervisor(store, tmp_path)
+
+    repo_mock = AsyncMock()
+    repo_mock.complete_step = AsyncMock()
+    repo_mock.transition = AsyncMock()
+
+    conn_ctx = AsyncMock()
+    conn_ctx.__aenter__ = AsyncMock(return_value=conn_ctx)
+    conn_ctx.__aexit__ = AsyncMock(return_value=False)
+    conn_ctx.transaction = MagicMock(return_value=AsyncMock(
+        __aenter__=AsyncMock(return_value=AsyncMock()),
+        __aexit__=AsyncMock(return_value=False),
+    ))
+
+    with patch("soken_review.worker.supervisor.JobRepo", return_value=repo_mock), \
+         patch.object(sup, "_get_job", new=AsyncMock(return_value=job_dict)), \
+         patch("soken_review.worker.supervisor._render_mod.run_render_step",
+               new=AsyncMock(side_effect=RuntimeError("render container OOM"))), \
+         patch.object(sup, "_maybe_queue_context", new=AsyncMock()):
+
+        sup._pool.connection = MagicMock(return_value=conn_ctx)
+        await sup._run_step(step_dict)
+
+    # Render exceptions must NOT transition the job (render is non-gating)
+    repo_mock.transition.assert_not_awaited()
