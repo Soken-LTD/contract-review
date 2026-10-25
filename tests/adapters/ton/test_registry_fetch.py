@@ -435,6 +435,42 @@ class TestFetchSourceFromRegistry:
         assert cand.explorer_verified is True
 
     @pytest.mark.asyncio
+    async def test_attested_only_when_everything_came_from_the_verifier_gateway(self):
+        client = self._build_mock_client()
+        with patch("soken_review.adapters.ton.fetch._limiter") as mock_lim:
+            mock_lim.return_value.wait = AsyncMock()
+            with patch("soken_review.adapters.ton.fetch._validate_download_url", side_effect=lambda u: u):
+                cand = await fetch_source_from_registry(client, CODE_HASH)
+        assert cand.settings["verifier"]["hash_attested"] is True
+
+    @pytest.mark.asyncio
+    async def test_third_party_gateway_or_missing_file_is_not_attested(self):
+        for broken in ("verifier_gateway_down", "missing_file"):
+            client = self._build_mock_client()
+            inner = client.get
+
+            async def get(url, _inner=inner, _broken=broken, **kw):
+                if _broken == "verifier_gateway_down" and url.startswith("https://files.orbs.network/"):
+                    r = MagicMock()
+                    r.status_code = 503
+                    r.content = b""
+                    return r
+                if _broken == "missing_file" and "CIDsource2" in url:
+                    r = MagicMock()
+                    r.status_code = 404
+                    r.content = b""
+                    return r
+                return await _inner(url, **kw)
+
+            client.get = get
+            with patch("soken_review.adapters.ton.fetch._limiter") as mock_lim:
+                mock_lim.return_value.wait = AsyncMock()
+                with patch("soken_review.adapters.ton.fetch._validate_download_url", side_effect=lambda u: u):
+                    cand = await fetch_source_from_registry(client, CODE_HASH)
+            assert cand is not None, broken
+            assert cand.settings["verifier"]["hash_attested"] is False, broken
+
+    @pytest.mark.asyncio
     async def test_returns_none_for_unverified_code_hash(self):
         unverified = "a" * 64
         client = MagicMock()

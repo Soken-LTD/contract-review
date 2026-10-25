@@ -657,17 +657,23 @@ async def _registry_get_ipfs_link(
     return _parse_string_cell(item_val if isinstance(item_val, dict) else {})
 
 
+# The verifier operator's own gateway: content served from it is attested by the same party that
+# signs the on-chain registry. Third-party gateways serve the bytes but attest nothing.
+_VERIFIER_GATEWAY = "https://files.orbs.network/ipfs/"
+
+
 async def _ipfs_fetch_bytes(
     client: httpx.AsyncClient,
     cid: str,
     max_bytes: int,
+    gateways: tuple[str, ...] | None = None,
 ) -> bytes | None:
     """Fetch raw bytes for an IPFS CID, trying each gateway in turn.
 
     Uses the "ipfs" rate-limiter bucket (limits.yaml outbound.ipfs 2/s).
     Only hostnames in _VERIFIER_DOWNLOAD_ALLOWLIST are contacted (SSRF protection).
     """
-    for gateway in _IPFS_GATEWAYS:
+    for gateway in gateways or _IPFS_GATEWAYS:
         url = gateway + cid
         if _validate_download_url(url) is None:
             continue
@@ -688,6 +694,7 @@ async def _ipfs_fetch_manifest(
     client: httpx.AsyncClient,
     ipfs_url: str,
     code_hash: str,
+    gateways: tuple[str, ...] | None = None,
 ) -> dict[str, Any] | None:
     """Fetch the IPFS sources JSON manifest and verify it matches code_hash.
 
@@ -697,7 +704,7 @@ async def _ipfs_fetch_manifest(
     if not ipfs_url.startswith("ipfs://"):
         return None
     cid = ipfs_url[len("ipfs://"):]
-    raw = await _ipfs_fetch_bytes(client, cid, _MAX_MANIFEST_BYTES)
+    raw = await _ipfs_fetch_bytes(client, cid, _MAX_MANIFEST_BYTES, gateways)
     if raw is None:
         return None
     try:
@@ -748,6 +755,8 @@ def _registry_find_entrypoint(manifest: dict[str, Any], source_filenames: list[s
 async def _registry_download_files(
     client: httpx.AsyncClient,
     manifest: dict[str, Any],
+    gateways: tuple[str, ...] | None = None,
+    missing: list[str] | None = None,
 ) -> dict[str, str]:
     """Download source files referenced in the IPFS manifest.
 
@@ -775,9 +784,11 @@ async def _registry_download_files(
         if not ipfs_url.startswith("ipfs://"):
             continue
         cid = ipfs_url[len("ipfs://"):]
-        raw = await _ipfs_fetch_bytes(client, cid, _MAX_FILE_BYTES)
+        raw = await _ipfs_fetch_bytes(client, cid, _MAX_FILE_BYTES, gateways)
         if raw is None:
             logger.debug("_registry_download_files: failed to fetch %s", filename)
+            if missing is not None:
+                missing.append(filename)
             continue
         if total_bytes + len(raw) > _MAX_TOTAL_FETCH_BYTES:
             logger.warning("_registry_download_files: total byte budget exceeded at %s", filename)
@@ -827,11 +838,22 @@ async def fetch_source_from_registry(
         if not ipfs_url:
             logger.debug("registry: empty ipfs link for %s / %s", code_hash[:12], verifier_id)
             continue
-        manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash)
+        # Attested only when the manifest and EVERY listed source come from the verifier's own
+        # gateway; otherwise the same content from third-party gateways is used unattested (tier D
+        # unless an exact rebuild matches).
+        attested = True
+        manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash, (_VERIFIER_GATEWAY,))
+        if manifest is None:
+            attested = False
+            manifest = await _ipfs_fetch_manifest(client, ipfs_url, code_hash)
         if manifest is None:
             logger.debug("registry: manifest fetch/verify failed for %s / %s", code_hash[:12], verifier_id)
             continue
-        raw_files = await _registry_download_files(client, manifest)
+        missing: list[str] = []
+        raw_files = await _registry_download_files(
+            client, manifest, (_VERIFIER_GATEWAY,) if attested else None, missing)
+        if missing:
+            attested = False
         if not raw_files:
             logger.warning("registry: no source files downloaded for %s / %s", code_hash[:12], verifier_id)
             continue
@@ -862,7 +884,7 @@ async def fetch_source_from_registry(
             "verifier": {
                 "verifier_id": verifier_id,
                 "code_hash": code_hash,
-                "hash_attested": True,
+                "hash_attested": attested,
                 "ipfs_manifest_url": ipfs_url,
                 "compiler": _compiler_norm,
                 "compiler_settings": compiler_settings,
@@ -1018,7 +1040,8 @@ async def fetch_source_from_verifier(
         "func_targets": targets,
         "verifier": {
             "code_hash": code_hash,
-            "hash_attested": True,
+            # Legacy HTTP bundle: the server's own claim, no on-chain binding; never attested.
+            "hash_attested": False,
             "source_bundle_hash": bundle.get("source_bundle_hash"),
             "storage_revision": bundle.get("storage_revision"),
             "verified_at": bundle.get("verified_at"),
