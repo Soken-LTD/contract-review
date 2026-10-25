@@ -106,6 +106,14 @@ def _make_manifest(code_hash: str = CODE_HASH, compiler: str = "tact") -> dict[s
 # ── unit: address helpers ─────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _cid_checks_pass(request, monkeypatch):
+    """These tests use synthetic IPFS content; CID verification is tested in test_ipfs_cid.py."""
+    if request.node.get_closest_marker("real_cid"):
+        return
+    monkeypatch.setattr("soken_review.adapters.ton.fetch.cid_matches", lambda cid, content: True)
+
+
 class TestCrc16Xmodem:
     def test_known_vector(self):
         # CRC-16/XMODEM (poly=0x1021, init=0x0000, no reflection):
@@ -435,7 +443,7 @@ class TestFetchSourceFromRegistry:
         assert cand.explorer_verified is True
 
     @pytest.mark.asyncio
-    async def test_attested_only_when_everything_came_from_the_verifier_gateway(self):
+    async def test_attested_when_all_cids_verify(self):
         client = self._build_mock_client()
         with patch("soken_review.adapters.ton.fetch._limiter") as mock_lim:
             mock_lim.return_value.wait = AsyncMock()
@@ -444,17 +452,12 @@ class TestFetchSourceFromRegistry:
         assert cand.settings["verifier"]["hash_attested"] is True
 
     @pytest.mark.asyncio
-    async def test_third_party_gateway_or_missing_file_is_not_attested(self):
-        for broken in ("verifier_gateway_down", "missing_file"):
+    async def test_missing_file_or_unverifiable_cid_is_not_attested(self, monkeypatch):
+        for broken in ("missing_file", "cid_unverifiable"):
             client = self._build_mock_client()
             inner = client.get
 
             async def get(url, _inner=inner, _broken=broken, **kw):
-                if _broken == "verifier_gateway_down" and url.startswith("https://files.orbs.network/"):
-                    r = MagicMock()
-                    r.status_code = 503
-                    r.content = b""
-                    return r
                 if _broken == "missing_file" and "CIDsource2" in url:
                     r = MagicMock()
                     r.status_code = 404
@@ -463,6 +466,9 @@ class TestFetchSourceFromRegistry:
                 return await _inner(url, **kw)
 
             client.get = get
+            if broken == "cid_unverifiable":
+                monkeypatch.setattr("soken_review.adapters.ton.fetch.cid_matches",
+                                    lambda cid, content: "CIDsource2" not in cid)
             with patch("soken_review.adapters.ton.fetch._limiter") as mock_lim:
                 mock_lim.return_value.wait = AsyncMock()
                 with patch("soken_review.adapters.ton.fetch._validate_download_url", side_effect=lambda u: u):
