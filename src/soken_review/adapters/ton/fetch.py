@@ -768,6 +768,11 @@ async def _registry_download_files(
     result: dict[str, str] = {}
     total_bytes = 0
     sources = manifest.get("sources") or []
+    if not isinstance(sources, list) or len(sources) > _MAX_TOTAL_INODES:
+        logger.warning("_registry_download_files: %s sources listed; refused", len(sources) if isinstance(sources, list) else "?")
+        if missing is not None:
+            missing.append("(manifest sources list refused)")
+        return {}
     for entry in sources:
         filename = entry.get("filename") if isinstance(entry, dict) else None
         ipfs_url = entry.get("url") if isinstance(entry, dict) else None
@@ -813,7 +818,11 @@ async def _registry_download_files(
         listed = [e.get("filename") for e in sources if isinstance(e, dict) and isinstance(e.get("filename"), str)
                   and _Path(e["filename"]).suffix.lower() in _REGISTRY_SOURCE_EXTS
                   and _Path(e["filename"]).suffix.lower() not in _BINARY_SOURCE_EXTS]
-        missing.extend(f for f in listed if f not in result and f not in missing)
+        seen = set(missing)
+        for f in listed:
+            if f not in result and f not in seen:
+                missing.append(f)
+                seen.add(f)
     return result
 
 
