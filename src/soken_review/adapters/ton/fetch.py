@@ -153,6 +153,44 @@ _MAX_TOTAL_INODES = 200_000  # max number of individual source files
 _TIMEOUT = httpx.Timeout(30.0)
 _MAX_RETRIES = 3
 
+# Maximum size for compilerSettings.parameters JSON string (size-capped before parse).
+_MAX_PARAMS_JSON = 4096
+
+
+def _normalise_verifier_compiler(
+    name: Any,
+    version: Any,
+    params_raw: Any,
+) -> dict[str, Any]:
+    """Return a normalised compiler dict: {"name": str, "version": str|None, "params": dict|None}.
+
+    Both fetch paths (on-chain registry and legacy HTTP) store `settings["verifier"]["compiler"]`
+    as this shape so that build.py and trust_scan.scan_params always receive a dict, never a bare
+    string.  `params_raw` is the compilerSettings.parameters field from the registry manifest
+    (a JSON string) or the legacy bundle's compiler.params dict.  Invalid JSON and oversized
+    strings produce an `__invalid__` marker that scan_params rejects (untrusted_args).
+    """
+    # Fail closed: params that are present but cannot become a dict are kept as a marker that
+    # trust_scan.scan_params rejects ("outside the allowlist"), never dropped as "no params".
+    params: dict[str, Any] | None = None
+    if params_raw is None or params_raw == "":
+        params = None
+    elif isinstance(params_raw, dict):
+        params = params_raw
+    elif isinstance(params_raw, str) and len(params_raw) <= _MAX_PARAMS_JSON:
+        try:
+            parsed = json.loads(params_raw)
+        except (json.JSONDecodeError, ValueError):
+            parsed = None
+        params = parsed if isinstance(parsed, dict) else {"__invalid__": "params are not a JSON object"}
+    else:
+        params = {"__invalid__": "params are oversized or of an unexpected type"}
+    return {
+        "name": (name or "").lower() if isinstance(name, str) else "",
+        "version": version if isinstance(version, str) and version else None,
+        "params": params,
+    }
+
 
 # ── on-chain registry helpers ─────────────────────────────────────────────
 
@@ -808,13 +846,20 @@ async def fetch_source_from_registry(
         if entry is None and language == "tact":
             logger.debug("registry: no entrypoint found for tact contract %s", code_hash[:12])
             # still proceed; build may work without an explicit entry if there is only one .tact file
+        # Normalise into the documented compiler shape so build.py/trust_scan always get a dict.
+        # parameters is a JSON string in the registry manifest; parse it safely (size-capped).
+        _compiler_norm = _normalise_verifier_compiler(
+            name=manifest.get("compiler"),
+            version=version,
+            params_raw=compiler_settings.get("parameters"),
+        )
         settings: dict[str, Any] = {
             "entry": entry,
             "verifier": {
                 "verifier_id": verifier_id,
                 "code_hash": code_hash,
                 "ipfs_manifest_url": ipfs_url,
-                "compiler": manifest.get("compiler"),
+                "compiler": _compiler_norm,
                 "compiler_settings": compiler_settings,
                 "verification_date": manifest.get("verificationDate"),
                 "source_item_address": source_item_addr,
@@ -953,6 +998,14 @@ async def fetch_source_from_verifier(
     if language not in ("func", "tact", "tolk"):
         return None
     entry = bundle.get("entrypoint")
+    # Normalise into the documented compiler shape (same as the registry path above).
+    _raw_compiler = bundle.get("compiler") or {}
+    _legacy_params = _raw_compiler.get("params") if isinstance(_raw_compiler, dict) else None
+    _compiler_norm = _normalise_verifier_compiler(
+        name=language,
+        version=version,
+        params_raw=_legacy_params,
+    )
     settings: dict[str, Any] = {
         "entry": entry,
         "func_targets": targets,
@@ -961,7 +1014,7 @@ async def fetch_source_from_verifier(
             "source_bundle_hash": bundle.get("source_bundle_hash"),
             "storage_revision": bundle.get("storage_revision"),
             "verified_at": bundle.get("verified_at"),
-            "compiler": bundle.get("compiler"),
+            "compiler": _compiler_norm,
         },
     }
     cand = _make_ton_candidate(

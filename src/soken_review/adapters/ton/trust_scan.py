@@ -69,8 +69,23 @@ _KNOWN_BODIES = frozenset({
     "<b b> <s PUSHSLICE",          # empty slice
 })
 
-# Verifier bundle `compiler.params` keys the worker accepts (acton compiler-worker, F13).
-_ALLOWED_PARAMS = frozenset({"compiler_version"})
+# Verifier bundle `compiler.params` top-level keys the worker accepts (acton compiler-worker, F13).
+# compiler_version: FunC/Tolk legacy param.
+# entrypoint: Tact registry param — path to the main .tact file (must end in .tact).
+# options: Tact compiler options object; sub-keys are validated against the Tact 1.6 schema.
+_ALLOWED_PARAMS = frozenset({"compiler_version", "entrypoint", "options"})
+
+# Tact 1.6 options allowlist (mirrors tact_config._BOOL_OPTIONS / _NESTED_OPTIONS).
+_ALLOWED_OPTION_KEYS = frozenset({
+    "debug", "external", "ipfsAbiGetter", "interfacesGetter",
+    "enableLazyDeploymentCompletedGetter",
+    "experimental", "safety", "optimizations",
+})
+_NESTED_OPTION_KEYS: dict[str, frozenset[str]] = {
+    "experimental": frozenset({"inline"}),
+    "safety": frozenset({"nullChecks"}),
+    "optimizations": frozenset({"alwaysSaveContractData", "internalExternalReceiversOutsideMethodsMap"}),
+}
 
 # Legacy mnemonics still declared by deployed stdlib.fc copies but absent from the pinned lists.
 _LEGACY_MNEMONICS = frozenset({"BUYGAS"})
@@ -366,9 +381,41 @@ def scan_files(files: dict[str, str]) -> list[str]:
 
 
 def scan_params(params: Any) -> list[str]:
-    """Compiler params outside the allowlist make the candidate `untrusted_args`."""
+    """Compiler params outside the allowlist make the candidate `untrusted_args`.
+
+    Top-level keys are checked against _ALLOWED_PARAMS.  The `entrypoint` value must be a
+    string ending in `.tact`.  The `options` value must be an object whose keys and their
+    types match the Tact 1.6 schema (boolean scalars, or nested objects with known sub-keys).
+    Unknown option keys are untrusted even if nested keys are otherwise valid.
+    """
     if not params:
         return []
     if not isinstance(params, dict):
         return ["compiler params are not an object"]
-    return [f"compiler param {k!r} outside the allowlist" for k in params if k not in _ALLOWED_PARAMS]
+    reasons = [f"compiler param {k!r} outside the allowlist" for k in params if k not in _ALLOWED_PARAMS]
+    if "entrypoint" in params:
+        ep = params["entrypoint"]
+        if not isinstance(ep, str):
+            reasons.append("compiler param 'entrypoint' is not a string")
+        elif not ep.lower().endswith(".tact"):
+            reasons.append(f"compiler param 'entrypoint' {ep[:80]!r} is not a .tact file")
+    if "options" in params:
+        opts = params["options"]
+        if not isinstance(opts, dict):
+            reasons.append("compiler param 'options' is not an object")
+        else:
+            for ok, ov in opts.items():
+                if ok not in _ALLOWED_OPTION_KEYS:
+                    reasons.append(f"compiler param options.{ok!r} outside the allowlist")
+                elif ok in _NESTED_OPTION_KEYS:
+                    if not isinstance(ov, dict):
+                        reasons.append(f"compiler param options.{ok} is not an object")
+                    else:
+                        for sk, sv in ov.items():
+                            if sk not in _NESTED_OPTION_KEYS[ok]:
+                                reasons.append(f"compiler param options.{ok}.{sk!r} outside the allowlist")
+                            elif not isinstance(sv, bool):
+                                reasons.append(f"compiler param options.{ok}.{sk} is not a boolean")
+                elif not isinstance(ov, bool):
+                    reasons.append(f"compiler param options.{ok} is not a boolean")
+    return reasons

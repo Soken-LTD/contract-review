@@ -228,7 +228,20 @@ def _build_tact(candidate: Candidate, version: str, work_dir: Path) -> tuple[dic
         entry = _entry(candidate, (".tact",))
         if not entry:
             return {}, "no Tact entrypoint"
-        cfg = {"projects": [{"name": "contract", "path": f"./src/{entry}", "output": "./out"}]}
+        project: dict = {"name": "contract", "path": f"./src/{entry}", "output": "./out"}
+        # Apply options from verifier params when the source is trusted and params carry them.
+        # scan_params has already validated the params keys (untrusted_args would have failed early).
+        _vc = ((candidate.settings or {}).get("verifier") or {})
+        _ci = _vc.get("compiler") if isinstance(_vc, dict) else None
+        if isinstance(_ci, dict) and isinstance(_ci.get("params"), dict):
+            _p_opts = _ci["params"].get("options")
+            if isinstance(_p_opts, dict):
+                # Re-validate through the allowlist to get a typed, compiler-safe options dict.
+                _tmp_cfg = {"projects": [{"name": "contract", "path": entry, "options": _p_opts}]}
+                _projs, _reasons = check_config(_tmp_cfg)
+                if not _reasons and _projs and _projs[0].get("options"):
+                    project["options"] = _projs[0]["options"]
+        cfg = {"projects": [project]}
     (work_dir / "tact.config.json").write_text(json.dumps(cfg), encoding="utf-8")
     # recorded in provenance (tried[].build_config) and the report checks
     candidate.settings = {**(candidate.settings or {}), "tact_build_config": cfg}
@@ -271,8 +284,16 @@ def _run_build(candidate: Candidate, language: str, work_dir: Path) -> BuildResu
 
     if language not in _BUILDERS:
         return _fail(candidate, "unsupported_toolchain", f"language {language}")
-    bad_params = scan_params((candidate.settings or {}).get("verifier", {}).get("compiler", {}).get("params")
-                             if candidate.provider == "ton_verifier" else None)
+    _verifier_compiler = (
+        (candidate.settings or {}).get("verifier", {}).get("compiler")
+        if candidate.provider == "ton_verifier"
+        else None
+    )
+    if _verifier_compiler is not None and not isinstance(_verifier_compiler, dict):
+        # fetch.py always produces a dict now; a bare string here means a stale/unexpected shape.
+        bad_params = [f"compiler settings shape is not a dict: {type(_verifier_compiler).__name__}"]
+    else:
+        bad_params = scan_params((_verifier_compiler or {}).get("params"))
     if bad_params:
         return _fail(candidate, "untrusted_args", "; ".join(bad_params))
     requested = candidate.compiler.version if candidate.compiler else _DEFAULT_VERSION[language]
