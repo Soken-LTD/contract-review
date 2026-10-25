@@ -1,9 +1,15 @@
 # TON build/analyze image (plan v4 06 section 4.2, 4.4).
 #
 # Compilers baked in at pinned versions (all via npm, no native binaries):
-#   FunC   @ton-community/func-js 0.10.0  (lockfile)
-#   Tact   @tact-lang/compiler 1.6.13     (lockfile)
-#   Tolk   @ton/tolk-js 0.12.0 (WASM)     (lockfile)
+#   FunC   @ton-community/func-js 0.10.0  (lockfile, orchestrator)
+#          func-js-bin aliases: 0.2.0, 0.3.0, 0.4.0-0.4.6, 0.4.4-newops, 0.4.4-newops.1, 0.4.6-wasmfix.0
+#   Tact   @tact-lang/compiler 1.6.13     (lockfile, default + Misti dep)
+#          tact-* aliases: 1.4.0 through 1.6.13  (all npm-published releases)
+#   Tolk   @ton/tolk-js 0.12.0 (WASM, lockfile, default)
+#          tolk-* aliases: 0.6.0 through 1.5.0
+#
+# Versions source-of-truth: docker/ton-build/versions.json (baked at /opt/ton-node/versions.json)
+# Mirrored in: src/soken_review/adapters/ton/build.py (TACT_VERSIONS, FUNC_VERSIONS, TOLK_VERSIONS)
 #
 # Analyzers:
 #   Misti 0.9.0 (lockfile, symlinked to PATH)
@@ -60,9 +66,29 @@ COPY docker/ton-build/package.json docker/ton-build/package-lock.json ./
 
 RUN npm ci --ignore-scripts
 
+# Bake versions.json (source of truth, mirrors build.py constants)
+COPY docker/ton-build/versions.json ./versions.json
+
 # Symlink Misti CLI to PATH (installed into node_modules/.bin via lockfile)
 RUN ln -sf /opt/ton-node/node_modules/.bin/misti /usr/local/bin/misti \
     && misti --version
+
+# Verify all tact-* and tolk-* alias packages are present (fail-fast sanity check)
+RUN node -e "
+const fs = require('fs');
+const v = JSON.parse(fs.readFileSync('/opt/ton-node/versions.json','utf8'));
+let ok = true;
+for (const ver of v.tact) {
+  const pkg = '/opt/ton-node/node_modules/tact-' + ver + '/package.json';
+  if (!fs.existsSync(pkg)) { process.stderr.write('MISSING tact-' + ver + '\n'); ok = false; }
+}
+for (const ver of v.tolk.filter(x => x !== 'latest')) {
+  const pkg = '/opt/ton-node/node_modules/tolk-' + ver + '/package.json';
+  if (!fs.existsSync(pkg)) { process.stderr.write('MISSING tolk-' + ver + '\n'); ok = false; }
+}
+if (!ok) process.exit(1);
+process.stdout.write('version check ok: ' + v.tact.length + ' tact, ' + v.tolk.length + ' tolk\n');
+"
 
 # Copy node_scripts from the adapter source (repo root is Docker build context)
 COPY src/soken_review/adapters/ton/node_scripts/ /opt/ton-node/node_scripts/

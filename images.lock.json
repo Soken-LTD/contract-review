@@ -271,13 +271,13 @@
     "ton-build": {
       "repository": "ghcr.io/soken-ltd/ton-build",
       "tag": "0.1.0-dev",
-      "digest": "sha256:67562957ab10868e1b127c10d5b164dbfd77bee6b5ee56aac7c791d4ec20d77f",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "tools": {
         "node": "22",
         "func-js": "0.10.0",
         "func-js-bin": "0.2.0, 0.3.0, 0.4.0-0.4.6, 0.4.4-newops, 0.4.4-newops.1, 0.4.6-wasmfix.0 (npm aliases func-<version>)",
-        "tact-compiler": "1.6.13",
-        "tolk-js": "0.12.0",
+        "tact-compiler": "1.4.0-1.6.13 (npm aliases tact-<version>; default @tact-lang/compiler 1.6.13)",
+        "tolk-js": "0.6.0-1.5.0 (npm aliases tolk-<version>; default @ton/tolk-js 0.12.0)",
         "ton-core": "0.61.0",
         "ton-sandbox": "0.45.0",
         "misti": "0.9.0"
@@ -285,7 +285,7 @@
       "platforms": [
         "linux/amd64"
       ],
-      "note": "Pushed by the ton-e2e workflow (branch feat/ton-tier-a, commit 4b0d5af, run 38029714298) after the x86 adapter and supervisor e2e passed; build is not reproducible, so pin this digest, not the tag. Base node:22-bookworm-slim pinned by its amd64 digest in docker/ton-build/Dockerfile. Plan v4 06 section 4.2.",
+      "note": "Multi-version Tact (1.4.0-1.6.13) and Tolk (0.6.0-1.5.0) added (feat/ton-build-multiversion). Digest zeroed: will be re-pinned after images.yml CI build on this branch. Base node:22-bookworm-slim pinned by its amd64 digest in docker/ton-build/Dockerfile. Plan v4 06 section 4.2.",
       "built": {
         "commit": "81b357ad78c4814614a421d491e1131456a782e1",
         "run_id": "39909694496",

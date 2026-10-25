@@ -5,7 +5,7 @@ name: ton-e2e
 # run it too (and push the image).
 on:
   push:
-    branches: [feat/ton-tier-a, fix/ton-tact-options]
+    branches: [feat/ton-tier-a, fix/ton-tact-options, feat/ton-build-multiversion]
     paths:
       - docker/ton-build/**
       - src/soken_review/adapters/ton/**
@@ -13,6 +13,8 @@ on:
       - src/soken_review/worker/**
       - scripts/e2e_ton_*.py
       - tests/integration/test_e2e_ton.py
+      - tests/adapters/ton/test_tact_rebuild_hash.py
+      - tests/fixtures/ton/ftsquad/**
       - .github/workflows/ton-e2e.yml
   workflow_dispatch:
     inputs:
@@ -67,11 +69,17 @@ jobs:
           SOKEN_DATABASE_URL: postgresql://soken:soken@127.0.0.1:5434/soken
           SOKEN_PIN_ROOT: ${{ runner.temp }}/pins
         run: uv run pytest -s -q -rs tests/integration/test_e2e_ton.py
+      - name: Tact multi-version rebuild hash (FtSquad, Tact 1.6.5 → hash c845917d...)
+        env:
+          SOKEN_IMAGE_TON_BUILD: soken/ton-build:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+        run: uv run pytest -s -v tests/adapters/ton/test_tact_rebuild_hash.py
 
   push:
     # Separate job: the only one holding packages: write; no third-party actions.
     needs: e2e
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/feat/ton-tier-a') || inputs.push_image }}
+    if: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/feat/ton-tier-a' || github.ref == 'refs/heads/feat/ton-build-multiversion')) || inputs.push_image }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

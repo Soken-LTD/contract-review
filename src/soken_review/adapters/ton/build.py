@@ -15,10 +15,12 @@ file in the job dir cannot replace them.
 Trust scan (06 3.3.4) runs first and sets `candidate.untrusted_inputs`; compiler params from a
 verifier bundle outside the worker allowlist fail the attempt with `untrusted_args`.
 
-Compilers in the image (docker/ton-build/package.json):
+Compilers in the image (docker/ton-build/package.json + versions.json):
   FunC: @ton-community/func-js FuncCompiler with the worker's 12 func-js-bin versions (F32)
-  Tact: @tact-lang/compiler 1.6.13
-  Tolk: @ton/tolk-js 0.12.0
+  Tact: tact-* npm aliases, 1.4.0–1.6.13 (every release that npm still serves)
+  Tolk: tolk-* npm aliases, 0.6.0–1.5.0
+  Versions are a single source of truth: docker/ton-build/versions.json (baked as
+  /opt/ton-node/versions.json in the image) mirrored here (TACT_VERSIONS, TOLK_VERSIONS).
 A version the image does not carry is `unsupported_toolchain`, never a silent substitution.
 
 Host execution only behind SOKEN_TON_BUILD_DIRECT=1 (dev only, never default, never in CI).
@@ -65,14 +67,34 @@ _MAX_OUTPUT_FILES = 64
 
 _BINARY_SOURCE_EXTS = frozenset({".boc", ".cell", ".fif", ".fift", ".bag"})
 
-# FunC: the verifier compiler worker's func-js-bin versions (acton compiler-worker package.json,
-# F32), installed in the image as npm aliases `func-<version>`. "latest" = the func-js default bin.
+# ── Installed compiler versions (mirrors docker/ton-build/versions.json) ─────────────────────
+# These MUST match versions.json exactly. CI test: tests/adapters/ton/test_versions_consistency.py
+# verifies the two are in sync.  A version not in this set → unsupported_toolchain (no silent
+# substitution).
+#
+# FunC: verifier compiler worker versions (func-js-bin aliases, F32)
 FUNC_VERSIONS = frozenset({
     "0.2.0", "0.3.0", "0.4.0", "0.4.1", "0.4.2", "0.4.3", "0.4.4",
     "0.4.4-newops", "0.4.4-newops.1", "0.4.5", "0.4.6", "0.4.6-wasmfix.0", "latest",
 })
-TACT_VERSIONS = frozenset({"1.6.13"})
-TOLK_VERSIONS = frozenset({"0.12.0"})
+
+# Tact: every @tact-lang/compiler release 1.4.0–1.6.13 that npm serves
+TACT_VERSIONS = frozenset({
+    "1.4.0", "1.4.1", "1.4.2", "1.4.3", "1.4.4",
+    "1.5.0", "1.5.1", "1.5.2", "1.5.3", "1.5.4",
+    "1.6.0", "1.6.1", "1.6.2", "1.6.3", "1.6.4",
+    "1.6.5", "1.6.6", "1.6.7", "1.6.8", "1.6.9",
+    "1.6.10", "1.6.11", "1.6.12", "1.6.13",
+})
+
+# Tolk: @ton/tolk-js versions 0.6.0–1.5.0
+TOLK_VERSIONS = frozenset({
+    "0.6.0", "0.7.0", "0.8.0", "0.9.0", "0.10.0",
+    "0.11.0", "0.12.0", "0.13.0", "0.99.0",
+    "1.0.0", "1.1.0", "1.2.0", "1.3.0",
+    "1.4.0", "1.4.1", "1.4.2", "1.5.0",
+})
+
 _INSTALLED = {"func": FUNC_VERSIONS, "tact": TACT_VERSIONS, "tolk": TOLK_VERSIONS}
 _DEFAULT_VERSION = {"func": "latest", "tact": "1.6.13", "tolk": "0.12.0"}
 
