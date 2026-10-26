@@ -643,12 +643,20 @@ def context_facts(facts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """`context.*` fact records (spec 5) as report facts, so `{{fact:context.*}}` in context notes
     expands at build. A value that fails the server text gate (document text) is left out; the
     build then reports the placeholder as unresolved instead of printing gated text."""
+    return report_facts(facts, prefix=CONTEXT_FACT_PREFIX)
+
+
+def report_facts(facts: list[dict[str, Any]], prefix: str = "") -> dict[str, dict[str, Any]]:
+    """Every job fact the kit may expand (`{{fact:key}}`, `{{calc:...}}`): `report.facts` per the
+    schema (value, unit, amount_at_risk). Blind run 2026-10-26: only `context.*` facts were passed,
+    so a finding that cited `{{fact:state.initial_minted}}` (accepted by the submit gate against the
+    full fact list) failed the build with "fact ... not in facts" and no PDF was delivered."""
     from ..engine.text_gate import check_text
 
     out: dict[str, dict[str, Any]] = {}
     for f in facts:
         key = str(f.get("key") or "")
-        if not key.startswith(CONTEXT_FACT_PREFIX) or not re.fullmatch(r"[a-z][a-z0-9_.]{0,79}", key):
+        if not key.startswith(prefix) or not re.fullmatch(r"[a-z][a-z0-9_.]{0,79}", key):
             continue
         value = _src_text(f.get("value"), 80)
         if re.fullmatch(r"[0-9]{5,}", value):  # plain integers print grouped (calc operands strip the commas)
@@ -659,6 +667,41 @@ def context_facts(facts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         out[key] = {"value": value, "unit": str(unit)[:40] if unit is not None else None,
                     "amount_at_risk": "amount_at_risk" in (f.get("tags") or [])}
     return out
+
+
+def pass_label(tool: str, limit: int = 40) -> str:
+    """A server pass name as printed in the report: `soken-lifecycle@1` and `soken-lifecycle:STALE`
+    become `lifecycle 1` and `lifecycle:STALE`. The printed strings are server text, and gate T25
+    (`\bsoken\b`) failed whole renders on them (blind run 2026-10-26, method line and lead evidence)."""
+    return str(tool).removeprefix("soken-").replace("@", " ")[:limit]
+
+
+def section_rows(section: Any, key: str = "rows") -> list[dict[str, Any]]:
+    """Rows of a stored report section. `review_set_section` stores the row list itself; older jobs
+    hold `{rows: [...]}` (or `{notes: [...]}`). Blind run 2026-10-26: every job with roles_notes,
+    coverage or out_of_scope_reasons crashed at assembly on `list.get`, so no PDF was delivered."""
+    rows = section.get(key, []) if isinstance(section, dict) else (section or [])
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def roles_section(rows_in: list[dict[str, Any]], notes_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Attach each `roles_notes` row (`{role, risk_note}`) to the role row with that name; a note for
+    a role the map does not list becomes a paragraph under the table. Prose blocks (`{p: ...}`) pass
+    through as notes. Text was gated at write time; the assembly gate runs again on the result."""
+    rows = [dict(r) for r in rows_in]
+    by_name = {str(r.get("role", "")).strip().lower(): r for r in rows}
+    notes: list[Any] = []
+    for n in notes_rows:
+        if "risk_note" not in n:
+            notes.append(n)
+            continue
+        role, note = str(n.get("role", "")).strip(), str(n["risk_note"]).strip()
+        hit = by_name.get(role.lower())
+        if hit is not None and not hit.get("risk_note"):
+            hit["risk_note"] = note[:300]
+        else:
+            notes.append({"p": f"{role}: {note}" if role else note})
+    return rows, _model_blocks(notes)[:8]
 
 
 def context_notes(section: Any) -> list[dict[str, Any]]:
@@ -851,7 +894,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
             if ld is None:
                 raise AssemblyError("schema", f"{d['final_id']} analyzer evidence without a lead row")
             tool = (ld.get("tools") or ["analyzer"])[0]
-            lead = {"analyzer": tool.replace("@", " ")[:40], "rule_id": ld["rule_id"][:80]}
+            lead = {"analyzer": pass_label(tool), "rule_id": pass_label(ld["rule_id"], 80)}
         body = c.get("body", {})
         f: dict[str, Any] = {
             "id": d["final_id"], "severity": sev, "evidence_level": level,
@@ -896,7 +939,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     sections = {r["section"]: r["content"] for r in await _rows(conn, """
         select distinct on (section) section, content from sections where job_id = %s
         order by section, revision desc""", (job_id,))}
-    for row in (sections.get("out_of_scope_reasons") or {}).get("rows", [])[:20]:
+    for row in section_rows(sections.get("out_of_scope_reasons"))[:20]:
         if pin.has_path(row.get("path", "")):
             oos.append({"path": row["path"], "reason": row["reason"], "by": "model"})
     nsloc = sum(f["nsloc"] for f in scope_files)
@@ -906,7 +949,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     per_tool: dict[tuple[str, str], dict[str, int]] = {}
     for lead in leads:
         tool = (lead.get("tools") or ["analyzer@"])[0]
-        name, _, ver = tool.partition("@")
+        name, _, ver = pass_label(tool, 120).partition("@")
         row = per_tool.setdefault((name, ver or "unknown"), {"leads": 0, "promoted": 0, "dismissed": 0})
         row["leads"] += 1
         row["promoted"] += lead["id"] in promoted_ids
@@ -921,7 +964,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         return any(f["category_key"] == cat for f in findings)
 
     areas = []
-    na_rows = {r["area_id"]: r for r in (sections.get("coverage") or {}).get("rows", [])}
+    na_rows = {r["area_id"]: r for r in section_rows(sections.get("coverage")) if "area_id" in r}
     for cat in coverage_categories(family, chain if chain != "evm" else None):
         ids = [f["id"] for f in findings if f["category_key"] == cat["id"]][:20]
         a: dict[str, Any] = {"area_id": cat["id"][:40], "area": category_label(cat["id"])}
@@ -955,7 +998,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     dismissed = [lead for lead in leads if lead["state"] == "dismissed"]
     # Project context (spec 7): documents, declared vs observed, context_notes; KPI when n > 0
     ctx = context_section(pin_root, job_id, job, sections, today)
-    context_facts_map = ctx.pop("facts")
+    context_facts_map = {**report_facts(facts), **ctx.pop("facts")}
     n_documents = sum(1 for d in ctx["documents"] if d["status"] == "ok")
     summary: dict[str, Any] = {"kpis": [
         {"key": "files", "value": len(scope_files), "label": texts["kpi_labels"]["files"]},
@@ -985,7 +1028,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
                                         "finding; severity mapped from the classifications through the fixed matrix"},
         {"step": m["deployment"], "detail": _deployment_method_detail(job, deployment)},
     ]
-    roles_notes = sections.get("roles_notes") or {}
+    roles_rows, roles_notes = roles_section(role_rows(map_doc, facts, job), section_rows(sections.get("roles_notes"), "notes")
+                                            or section_rows(sections.get("roles_notes")))
     profile = "owner" if job["ownership_proven"] else "public_review"
     rid = job["report_id"]
     short = report_id_short or rid[:10]
@@ -1014,8 +1058,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         "context": ctx,
         "architecture": architecture_block(map_doc, facts, job, deployment),
         "roles": {
-            "rows": role_rows(map_doc, facts, job),
-            "notes": _model_blocks(roles_notes.get("notes", []))[:8],
+            "rows": roles_rows,
+            "notes": roles_notes,
             **_roles_related(pin_root, job_id),
         },
         "method": method,
