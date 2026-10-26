@@ -1,9 +1,15 @@
 # TON build/analyze image (plan v4 06 section 4.2, 4.4).
 #
 # Compilers baked in at pinned versions (all via npm, no native binaries):
-#   FunC   @ton-community/func-js 0.10.0  (lockfile)
-#   Tact   @tact-lang/compiler 1.6.13     (lockfile)
-#   Tolk   @ton/tolk-js 0.12.0 (WASM)     (lockfile)
+#   FunC   @ton-community/func-js 0.10.0  (lockfile, orchestrator)
+#          func-js-bin aliases: 0.2.0, 0.3.0, 0.4.0-0.4.6, 0.4.4-newops, 0.4.4-newops.1, 0.4.6-wasmfix.0
+#   Tact   @tact-lang/compiler 1.6.13     (lockfile, default + Misti dep)
+#          tact-* aliases: 1.4.0 through 1.6.13  (all npm-published releases)
+#   Tolk   @ton/tolk-js 0.12.0 (WASM, lockfile, default)
+#          tolk-* aliases: 0.6.0 through 1.5.0
+#
+# Versions: package.json aliases (installed); docker/ton-build/versions.json mirrors them
+# Mirrored in: src/soken_review/adapters/ton/build.py (TACT_VERSIONS, FUNC_VERSIONS, TOLK_VERSIONS)
 #
 # Analyzers:
 #   Misti 0.9.0 (lockfile, symlinked to PATH)
@@ -63,6 +69,19 @@ RUN npm ci --ignore-scripts
 # Symlink Misti CLI to PATH (installed into node_modules/.bin via lockfile)
 RUN ln -sf /opt/ton-node/node_modules/.bin/misti /usr/local/bin/misti \
     && misti --version
+
+# Verify every tact-* and tolk-* alias in package.json is installed (fail-fast sanity check).
+# package.json is the image's version list; docker/ton-build/versions.json mirrors it for build.py
+# (tests/adapters/ton/test_versions_consistency.py keeps the three in step).
+RUN node - <<'JS'
+const fs = require('fs');
+const deps = JSON.parse(fs.readFileSync('/opt/ton-node/package.json', 'utf8')).dependencies || {};
+const aliases = Object.keys(deps).filter(k => k.startsWith('tact-') || k.startsWith('tolk-'));
+const missing = aliases.filter(k => !fs.existsSync('/opt/ton-node/node_modules/' + k + '/package.json'));
+if (missing.length) { process.stderr.write('MISSING ' + missing.join(', ') + '\n'); process.exit(1); }
+const n = p => aliases.filter(k => k.startsWith(p)).length;
+process.stdout.write('version check ok: ' + n('tact-') + ' tact, ' + n('tolk-') + ' tolk\n');
+JS
 
 # Copy node_scripts from the adapter source (repo root is Docker build context)
 COPY src/soken_review/adapters/ton/node_scripts/ /opt/ton-node/node_scripts/

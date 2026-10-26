@@ -5,34 +5,100 @@
  * Usage:
  *   node compile_tact.mjs <version> <tact.config.json_path> <output_dir>
  *
- * Uses the `tact` CLI from @tact-lang/compiler.
- * Patches the config's project.output fields to point to <output_dir>,
- * writes a temp config next to the original (so relative paths resolve),
- * then runs: tact --config <patched_config>
+ * Each Tact version is installed in the sandbox image as an npm alias:
+ *   tact-1.6.5  → @tact-lang/compiler@1.6.5  at node_modules/tact-1.6.5/
+ *   tact-1.6.13 → @tact-lang/compiler@1.6.13 at node_modules/tact-1.6.13/
+ *
+ * The version argument selects the alias; the bin/tact.js (or bin/tact) entry
+ * point is resolved from that alias's package.json, then called with:
+ *   node <bin> --config <patched_config> --quiet
+ *
+ * Fallback for local dev (DIRECT mode, no NODE_PATH in image): looks for
+ *   @tact-lang/compiler in the script's own node_modules (if installed there).
+ *
  * Exit 0 on success, exit 1 on error.
  *
- * Plan v4 06 4.2 — coordinator requirement 2026-10-09: project root with tact.config.json.
+ * Plan v4 06 4.2 — multi-version support 2026-10-25.
  */
 import { spawnSync } from "child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { resolve, dirname, join } from "path";
 
-function findTactCli() {
+/**
+ * Resolve the bin/tact.js path for a given version alias.
+ *
+ * In the sandbox image, NODE_PATH=/opt/ton-node/node_modules.
+ * Each alias `tact-<version>` is installed at NODE_PATH/tact-<version>/.
+ * The package.json bin field names the entry script.
+ *
+ * For local dev (DIRECT mode, NODE_PATH unset), we also check the script's
+ * own sibling node_modules for @tact-lang/compiler.
+ */
+function resolveTactBin(version) {
   const nodePath = process.env.NODE_PATH || "";
-  for (const dir of nodePath.split(":").filter(Boolean)) {
-    // In the sandbox image: NODE_PATH=/opt/ton-node/node_modules
-    // .bin symlinks are at /opt/ton-node/node_modules/.bin/
-    const bin = join(dir, ".bin", "tact");
-    if (existsSync(bin)) return bin;
-    // Also try parent dir .bin
-    const parentBin = join(dir, "..", "node_modules", ".bin", "tact");
-    if (existsSync(parentBin)) return parentBin;
+  const dirs = nodePath.split(":").filter(Boolean);
+
+  // Primary: tact-<version> alias in image node_modules
+  for (const dir of dirs) {
+    const pkgDir = join(dir, `tact-${version}`);
+    const binPath = tactBinFromDir(pkgDir);
+    if (binPath) return binPath;
   }
-  // Local dev: script's node_modules/.bin
+
+  // Secondary: @tact-lang/compiler (default, for matching version in local dev or
+  // when the canonical install matches the requested version)
+  for (const dir of dirs) {
+    const pkgDir = join(dir, "@tact-lang", "compiler");
+    const pkgJsonPath = join(pkgDir, "package.json");
+    if (existsSync(pkgJsonPath)) {
+      try {
+        const meta = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
+        if (meta.version === version) {
+          const binPath = tactBinFromDir(pkgDir);
+          if (binPath) return binPath;
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Local dev: script's own node_modules (DIRECT=1, no image NODE_PATH)
   const scriptDir = new URL(".", import.meta.url).pathname;
-  const localBin = join(scriptDir, "node_modules", ".bin", "tact");
-  if (existsSync(localBin)) return localBin;
+  const localPkg = join(scriptDir, "node_modules", `tact-${version}`);
+  const localBin = tactBinFromDir(localPkg);
+  if (localBin) return localBin;
+
+  const localCanonical = join(scriptDir, "node_modules", "@tact-lang", "compiler");
+  if (existsSync(join(localCanonical, "package.json"))) {
+    try {
+      const meta = JSON.parse(readFileSync(join(localCanonical, "package.json"), "utf8"));
+      if (meta.version === version) {
+        const b = tactBinFromDir(localCanonical);
+        if (b) return b;
+      }
+    } catch (_) {}
+  }
+
   return null;
+}
+
+function tactBinFromDir(pkgDir) {
+  const pkgJsonPath = join(pkgDir, "package.json");
+  if (!existsSync(pkgJsonPath)) return null;
+  try {
+    const meta = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
+    const binField = meta.bin;
+    let rel;
+    if (typeof binField === "string") {
+      rel = binField;
+    } else if (binField && typeof binField === "object") {
+      rel = binField.tact ?? binField.compiler ?? Object.values(binField)[0];
+    }
+    if (!rel) return null;
+    const full = join(pkgDir, rel);
+    return existsSync(full) ? full : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function findBocFiles(dir) {
@@ -61,12 +127,15 @@ async function main() {
   const configDir = dirname(absConfig);
   const absOut = resolve(outDir);
 
-  const tactBin = findTactCli();
+  const tactBin = resolveTactBin(version);
   if (!tactBin) {
-    process.stderr.write("compile_tact.mjs: cannot locate tact CLI (NODE_PATH=" + (process.env.NODE_PATH || "") + ")\n");
+    process.stderr.write(
+      `compile_tact.mjs: unsupported_toolchain: cannot locate tact ${version} ` +
+      `(tact-${version} alias not found; NODE_PATH=${process.env.NODE_PATH || ""})\n`
+    );
     process.exit(1);
   }
-  process.stderr.write(`compile_tact.mjs: tact CLI at ${tactBin}\n`);
+  process.stderr.write(`compile_tact.mjs: tact ${version} bin at ${tactBin}\n`);
 
   // Read and patch the config: set project output dirs to absOut
   let config;
@@ -105,7 +174,7 @@ async function main() {
     process.exit(1);
   }
   if (result.status !== 0) {
-    process.stderr.write(`compile_tact.mjs: tact exited ${result.status}\n`);
+    process.stderr.write(`compile_tact.mjs: tact ${version} exited ${result.status}\n`);
     if (result.stdout) process.stderr.write("stdout: " + result.stdout.slice(0, 500) + "\n");
     if (result.stderr) process.stderr.write("stderr: " + result.stderr.slice(0, 500) + "\n");
     process.exit(1);
