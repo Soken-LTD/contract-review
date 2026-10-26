@@ -614,6 +614,13 @@ def report_facts(facts: list[dict[str, Any]], prefix: str = "") -> dict[str, dic
     return out
 
 
+def pass_label(tool: str, limit: int = 40) -> str:
+    """A server pass name as printed in the report: `soken-lifecycle@1` and `soken-lifecycle:STALE`
+    become `lifecycle 1` and `lifecycle:STALE`. The printed strings are server text, and gate T25
+    (`\bsoken\b`) failed whole renders on them (blind run 2026-10-26, method line and lead evidence)."""
+    return str(tool).removeprefix("soken-").replace("@", " ")[:limit]
+
+
 def section_rows(section: Any, key: str = "rows") -> list[dict[str, Any]]:
     """Rows of a stored report section. `review_set_section` stores the row list itself; older jobs
     hold `{rows: [...]}` (or `{notes: [...]}`). Blind run 2026-10-26: every job with roles_notes,
@@ -821,7 +828,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
             if ld is None:
                 raise AssemblyError("schema", f"{d['final_id']} analyzer evidence without a lead row")
             tool = (ld.get("tools") or ["analyzer"])[0]
-            lead = {"analyzer": tool.replace("@", " ")[:40], "rule_id": ld["rule_id"][:80]}
+            lead = {"analyzer": pass_label(tool), "rule_id": pass_label(ld["rule_id"], 80)}
         body = c.get("body", {})
         f: dict[str, Any] = {
             "id": d["final_id"], "severity": sev, "evidence_level": level,
@@ -876,8 +883,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     per_tool: dict[tuple[str, str], dict[str, int]] = {}
     for lead in leads:
         tool = (lead.get("tools") or ["analyzer@"])[0]
-        name, _, ver = tool.partition("@")
-        name = name.removeprefix("soken-")  # server passes print under a plain name (text gate T25)
+        name, _, ver = pass_label(tool, 120).partition("@")
         row = per_tool.setdefault((name, ver or "unknown"), {"leads": 0, "promoted": 0, "dismissed": 0})
         row["leads"] += 1
         row["promoted"] += lead["id"] in promoted_ids
