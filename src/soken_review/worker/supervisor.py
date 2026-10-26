@@ -759,8 +759,12 @@ class Supervisor:
             repo = JobRepo(conn)
             await repo.update_job_fields(job_id, source_pin=pin.source_pin)
 
-        await self._mark_step(step_id, "done",
-                              provenance={"provider": best.provider, "sha256": best.sha256})
+        fetch_prov: dict[str, Any] = {"provider": best.provider, "sha256": best.sha256}
+        deps_path = out_dir / "dependencies.json"
+        if best.provider == "repo" and deps_path.is_file() and not deps_path.is_symlink():
+            # Host-written summary of vendored npm packages (_resolve_npm_deps); review_status shows it.
+            fetch_prov["dependencies"] = json.loads(deps_path.read_text(encoding="utf-8"))
+        await self._mark_step(step_id, "done", provenance=fetch_prov)
         await self._after_fetch(step, job)
 
     async def _fetch_repo(
@@ -923,6 +927,13 @@ class Supervisor:
                 logger.debug("job %s: explorer lookup failed (non-fatal)", job_id[-8:],
                              exc_info=True)
 
+        # npm packages the sources import (Hardhat, Foundry with node_modules): vendored into the
+        # tree, lockfile-pinned and sha512-checked, before the candidate is read (npm_deps).
+        npm = await self._resolve_npm_deps(step, job, out_dir, fetch_result.src_dir)
+        if npm is False:
+            return None
+        extra_remappings = list(npm.get("remappings") or []) if isinstance(npm, dict) else []
+
         # Build the repo Candidate from the manifest + files.
         # Pass repo_url@sha as source_url so provenance carries a real reference (not None).
         _source_url = f"{repo_url}@{expected_sha}" if expected_sha else repo_url
@@ -933,6 +944,7 @@ class Supervisor:
                 fetch_result.manifest,
                 explorer_candidate=explorer_candidate,
                 source_url=_source_url,
+                extra_remappings=extra_remappings,
             ),
         )
 
@@ -964,6 +976,64 @@ class Supervisor:
             candidates.append(explorer_candidate)
 
         return candidates
+
+    async def _resolve_npm_deps(self, step: dict[str, Any], job: dict[str, Any], out_dir: Path,
+                                src_dir: Path) -> dict[str, Any] | None | bool:
+        """Vendor the npm packages the repo imports (adapters/evm/npm_deps.py).
+
+        Returns the dependency summary (also written to out_dir/dependencies.json for the fetch
+        step provenance), None when the repo needs no npm package, or False when a dependency
+        could not be resolved: the job is then already terminal (insufficient_source,
+        E_DEPENDENCY_UNRESOLVED, detail names each package and why).
+        """
+        from ..adapters.evm import npm_deps as _npm
+        from ..adapters.evm.repo_candidate import (
+            _extract_settings,
+            _read_foundry_toml,
+            _read_remappings_txt,
+            _select_scope_files,
+        )
+        from ..sandbox.npm_fetch import run_npm_fetch
+
+        job_id = job["job_id"]
+        npm_dir = out_dir / "npm_fetch"
+        runs = [0]
+
+        def fetch(requests: list[dict]) -> Any:
+            runs[0] += 1
+            return run_npm_fetch(requests, npm_dir / f"run{runs[0]}")
+
+        def work() -> _npm.NpmResolution | None:
+            tree, _refused = safe_read_repo_tree(src_dir)
+            cfg = _read_foundry_toml(tree)
+            remaps = list(_extract_settings(cfg, _read_remappings_txt(tree)).get("remappings") or [])
+            scope = _select_scope_files(tree, cfg)
+            return _npm.resolve_npm_deps(str(src_dir), tree, scope, remaps, fetch)
+
+        res = await asyncio.get_event_loop().run_in_executor(None, work)
+        if res is None:
+            return None
+        summary = res.summary()
+        (out_dir / "dependencies.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        fatal = res.fatal
+        logger.info("job %s: npm deps lockfile=%s vendored=%d unresolved=%d not_declared=%d",
+                    job_id[-8:], res.lockfile, len(res.packages), len(fatal), len(res.not_declared))
+        if not fatal:
+            return summary
+        detail: dict[str, Any] = {
+            "stage": "dependencies",
+            "lockfile": res.lockfile,
+            # x-text-class: package names come from repo import strings (validated npm names)
+            "missing": [f.as_dict() for f in fatal][:_MISSING_IMPORT_MAX_PKGS],
+            "packages": ", ".join(f.name for f in fatal[:_MISSING_IMPORT_MAX_PKGS]),
+        }
+        async with self._pool.connection() as conn:
+            repo = JobRepo(conn)
+            async with conn.transaction():
+                await repo.complete_step(step["id"], "done", error_code="E_DEPENDENCY_UNRESOLVED")
+                await repo.transition(job_id, "insufficient_source",
+                                      error_code="E_DEPENDENCY_UNRESOLVED", error_detail=detail)
+        return False
 
     async def _hand_repo_to_family(self, step: dict[str, Any], job: dict[str, Any],
                                    source_args: dict[str, Any], src_dir: Path,
@@ -1197,7 +1267,7 @@ class Supervisor:
                     await repo.complete_step(step_id, "done",
                                              provenance={"reason": reason_kind})
                     await repo.transition(job_id, "insufficient_source",
-                                          error_code="E_SOURCE_NOT_FOUND",
+                                          error_code="E_DEPENDENCY_UNRESOLVED",
                                           error_detail=detail)
             return
 

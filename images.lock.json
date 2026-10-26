@@ -89,7 +89,7 @@
       "platforms": [
         "linux/amd64"
       ],
-      "note": "soken-fetch: git materializer (09 5.2, sandbox/git_materializer.py) on Debian trixie (git 2.47, GIT_NO_LAZY_FETCH).",
+      "note": "soken-fetch: git materializer (09 5.2, sandbox/git_materializer.py) on Debian trixie (git 2.47, GIT_NO_LAZY_FETCH); soken-npm-fetch: registry.npmjs.org downloader for EVM npm deps (sandbox/npm_materializer.py).",
       "built": {
         "commit": "81b357ad78c4814614a421d491e1131456a782e1",
         "run_id": "39909694496",
