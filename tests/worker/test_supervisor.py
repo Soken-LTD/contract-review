@@ -977,7 +977,7 @@ def _make_build_step_for_injection(tmp_path: Path, job_id: str) -> tuple[Any, An
 
 @pytest.mark.asyncio
 async def test_build_missing_import_uses_enum_error_code(tmp_path: Path) -> None:
-    """missing_import reason -> error_code=E_SOURCE_NOT_FOUND, not the raw reason string."""
+    """missing_import reason -> error_code=E_DEPENDENCY_UNRESOLVED, not the raw reason string."""
     job_id = "job_INJECT01"
     sup, step_dict, _out_dir = _make_build_step_for_injection(tmp_path, job_id)
 
@@ -1024,8 +1024,8 @@ async def test_build_missing_import_uses_enum_error_code(tmp_path: Path) -> None
     t = transition_calls[0]
     assert t["state"] == "insufficient_source"
     # error_code must be a server-side enum, never repo text
-    assert t.get("error_code") == "E_SOURCE_NOT_FOUND", (
-        f"error_code must be E_SOURCE_NOT_FOUND, got {t.get('error_code')!r}"
+    assert t.get("error_code") == "E_DEPENDENCY_UNRESOLVED", (
+        f"error_code must be E_DEPENDENCY_UNRESOLVED, got {t.get('error_code')!r}"
     )
     # Package names go into error_detail, not error_code
     detail = t.get("error_detail", {})
@@ -1096,7 +1096,7 @@ async def test_build_missing_import_injection_text_dropped(tmp_path: Path) -> No
     t = transition_calls[0]
 
     # error_code is always the enum; never injection text
-    assert t.get("error_code") == "E_SOURCE_NOT_FOUND"
+    assert t.get("error_code") == "E_DEPENDENCY_UNRESOLVED"
 
     # Only the valid package passes validation; injection strings are dropped
     detail = t.get("error_detail", {})

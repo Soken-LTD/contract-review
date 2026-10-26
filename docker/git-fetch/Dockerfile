@@ -12,6 +12,10 @@ RUN apt-get update \
     && git --version && python3 --version
 COPY src/soken_review/sandbox/git_materializer.py /usr/local/bin/soken-fetch
 RUN sed -i "1i #!/usr/bin/python3 -I" /usr/local/bin/soken-fetch && chmod 0755 /usr/local/bin/soken-fetch && soken-fetch --help >/dev/null
+# soken-npm-fetch: registry.npmjs.org downloader for the EVM deps step (sandbox/npm_materializer.py,
+# standard library only). It only downloads; the supervisor verifies sha512 and extracts.
+COPY src/soken_review/sandbox/npm_materializer.py /usr/local/bin/soken-npm-fetch
+RUN sed -i "1i #!/usr/bin/python3 -I" /usr/local/bin/soken-npm-fetch && chmod 0755 /usr/local/bin/soken-npm-fetch && soken-npm-fetch --help >/dev/null
 ENV GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null HOME=/tmp
 USER 10001:10001
 WORKDIR /work

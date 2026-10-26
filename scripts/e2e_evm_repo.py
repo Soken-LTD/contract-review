@@ -23,8 +23,8 @@ Cases (all repos public on github.com, commits pinned by full SHA):
   (b) Uniswap/v2-core HEAD 6a9e7c97860676e0992f22a49665760444c1cdf5
       Pre-Foundry truffle/npm project; all contracts committed in contracts/; no .gitmodules.
       Demonstrates in-tree deps (no gitlink submodules, no npm Solidity source deps).
-      _npm_only_reason was fixed (2026-10-13) to parse package.json rather than doing a broad
-      string-search that incorrectly triggered on @openzeppelin/test-helpers in devDependencies.
+      (The old npm-only gate is gone: npm packages the sources import are now vendored,
+      see case (g).)
 
   (c) gnosis/canonical-weth HEAD 0dd1ea3e295eef916d0c6223ec63141137d22d67
       Single-file WETH9.sol deployed at 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 on
@@ -47,6 +47,13 @@ Cases (all repos public on github.com, commits pinned by full SHA):
       A purpose-built fixture repo is needed for this live case (TODO: create
       soken-ltd/soken-e2e-fixtures with a ref pointing to bitbucket.org submodule).
       Skipped in this run; CI remains green.
+
+  (g) apyee-finance/apyee-protocol tag v2.0.0 ffc81631af65010c8afe66e1bee09f94d2d1ea79
+      Hardhat project: contracts/ imports @openzeppelin/contracts from node_modules, pinned by
+      package-lock.json v3 (5.6.1, sha512). The fetch step vendors exactly that package through
+      soken-npm-fetch on the evm egress network (registry.npmjs.org), checks the integrity, and the
+      build resolves it (forge auto layout or the B3 import closure). Was E_SOURCE_NOT_FOUND
+      npm_only_deps in the 2026-10-25 blind run. Expected: ready, leads > 0.
 
   (f) transmissions11/solmate commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
       Valid 40-hex SHA that does not exist in the repo.  soken-fetch exits 21 → E_COMMIT_NOT_FOUND.
@@ -143,6 +150,18 @@ TARGETS: list[dict] = [
     #         "commit": "TODO",
     #     },
     # },
+    # (g) Hardhat repo with npm-only deps (package-lock.json): vendored, built, analyzed
+    {
+        "name": "apyee-npm-lockfile",
+        "expect": {"state": "ready"},
+        "expect_flags": {"untrusted_inputs": False},
+        "source": {
+            "kind": "repo",
+            "repo_url": "https://github.com/apyee-finance/apyee-protocol",
+            "commit": "ffc81631af65010c8afe66e1bee09f94d2d1ea79",
+        },
+        "why": "Hardhat + package-lock.json: @openzeppelin/contracts 5.6.1 vendored with sha512 check",
+    },
     # (f) non-existent commit → E_COMMIT_NOT_FOUND
     {
         "name": "bad-commit",
@@ -270,7 +289,7 @@ async def run(names: list[str]) -> int:
 
                 # Read work artifacts (candidates.json tells us untrusted_inputs before build)
                 work = pin_root.parent / "work" / job_id
-                for fname in ("candidates.json", "build_result.json", "provenance.json"):
+                for fname in ("candidates.json", "build_result.json", "provenance.json", "dependencies.json"):
                     if (work / fname).exists():
                         try:
                             row[fname.removesuffix(".json")] = json.loads((work / fname).read_text())
@@ -296,7 +315,7 @@ async def run(names: list[str]) -> int:
                     row["leads_head"] = (leads.get("text") or "").splitlines()[:8]
                     # leads_count: prefer work-dir leads.json (accurate list count),
                     # fall back to non-empty text lines from review_leads response.
-                    leads_file = work / "leads.json"
+                    leads_file = pin_root / job_id / "leads.json"
                     if leads_file.exists():
                         try:
                             leads_data = json.loads(leads_file.read_text())
@@ -339,6 +358,12 @@ async def run(names: list[str]) -> int:
     summary = []
     for r in rows:
         entry = {k: r.get(k) for k in ("name", "accepted", "state", "tier", "error_code", "resolved_commit", "leads_count")}
+        deps = r.get("dependencies") or {}
+        if deps.get("packages"):
+            entry["npm_deps"] = [f"{p['name']}@{p['version']} ({p['pinned_by']})" for p in deps["packages"]]
+        build = r.get("build_result") or {}
+        if build:
+            entry["build"] = {k: build.get(k) for k in ("status", "nsloc", "reason")}
         # dep.match from provenance.json (weth9 13.1 comparison)
         prov = r.get("provenance") or {}
         dep = prov.get("dep") or {}

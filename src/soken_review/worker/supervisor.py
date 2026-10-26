@@ -83,6 +83,22 @@ _MISSING_IMPORT_MAX_PKGS = 10
 _DEP_SEG_RE = re.compile(r"^[A-Za-z0-9._@~\-]{1,128}$")
 
 
+def _dependency_error_detail(res: Any) -> dict[str, Any]:
+    """error_detail for E_DEPENDENCY_UNRESOLVED. x-text-class: it reaches the client, so it holds
+    only validated npm package names, enum reasons and the lockfile name from a fixed set; no
+    version, range, URL or other lockfile / package.json text ever goes in."""
+    rows = [f.as_dict() for f in res.fatal][:_MISSING_IMPORT_MAX_PKGS]
+    rows = [r for r in rows if r["name"] != "<invalid>" and _validate_npm_pkg(r["name"])]
+    lockfile = res.lockfile if res.lockfile in ("package-lock.json", "npm-shrinkwrap.json",
+                                                 "yarn.lock", "pnpm-lock.yaml") else None
+    return {
+        "stage": "dependencies",
+        "lockfile": lockfile,
+        "missing": rows,
+        "packages": ", ".join(r["name"] for r in rows) or "unnamed packages",
+    }
+
+
 def _validate_npm_pkg(name: str) -> bool:
     """Return True if *name* is a valid npm package name (strict subset)."""
     return len(name) <= _NPM_PKG_MAX_LEN and bool(_NPM_PKG_RE.match(name))
@@ -761,8 +777,12 @@ class Supervisor:
             repo = JobRepo(conn)
             await repo.update_job_fields(job_id, source_pin=pin.source_pin)
 
-        await self._mark_step(step_id, "done",
-                              provenance={"provider": best.provider, "sha256": best.sha256})
+        fetch_prov: dict[str, Any] = {"provider": best.provider, "sha256": best.sha256}
+        deps_path = out_dir / "dependencies.json"
+        if best.provider == "repo" and deps_path.is_file() and not deps_path.is_symlink():
+            # Host-written summary of vendored npm packages (_resolve_npm_deps); review_status shows it.
+            fetch_prov["dependencies"] = json.loads(deps_path.read_text(encoding="utf-8"))
+        await self._mark_step(step_id, "done", provenance=fetch_prov)
         await self._after_fetch(step, job)
 
     async def _fetch_repo(
@@ -925,6 +945,13 @@ class Supervisor:
                 logger.debug("job %s: explorer lookup failed (non-fatal)", job_id[-8:],
                              exc_info=True)
 
+        # npm packages the sources import (Hardhat, Foundry with node_modules): vendored into the
+        # tree, lockfile-pinned and sha512-checked, before the candidate is read (npm_deps).
+        npm = await self._resolve_npm_deps(step, job, out_dir, fetch_result.src_dir)
+        if npm is False:
+            return None
+        extra_remappings = list(npm.get("remappings") or []) if isinstance(npm, dict) else []
+
         # Build the repo Candidate from the manifest + files.
         # Pass repo_url@sha as source_url so provenance carries a real reference (not None).
         _source_url = f"{repo_url}@{expected_sha}" if expected_sha else repo_url
@@ -935,6 +962,7 @@ class Supervisor:
                 fetch_result.manifest,
                 explorer_candidate=explorer_candidate,
                 source_url=_source_url,
+                extra_remappings=extra_remappings,
             ),
         )
 
@@ -966,6 +994,58 @@ class Supervisor:
             candidates.append(explorer_candidate)
 
         return candidates
+
+    async def _resolve_npm_deps(self, step: dict[str, Any], job: dict[str, Any], out_dir: Path,
+                                src_dir: Path) -> dict[str, Any] | None | bool:
+        """Vendor the npm packages the repo imports (adapters/evm/npm_deps.py).
+
+        Returns the dependency summary (also written to out_dir/dependencies.json for the fetch
+        step provenance), None when the repo needs no npm package, or False when a dependency
+        could not be resolved: the job is then already terminal (insufficient_source,
+        E_DEPENDENCY_UNRESOLVED, detail names each package and why).
+        """
+        from ..adapters.evm import npm_deps as _npm
+        from ..adapters.evm.repo_candidate import (
+            _extract_settings,
+            _read_foundry_toml,
+            _read_remappings_txt,
+            _select_scope_files,
+        )
+        from ..sandbox.npm_fetch import run_npm_fetch
+
+        job_id = job["job_id"]
+        npm_dir = out_dir / "npm_fetch"
+        runs = [0]
+
+        def fetch(requests: list[dict]) -> Any:
+            runs[0] += 1
+            return run_npm_fetch(requests, npm_dir / f"run{runs[0]}")
+
+        def work() -> _npm.NpmResolution | None:
+            tree, _refused = safe_read_repo_tree(src_dir)
+            cfg = _read_foundry_toml(tree)
+            remaps = list(_extract_settings(cfg, _read_remappings_txt(tree)).get("remappings") or [])
+            scope = _select_scope_files(tree, cfg)
+            return _npm.resolve_npm_deps(str(src_dir), tree, scope, remaps, fetch)
+
+        res = await asyncio.get_event_loop().run_in_executor(None, work)
+        if res is None:
+            return None
+        summary = res.summary()
+        (out_dir / "dependencies.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        fatal = res.fatal
+        logger.info("job %s: npm deps lockfile=%s vendored=%d unresolved=%d not_declared=%d",
+                    job_id[-8:], res.lockfile, len(res.packages), len(fatal), len(res.not_declared))
+        if not fatal:
+            return summary
+        detail = _dependency_error_detail(res)
+        async with self._pool.connection() as conn:
+            repo = JobRepo(conn)
+            async with conn.transaction():
+                await repo.complete_step(step["id"], "done", error_code="E_DEPENDENCY_UNRESOLVED")
+                await repo.transition(job_id, "insufficient_source",
+                                      error_code="E_DEPENDENCY_UNRESOLVED", error_detail=detail)
+        return False
 
     async def _hand_repo_to_family(self, step: dict[str, Any], job: dict[str, Any],
                                    source_args: dict[str, Any], src_dir: Path,
@@ -1203,7 +1283,7 @@ class Supervisor:
                     await repo.complete_step(step_id, "done",
                                              provenance={"reason": reason_kind})
                     await repo.transition(job_id, "insufficient_source",
-                                          error_code="E_SOURCE_NOT_FOUND",
+                                          error_code="E_DEPENDENCY_UNRESOLVED",
                                           error_detail=detail)
             return
 
@@ -1357,11 +1437,16 @@ class Supervisor:
             work_dir=str(work_dir),
         )
 
+        # Lead scoping (repo jobs): the pinned files are the review; vendored npm packages and the
+        # repo files the scope selection excluded are known non-review files of this run.
+        scope_files, excluded_files = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self._review_file_sets(job_id, out_dir, cand_raw.get("provider")))
         # TRON: Slither in the tron-analyze image (TRON shim) with the compiler the build used.
-        analyzer = _tron_analyze_mod.analyze if await self._is_tron_job(job_id) else _analyze_mod.analyze
+        is_tron = await self._is_tron_job(job_id)
         try:
             leads, static_map, _read_plan = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: analyzer(br)
+                None, lambda: _tron_analyze_mod.analyze(br) if is_tron
+                else _analyze_mod.analyze(br, scope_files=scope_files, excluded_files=excluded_files)
             )
             degraded = static_map.get("status") in ("not_run", "degraded")
         except Exception:
@@ -1376,6 +1461,23 @@ class Supervisor:
 
         await self._mark_step(step_id, "done")
         await self._after_analyze(step, degraded=degraded)
+
+    def _review_file_sets(self, job_id: str, out_dir: Path,
+                          provider: str | None) -> tuple[set[str] | None, set[str] | None]:
+        """(pinned scope files, files known to be outside the review) for lead scoping.
+
+        Excluded = every .sol of the materialized repo tree (vendored node_modules included) that
+        is not pinned. (None, None) when the pin cannot be read: then no lead is dropped.
+        """
+        try:
+            scope = set(PinnedSource.load(self._pin_root, job_id).entries)
+        except (OSError, ValueError, KeyError):
+            logger.warning("job %s: pin unreadable for lead scoping; no lead filtered", job_id[-8:])
+            return None, None
+        if provider != "repo":
+            return scope, None
+        tree, _refused = safe_read_repo_tree(out_dir / "repo_fetch" / "src")
+        return scope, {p for p in tree if p.endswith(".sol") and p not in scope}
 
     async def _after_analyze(self, step: dict[str, Any], degraded: bool = False) -> None:
         """Queue the map step after the analyze step (03 3.1: map runs in `analyzing`)."""

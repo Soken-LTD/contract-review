@@ -21,6 +21,7 @@ import re
 import secrets
 import time
 from datetime import UTC
+from pathlib import Path
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
@@ -779,6 +780,34 @@ def _error_detail_text(detail: Any) -> str:
     return text[:_ERROR_DETAIL_MAX_CHARS]
 
 
+def _error_texts(code: str, detail: Any) -> dict[str, str]:
+    """`what` and `fix` of a status error from contract/errors.yaml (03 section 7), so a stopped
+    job always tells the client what to do next. A template is used only when every placeholder
+    it names is present in the stored detail; otherwise that text is left out rather than sent
+    with a blank hole."""
+    import string
+
+    from ..contract import load_errors
+
+    row = load_errors().get(code)
+    if not row:
+        return {}
+    fields: dict[str, str] = {}
+    if isinstance(detail, dict):
+        for key, value in detail.items():
+            if isinstance(value, (list, tuple)):
+                value = ", ".join(str(v) for v in value[:10] if isinstance(v, (str, int)))
+            if isinstance(value, (str, int)) and str(value):
+                fields[str(key)] = str(value)[:300]
+    out: dict[str, str] = {}
+    for key in ("what", "fix"):
+        template = row.get(key) or ""
+        names = {n for _, n, _, _ in string.Formatter().parse(template) if n}
+        if template and names <= fields.keys():
+            out[key] = template.format(**{n: fields[n] for n in names})
+    return out
+
+
 def _build_status_response(
     job: dict[str, Any],
     response_format: str,
@@ -837,9 +866,16 @@ def _build_status_response(
     # a validating MCP client rejects the whole status response.
     if job.get("error_code"):
         err = {"code": job["error_code"]}
+        err.update(_error_texts(job["error_code"], job.get("error_detail")))
         if job.get("error_detail") is not None:
             err["detail"] = _error_detail_text(job["error_detail"])
         out["error"] = err
+
+    # Vendored npm dependencies of a repo review (adapters/evm/npm_deps.py, fetch provenance):
+    # the weakest pin, the count, and the package list in the detailed format.
+    deps = _dependencies_status(_steps, detailed=response_format == "detailed")
+    if deps is not None:
+        out["dependencies"] = deps
 
     # Project context (context ingestion spec 3): present once documents were requested
     ctx = _context_status(job)
@@ -879,6 +915,63 @@ def _build_status_response(
     out["publication"] = publication_outcome(job, _profile)
 
     return out
+
+
+_PIN_NOTES = {
+    "lockfile": "Dependency versions and sha512 integrity come from the repository lockfile.",
+    "lockfile_version": ("Dependency versions come from the repository lockfile; the lockfile has no sha512 "
+                         "integrity, so the registry integrity for those exact versions was checked."),
+    "registry_range": ("The repository has no lockfile: dependency versions were chosen from the package.json "
+                       "ranges at fetch time and may differ from the versions the project built and deployed."),
+}
+
+
+def _dependencies_status(steps: list[dict[str, Any]], *, detailed: bool) -> dict[str, Any] | None:
+    fetched = [s for s in steps if s.get("step") == "fetch" and s.get("status") == "done"]
+    deps = ((fetched[-1].get("provenance") or {}).get("dependencies")) if fetched else None
+    if not isinstance(deps, dict) or not deps.get("packages"):
+        return None
+    pins = deps.get("pinned_by")
+    out: dict[str, Any] = {
+        "manager": "npm",
+        "lockfile": deps.get("lockfile"),
+        "pinned_by": pins,
+        "count": len(deps.get("packages") or []),
+        "note": _PIN_NOTES.get(str(pins), ""),
+    }
+    if detailed:
+        from ..adapters.evm.npm_deps import safe_version
+
+        rows = []
+        for p in (deps.get("packages") or [])[:60]:
+            if not isinstance(p, dict):
+                continue
+            row = {"name": str(p.get("name")), "pinned_by": str(p.get("pinned_by"))}
+            if safe_version(p.get("version") if isinstance(p.get("version"), str) else None):
+                row["version"] = p["version"]
+            rows.append(row)
+        out["packages"] = rows
+    return out
+
+
+_BUILD_STATUS = {"ok": "ok", "failed": "failed", "refused": "refused", "not_needed": "not_needed"}
+
+
+def _build_status_value(pin_root: Any, job_id: str, map_status: str | None) -> str | None:
+    """`build.status` in the schema enum (ok, failed, refused, not_needed), never a map status.
+
+    The supervisor's build_result.json (job work dir) is the source; without it, a failed map
+    means a failed build and a full semantic map means a successful one; otherwise unknown (None).
+    """
+    try:
+        path = Path(pin_root).parent / "work" / job_id / "build_result.json"
+        if path.is_file() and not path.is_symlink() and path.stat().st_size < 4 * 1024 * 1024:
+            value = json.loads(path.read_text(encoding="utf-8")).get("status")
+            if value in _BUILD_STATUS:
+                return _BUILD_STATUS[value]
+    except (OSError, ValueError, AttributeError):
+        pass
+    return {"failed": "failed", "full": "ok"}.get(map_status or "")
 
 
 _PIPELINE_STATES = frozenset({"awaiting_upload", "queued", "fetching", "building", "analyzing"})
@@ -937,10 +1030,16 @@ def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
         build_detail = map_status_doc.get("build_detail")
         facts = load_facts(pin_root, job_id) or []
         compiler_version = next((f["value"] for f in facts if f["key"] == "compiler.version"), None)
-        # The build outcome itself when the map step recorded it (a parsed Solana map is `partial`
-        # whether or not the program built); else the map status, as before.
-        build_info: dict[str, Any] = {"status": map_status_doc.get("build_status") or job.get("map_status") or "none"}
-        if map_status_doc.get("build_status"):
+        # The build outcome the map step recorded (#72: a parsed Solana map is `partial` whether or
+        # not the program built), else the supervisor's build_result.json, else failed/full map
+        # status; always a schema enum value (ok, failed, refused, not_needed), never a map status.
+        build_info: dict[str, Any] = {}
+        recorded = map_status_doc.get("build_status")
+        status = (_BUILD_STATUS.get(recorded) if isinstance(recorded, str) else None) \
+            or _build_status_value(pin_root, job_id, job.get("map_status"))
+        if status is not None:
+            build_info["status"] = status
+        if recorded:
             build_info["map_status"] = job.get("map_status") or map_status_doc.get("map_status")
         if compiler_version:
             build_info["version"] = compiler_version
