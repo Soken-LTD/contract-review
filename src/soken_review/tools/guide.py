@@ -9,7 +9,8 @@ handler at all and every call ended in an internal error, which left clients gue
 (matrix.trigger "governance", impact_class "accounting_error") and burning submit attempts.
 
 Output: first line ``guide_version <v> topic <t> chain <c>``, then compact lines, at most 12,000
-characters (03 6).
+characters (03 6). With ``topics`` the blocks of several topics are joined by a blank line, each with
+its own header and cap (the 2026-10-25 blind runs spent 4 to 5 guide calls per review, one per topic).
 """
 
 from __future__ import annotations
@@ -206,10 +207,19 @@ def _topic_checklist(family: str) -> list[str]:
 
 @handler("review_get_guide")
 async def _get_guide(args: dict[str, Any]) -> str:
-    topic: str = args["topic"]
+    """One topic (`topic`) or several (`topics`, in the given order) in one call; each topic block keeps
+    its own header line and its own cap, so a multi-topic answer is the single answers joined."""
+    topics: list[str] = list(args.get("topics") or ([args["topic"]] if args.get("topic") else []))
+    if not topics:
+        raise ReviewError("E_INVALID_ARGUMENT", field="topic", rule="required", value80="none",
+                          example="topic 'checklist', or topics ['severity_inputs', 'categories']")
     chain: str | None = args.get("chain")
     if chain is None and args.get("job_id"):
         chain = _job_chain(args["job_id"])
+    return "\n\n".join(_render_topic(topic, chain) for topic in dict.fromkeys(topics))
+
+
+def _render_topic(topic: str, chain: str | None) -> str:
     family = _family_for(chain)
     if topic == "categories":
         body = _topic_categories(family)
