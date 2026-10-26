@@ -41,6 +41,7 @@ from ..engine.numbers import lex_numbers
 from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
+from ..mapping.lifecycle import load_lifecycle, rubric
 from ..server import handler
 from .context import JobContext
 from .coverage import (
@@ -53,6 +54,7 @@ from .coverage import (
     rows_index as cov_rows_index,
 )
 from .submit import _family_from_chain
+from .walks import latest_rows, load_drafts, load_reads, merge_rows, open_walks, validate_row, walk_index
 
 RUBRIC_DIR = Path(__file__).resolve().parents[3] / "contract" / "rubric"
 
@@ -83,7 +85,7 @@ def _get_ctx() -> JobContext:
 
 _FROZEN_STATES = frozenset({"finalized", "render_queued", "rendering", "rendered", "render_failed"})
 _TERMINAL_STATES = frozenset({"insufficient_source", "failed", "expired", "deleted"})
-_SECTIONS = ("roles_notes", "out_of_scope_reasons", "coverage", "context_notes")  # enums.yaml `section`
+_SECTIONS = ("roles_notes", "out_of_scope_reasons", "coverage", "context_notes", "invariant_walks")  # enums.yaml `section`
 # context_notes block limits: finding.v1 `block` (the tools.v1 `context_notes.notes` items) and the
 # report schema `context.notes` (max 8 model blocks).
 _CTX_MAX_BLOCKS, _CTX_P_MAX, _CTX_UL_MAX, _CTX_UL_ITEM_MAX = 8, 900, 8, 300
@@ -118,6 +120,10 @@ def _check_context_blocks(content: Any) -> str | None:
                     for r in rows):
                 return f"context_notes[{i}].table.rows: 1..{_CTX_ROWS_MAX} rows of up to {_CTX_COLS_MAX} strings of up to {_CTX_CELL_MAX} characters"
     return None
+
+
+def _walk_example() -> str:
+    return str(rubric()["guide"]["answer_example"])
 
 
 @cache
@@ -211,7 +217,7 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
     # is {section: "...", <section>: {rows: [...]}}, not {section: "...", content: [...]}.
     # Previously these three sections always returned E_SECTION_INVALID "content must be an array"
     # because args.get("content") was always None.
-    if content is None and section in ("roles_notes", "coverage", "out_of_scope_reasons"):
+    if content is None and section in ("roles_notes", "coverage", "out_of_scope_reasons", "invariant_walks"):
         section_arg = args.get(section)
         if isinstance(section_arg, dict):
             content = section_arg.get("rows")
@@ -254,6 +260,7 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
         "coverage": '[{"area_id": "AC", "status": "partially_read"}]',
         "out_of_scope_reasons": '[{"item_id": "X-001", "reason": "Vendored dependency, not audited."}]',
         "context_notes": '[{"p": "The project is a token bridge."}]',
+        "invariant_walks": _walk_example(),
     }
     if not isinstance(content, list):
         example = _SECTION_EXAMPLES.get(section, "[]")
@@ -391,6 +398,31 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
                                 detail=f"{area_id}: predicate {reason}={predicate_result}").envelope()
                 ]}
 
+    # ── Invariant walks: coverage-checked answers, merged by walk_id ──────────
+    walks_open: list[str] = []
+    if section == "invariant_walks":
+        lc = load_lifecycle(_get_ctx().get_pin_root(), job_id)
+        index = walk_index(lc)
+        if not index:
+            return {"accepted": False, "errors": [ReviewError(
+                "E_SECTION_INVALID", detail="this job has no invariant walks (review_get_guide topic invariants)",
+                example=_walk_example()).envelope()]}
+        async with pool.connection() as wc:
+            reads = await load_reads(wc, job_id)
+            drafts = await load_drafts(wc, job_id)
+            previous = await latest_rows(wc, job_id)
+        errors = []
+        for row in content:
+            detail = validate_row(row, index.get(str((row or {}).get("walk_id"))) if isinstance(row, dict) else None,
+                                  reads, drafts)
+            if detail is not None:
+                errors.append(ReviewError("E_SECTION_INVALID", detail=detail, example=_walk_example()).envelope())
+        if errors:
+            return {"accepted": False, "errors": errors[:20]}
+        clean = [{k: row[k] for k in ("walk_id", "outcome", "refs", "note", "draft_key") if k in row} for row in content]
+        content = merge_rows(previous, clean)
+        walks_open = open_walks(lc, content, drafts)
+
     # ── Compute content hash and check idempotency ────────────────────────────
     content_hash = hashlib.sha256(
         json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
@@ -431,6 +463,7 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
                     "section": section,
                     "revision": existing["revision"],
                     "idempotent": True,
+                    **({"walks_open": walks_open} if section == "invariant_walks" else {}),
                 }
             # New content: next revision
             next_revision = existing["revision"] + 1
@@ -454,4 +487,5 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
         "section": section,
         "revision": next_revision,
         "idempotent": False,
+        **({"walks_open": walks_open} if section == "invariant_walks" else {}),
     }
