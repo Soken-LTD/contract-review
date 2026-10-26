@@ -15,6 +15,19 @@ _ERROR_CLASS_RE = re.compile(r"\b([A-Z][A-Za-z]{2,40}Error|not_checkable|failed|
 
 _CAP = 20_000
 _HANDLER_NAMES = frozenset({"receive", "bounced", "external"})
+_REASON_RE = re.compile(r"[a-z][a-z0-9_]{1,40}")
+
+
+def build_error_summary(build_detail: str | None) -> str | None:
+    """Server-safe form of a build failure: the leading reason token plus error class names.
+
+    Raw compiler or build stderr can quote repo text, so it stays in host files only."""
+    if not build_detail:
+        return None
+    head = str(build_detail).split(":", 1)[0].strip()
+    parts = [head] if _REASON_RE.fullmatch(head) else []
+    parts += [c for c in sorted(set(_ERROR_CLASS_RE.findall(str(build_detail)))) if c not in parts][:5]
+    return ", ".join(parts) or "failed"
 
 
 def _spans(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
