@@ -4,8 +4,8 @@
     uv run python scripts/e2e_solana_repo_map.py --versions     # image versions the targets need
 
 Per target, through the functions worker/solana_steps.py runs for a repo job:
-  1. fetch.fetch_source with repo_url, commit and subdir: the subdir is the pin (review scope), the
-     repo tree around it is kept for the build (fetch.attach_build_workspace)
+  1. the fetch_source steps (sandboxed clone of the commit, candidate, attach_build_workspace): the
+     subdir is the pin (review scope), the repo tree around it is kept for the build
   2. build with solana_steps.build_files (pinned scope inside its Cargo workspace), the image of the
      program's Solana version or the nearest published one; deps fetched online, build offline
   3. analyze: clippy and cargo-audit on the built tree, soken-solana-rules on the pin; without a build
@@ -27,6 +27,7 @@ import os
 import sys
 import tempfile
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,7 @@ from soken_review.adapters.base import BuildResult, Candidate
 from soken_review.adapters.solana import SolanaAdapter
 from soken_review.adapters.solana.analyze import analyze_source_only
 from soken_review.adapters.solana.build import sandbox_layout
-from soken_review.adapters.solana.fetch import fetch_source
+from soken_review.adapters.solana.fetch import _clone_repo, _make_candidate, attach_build_workspace
 from soken_review.mapping.build import build_map
 from soken_review.mapping.step import family_categories
 from soken_review.worker.solana_steps import build_files, pin_nsloc
@@ -52,12 +53,17 @@ TARGETS: list[dict[str, Any]] = [
 def run(t: dict[str, Any], root: Path) -> dict[str, Any]:
     out: dict[str, Any] = {"name": t["name"]}
     t0 = time.time()
-    job = {"address": t["address"], "repo_url": t["repo_url"], "commit": t["commit"], "subdir": t["subdir"],
-           "work_dir": str(root / t["name"])}
-    bundles = fetch_source(job, {})
-    if not bundles or not bundles[0].candidates:
+    # fetch_source's own steps (clone, candidate, workspace) in a kept work dir: the sandbox writes the
+    # clone as uid 10001, which a non-root CI runner cannot remove from fetch_source's temp dir.
+    work = root / t["name"]
+    work.mkdir(parents=True, exist_ok=True)
+    files = _clone_repo(t["repo_url"], t["commit"], work, subdir=t["subdir"])
+    if not files:
         return {**out, "stage": "fetch", "ok": False}
-    cand = bundles[0].candidates[0]
+    cand = _make_candidate(files, "repo", repo_url=t["repo_url"], commit=t["commit"])
+    workspace = getattr(files, "workspace", None)
+    if workspace:
+        attach_build_workspace(cand, t["subdir"], workspace)
     scope = dict(cand.files)
     out.update(pin_files=len(scope), workspace_files=len(cand._full_tree or {}),
                library_name=cand.settings.get("library_name"), fetch_s=round(time.time() - t0))
@@ -136,7 +142,8 @@ def main(argv: list[str]) -> int:
         try:
             row = run(t, root)
         except Exception as exc:  # noqa: BLE001 - one target's crash is that target's failed row
-            row = {"name": t["name"], "stage": "crash", "error": repr(exc)[:500], "ok": False}
+            row = {"name": t["name"], "stage": "crash", "error": repr(exc)[:500],
+                   "trace": traceback.format_exc()[-1500:], "ok": False}
         print(json.dumps(row), flush=True)
         rows.append(row)
     return 0 if rows and all(r.get("ok") for r in rows) else 1
