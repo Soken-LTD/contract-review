@@ -269,3 +269,22 @@ def test_rubric_text_is_plain():
     assert len(ids) == len(set(ids))
     for sig in {s for t in r["protocol_types"].values() for w in t["walks"] for s in w.get("signals") or []}:
         assert sig in r["lifecycle_signals"]
+
+
+def test_near_copies_group_into_one_lead():
+    """Same signal and parameters in several contracts: one lead, every location in its message."""
+    base = {"signal": "LC-EVM-EMPTY", "end": 0, "score": 70,
+            "params": {"fn": "_emergencyWithdraw", "subject": "balanceOf(this)", "vars": "none"}}
+    copies = [{**base, "file": f"src/strategies/S{i}.sol", "start": 60 + i, "end": 60 + i, "strong": i == 2}
+              for i in (3, 1, 2)]
+    other = {**base, "file": "src/Vault.sol", "start": 9, "end": 9, "strong": True,
+             "params": {**base["params"], "fn": "deposit"}}
+    ranked = rank_signals([*copies, other])
+    assert len(ranked) == 2
+    grouped = next(s for s in ranked if s["params"]["fn"] == "_emergencyWithdraw")
+    assert grouped["file"] == "src/strategies/S1.sol" and grouped["strong"] is True
+    assert grouped["locations"] == ["src/strategies/S2.sol:62", "src/strategies/S3.sol:63"]
+    lead = leads_from_signals([grouped], 1)[0]
+    assert "src/strategies/S2.sol:62, src/strategies/S3.sol:63" in lead["message"] and "3 structurally" in lead["message"]
+    single = leads_from_signals([s for s in ranked if s is not grouped], 2)[0]
+    assert "structurally" not in single["message"]

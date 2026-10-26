@@ -331,4 +331,8 @@ guide:
   answer_example: '{"section": "invariant_walks", "invariant_walks": {"rows": [{"walk_id": "IW-VS-1", "outcome": "holds", "refs": ["src/Vault.sol:120-168"], "note": "The price snapshot is cleared in _burn when supply reaches zero, so the next deposit starts at the initial price."}]}}'
   no_walks: No invariant walks apply to this job; the lifecycle leads, if any, are handled as ordinary leads.
 
+# Appended to a lead message when near-copy contracts repeat the same pattern (group_signals): one
+# lead stands for every location; dismissing or promoting it covers the group.
+group_suffix: 'The same pattern repeats in {count} structurally identical places; the other locations are {locations}. Decide it once for all of them.'
+
 map_pointer: 'lifecycle: {leads} lifecycle leads, protocol types {types}, invariant walks {walks} (review_get_guide topic invariants; answer with review_set_section section invariant_walks)'

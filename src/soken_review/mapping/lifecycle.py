@@ -68,11 +68,38 @@ def _dep_re(family: str) -> re.Pattern[str]:
 # ── signals -> leads ──────────────────────────────────────────────────────────
 
 
+def group_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One signal per pattern shape across near-copy contracts.
+
+    Two signals have the same shape when the signal id and every rendered parameter (function or
+    instruction name, population measure, values read, account and authority) are equal while the
+    location differs: a strategy family where each adapter repeats the same `_emergencyWithdraw`
+    zero branch, or forks of one accounts struct. The group keeps the first location (path, line)
+    as its anchor, lists the others in `locations`, takes the highest score and is strong when any
+    member is. A reviewer decides the pattern once; N copies would only fill the lead cap."""
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for s in signals:
+        key = (s["signal"], json.dumps(s.get("params") or {}, sort_keys=True))
+        groups.setdefault(key, []).append(s)
+    out = []
+    for members in groups.values():
+        members = sorted(members, key=lambda m: (m["file"], int(m["start"])))
+        head = dict(members[0])
+        if len(members) > 1:
+            head["locations"] = [f"{m['file']}:{m['start']}" for m in members[1:]]
+            head["score"] = max(int(m.get("score", 0)) for m in members)
+            head["strong"] = any(m.get("strong") for m in members)
+            head["names"] = sorted({n for m in members for n in m.get("names") or []})
+        out.append(head)
+    return out
+
+
 def rank_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Order, cap and grade the signals: at most `max_leads`, at most `max_medium` warnings."""
+    """Group near-copies, then order, cap and grade: at most `max_leads`, at most `max_medium` warnings."""
     r = rubric()
     lim = r["limits"]
     defs = r["lifecycle_signals"]
+    signals = group_signals(signals)
     ordered = sorted(signals, key=lambda s: (-int(s.get("score", 0)), s["file"], int(s["start"]), s["signal"]))
     seen: set[tuple[str, str, int]] = set()
     out: list[dict[str, Any]] = []
@@ -114,7 +141,10 @@ def leads_from_signals(signals: list[dict[str, Any]], first_no: int) -> list[dic
             "end": max(int(s["start"]), int(s["end"])),
             "state": "open",
             "origin": "analyzer",
-            "message": _render(d["message"], s.get("params") or {}),
+            "message": _render(d["message"] + (" " + rubric()["group_suffix"] if s.get("locations") else ""),
+                               {**(s.get("params") or {}), "count": str(1 + len(s.get("locations") or [])),
+                                "locations": ", ".join((s.get("locations") or [])[:8])
+                                + (" and more" if len(s.get("locations") or []) > 8 else "")}),
         }
         if s.get("unit"):
             lead["unit"] = s["unit"][:200]

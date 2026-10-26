@@ -23,6 +23,7 @@ from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
 from ..mapping.build import load_map
 from ..mapping.facts import load_facts
+from ..mapping.lifecycle import load_lifecycle
 from ..mapping.related import load_related_contracts
 from ..pinning.store import PinnedSource
 from .architecture import architecture_block, role_rows
@@ -611,6 +612,30 @@ def context_notes(section: Any) -> list[dict[str, Any]]:
     return _model_blocks(list(blocks))[:MAX_CONTEXT_NOTES]
 
 
+def invariant_walk_rows(lc: dict[str, Any] | None, section: Any, keymap: dict[str, str]) -> list[dict[str, Any]]:
+    """`review_coverage.invariant_walks` (feat/lifecycle-invariant-pass): one row per walk of the job
+    with the session's verdict, the traced code (at most four refs) and the final id of the finding a
+    violated walk names. The answer note is audit-log text and is not printed. No walks, no rows."""
+    walks = (lc or {}).get("walks") or []
+    rows_in = section.get("rows", []) if isinstance(section, dict) else (section or [])
+    answers = {str(r.get("walk_id")): r for r in rows_in if isinstance(r, dict)}
+    out = []
+    for w in walks[:20]:
+        a = answers.get(w["id"]) or {}
+        verdict = a.get("outcome") if a.get("outcome") in ("holds", "violated", "not_applicable") else "not_answered"
+        lines = []
+        for ref in (a.get("refs") or [])[:4]:
+            m = re.match(r"^(.+):(\d+)-(\d+)$", str(ref))
+            if m:
+                lines.append(_ref(m[1], int(m[2]), int(m[3])))
+        row: dict[str, Any] = {"walk_id": w["id"], "title": str(w.get("title", ""))[:80], "verdict": verdict,
+                               "lines": lines}
+        if verdict == "violated" and keymap.get(str(a.get("draft_key"))):
+            row["finding"] = keymap[str(a["draft_key"])]
+        out.append(row)
+    return out
+
+
 def context_section(pin_root: Path, job_id: str, job: dict[str, Any], sections: dict[str, Any], today: date) -> dict[str, Any]:
     """The report `context` object (spec 7) plus the context facts for `report.facts`."""
     store = context_store(pin_root, job_id)
@@ -933,6 +958,9 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
                             "leads": [{"analyzer": n[:40], "version": v[:40], **r} for (n, v), r in sorted(per_tool.items())],
                             "withdrawn": withdrawn[:60], "injection_flags": []},
     }
+    walk_rows = invariant_walk_rows(load_lifecycle(pin_root, job_id), sections.get("invariant_walks"), keymap)
+    if walk_rows:
+        report["review_coverage"]["invariant_walks"] = walk_rows
     # Verification blocks: present only for tier A and C (schema: "present for tier A and C only")
     if job.get("tier") in ("A", "C") and deployment is not None:
         report["verification"] = _build_verification_blocks(deployment, chain_state, job)

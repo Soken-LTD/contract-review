@@ -161,5 +161,20 @@
   "out_of_scope": "Out of scope",
   "disproved_by_challenge": "Disproved by challenge",
   "not_reviewed": "Not reviewed"
+ },
+ "invariant_walks": {
+  "heading": "Invariant walks",
+  "head": {
+   "walk": "Walk",
+   "verdict": "Verdict",
+   "code": "Code traced",
+   "finding": "Finding"
+  },
+  "verdict": {
+   "holds": "Holds",
+   "violated": "Violated",
+   "not_applicable": "Not applicable",
+   "not_answered": "Not answered"
+  }
  }
 }
