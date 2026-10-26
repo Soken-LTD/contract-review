@@ -180,6 +180,10 @@ def _clone_repo(repo_url: str, commit: str | None, work_dir: Path,
     Production (SOKEN_SOLANA_DIRECT not set): soken-fetch (09 5.2) in the git-fetch image on the
     solana egress network; any failure = fetch failed (None), never a direct clone.
     Dev (SOKEN_SOLANA_DIRECT=1): direct git clone on the host.
+
+    With a subdir the result's `.workspace` is the walk of the clone root: the subdir is the
+    reviewed scope, but a Cargo workspace needs the root manifest, Cargo.lock, every member manifest
+    and path dependencies to build.
     """
     src_url = _safe_repo_url(repo_url)
     if src_url is None:
@@ -189,12 +193,23 @@ def _clone_repo(repo_url: str, commit: str | None, work_dir: Path,
     if os.environ.get("SOKEN_SOLANA_DIRECT") == "1":
         clone_dir = work_dir / "clone"
         sandbox_writable_dir(clone_dir)
-        return _clone_direct(src_url, commit, clone_dir, subdir=subdir)
+        files = _clone_direct(src_url, commit, clone_dir, subdir=subdir)
+    else:
+        files = _clone_in_sandbox(src_url, commit, work_dir, subdir=subdir)
+        if files is None:
+            logger.warning("sandboxed fetch failed for %s; failing closed (no direct fallback)", src_url)
+    return files
 
-    result = _clone_in_sandbox(src_url, commit, work_dir, subdir=subdir)
-    if result is None:
-        logger.warning("sandboxed fetch failed for %s; failing closed (no direct fallback)", src_url)
-    return result
+
+def _walk_scope(root: Path, subdir: str | None) -> dict[str, str] | None:
+    """Walk of the subdir; with a subdir, the walk of the clone root rides along as `.workspace`."""
+    src_root = _resolve_subdir(root, subdir)
+    if src_root is None:
+        return None
+    files = _walk_source_files(src_root)
+    if src_root != root and isinstance(files, SourceFiles):
+        files.workspace = _walk_source_files(root)
+    return files
 
 
 def _clone_in_sandbox(src_url: str, commit: str | None, work_dir: Path,
@@ -212,10 +227,7 @@ def _clone_in_sandbox(src_url: str, commit: str | None, work_dir: Path,
         logger.warning("soken-fetch exit %d (%s): %s", res.exit_code, res.error_code,
                        str((res.manifest or {}).get("error"))[:300])
         return None
-    src_root = _resolve_subdir(Path(res.src_dir), subdir)
-    if src_root is None:
-        return None
-    return _walk_source_files(src_root)
+    return _walk_scope(Path(res.src_dir), subdir)
 
 
 def _clone_direct(src_url: str, commit: str | None, clone_dir: Path,
@@ -258,10 +270,7 @@ def _clone_direct(src_url: str, commit: str | None, clone_dir: Path,
         logger.warning("git clone failed for %s: %s", src_url, exc)
         return None
 
-    walk_root = _resolve_subdir(clone_dir, subdir)
-    if walk_root is None:
-        return None
-    return _walk_source_files(walk_root)
+    return _walk_scope(clone_dir, subdir)
 
 
 class SourceFiles(dict):
@@ -269,10 +278,12 @@ class SourceFiles(dict):
     (binary extension, hidden or heavy dir) that the trust scan must still see (06 3.3.4)."""
 
     unread_paths: list[str]
+    workspace: dict[str, str] | None   # walk of the clone root when a subdir was fetched
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.unread_paths = []
+        self.workspace = None
 
 
 _TRUST_ARTIFACT_EXTS = frozenset({".o", ".a", ".so", ".elf"})
@@ -537,6 +548,7 @@ def fetch_source(job: Any, cs: dict[str, Any]) -> list[Any]:
     with tempfile.TemporaryDirectory(dir=_SBX_ROOT) as tmp:
         work_dir = Path(tmp)
         files = _clone_repo(repo_url, commit, work_dir, subdir=subdir)
+    workspace = getattr(files, "workspace", None)
 
     if not files:
         logger.warning("fetch_source: empty file set from repo %s", repo_url)
@@ -544,6 +556,8 @@ def fetch_source(job: Any, cs: dict[str, Any]) -> list[Any]:
 
     framework = detect_framework_from_files(files) or "native"
     candidate = _make_candidate(files, "repo", repo_url=repo_url, commit=commit, framework=framework)
+    if subdir and workspace:
+        attach_build_workspace(candidate, subdir, workspace)
 
     # Unit label
     unit_label = make_unit_label(
@@ -563,6 +577,26 @@ def fetch_source(job: Any, cs: dict[str, Any]) -> list[Any]:
     )
 
     return [SourceBundle(target=target, candidates=[candidate])]
+
+
+def attach_build_workspace(candidate: Any, subdir: str, workspace: dict[str, str]) -> None:
+    """Keep the repo tree around a subdir candidate for the build (runtime only, never pinned).
+
+    `candidate.files` stays the subdir (the reviewed scope, the pin). The build needs the Cargo
+    workspace the subdir belongs to: `settings.subdir` places the scope in it and
+    `settings.library_name` is the subdir crate's `[lib] name` (solana-verify --library-name), so
+    the build is `--manifest-path <subdir>/Cargo.toml` inside the workspace. The workspace's own
+    unread paths (committed objects, .cargo/config*) join the trust scan.
+    """
+    from soken_review.adapters.solana.build import _lib_name, _toml
+
+    manifest = _toml(candidate.files.get("Cargo.toml") or "")
+    candidate.settings["subdir"] = subdir
+    lib = _lib_name(manifest) if manifest else None
+    if lib:
+        candidate.settings["library_name"] = lib
+    candidate.settings["workspace_unread_paths"] = list(getattr(workspace, "unread_paths", []))
+    candidate._full_tree = dict(workspace)
 
 
 def _name_from_url(repo_url: str) -> str:
