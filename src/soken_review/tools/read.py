@@ -33,6 +33,7 @@ from ..engine.injection import escape_invisible
 from ..errors import ReviewError
 from ..mapping.build import load_map, load_map_status
 from ..mapping.facts import load_facts
+from ..mapping.lifecycle import load_lifecycle, map_pointer
 from ..mapping.step import load_flags
 from ..pinning.store import PinnedSource
 from ..server import handler
@@ -515,10 +516,12 @@ def _format_lead(lead: dict, fmt: str) -> str:
         prev_id = lead.get("prev_finding_id", "")
         line += f" prev {prev_id}"
 
-    if fmt == "detailed":
+    if fmt == "detailed" or str(lead.get("rule_id", "")).startswith("soken-lifecycle:"):
+        # lifecycle leads carry their reason in the message (rubric invariants.yaml); without it
+        # the concise line names a location and nothing to check there
         msg = lead.get("message", "")[:400]
         if msg:
-            line += f' "{msg}"'
+            line += f' {lead.get("rule_id", "")} "{msg}"' if fmt != "detailed" else f' "{msg}"'
 
     return line
 
@@ -579,8 +582,10 @@ async def _contract_map(args: dict[str, Any]) -> str:
     doc, status = load_map(root, job_id)
     if doc is None:
         raise ReviewError("E_INTERNAL", incident=f"map-missing-{job_id[-8:]}")
+    pointer = map_pointer(load_lifecycle(root, job_id))
     if not doc.get("semantic"):
-        return "\n".join(map_view.render_lexical(doc, status, load_map_status(root, job_id).get("build_detail")))
+        lines = map_view.render_lexical(doc, status, load_map_status(root, job_id).get("build_detail"))
+        return "\n".join([*lines, pointer] if pointer else lines)
 
     filters = {"contract": contract or "", "detailed": detailed, "page_size": page_size}
     offset = _parse_cursor(cursor, job_id, "review_contract_map", filters) if cursor else 0
@@ -594,6 +599,8 @@ async def _contract_map(args: dict[str, Any]) -> str:
         # Parsed from source (no compiler resolution); the build outcome is stated, never implied.
         build_status = load_map_status(root, job_id).get("build_status") or "unknown"
         out[0] += f"; layer parsed from source, build {build_status} (see review_status build)"
+    if pointer and offset == 0:
+        out.append(pointer)
     used = len(out[0])
     shown = 0
     for unit in page:

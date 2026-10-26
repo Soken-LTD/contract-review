@@ -47,6 +47,48 @@ def _main_contract() -> dict | None:
 # ── contract: additive only ─────────────────────────────────────────────────
 
 
+def _widens(old, new) -> bool:
+    """`new` accepts every value `old` accepts, judged structurally: enums may gain values, upper
+    bounds may grow, lower bounds may shrink, `required` may shrink, objects may gain properties,
+    descriptions may change. Anything else must stay equal."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        for k, v in old.items():
+            if k == "description":
+                continue
+            if k not in new:
+                return False
+            n = new[k]
+            if k == "enum":
+                if not set(v) <= set(n):
+                    return False
+            elif k in ("maxItems", "maxLength", "maximum"):
+                if n < v:
+                    return False
+            elif k in ("minItems", "minLength", "minimum"):
+                if n > v:
+                    return False
+            elif k == "required":
+                if not set(n) <= set(v):
+                    return False
+            elif not _widens(v, n):
+                return False
+        return all(k in old or k == "description" or (k != "required" and not isinstance(new[k], (int, str, bool)))
+                   for k in new)
+    if isinstance(old, list) and isinstance(new, list):
+        return len(old) == len(new) and all(_widens(a, b) for a, b in zip(old, new, strict=True))
+    return old == new
+
+
+def test_widens_rules():
+    assert _widens({"enum": ["a"]}, {"enum": ["a", "b"]})
+    assert not _widens({"enum": ["a", "b"]}, {"enum": ["a"]})
+    assert _widens({"type": "object", "properties": {"x": {"type": "string"}}},
+                   {"type": "object", "properties": {"x": {"type": "string"}, "y": {"type": "string"}}})
+    assert not _widens({"type": "string"}, {"type": "integer"})
+    assert not _widens({"maxItems": 5}, {"maxItems": 4})
+    assert not _widens({"type": "string"}, {"type": "string", "maxLength": 3})
+
+
 def test_schema_changes_are_additive():
     old = _main_contract()
     if old is None:
@@ -60,7 +102,7 @@ def test_schema_changes_are_additive():
                 continue
             old_props, new_props = tool[key].get("properties", {}), cur[key].get("properties", {})
             for name, spec in old_props.items():
-                assert new_props.get(name) == spec, f"{tool['name']}.{key}.{name} changed"
+                assert name in new_props and _widens(spec, new_props[name]), f"{tool['name']}.{key}.{name} narrowed"
             if key == "inputSchema":  # required may only shrink: every old call stays valid
                 assert set(cur[key].get("required", [])) <= set(tool[key].get("required", [])), tool["name"]
 

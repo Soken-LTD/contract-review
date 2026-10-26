@@ -983,6 +983,16 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
             f'<td>{esc_src(ref_text(w["lines"]), ctx)}</td></tr>' for w in cov["withdrawn"])
         cov_html += (f'<div class="keep"><h3>Withdrawn candidates</h3><table><tr><th style="width:12%">Candidate</th><th>Category</th>'
                      f'<th>Withdrawn by</th><th>Lines</th></tr>{wrows}</table></div>')
+    if cov.get("invariant_walks"):
+        iw = t["invariant_walks"]
+        vrows = "".join(
+            f'<tr><td>{esc(x["walk_id"])} {esc(x["title"])}</td><td>{esc(iw["verdict"][x["verdict"]])}</td>'
+            f'<td>{"<br>".join(esc_src(ref_text(ln), ctx) for ln in x["lines"])}</td>'
+            f'<td>{esc(x.get("finding", ""))}</td></tr>' for x in cov["invariant_walks"])
+        head = iw["head"]
+        cov_html += (f'<div class="keep"><h3>{esc(iw["heading"])}</h3><table><tr><th style="width:38%">{esc(head["walk"])}</th>'
+                     f'<th style="width:14%">{esc(head["verdict"])}</th><th>{esc(head["code"])}</th>'
+                     f'<th style="width:10%">{esc(head["finding"])}</th></tr>{vrows}</table></div>')
     if cov["injection_flags"]:
         irows = "".join(f'<tr><td>{esc_src(x["file"], ctx)}</td><td class="num">{x["line"]:,}</td></tr>' for x in cov["injection_flags"])
         cov_html += (f'<div class="keep"><h3>Instruction-like comments</h3><table><tr><th>File</th><th class="num" style="width:12%">'

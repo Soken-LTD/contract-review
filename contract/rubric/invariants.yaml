@@ -1,0 +1,338 @@
+# rubric/invariants.yaml: the lifecycle and invariant pass (feat/lifecycle-invariant-pass, 2026-10-26).
+#
+# Why: pattern detectors and a single read pass miss bugs that only show up when state moves
+# through a full lifecycle: a stored value that is never reset when a population (share supply,
+# total stake, open positions) returns to zero, or an account the program does not control whose
+# owner, authority or frozen state changes under a pending settlement. This file is the single
+# source of every text the client model sees for that pass, plus the reference data the server
+# uses to find the anchors. Server code substitutes identifiers only ({var}, {fn}, ...); it never
+# carries its own wording (NO HARDCODE rule).
+#
+# Sections:
+#   lifecycle_signals  server-detected anchors that become analyzer leads (tool soken-lifecycle)
+#   protocol_types     name-based protocol detection and the invariant walks the client answers
+#   evm / solana       reference data for the extractors (name patterns, dependency paths)
+#   guide              text of review_get_guide topic invariants
+#   map_pointer        one line printed by review_contract_map when the job has walks
+version: "1.0.0"
+tool: soken-lifecycle
+
+# Severity is SARIF-like (analyzer_severity.yaml row soken-lifecycle): warning -> Medium (must be
+# promoted or dismissed before finalize, F2), note -> Low.
+# limits: per job, at most `max_leads` lifecycle leads; at most `max_medium` stay warning, the rest
+# are lowered to note by score.
+limits: {max_leads: 10, max_medium: 6, max_walks: 10, max_types: 2, max_walk_anchors: 4}
+
+lifecycle_signals:
+  LC-EVM-STALE:
+    family: evm
+    category: evm.accounting_logic
+    severity: warning
+    message: >-
+      Stored value {var} is written on the non-empty path ({writers}) and read where {subject} is
+      used ({readers}), but no path resets it when {subject} returns to zero. Walk supply from zero
+      to positive and back to zero, then run the next deposit or mint with the value {var} still
+      holds.
+  LC-EVM-EMPTY:
+    family: evm
+    category: evm.accounting_logic
+    severity: warning
+    message: >-
+      {fn} branches on {subject} being zero. The branch runs on the first deposit and again every
+      time {subject} returns to zero; check that every stored value it reads or skips ({vars}) is
+      valid in both cases and that a donation or a dust position before the branch cannot skew it.
+  LC-EVM-ACCRUE:
+    family: evm
+    category: evm.accounting_logic
+    severity: warning
+    message: >-
+      {fn} updates {accumulators} only while {subject} is not zero and records time or block
+      progress in {clocks}. Check where the value for a period with {subject} at zero goes: lost,
+      stuck in the contract, or paid to the next entrant.
+  LC-EVM-DIV:
+    family: evm
+    category: evm.arithmetic_precision
+    severity: note
+    message: >-
+      {fn} divides by {subject} without a zero check on the same path. Check the state where
+      {subject} is zero (empty vault, all stake withdrawn, all assets lost).
+  LC-SOL-AUTH:
+    family: solana
+    category: solana.ata_owner_reassign
+    severity: warning
+    message: >-
+      Instruction {ix} requires token account {account} with authority {authority}, a party that
+      does not sign {ix}. A classic SPL Token account owner can reassign the account owner
+      (SetAuthority AccountOwner), close an empty account, or have it frozen by the mint, after
+      which this constraint fails for every caller. Check whether the other party can still settle,
+      claim or recover without this account.
+  LC-SOL-PIN:
+    family: solana
+    category: solana.ata_owner_reassign
+    severity: note
+    message: >-
+      Instruction {ix} pins token account {account} to a stored key ({pin}) that a user controls.
+      If the owner closes it or the mint freezes it, {ix} fails until someone else acts. Check the
+      recovery path for the other party.
+
+protocol_types:
+  # detect: each entry is a case-insensitive regex over function, state variable and account names
+  # of in-scope files; a type is detected when at least `min_hits` distinct entries match. At most
+  # limits.max_types types (highest hit count first) give walks.
+  # walks[].focus: regex over function names; the server resolves it to in-scope function spans the
+  #   answer must cover (refs overlapping at least min(2, n) of them).
+  # walks[].signals: lifecycle signals whose leads are anchors of the walk; the answer refs must
+  #   cover every anchor line (at most limits.max_walk_anchors per walk).
+  vault_shares:
+    label: vault or share accounting
+    min_hits: 3
+    detect: ['^_?deposit', '^_?withdraw', '^_?redeem', '^_?mint$', 'shares?', 'totalassets', 'converttoshares|converttoassets',
+             'shareprice|pricepershare|exchangerate', 'previewdeposit|previewredeem|previewmint|previewwithdraw', 'highwatermark']
+    walks:
+      - id: IW-VS-1
+        title: Supply returns to zero
+        focus: 'deposit|mint|withdraw|redeem|convert|shareprice|pricepershare|totalassets|_update|harvest|report'
+        signals: [LC-EVM-STALE, LC-EVM-EMPTY]
+        text: >-
+          Walk the share supply from zero to positive and back to zero (every holder redeems, is
+          burned, or is liquidated). List every stored value the deposit, mint, withdraw, redeem
+          and pricing paths read: share price snapshots, high-water marks, fee checkpoints,
+          accumulators, last-update values. State the value each one holds after supply is zero
+          again and show what the next deposit computes from it: a revert, a wrong price, or a
+          correct reset.
+      - id: IW-VS-2
+        title: First deposit into an empty vault
+        focus: 'deposit|mint|convert|preview|totalassets'
+        signals: [LC-EVM-EMPTY]
+        text: >-
+          Price the first deposit into an empty vault. Show how shares are computed when supply is
+          zero, whether assets sent directly to the vault before or after that deposit change the
+          share price for the next depositor, and what bounds the rounding loss (virtual shares,
+          dead shares, a minimum deposit).
+      - id: IW-VS-3
+        title: Assets lost while shares remain
+        focus: 'withdraw|redeem|convert|totalassets|report|harvest|loss'
+        signals: [LC-EVM-DIV]
+        text: >-
+          Take the state where total assets fall to zero or near zero while shares are still
+          outstanding (strategy loss, slashing, a blacklisted or removed strategy). Show what
+          deposit, withdraw and the price functions do then: division by zero, a share price of
+          zero that mints unbounded shares, or a revert that blocks exits.
+      - id: IW-VS-4
+        title: Rounding at the boundaries
+        focus: 'deposit|mint|withdraw|redeem|convert|preview'
+        text: >-
+          For one unit and for the largest amount, show the rounding direction of each conversion
+          (deposit and redeem round shares down, mint and withdraw round assets up, in favor of the
+          vault) and that a deposit followed by a redeem cannot return more than was paid.
+  staking_rewards:
+    label: staking and reward distribution
+    min_hits: 3
+    detect: ['^_?stake', 'unstake', 'reward', 'earned', 'rewardpertoken|accrewardpershare|rewardindex|accumulat', 'notifyreward',
+             'lastupdatetime|lastrewardtime|lastupdate', 'userrewardpertokenpaid|rewarddebt|checkpoint', 'claim']
+    walks:
+      - id: IW-SR-1
+        title: Rewards while nothing is staked
+        focus: 'reward|update|earned|notify|accrue|checkpoint'
+        signals: [LC-EVM-ACCRUE, LC-EVM-EMPTY, LC-EVM-DIV]
+        text: >-
+          Take a period in which total stake is zero while rewards are scheduled. Show where the
+          rewards for that period go (lost, stuck in the contract, or paid to the first staker that
+          enters) and whether the last-update time still moves forward while the per-share
+          accumulator does not.
+      - id: IW-SR-2
+        title: Full exit and re-entry
+        focus: 'stake|withdraw|exit|claim|getreward|earned|checkpoint|update'
+        signals: [LC-EVM-STALE]
+        text: >-
+          Walk one user from first stake through a full exit and a new stake. Show the per-user
+          checkpoint values (paid per-share value, reward debt, pending rewards) after the exit and
+          that the new position cannot claim rewards earned by the old one or lose them.
+      - id: IW-SR-3
+        title: Reward schedule changes mid-period
+        focus: 'notify|setreward|rewardrate|duration|period'
+        text: >-
+          Change the reward amount or duration while a period is running and after it ends. Show
+          that leftover rewards are carried, that the rate cannot exceed the balance held, and that
+          no accrued but unclaimed reward is overwritten.
+  lending_escrow:
+    label: lending, escrow, lock or vesting
+    min_hits: 3
+    detect: ['loan', 'borrow', 'repay', 'liquidat', 'collateral', 'escrow', '^_?lock', 'unlock', 'vest', 'settle', 'default', 'claim',
+             'maturity|expir|deadline', 'lender|borrower|recipient|beneficiary']
+    walks:
+      - id: IW-LE-1
+        title: Every party can leave every state
+        focus: 'settle|repay|claim|liquidat|default|withdraw|cancel|close|unlock|release|refund|redeem'
+        signals: [LC-SOL-AUTH, LC-SOL-PIN]
+        text: >-
+          For each position state (created, funded, active, repaid, defaulted, expired, closed),
+          name the instruction or function each party uses to leave it and the accounts or
+          addresses that call depends on. Show that no party other than the caller can make that
+          call fail by changing something it controls: closing, freezing or reassigning the owner
+          of its token account, revoking an approval, being blacklisted, or changing a stored
+          payout address.
+      - id: IW-LE-2
+        title: Accounts the program does not control
+        focus: 'settle|repay|claim|liquidat|default|withdraw|transfer|pay'
+        signals: [LC-SOL-AUTH, LC-SOL-PIN]
+        text: >-
+          List every token account, address or contract that the settlement, repayment,
+          liquidation or claim path pays to or reads but the protocol does not own. For each one,
+          state who can change its owner, authority, delegate, close authority, frozen state or
+          token extension settings (transfer fee, transfer hook, permanent delegate), and what the
+          path does after such a change.
+      - id: IW-LE-3
+        title: Time boundaries
+        focus: 'settle|repay|claim|liquidat|default|expir|matur|unlock|release'
+        text: >-
+          Evaluate each time check at the exact boundary (now equal to maturity, expiry, cliff or
+          deadline) and one second either side. Show that exactly one party can act at the boundary
+          and that no state is stuck after expiry because an action requires a time that has
+          passed.
+      - id: IW-LE-4
+        title: Zero, dust and partial amounts
+        focus: 'repay|borrow|deposit|withdraw|liquidat|claim|vest|release'
+        signals: [LC-EVM-DIV]
+        text: >-
+          Run each path with a zero amount, a one-unit amount and a partial amount. Show that
+          positions cannot be left with dust that blocks closing, that partial repayment or claim
+          keeps the stored totals consistent, and that a fully repaid or fully vested position
+          resets its accounting.
+  token:
+    label: token supply and authorities
+    min_hits: 4
+    detect: ['^_?mint$|^_?mint_?to', '^_?burn', '^_?transfer', 'approve|allowance|delegate', 'totalsupply|supply', 'balanceof|balances',
+             'blacklist|blocklist|freeze', 'pause', 'fee|tax']
+    walks:
+      - id: IW-TK-1
+        title: Supply and balance consistency
+        focus: 'mint|burn|transfer|_update|fee|tax'
+        text: >-
+          Show that the sum of balances equals the recorded supply across mint, burn, transfer,
+          fee and tax paths, including zero-amount transfers, self-transfers and transfers to the
+          token contract or the zero address.
+      - id: IW-TK-2
+        title: Authorities after deployment
+        focus: 'mint|pause|freeze|blacklist|setfee|settax|owner|authority|renounce'
+        text: >-
+          List each authority that can still change balances, fees, transferability or supply after
+          deployment, how it is assigned and removed, and what holders can do if it acts.
+  amm:
+    label: pool or AMM
+    min_hits: 3
+    detect: ['swap', 'addliquidity|add_liquidity|deposit', 'removeliquidity|remove_liquidity|burn', 'reserve', 'getamountout|quote|price',
+             'pair|pool', 'liquidity', 'sync|skim']
+    walks:
+      - id: IW-AMM-1
+        title: Empty pool and re-seeding
+        focus: 'addliquidity|add_liquidity|mint|removeliquidity|remove_liquidity|burn|swap|sync'
+        signals: [LC-EVM-EMPTY, LC-EVM-STALE, LC-EVM-DIV]
+        text: >-
+          Walk a pool from empty to seeded, drained back to zero liquidity and seeded again. Show
+          the first-provider share computation, any minimum liquidity that is locked, and the
+          stored reserves, price accumulators and fee counters after the pool is empty.
+      - id: IW-AMM-2
+        title: Invariant across fees and rounding
+        focus: 'swap|getamountout|quote|fee'
+        text: >-
+          Show that the pool invariant does not decrease across a swap at very small and very large
+          reserves after fees and rounding, and that reserves cannot diverge from balances.
+  governance:
+    label: governance and voting
+    min_hits: 3
+    detect: ['propos', 'vote|voting', 'quorum', 'execute', 'delegat', 'snapshot|checkpoint', 'timelock|queue', 'veto|cancel']
+    walks:
+      - id: IW-GOV-1
+        title: Voting power lifecycle
+        focus: 'vote|delegat|checkpoint|snapshot|getvotes|getpastvotes'
+        text: >-
+          Show how voting power is fixed for a proposal and that moving tokens or changing a
+          delegate after that point cannot add votes, and that power returns correctly after a
+          full withdrawal and a new deposit.
+      - id: IW-GOV-2
+        title: Proposal state transitions
+        focus: 'propos|execute|queue|cancel|veto|state'
+        text: >-
+          Walk each proposal state transition and show that a proposal cannot be executed twice,
+          executed after cancel, or pass when total voting supply is zero or near zero.
+
+  # Signal-driven types: detected when a lifecycle lead of a listed signal exists and no
+  # name-detected type already walks that signal. They keep the pass useful on code whose names
+  # match no catalogue type (a bridge vault, a custom escrow).
+  external_accounts:
+    label: accounts the program does not control
+    detect_signals: [LC-SOL-AUTH, LC-SOL-PIN]
+    walks:
+      - id: IW-EXT-1
+        title: Outside authority over required accounts
+        focus: 'settle|repay|claim|liquidat|default|withdraw|receive|transfer|pay|release|redeem|close'
+        signals: [LC-SOL-AUTH, LC-SOL-PIN]
+        text: >-
+          For each anchor account, name the instructions that require it, the party that controls
+          its owner, authority, close authority and frozen state, and the parties that depend on
+          those instructions. Show what happens to every pending position or message when that
+          party reassigns the owner, closes the account, or the mint freezes it, and which path
+          lets the others finish.
+  population_lifecycle:
+    label: population returning to zero
+    detect_signals: [LC-EVM-STALE, LC-EVM-EMPTY, LC-EVM-ACCRUE]
+    walks:
+      - id: IW-POP-1
+        title: Population returns to zero
+        focus: 'deposit|mint|withdraw|redeem|stake|unstake|exit|claim|update|accrue|_update|burn'
+        signals: [LC-EVM-STALE, LC-EVM-EMPTY, LC-EVM-ACCRUE]
+        text: >-
+          Walk the population named by the anchors (supply, total stake, total deposits) from zero
+          to positive and back to zero. For each stored value the anchors name, state the value it
+          holds when the population is zero again and what the next entry computes from it.
+
+evm:
+  # Population measures: a stored total or a call that reports one. A comparison of one of these
+  # with zero is an emptiness predicate; their writers move the population.
+  population_calls: '^(totalSupply|totalAssets|totalShares|getTotalShares|totalStake|totalStaked|getTotalStaked|totalDeposits?|totalLiquidity|totalBorrows?|totalPooledEther|getTotalPooledEther)$'
+  population_vars: '(?i)^_{0,2}(total(supply|shares?|staked|stake|stakes|deposits?|deposited|liquidity|assets|locked|weight|principal|borrows?|debt|balance|amount|pooled)\w*|supply|shares|poolsize|liquidity)$'
+  clock_vars: '(?i)(last|prev)\w*(time|timestamp|update|block|accrual|accrue)|(time|update)stamp$|lastupdate'
+  # Files that are dependencies or tests: their code feeds the call graph but never gets a lead.
+  dependency_paths: '(^|/)(node_modules|lib|dependencies|\.deps|vendor)/|^@|(^|/)(test|tests|mock|mocks|script|scripts)/|\.t\.sol$|(^|/)(forge-std|openzeppelin[\w-]*|solmate|solady)/'
+
+solana:
+  dependency_paths: '(^|/)(target|node_modules|tests?|migrations|\.anchor)/'
+  token_account_types: '\b(TokenAccount)\b'
+  token2022_only_programs: '\bProgram\s*<\s*''info\s*,\s*Token2022\s*>'
+
+guide:
+  intro: >-
+    Lifecycle and invariant pass. Run it after the first read of the code and the leads, as a
+    second pass. Pattern leads find code that looks wrong; this pass finds code that is wrong only
+    after a sequence of states: a stored value that survives a population returning to zero, an
+    account the program does not control that changes under a pending settlement, a boundary that
+    no single function shows.
+  steps:
+    - >-
+      Read the lifecycle leads (detector names start with soken-lifecycle). Each one names a
+      stored value, a zero branch, or an account with an outside authority, and the functions or
+      instructions that touch it. Promote it into a finding or dismiss it with a quote, like any
+      other lead.
+    - >-
+      Answer every invariant walk below with review_set_section, section invariant_walks. A walk
+      is answered by tracing the states it names through the code, not by quoting one line.
+    - >-
+      For each walk give the outcome holds, violated or not_applicable, refs that cover the code
+      traced (path:start-end, every range read with review_read_code first), and a note of at
+      least 40 characters stating the invariant and why it holds or how it breaks.
+    - >-
+      Refs must overlap at least two of the focus functions listed for the walk (one when only one
+      is listed) and every anchor line listed for it. violated needs draft_key of the finding that
+      reports the break. not_applicable is accepted only for a walk without anchors.
+    - >-
+      Rows can be sent in several calls; each call merges by walk_id. review_finalize stays open
+      (check F9) until every walk has an accepted answer.
+  answer_example: '{"section": "invariant_walks", "invariant_walks": {"rows": [{"walk_id": "IW-VS-1", "outcome": "holds", "refs": ["src/Vault.sol:120-168"], "note": "The price snapshot is cleared in _burn when supply reaches zero, so the next deposit starts at the initial price."}]}}'
+  no_walks: No invariant walks apply to this job; the lifecycle leads, if any, are handled as ordinary leads.
+
+# Appended to a lead message when near-copy contracts repeat the same pattern (group_signals): one
+# lead stands for every location; dismissing or promoting it covers the group.
+group_suffix: 'The same pattern repeats in {count} structurally identical places; the other locations are {locations}. Decide it once for all of them.'
+
+map_pointer: 'lifecycle: {leads} lifecycle leads, protocol types {types}, invariant walks {walks} (review_get_guide topic invariants; answer with review_set_section section invariant_walks)'

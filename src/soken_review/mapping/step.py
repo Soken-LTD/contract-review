@@ -20,6 +20,7 @@ from ..engine.injection import scan_file
 from ..pinning.store import PinnedSource
 from .build import build_map, load_map, load_tokens, write_map
 from .facts import load_facts, static_facts, write_facts
+from .lifecycle import apply_lifecycle
 from .project_url import discover_project_urls, write_suggested_context
 
 _ENUMS = Path(__file__).resolve().parents[3] / "contract" / "rubric" / "enums.yaml"
@@ -79,6 +80,16 @@ def run_map_step(
                     compiled_texts=compiled_texts, parsed_family="solana" if family == "solana" else None)
     write_map(pin_root, job_id, art, build_detail=build_detail, build_status=build_status)
 
+    # Lifecycle and invariant pass (feat/lifecycle-invariant-pass): lifecycle leads merged into
+    # leads.json and the job's invariant walks in map/lifecycle.json. Additive: a fault here is
+    # logged and never fails the map step.
+    lifecycle: dict[str, Any] = {}
+    try:
+        lifecycle = apply_lifecycle(pin_root, job_id, family, files, art.doc, output, compiled_texts)
+    except Exception:
+        import logging as _logging
+        _logging.getLogger(__name__).exception("lifecycle pass failed for job %s", job_id[-8:])
+
     # Server-side project URL discovery: scan source for NatSpec @custom:website,
     # @custom:security-contact, and GitHub repo URLs; write as suggested context items
     # so review_status can surface them to the model (feat/context-related-state).
@@ -123,6 +134,7 @@ def run_map_step(
         **({"build_status": build_status, "nsloc": nsloc} if build_status is not None else {}),
         "flags": {r: sum(1 for f in flags if f["rule"] == r) for r in ("J1", "J2", "J3", "J4", "J5")},
         "facts": len(facts),
+        "lifecycle": lifecycle,
     }
 
 
