@@ -606,6 +606,34 @@ def context_facts(facts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def section_rows(section: Any, key: str = "rows") -> list[dict[str, Any]]:
+    """Rows of a stored report section. `review_set_section` stores the row list itself; older jobs
+    hold `{rows: [...]}` (or `{notes: [...]}`). Blind run 2026-10-26: every job with roles_notes,
+    coverage or out_of_scope_reasons crashed at assembly on `list.get`, so no PDF was delivered."""
+    rows = section.get(key, []) if isinstance(section, dict) else (section or [])
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def roles_section(rows_in: list[dict[str, Any]], notes_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Attach each `roles_notes` row (`{role, risk_note}`) to the role row with that name; a note for
+    a role the map does not list becomes a paragraph under the table. Prose blocks (`{p: ...}`) pass
+    through as notes. Text was gated at write time; the assembly gate runs again on the result."""
+    rows = [dict(r) for r in rows_in]
+    by_name = {str(r.get("role", "")).strip().lower(): r for r in rows}
+    notes: list[Any] = []
+    for n in notes_rows:
+        if "risk_note" not in n:
+            notes.append(n)
+            continue
+        role, note = str(n.get("role", "")).strip(), str(n["risk_note"]).strip()
+        hit = by_name.get(role.lower())
+        if hit is not None and not hit.get("risk_note"):
+            hit["risk_note"] = note[:300]
+        else:
+            notes.append({"p": f"{role}: {note}" if role else note})
+    return rows, _model_blocks(notes)[:8]
+
+
 def context_notes(section: Any) -> list[dict[str, Any]]:
     """The stored `context_notes` section (a list of blocks, or `{notes: [...]}`) as model blocks, max 8."""
     blocks = section.get("notes", []) if isinstance(section, dict) else (section or [])
@@ -830,7 +858,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     sections = {r["section"]: r["content"] for r in await _rows(conn, """
         select distinct on (section) section, content from sections where job_id = %s
         order by section, revision desc""", (job_id,))}
-    for row in (sections.get("out_of_scope_reasons") or {}).get("rows", [])[:20]:
+    for row in section_rows(sections.get("out_of_scope_reasons"))[:20]:
         if pin.has_path(row.get("path", "")):
             oos.append({"path": row["path"], "reason": row["reason"], "by": "model"})
     nsloc = sum(f["nsloc"] for f in scope_files)
@@ -855,7 +883,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         return any(f["category_key"] == cat for f in findings)
 
     areas = []
-    na_rows = {r["area_id"]: r for r in (sections.get("coverage") or {}).get("rows", [])}
+    na_rows = {r["area_id"]: r for r in section_rows(sections.get("coverage")) if "area_id" in r}
     for cat in coverage_categories(family, chain if chain != "evm" else None):
         ids = [f["id"] for f in findings if f["category_key"] == cat["id"]][:20]
         a: dict[str, Any] = {"area_id": cat["id"][:40], "area": category_label(cat["id"])}
@@ -919,7 +947,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
                                         "finding; severity mapped from the classifications through the fixed matrix"},
         {"step": m["deployment"], "detail": _deployment_method_detail(job, deployment)},
     ]
-    roles_notes = sections.get("roles_notes") or {}
+    roles_rows, roles_notes = roles_section(role_rows(map_doc, facts, job), section_rows(sections.get("roles_notes"), "notes")
+                                            or section_rows(sections.get("roles_notes")))
     profile = "owner" if job["ownership_proven"] else "public_review"
     rid = job["report_id"]
     short = report_id_short or rid[:10]
@@ -947,8 +976,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         "context": ctx,
         "architecture": architecture_block(map_doc, facts, job, deployment),
         "roles": {
-            "rows": role_rows(map_doc, facts, job),
-            "notes": _model_blocks(roles_notes.get("notes", []))[:8],
+            "rows": roles_rows,
+            "notes": roles_notes,
             **_roles_related(pin_root, job_id),
         },
         "method": method,
