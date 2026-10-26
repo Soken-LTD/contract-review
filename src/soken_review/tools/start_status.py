@@ -38,6 +38,7 @@ from ..mapping.project_url import load_suggested_context
 from ..mapping.related import load_related_contracts
 from ..networks import publication_outcome
 from ..server import handler
+from . import map_view
 from .git_probe import GitLsRemoteProbe
 from .listen import RECHECK_S, job_hash, listener_for
 
@@ -944,7 +945,7 @@ def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
         if compiler_version:
             build_info["version"] = compiler_version
         if build_detail:
-            build_info["error"] = str(build_detail)[:300]
+            build_info["error"] = map_view.build_error_summary(build_detail)
         extras["build"] = build_info
     except Exception as exc:  # noqa: BLE001
         logger.debug("_detailed_extras: %s", type(exc).__name__)
