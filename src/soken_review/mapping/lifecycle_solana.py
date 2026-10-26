@@ -32,8 +32,6 @@ _DERIVE_RE = re.compile(r"#\s*\[\s*derive\s*\(([^)]*)\)\s*\]")
 _STRUCT_RE = re.compile(r"\bstruct\s+([A-Za-z_][A-Za-z0-9_]*)")
 _CTX_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\(\s*(?:mut\s+)?\w+\s*:\s*Context\s*<\s*(?:'\w+\s*,\s*)*"
                      r"([A-Za-z_][A-Za-z0-9_]*)")
-_AUTH_RE = re.compile(r"\b(associated_token|token)\s*::\s*authority\s*=\s*([A-Za-z_][\w.]*(?:\s*\.\s*key\s*\(\s*\))?)")
-_OWNER_CONSTRAINT_RE = re.compile(r"constraint\s*=\s*([A-Za-z_]\w*)\s*\.\s*owner\s*==\s*([A-Za-z_][\w.]*)")
 _TOKEN_PROGRAM_RE = re.compile(r"\b(associated_token|token)\s*::\s*token_program\s*=\s*([A-Za-z_]\w*)")
 _ADDRESS_RE = re.compile(r"\baddress\s*=\s*([A-Za-z_][\w.]*)")
 _HAS_ONE_RE = re.compile(r"\bhas_one\s*=\s*([A-Za-z_]\w*)")
@@ -166,10 +164,65 @@ def _parse_structs(path: str, text: str) -> list[_Struct]:
     return out
 
 
+_AUTH_AT_RE = re.compile(r"\b(?:associated_token|token)\s*::\s*authority\s*=\s*")
+_OWNER_AT_RE = re.compile(r"constraint\s*=\s*([A-Za-z_]\w*)\s*\.\s*owner\s*==\s*")
+# a program data account (state the program owns): it can be a token authority only as a PDA the
+# program signs for, never a party that can call SetAuthority on its own
+_STATE_ACCOUNT_RE = re.compile(r"\b(?:AccountLoader|Account|InterfaceAccount)\s*<\s*'\w+\s*,\s*([A-Za-z_][\w:]*)\s*>")
+_TOKEN_STATE = frozenset({"TokenAccount", "Mint"})
+_EXTERNAL_RE = re.compile(r"\b(?:UncheckedAccount|SystemAccount|AccountInfo)\b")
+
+
+def _expr_at(attrs: str, pos: int) -> str:
+    """The attribute expression starting at `pos`, up to a top-level `,` or `@` (Anchor error)."""
+    depth, j = 0, pos
+    while j < len(attrs):
+        c = attrs[j]
+        if c in "([{<":
+            depth += 1
+        elif c in ")]}>":
+            if depth == 0:
+                break
+            depth -= 1
+        elif c in ",@" and depth == 0:
+            break
+        j += 1
+    return attrs[pos:j].strip()
+
+
+def _segments(expr: str) -> list[str]:
+    """`escrow.load()?.recipient.key()` -> [escrow, recipient]; `&lender` -> [lender]."""
+    e = re.sub(r"\s+", "", expr).lstrip("&*")
+    e = re.sub(r"\.(key|load|load_mut|as_ref|to_account_info)\(\)\??", "", e)
+    e = e.replace("?", "").replace("()", "")
+    return [seg for seg in e.split(".") if seg]
+
+
 def _root_key(expr: str) -> str:
     """`loan.lender.key()` -> `lender`; `lender` -> `lender`; `ctx.accounts.x` -> `x`."""
-    expr = re.sub(r"\.\s*key\s*\(\s*\)", "", expr).strip()
-    return expr.split(".")[-1]
+    segs = _segments(expr)
+    return segs[-1] if segs else ""
+
+
+def _authority_kind(st: _Struct, expr: str) -> str | None:
+    """`stored` (a party key kept in program state), `external` (an account the instruction does
+    not control), or None when the authority is a signer, a PDA or a program data account."""
+    segs = _segments(expr)
+    if not segs or not re.fullmatch(r"[A-Za-z_]\w*", segs[-1]):
+        return None
+    key = segs[-1]
+    if _is_signer(st, key) or _is_pda(st, key) or key in ("program", "crate", "ID", "id"):
+        return None
+    f = st.fields.get(key)
+    if f is not None:
+        sm = _STATE_ACCOUNT_RE.search(f.type)
+        if sm and sm.group(1).split("::")[-1] not in _TOKEN_STATE:
+            return None
+    if len(segs) > 1:
+        return "stored"
+    if f is not None and _EXTERNAL_RE.search(f.type):
+        return "external"
+    return None
 
 
 def _is_signer(st: _Struct, key: str) -> bool:
@@ -214,20 +267,22 @@ def solana_signals(files: dict[str, str], cfg: dict[str, Any]) -> list[dict[str,
             if _token2022_only(st, f, cfg):
                 continue
             authority = None
-            m = _AUTH_RE.search(f.attrs)
+            m = _AUTH_AT_RE.search(f.attrs)
             if m:
-                authority = m.group(2)
+                authority = _expr_at(f.attrs, m.end())
             else:
-                mo = _OWNER_CONSTRAINT_RE.search(f.attrs)
+                mo = _OWNER_AT_RE.search(f.attrs)
                 if mo and mo.group(1) == f.name:
-                    authority = mo.group(2)
-            if authority is not None:
-                key = _root_key(authority)
-                if key in signers or _is_pda(st, key) or key in ("program", "crate", "ID", "id"):
+                    authority = _expr_at(f.attrs, mo.end())
+            if authority:
+                kind = _authority_kind(st, authority)
+                if kind is None:
                     continue
+                key = _root_key(authority)
                 out.append({
                     "signal": "LC-SOL-AUTH", "file": st.path, "start": f.line, "end": f.end, "strong": True,
-                    "score": 85,
+                    # a counterparty key stored in program state is the strongest form
+                    "score": 90 if kind == "stored" else 85,
                     "params": {"ix": ix, "account": f.name, "authority": " ".join(authority.split())},
                     "names": sorted({f.name, key, *handlers.get(st.name, set())}),
                 })

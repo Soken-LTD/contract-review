@@ -158,6 +158,23 @@ pub struct Release<'info> {
     pub mint: InterfaceAccount<'info, Mint>,
     pub token_program: Program<'info, Token2022>,
 }
+
+#[derive(Accounts)]
+pub struct Payout<'info> {
+    pub keeper: Signer<'info>,
+    #[account(mut, has_one = mint)]
+    pub escrow: AccountLoader<'info, Escrow>,
+    #[account(mut, associated_token::mint = mint, associated_token::authority = escrow)]
+    pub escrow_token: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = escrow.load()?.beneficiary @ LockerError::WrongOwner,
+    )]
+    pub beneficiary_token: Box<Account<'info, TokenAccount>>,
+    pub mint: Account<'info, Mint>,
+    pub token_program: Program<'info, Token>,
+}
 """
 
 
@@ -177,7 +194,12 @@ def test_solana_signals():
     assert ("LC-SOL-AUTH", "vault_ata") not in by and ("LC-SOL-AUTH", "vault") not in by
     assert ("LC-SOL-AUTH", "recipient_ata") not in by
     assert all("tests/" not in s["file"] for s in sigs)
-    assert len(sigs) == 2
+    # a program data account as authority is a PDA the program signs for: no signal; a party key
+    # stored in program state is the strongest form
+    assert ("LC-SOL-AUTH", "escrow_token") not in by
+    stored = by[("LC-SOL-AUTH", "beneficiary_token")]
+    assert stored["score"] > auth["score"] and stored["params"]["authority"] == "escrow.load()?.beneficiary"
+    assert len(sigs) == 3
 
 
 def test_protocol_types_and_walks(evm_case):
