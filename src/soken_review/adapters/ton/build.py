@@ -15,12 +15,12 @@ file in the job dir cannot replace them.
 Trust scan (06 3.3.4) runs first and sets `candidate.untrusted_inputs`; compiler params from a
 verifier bundle outside the worker allowlist fail the attempt with `untrusted_args`.
 
-Compilers in the image (docker/ton-build/package.json + versions.json):
+Compilers in the image (docker/ton-build/package.json; versions.json mirrors its aliases):
   FunC: @ton-community/func-js FuncCompiler with the worker's 12 func-js-bin versions (F32)
   Tact: tact-* npm aliases, 1.4.0–1.6.13 (every release that npm still serves)
   Tolk: tolk-* npm aliases, 0.6.0–1.5.0
-  Versions are a single source of truth: docker/ton-build/versions.json (baked as
-  /opt/ton-node/versions.json in the image) mirrored here (TACT_VERSIONS, TOLK_VERSIONS).
+  Versions: docker/ton-build/package.json aliases are installed; versions.json lists them (not
+  baked into the image) and is mirrored here (TACT_VERSIONS, TOLK_VERSIONS).
 A version the image does not carry is `unsupported_toolchain`, never a silent substitution.
 
 Host execution only behind SOKEN_TON_BUILD_DIRECT=1 (dev only, never default, never in CI).

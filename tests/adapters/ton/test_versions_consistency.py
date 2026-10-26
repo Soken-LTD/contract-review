@@ -68,3 +68,13 @@ def test_fixture_version_is_installed() -> None:
         "Tact 1.6.5 not in TACT_VERSIONS — cannot rebuild FtSquad fixture "
         "(EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ)"
     )
+
+
+def test_versions_json_matches_package_json_aliases() -> None:
+    """The image installs package.json; versions.json (and build.py) must list exactly its aliases."""
+    deps = json.loads((_REPO_ROOT / "docker" / "ton-build" / "package.json").read_text())["dependencies"]
+    v = _load_versions()
+    for lang in ("tact", "tolk"):
+        aliases = {k.removeprefix(f"{lang}-") for k in deps if k.startswith(f"{lang}-")}
+        listed = {x for x in v[lang] if x != "latest"}
+        assert aliases == listed, f"{lang}: package.json only {sorted(aliases - listed)}, versions.json only {sorted(listed - aliases)}"

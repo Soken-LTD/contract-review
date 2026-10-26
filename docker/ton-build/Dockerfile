@@ -8,7 +8,7 @@
 #   Tolk   @ton/tolk-js 0.12.0 (WASM, lockfile, default)
 #          tolk-* aliases: 0.6.0 through 1.5.0
 #
-# Versions source-of-truth: docker/ton-build/versions.json (baked at /opt/ton-node/versions.json)
+# Versions: package.json aliases (installed); docker/ton-build/versions.json mirrors them
 # Mirrored in: src/soken_review/adapters/ton/build.py (TACT_VERSIONS, FUNC_VERSIONS, TOLK_VERSIONS)
 #
 # Analyzers:
@@ -66,28 +66,21 @@ COPY docker/ton-build/package.json docker/ton-build/package-lock.json ./
 
 RUN npm ci --ignore-scripts
 
-# Bake versions.json (source of truth, mirrors build.py constants)
-COPY docker/ton-build/versions.json ./versions.json
-
 # Symlink Misti CLI to PATH (installed into node_modules/.bin via lockfile)
 RUN ln -sf /opt/ton-node/node_modules/.bin/misti /usr/local/bin/misti \
     && misti --version
 
-# Verify all tact-* and tolk-* alias packages are present (fail-fast sanity check)
+# Verify every tact-* and tolk-* alias in package.json is installed (fail-fast sanity check).
+# package.json is the image's version list; docker/ton-build/versions.json mirrors it for build.py
+# (tests/adapters/ton/test_versions_consistency.py keeps the three in step).
 RUN node - <<'JS'
 const fs = require('fs');
-const v = JSON.parse(fs.readFileSync('/opt/ton-node/versions.json', 'utf8'));
-let ok = true;
-for (const ver of v.tact) {
-  const pkg = '/opt/ton-node/node_modules/tact-' + ver + '/package.json';
-  if (!fs.existsSync(pkg)) { process.stderr.write('MISSING tact-' + ver + '\n'); ok = false; }
-}
-for (const ver of v.tolk.filter(x => x !== 'latest')) {
-  const pkg = '/opt/ton-node/node_modules/tolk-' + ver + '/package.json';
-  if (!fs.existsSync(pkg)) { process.stderr.write('MISSING tolk-' + ver + '\n'); ok = false; }
-}
-if (!ok) process.exit(1);
-process.stdout.write('version check ok: ' + v.tact.length + ' tact, ' + v.tolk.length + ' tolk\n');
+const deps = JSON.parse(fs.readFileSync('/opt/ton-node/package.json', 'utf8')).dependencies || {};
+const aliases = Object.keys(deps).filter(k => k.startsWith('tact-') || k.startsWith('tolk-'));
+const missing = aliases.filter(k => !fs.existsSync('/opt/ton-node/node_modules/' + k + '/package.json'));
+if (missing.length) { process.stderr.write('MISSING ' + missing.join(', ') + '\n'); process.exit(1); }
+const n = p => aliases.filter(k => k.startsWith(p)).length;
+process.stdout.write('version check ok: ' + n('tact-') + ' tact, ' + n('tolk-') + ' tolk\n');
 JS
 
 # Copy node_scripts from the adapter source (repo root is Docker build context)
