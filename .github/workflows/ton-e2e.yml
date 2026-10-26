@@ -70,6 +70,8 @@ jobs:
           SOKEN_PIN_ROOT: ${{ runner.temp }}/pins
         run: uv run pytest -s -q -rs tests/integration/test_e2e_ton.py
       - name: Tact multi-version rebuild hash (FtSquad, Tact 1.6.5 → hash c845917d...)
+        # Independent of the supervisor step (app lifespan); runs whenever the image built.
+        if: ${{ !cancelled() }}
         env:
           SOKEN_IMAGE_TON_BUILD: soken/ton-build:ci
           SOKEN_SANDBOX_RUNTIME: runc
