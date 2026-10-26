@@ -477,6 +477,16 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             "Ask the user for the relevant URLs and add them via review_add_context."
         )
 
+    # Optional settle-wait (2026-10-26): the first review_status calls of every blind run only waited for
+    # a pipeline of 10 to 70 s; with wait_seconds the status at the end of the wait comes back here.
+    wait = min(int(args.get("wait_seconds") or 0), _MAX_WAIT)
+    if wait > 0 and initial_state == "queued":
+        try:
+            result["status"] = await handle_review_status(
+                {"job_id": job_id, "wait_seconds": wait, "wait_for": "settled"})
+        except ReviewError:
+            pass  # the job exists and the id is returned; review_status reports the state on the next call
+
     return result
 
 
@@ -561,6 +571,11 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
         raise ReviewError("E_JOB_NOT_FOUND")
 
     initial_state: str = job["state"]
+    # wait_for settled (2026-10-26): keep waiting through queued -> fetching -> building -> analyzing,
+    # which cost 3 to 4 status calls per job in the blind runs although the pipeline took 10 to 70 s.
+    settled = args.get("wait_for") == "settled"
+    if settled and initial_state == "awaiting_upload":
+        wait_seconds = 0  # only the upload moves it on; waiting would just hold the call
 
     # Long-poll (03 §4.2): return at once on a terminal, ready, rendered or changed state, else wait
     # on LISTEN job_changed (payload sha256(job_id)[:12], migrations/002_ops.sql). The row is re-read
@@ -578,7 +593,7 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
                     job = await JobRepo(conn).get(job_id)
                 if job is None:
                     raise ReviewError("E_JOB_NOT_FOUND")
-                if job["state"] != initial_state:
+                if job["state"] in _TERMINAL_OR_READY or (not settled and job["state"] != initial_state):
                     break
                 remaining = deadline - loop.time()
                 if remaining <= 0:
@@ -852,6 +867,7 @@ def _build_status_response(
 
     # Finalize checks (03 §4.2, F1-F6, F8): shared with review_finalize
     out["finalize_checks"] = finalize_checks or []
+    out["next_tools"] = _status_next_tools(state, out["drafts"], out["finalize_checks"])
 
     # Publish info (CEO 2026-10-24): present for rendered jobs; null for pre-render.
     out["publish_status"] = pub_status
@@ -862,6 +878,37 @@ def _build_status_response(
     out["publication"] = publication_outcome(job, _profile)
 
     return out
+
+
+_PIPELINE_STATES = frozenset({"awaiting_upload", "queued", "fetching", "building", "analyzing"})
+_RENDER_STATES = frozenset({"finalized", "render_queued", "rendering", "rendered", "render_failed"})
+
+
+def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[dict[str, Any]]) -> list[str]:
+    """Tool names (schema `next_tools`, at most 3) that move the job forward from this state; names
+    only, no prose. Drafts first (a needs_text or needs_challenge draft blocks finalize), then the
+    tools named by open finalize checks, then finalize."""
+    if state in _PIPELINE_STATES:
+        return ["review_status"]
+    if state in _RENDER_STATES:
+        return ["review_report"]
+    if state != "ready":
+        return []
+    statuses = {d.get("status") for d in drafts}
+    out: list[str] = []
+    if "needs_text" in statuses:
+        out.append("review_submit_finding")
+    if "needs_challenge" in statuses:
+        out.append("review_challenge")
+    for check in checks:
+        tool = check.get("tool")
+        if check.get("open") and tool and tool not in out:
+            out.append(tool)
+    if not drafts:
+        out = ["review_contract_map", "review_leads", "review_read_code"]
+    elif not out:
+        out = ["review_finalize"]
+    return out[:3]
 
 
 def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
