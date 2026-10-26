@@ -85,3 +85,41 @@ async def test_get_guide_missing_topic_names_the_field():
     assert body["errors"][0]["code"] == "E_INVALID_ARGUMENT"
     assert body["errors"][0]["field"] == "topic"
     assert "topic" in body["errors"][0]["fix"]
+
+
+def test_json_string_is_parsed_for_object_and_array_properties():
+    """A client with a stale tool list sends an unknown-typed object as a string (blind run 2026-10-26,
+    `invariant_walks`). The server parses it before validation; other strings stay untouched."""
+    from soken_review.server import _parse_json_strings
+
+    schema = {"properties": {"job_id": {"type": "string"}, "invariant_walks": {"type": "object"},
+                             "ranges": {"type": "array"}, "maybe": {"type": ["object", "null"]}}}
+    args = {"job_id": "job_X", "invariant_walks": '{"rows": [{"walk_id": "w1"}]}', "ranges": "[1, 2]",
+            "maybe": "{}"}
+    out = _parse_json_strings(schema, args)
+    assert out["invariant_walks"] == {"rows": [{"walk_id": "w1"}]}
+    assert out["ranges"] == [1, 2] and out["maybe"] == {}
+    assert out["job_id"] == "job_X"
+    assert args["invariant_walks"].startswith("{")  # input not mutated
+
+
+def test_json_string_of_wrong_type_or_not_json_is_left_alone():
+    from soken_review.server import _parse_json_strings
+
+    schema = {"properties": {"obj": {"type": "object"}, "txt": {"type": "string"}, "arr": {"type": "array"}}}
+    args = {"obj": "[1]", "txt": '{"a": 1}', "arr": "{not json"}
+    assert _parse_json_strings(schema, args) is args
+
+
+async def test_set_section_accepts_section_object_sent_as_string():
+    """End to end through the SDK: the string form must reach the handler as an object (so the error,
+    if any, is the handler's, not E_INVALID_ARGUMENT from the schema validator)."""
+    async with Client(SokenServer()) as client:
+        result = await client.call_tool("review_set_section", {
+            "job_id": "job_00000000000000000000000000",
+            "section": "invariant_walks",
+            "invariant_walks": '{"rows": [{"walk_id": "W1", "outcome": "holds", "refs": []}]}',
+        })
+    body = json.loads(result.content[0].text)
+    err = body["errors"][0]
+    assert not (err["code"] == "E_INVALID_ARGUMENT" and err.get("field") == "invariant_walks"), body

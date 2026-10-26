@@ -65,6 +65,7 @@ class SokenServer(MCPServer):
         tool = self.contract.get(name)
         if tool is None:
             return _error_result(ReviewError("E_INVALID_ARGUMENT", field="name", rule="known tool", value80=name[:80]))
+        arguments = _parse_json_strings(tool["inputSchema"], arguments)
         violation = next(iter(sorted(self.validators[name].iter_errors(arguments), key=lambda e: e.path)), None)
         if violation is not None:
             field, example = _violation_hint(violation)
@@ -90,6 +91,34 @@ class SokenServer(MCPServer):
             text = json.dumps(result, separators=(",", ":"), ensure_ascii=False)
             return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=result)
         return CallToolResult(content=[TextContent(type="text", text=str(result))])
+
+
+def _parse_json_strings(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
+    """Accept an object or array argument that arrived as a JSON string.
+
+    A client that loaded the tool list before a schema change (claude.ai caches it per connector) has
+    no type for a property added since, and its proxy serialises the value as a string. Blind run
+    2026-10-26: `invariant_walks` reached the server as a string and finalize check F9 could never
+    close. Only top-level properties the schema declares as object or array are parsed, and only when
+    the parsed value has that type; everything else is left for the validator to report."""
+    props = schema.get("properties") or {}
+    out = None
+    for key, raw in arguments.items():
+        if not isinstance(raw, str) or len(raw) > 262_144:
+            continue
+        declared = (props.get(key) or {}).get("type")
+        kinds = set(declared) if isinstance(declared, list) else {declared}
+        want = tuple(t for t, k in ((dict, "object"), (list, "array")) if k in kinds)
+        if not want or raw[:1] not in "{[":
+            continue
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(value, want):
+            out = dict(arguments) if out is None else out
+            out[key] = value
+    return out if out is not None else arguments
 
 
 def _error_result(err: ReviewError, structured: bool = True) -> CallToolResult:
