@@ -53,7 +53,7 @@ async def _run(chain_id: int, address: str, out_dir: Path) -> None:
             rpc_url = entry.url
             print(f"RPC {entry.url} block: {block_num}, bytecode length: {len(runtime_bytecode) // 2 - 1} bytes")
             break
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             block_num = None
             print(f"WARNING: RPC {entry.url} failed ({exc})", file=sys.stderr)
     if rpc_url is None:
@@ -129,7 +129,7 @@ async def _run(chain_id: int, address: str, out_dir: Path) -> None:
             }
             (out_dir / "proxy.json").write_text(json.dumps(proxy_dict, indent=2))
             print(f"Proxy: {proxy_result.pattern_name} (impl={proxy_result.implementation})")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(f"WARNING: proxy detection failed: {exc}", file=sys.stderr)
 
     # 5. Settings summary

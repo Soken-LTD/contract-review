@@ -72,13 +72,19 @@ def validate_map(doc: dict[str, Any]) -> None:
 
 
 def build_map(files: dict[str, str], solc_output: dict | None, categories: list[str],
-              build_ok: bool = True, compiled_texts: dict[str, str] | None = None) -> MapArtifacts:
+              build_ok: bool = True, compiled_texts: dict[str, str] | None = None,
+              parsed_family: str | None = None) -> MapArtifacts:
     """Lexical layer for every file; semantic layer from the solc AST when the build succeeded.
 
     `compiled_texts` are the exact source strings the compiler received (per path). The build step
     compiles the fetched Standard JSON byte for byte, so these may keep CRLF while `files` is the
     LF-normalised pin; AST byte offsets are resolved against them so every semantic function lands
-    on its own lexical span."""
+    on its own lexical span.
+
+    `parsed_family="solana"`: the semantic layer comes from the Rust parse (semantic_solana), with or
+    without a build. Such a map is `partial` at best (not compiler-resolved), never `full`, so the
+    unreachability auto-proof that needs `full` stays off; the build outcome is reported separately
+    (map/status.json `build_status`)."""
     lex: dict[str, LexResult] = {p: lex_file(p, t) for p, t in sorted(files.items())}
     file_rows = []
     spans: list[dict[str, Any]] = []
@@ -122,7 +128,22 @@ def build_map(files: dict[str, str], solc_output: dict | None, categories: list[
         "constants": constants,
     }
     semantic = None
-    if build_ok and solc_output:
+    parsed = False
+    if parsed_family == "solana":
+        from .semantic_solana import build_semantic_solana
+
+        built = build_semantic_solana(files, categories)
+        if built is not None:
+            semantic, span_ids = built
+            parsed = True
+            for sp in spans:
+                hit = span_ids.get((sp["file"], sp["start"]))
+                if hit is not None:
+                    sp["id"], sp["unit"] = hit
+            known = {sp["id"] for sp in spans}
+            semantic["functions"] = [f for f in semantic["functions"] if f["span"] in known]
+            doc["semantic"] = semantic
+    elif build_ok and solc_output:
         built = build_semantic(solc_output, files, categories, compiled_texts)
         if built is not None:
             semantic, span_ids = built
@@ -142,7 +163,9 @@ def build_map(files: dict[str, str], solc_output: dict | None, categories: list[
             semantic["functions"] = [f for f in semantic["functions"] if f["span"] in known]
             _dedup_span_ids(spans)
             doc["semantic"] = semantic
-    if not build_ok:
+    if parsed:
+        status = "partial"
+    elif not build_ok:
         status = "failed"
     elif semantic is None:
         status = "partial"
@@ -179,7 +202,8 @@ def token_file_name(path: str) -> str:
     return hashlib.sha256(path.encode("utf-8")).hexdigest()[:16] + ".jsonl"
 
 
-def write_map(root: Path, job_id: str, art: MapArtifacts, build_detail: str | None = None) -> None:
+def write_map(root: Path, job_id: str, art: MapArtifacts, build_detail: str | None = None,
+              build_status: str | None = None) -> None:
     d = _map_dir(root, job_id)
     (d / "tokens").mkdir(parents=True, exist_ok=True)
     index = {}
@@ -190,8 +214,10 @@ def write_map(root: Path, job_id: str, art: MapArtifacts, build_detail: str | No
                                          encoding="utf-8")
     (d / "tokens.json").write_text(json.dumps(index, sort_keys=True), encoding="utf-8")
     (d / "map.json").write_text(json.dumps(art.doc, sort_keys=True, separators=(",", ":")), encoding="utf-8")
-    (d / "status.json").write_text(json.dumps({"map_status": art.status, "build_detail": build_detail}),
-                                   encoding="utf-8")
+    status: dict[str, Any] = {"map_status": art.status, "build_detail": build_detail}
+    if build_status is not None:
+        status["build_status"] = build_status
+    (d / "status.json").write_text(json.dumps(status), encoding="utf-8")
 
 
 def load_map(root: Path, job_id: str) -> tuple[dict[str, Any] | None, str | None]:

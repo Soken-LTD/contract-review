@@ -178,7 +178,7 @@ codes:
     class: "input"
     tools: "read, write, finalize, report"
     what: "Job is {state}, eta {eta_s} s."
-    fix: "Call review_status with wait_seconds 45."
+    fix: "Call review_status with wait_seconds 45 and wait_for settled."
   - code: E_JOB_TERMINAL
     owner: "03"
     channel: "rejection"
@@ -290,7 +290,7 @@ codes:
     class: "input"
     tools: "write tools with text"
     what: "Rule {rule}, matched {match}, with 40 characters of context."
-    fix: "Rewrite the span per the rule text."
+    fix: "Remove or reword the matched words ({match}) and send the call again; review_get_guide topic challenge_rules lists the text rules."
   - code: E_CODESPAN_NOT_IN_SOURCE
     owner: "04"
     channel: "rejection"

@@ -29,7 +29,7 @@ import os
 import shutil
 import stat
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import jsonschema
@@ -109,9 +109,14 @@ def _safe_read_output_file(output_dir: Path, filename: str) -> bytes | None:
 # ---------------------------------------------------------------------------
 
 def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
-    """Run Solana analyzers and return (leads, static_map, read_plan)."""
+    """Run Solana analyzers and return (leads, static_map, read_plan).
+
+    Without a build (failed, or no work dir) clippy and cargo-audit cannot run, but the
+    soken-solana-rules matcher reads source only: it still runs and its leads are kept, and the
+    static map is `degraded` with both build tools named in `not_run` (never an "ok" with fewer leads).
+    """
     if result.status != "ok" or not result.work_dir:
-        return [], {"status": "not_run", "reason": "build_failed"}, {}
+        return analyze_source_only(result.candidate.files, f"build_{result.reason or 'failed'}")
 
     work_dir = Path(result.work_dir)
     analyze_dir = work_dir / "analyze"
@@ -132,9 +137,10 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     tool_statuses: dict[str, Any] = {}
 
     # --- clippy (runs INSIDE Docker; no network) ---
+    subdir = str((result.candidate.settings or {}).get("subdir") or "").strip("/")
     clippy_result = _run_clippy_docker(work_dir, analyze_dir)
     if clippy_result["status"] == "ok":
-        all_raw.extend(clippy_result.get("items", []))
+        all_raw.extend(scope_items(clippy_result.get("items", []), files, subdir))
     tool_statuses["clippy"] = clippy_result
 
     # --- cargo-audit (runs INSIDE Docker; no network; RustSec DB from cache mount) ---
@@ -143,7 +149,7 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
         "status": "not_run", "reason": "no_cargo_lock",
     }
     if audit_result["status"] == "ok":
-        all_raw.extend(audit_result.get("items", []))
+        all_raw.extend(scope_items(audit_result.get("items", []), files, subdir))
     tool_statuses["cargo_audit"] = audit_result
 
     # --- soken-solana-rules (Python, always runs) ---
@@ -179,6 +185,45 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     (analyze_dir / "read_plan.json").write_text(json.dumps(read_plan, indent=2), encoding="utf-8")
 
     return leads, static_map, read_plan
+
+
+def scope_items(items: list[dict], files: dict[str, str], subdir: str = "") -> list[dict]:
+    """Tool items on reviewed (pinned) paths only.
+
+    A subdir job builds inside its repo workspace, so rustc names files from the workspace root
+    (`<subdir>/src/lib.rs`): the prefix is stripped. Items on other workspace members or registry
+    crates are not in the review scope and are dropped. A dependency advisory on a workspace
+    Cargo.lock outside the pin lands on the crate's Cargo.toml (where the dependency is declared).
+    """
+    out = []
+    prefix = f"{subdir}/" if subdir else ""
+    for item in items:
+        path = str(item.get("file") or "")
+        if prefix and path.startswith(prefix):
+            path = path[len(prefix):]
+        if path not in files and PurePosixPath(path).name == "Cargo.lock" and "Cargo.toml" in files:
+            path = "Cargo.toml"
+        if path in files:
+            out.append({**item, "file": path})
+    return out
+
+
+def analyze_source_only(files: dict[str, str], reason: str,
+                        overflow_checks: str = "unknown") -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
+    """soken-solana-rules over the pinned source when no build exists (reason names why)."""
+    framework = detect_framework_from_files(files)
+    leads = _build_leads(_run_solana_rules(files, framework, overflow_checks))
+    static_map = {
+        "status": "degraded",
+        "not_run": ["cargo_audit", "clippy"],
+        "degraded_reasons": [f"cargo_audit:{reason}", f"clippy:{reason}"],
+        "framework": framework,
+        "overflow_checks": overflow_checks,
+        "tools": {"clippy": {"status": "not_run", "reason": reason},
+                  "cargo_audit": {"status": "not_run", "reason": reason},
+                  "soken_solana_rules": f"ran@{_SOKEN_RULES_VERSION}"},
+    }
+    return leads, static_map, _build_read_plan(files)
 
 
 # ---------------------------------------------------------------------------

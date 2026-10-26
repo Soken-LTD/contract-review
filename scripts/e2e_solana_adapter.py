@@ -41,7 +41,6 @@ from soken_review.adapters.solana.fetch import (
     _fetch_osec_verify,
     _make_candidate,
     _walk_source_files,
-    SourceFiles,
 )
 from soken_review.adapters.solana.onchain import deployed_program, owner_linked_verify_pdas
 

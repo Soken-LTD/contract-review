@@ -39,6 +39,7 @@ from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
+from ..mapping.lifecycle import load_lifecycle
 from ..mapping.semantic_evm import detect_token_review, units_holding
 from ..mapping.step import load_flags
 from ..report.render import queue_render
@@ -47,6 +48,7 @@ from .context import JobContext
 from .coverage import EnumsLoadError, category_allowed_na_reasons, compute_coverage_rows
 from .set_section import _check_na_predicate_for_section
 from .submit import _category_info, _family_from_chain, _iter_text_fields
+from .walks import latest_rows, load_drafts, open_walks, walk_index
 
 _pool: psycopg_pool.AsyncConnectionPool | None = None
 _ctx: JobContext | None = None
@@ -288,6 +290,21 @@ async def compute_finalize_checks(
         f7_open = False
     checks.append({"id": "F7", "open": int(f7_open), **(
         {"tool": "review_set_section", "section": "roles_notes"} if f7_open else {}
+    )})
+
+    # F9: invariant walks (feat/lifecycle-invariant-pass): every walk of map/lifecycle.json needs an
+    # accepted answer in section invariant_walks; a violated answer re-opens when its finding is
+    # withdrawn. Jobs mapped before the pass have no lifecycle.json and no walks.
+    try:
+        _f9_lc = load_lifecycle(_get_ctx().get_pin_root(), job_id)
+    except Exception:  # noqa: BLE001  # no pin root = map not run yet; fail open like F7
+        _f9_lc = None
+    f9_open_ids: list[str] = []
+    if walk_index(_f9_lc):
+        f9_open_ids = open_walks(_f9_lc, await latest_rows(conn, job_id), await load_drafts(conn, job_id))
+    checks.append({"id": "F9", "open": len(f9_open_ids), **(
+        {"tool": "review_set_section", "section": "invariant_walks",
+         "reason": "unanswered invariant walks: " + ", ".join(f9_open_ids[:12])} if f9_open_ids else {}
     )})
 
     # F8: findings in needs_text
@@ -914,7 +931,7 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
 
         if open_checks:
             items = [
-                {"id": c["id"], "open": 1, **({"tool": c["tool"]} if c.get("tool") else {})}
+                {"id": c["id"], "open": 1, **{k: c[k] for k in ("tool", "section", "reason") if c.get(k)}}
                 for c in open_checks[:40]
             ]
             return {
