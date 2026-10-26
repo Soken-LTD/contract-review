@@ -9,9 +9,10 @@ After `soken-fetch` materializes a git tree into `src_dir`, this module:
   - Validates every remapping: the target side must stay inside the pinned tree
     (no absolute path, no `..`, no backslash).
   - Flags `ffi = true` or any script/build hook → `untrusted_inputs = True` (tier B).
-  - Detects npm-only dependency trees (no in-tree .sol sources outside src/, no
-    gitlink submodules with .sol files) → `insufficient_source` with reason
-    `npm_only_deps`.
+  - npm packages (`node_modules/`) are vendored before this runs by the supervisor
+    (adapters/evm/npm_deps.py, lockfile pinned, sha512 checked); their remappings arrive as
+    `extra_remappings`. An import that still does not resolve is caught by the build gate
+    (`missing_import`), never guessed here.
   - Returns a `Candidate(provider="repo", ...)` ready for `build()`.
 
 The entry selection rule (plan 05/04): all non-test, non-script, non-dependency
@@ -229,6 +230,7 @@ def repo_candidate_from_manifest(
     *,
     explorer_candidate: Candidate | None = None,
     source_url: str | None = None,
+    extra_remappings: list[str] | None = None,
 ) -> tuple[Candidate | None, str | None]:
     """Build a `repo` Candidate from a materialized git tree.
 
@@ -245,6 +247,9 @@ def repo_candidate_from_manifest(
         When an explorer record (Sourcify, eth-bytecode-db, …) exists for the
         same address, pass it so we can copy its compiler version and settings
         (plan 05 section 6.1, rule B4 + section 13.3).
+    extra_remappings:
+        Remappings for npm packages the supervisor vendored into node_modules/ (hardhat-style
+        imports such as `@openzeppelin/contracts/...`), appended after the repo's own.
 
     Returns
     -------
@@ -295,6 +300,14 @@ def repo_candidate_from_manifest(
 
     # 4. Extract settings from config (compiler version comes from the explorer candidate).
     settings = _extract_settings(foundry_cfg, remappings_txt)
+    if extra_remappings:
+        own = list(settings.get("remappings") or [])
+        for remap in extra_remappings:
+            safe = sanitize_remapping(remap)
+            if safe is not None and safe not in own:
+                own.append(safe)
+        if own:
+            settings["remappings"] = own
 
     # 5. Trust check: ffi or build hooks → untrusted.
     #    Also: a committed out/ with solc-output artifacts means the repo pre-baked build
@@ -305,11 +318,6 @@ def repo_candidate_from_manifest(
         or _has_committed_build_artifacts(safe_files)
         or _has_forge_compiler_trust_issues(foundry_cfg, safe_files)
     )
-
-    # 6. Check for npm-only dependency tree (no in-tree or submodule .sol deps).
-    npm_only_reason = _npm_only_reason(safe_files, manifest)
-    if npm_only_reason:
-        return None, npm_only_reason
 
     # 7. Select scope files (non-test, non-script, non-dep .sol).
     sol_files = _select_scope_files(safe_files, foundry_cfg)
@@ -523,92 +531,6 @@ def _has_forge_compiler_trust_issues(cfg: dict[str, Any], files: dict[str, str])
                 logger.info("repo_candidate: FOUNDRY_* key %r in %r → untrusted", key[:40], env_file)
                 return True
     return False
-
-
-# ---------------------------------------------------------------------------
-# npm-only detection (plan 09 section 5.2 / spec: "npm-only dependency trees")
-# ---------------------------------------------------------------------------
-
-
-def _npm_only_reason(files: dict[str, str], manifest: dict[str, Any]) -> str | None:
-    """Return a reason string when the repo can only be built with npm (no in-tree deps).
-
-    A repo is npm-only when:
-    - It has a `package.json` (or `package-lock.json`) that references Solidity source
-      libs as package dependencies (e.g. @openzeppelin/contracts), AND
-    - There are no gitlink submodules that resolved to Solidity repos, AND
-    - There are no in-tree vendored .sol files under lib/, deps/, or vendor/.
-
-    Plan 09 5.2: "npm-only dependency trees (no in-tree or submodule deps) give
-    `insufficient_source` with a named reason".
-
-    Returns "npm_only_deps" when the package is in the known-Solidity allowlist.
-    Returns "missing_import" when a .sol file imports from an npm package that is NOT
-    in the allowlist and is not available in-tree — the build would silently drop files.
-
-    Note: the package.json check is JSON-parsed to avoid false positives from
-    package descriptions or JS-only test helpers (e.g. @openzeppelin/test-helpers is
-    JavaScript, not a Solidity source dep that Standard JSON needs).
-    """
-    import json as _json
-
-    has_npm = "package.json" in files or "package-lock.json" in files
-
-    # Check for in-tree Solidity under dep directories
-    dep_sol = any(
-        p for p in files
-        if p.endswith(".sol") and re.match(r"^(lib|deps|vendor|dependencies|contracts_lib)/", p, re.IGNORECASE)
-    )
-    if dep_sol:
-        return None  # in-tree deps present
-
-    # Check submodule fetched status
-    submodules = manifest.get("submodules") or []
-    fetched_subs = [s for s in submodules if s.get("status") == "fetched"]
-    if fetched_subs:
-        return None  # gitlink submodules present
-
-    if not has_npm:
-        return None
-
-    # Parse package.json to check dependency keys, not the whole file text.
-    # This avoids false positives where "contracts" or "solidity" appear only
-    # in the package description (e.g. Uniswap v2-core: "Core smart contracts"
-    # description, @openzeppelin/test-helpers JS dep, no Solidity npm deps).
-    pkg_json = files.get("package.json", "")
-    all_dep_keys: set[str] = set()
-    try:
-        pkg_data = _json.loads(pkg_json)
-        all_dep_keys = (
-            set(pkg_data.get("dependencies", {}).keys())
-            | set(pkg_data.get("devDependencies", {}).keys())
-        )
-    except (ValueError, TypeError, AttributeError):
-        pass
-
-    # Known npm packages that supply Solidity source code needed at compile time.
-    # "@openzeppelin/test-helpers" is JS-only → excluded.
-    _NPM_SOL_SOURCE_PREFIXES = (
-        "@openzeppelin/contracts",            # main OZ Solidity lib
-        "@openzeppelin/contracts-upgradeable",
-        "hardhat",                            # Hardhat (always brings npm Solidity stack)
-        "@nomicfoundation/hardhat",
-    )
-
-    if all_dep_keys:
-        has_sol_npm = any(k.startswith(_NPM_SOL_SOURCE_PREFIXES) for k in all_dep_keys)
-    else:
-        # Unparseable package.json: fall back to conservative string check
-        has_sol_npm = (
-            "@openzeppelin/contracts" in pkg_json
-            or "hardhat" in pkg_json.lower()
-            or "foundry" in pkg_json.lower()
-        )
-
-    if has_sol_npm:
-        return "npm_only_deps"
-
-    return None
 
 
 # ---------------------------------------------------------------------------

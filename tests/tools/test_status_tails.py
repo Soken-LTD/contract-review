@@ -13,7 +13,7 @@ from jsonschema import Draft202012Validator
 from mcp import Client
 
 import soken_review.tools  # noqa: F401
-from soken_review.contract import bundle_tools
+from soken_review.contract import bundle_tools, load_errors
 from soken_review.db.job_repo import JobRepo
 from soken_review.errors import ReviewError
 from soken_review.server import SokenServer
@@ -272,7 +272,9 @@ def test_status_error_omits_detail_when_null():
     # E_SOURCE_NOT_FOUND with no detail text: `detail: null` would fail the schema (type string),
     # so the key must be omitted, not sent as null (a validating MCP client rejects the response).
     body = start_status._build_status_response(_errored_job("E_SOURCE_NOT_FOUND", None), "json", steps=[])
-    assert body["error"] == {"code": "E_SOURCE_NOT_FOUND"}
+    # `what` names {providers}, which no detail fills: left out; `fix` has no placeholder: sent.
+    assert body["error"] == {"code": "E_SOURCE_NOT_FOUND",
+                             "fix": load_errors()["E_SOURCE_NOT_FOUND"]["fix"]}
     assert "detail" not in body["error"]
     assert list(STATUS_SCHEMA.iter_errors(body)) == []
 
@@ -295,8 +297,8 @@ def test_status_error_structured_detail_is_serialized_as_text():
         _errored_job("E_SOURCE_NOT_FOUND",
                      {"reason": "missing_import", "packages": ["@openzeppelin/contracts", "solmate"]}),
         "json", steps=[])
-    assert body["error"] == {"code": "E_SOURCE_NOT_FOUND",
-                             "detail": '{"packages":["@openzeppelin/contracts","solmate"],"reason":"missing_import"}'}
+    assert body["error"]["detail"] == '{"packages":["@openzeppelin/contracts","solmate"],"reason":"missing_import"}'
+    assert body["error"]["code"] == "E_SOURCE_NOT_FOUND"
     assert list(STATUS_SCHEMA.iter_errors(body)) == []
 
 
@@ -306,3 +308,69 @@ def test_status_error_detail_list_and_cap():
     long = start_status._build_status_response(_errored_job("E_BUILD_FAILED", "x" * 5000), "json", steps=[])
     assert len(long["error"]["detail"]) == start_status._ERROR_DETAIL_MAX_CHARS
     assert list(STATUS_SCHEMA.iter_errors(long)) == []
+
+
+# ── E_DEPENDENCY_UNRESOLVED: what + fix filled from the stored detail (blind run 2026-10-25) ──
+
+
+def test_status_dependency_unresolved_names_packages_and_fix():
+    detail = {"stage": "dependencies", "lockfile": None,
+              "missing": [{"name": "@acme/lib", "reason": "not_in_registry"}], "packages": "@acme/lib"}
+    body = start_status._build_status_response(_errored_job("E_DEPENDENCY_UNRESOLVED", detail), "json", steps=[])
+    err = body["error"]
+    assert err["code"] == "E_DEPENDENCY_UNRESOLVED"
+    assert "@acme/lib" in err["what"]
+    assert "lockfile" in err["fix"] and "lib/" in err["fix"]
+    assert "\u2014" not in err["fix"] and "\u2014" not in err["what"]   # no em dash in client text
+    assert list(STATUS_SCHEMA.iter_errors(body)) == []
+
+
+def test_status_build_missing_import_list_fills_packages():
+    detail = {"reason": "missing_import", "packages": ["@openzeppelin/contracts", "solmate"], "dropped_invalid": 0}
+    body = start_status._build_status_response(_errored_job("E_DEPENDENCY_UNRESOLVED", detail), "json", steps=[])
+    assert "@openzeppelin/contracts, solmate" in body["error"]["what"]
+
+
+def _deps_step(pinned_by: str) -> dict:
+    return {"step": "fetch", "status": "done", "provenance": {"provider": "repo", "sha256": "0" * 64,
+            "dependencies": {"lockfile": None if pinned_by == "registry_range" else "package-lock.json",
+                             "pinned_by": pinned_by,
+                             "packages": [{"name": "@openzeppelin/contracts", "version": "5.6.1",
+                                           "pinned_by": pinned_by, "integrity": "sha512-x", "files": 227}]}}}
+
+
+def test_status_dependencies_block_concise_and_detailed():
+    job = _tiered_job("repo")
+    concise = start_status._build_status_response(job, "json", steps=[_deps_step("lockfile")])
+    assert concise["dependencies"]["count"] == 1 and concise["dependencies"]["pinned_by"] == "lockfile"
+    assert "packages" not in concise["dependencies"]
+    assert list(STATUS_SCHEMA.iter_errors(concise)) == []
+    detailed = start_status._build_status_response(job, "detailed", steps=[_deps_step("registry_range")])
+    deps = detailed["dependencies"]
+    assert deps["packages"] == [{"name": "@openzeppelin/contracts", "version": "5.6.1", "pinned_by": "registry_range"}]
+    assert "no lockfile" in deps["note"]
+    # Only the new block is checked here: the detailed `build.status` echoes map_status ("none"),
+    # which the schema enum does not list (pre-existing, tracked separately).
+    deps_schema = {t["name"]: t for t in bundle_tools()}["review_status"]["outputSchema"]["properties"]["dependencies"]
+    assert list(Draft202012Validator(deps_schema).iter_errors(deps)) == []
+
+
+def test_status_no_dependencies_block_without_vendored_packages():
+    body = start_status._build_status_response(_tiered_job("repo"), "json", steps=[])
+    assert "dependencies" not in body
+
+
+# ── detailed build.status: schema enum, never a map status ────────────────────
+
+
+def test_build_status_value_from_build_result_and_map_status(tmp_path):
+    pins = tmp_path / "pins"
+    work = tmp_path / "work" / "job_X"
+    work.mkdir(parents=True)
+    assert start_status._build_status_value(pins, "job_X", "none") is None
+    assert start_status._build_status_value(pins, "job_X", "failed") == "failed"
+    assert start_status._build_status_value(pins, "job_X", "full") == "ok"
+    (work / "build_result.json").write_text(json.dumps({"status": "ok"}))
+    assert start_status._build_status_value(pins, "job_X", "partial") == "ok"
+    (work / "build_result.json").write_text(json.dumps({"status": "weird"}))
+    assert start_status._build_status_value(pins, "job_X", "lexical") is None

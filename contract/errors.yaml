@@ -102,6 +102,13 @@ codes:
     tools: "status"
     what: "Source not found in the automatic sources ({providers})."
     fix: "Start again with repo and commit, files (a Standard JSON input as files with its compiler version and remappings), or an upload, each with deployment set to this address."
+  - code: E_DEPENDENCY_UNRESOLVED
+    owner: "03"
+    channel: "status"
+    class: "input"
+    tools: "status"
+    what: "The repository source was fetched, but these imported dependencies could not be resolved: {packages}."
+    fix: "Commit the lockfile (package-lock.json, yarn.lock or pnpm-lock.yaml) that pins these packages from the public npm registry, or vendor them in the repository (lib/ with git submodules or committed files), then start a new review on that commit."
   - code: E_INSUFFICIENT_SOURCE
     owner: "03"
     channel: "status"

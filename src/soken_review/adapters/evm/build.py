@@ -413,7 +413,8 @@ def build(candidate: Candidate, cache_dir: Path | None = None, work_dir: Path | 
         _wdir = Path(work_dir) if work_dir is not None else Path(tempfile.mkdtemp(dir=_SBX_ROOT))
         forge_diag: dict = {}
         forge_result, forge_fail_reason = forge_build_repo(candidate.src_tree_dir, _wdir, solc_bin, cache,
-                                                           diag=forge_diag)
+                                                           diag=forge_diag,
+                                                           extra_remappings=_npm_remappings(candidate))
         if forge_result is not None:
             gate_diag: dict = {}
             match_ok, reject_reason = _forge_sources_match_pin(
@@ -500,8 +501,31 @@ def _prepare_std_input(candidate: Candidate) -> dict:
     for path, content in candidate.files.items():
         sources[path] = {"content": content}
     settings: dict[str, Any] = dict(candidate.settings) if candidate.settings else {}
+    # Repo candidates: the files the scope imports (lib/, node_modules/, shared local files) are
+    # in the pinned tree but not in the scope pin; add exactly the import closure, resolved the
+    # way solc resolves it (remappings, then the path as written), so B3 can compile a repo whose
+    # sources import dependencies when forge (B4) is unavailable or rejected.
+    full_tree = getattr(candidate, "_full_tree", None)
+    if candidate.provider == "repo" and full_tree:
+        from soken_review.adapters.evm.npm_deps import import_closure
+
+        visited, _missing = import_closure(candidate.files, full_tree, list(settings.get("remappings") or []),
+                                           node_modules=False)
+        for path in sorted(visited - set(sources)):
+            sources[path] = {"content": full_tree[path]}
     settings["outputSelection"] = _OUTPUT_SELECTION
     return {"language": "Solidity", "sources": sources, "settings": settings}
+
+
+def _npm_remappings(candidate: Candidate) -> list[str]:
+    """Remappings into vendored node_modules/ (npm_deps), passed to forge explicitly: forge maps
+    node_modules by itself only when the repo has no lib/ dir."""
+    out: list[str] = []
+    for remap in (candidate.settings or {}).get("remappings") or []:
+        safe = sanitize_remapping(remap)
+        if safe is not None and safe.partition("=")[2].startswith("node_modules/"):
+            out.append(safe)
+    return out
 
 
 def _invoke_solc(solc_bin: Path, stdin_data: bytes, work_dir: Path, cache: SolcCache) -> tuple[bytes, str]:
@@ -768,6 +792,7 @@ def forge_build_repo(
     solc_bin: Path,
     cache: SolcCache,
     diag: dict | None = None,
+    extra_remappings: list[str] | None = None,
 ) -> tuple[ForgeStdInput | None, str]:
     """B4: run forge to resolve sources+remappings into a Standard JSON input only.
 
@@ -836,6 +861,12 @@ def forge_build_repo(
         # by HOME=/tmp (no user-level foundry config) and the lack of FOUNDRY_* in the
         # container env.  CLI --use overrides any FOUNDRY_SOLC from a repo .env file.
     ]
+    # Vendored npm packages (npm_deps): each remapping was validated by sanitize_remapping (no
+    # leading dash, relative target inside the tree), so it cannot become a forge option.
+    for remap in extra_remappings or []:
+        safe = sanitize_remapping(remap)
+        if safe is not None:
+            command += ["--remappings", safe]
 
     try:
         argv = docker_argv(

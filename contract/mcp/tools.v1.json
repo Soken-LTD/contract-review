@@ -797,6 +797,18 @@
          "string",
          "null"
         ]
+       },
+       "version": {
+        "type": "string"
+       },
+       "error": {
+        "type": "string"
+       },
+       "map_status": {
+        "type": [
+         "string",
+         "null"
+        ]
        }
       }
      },
@@ -1066,6 +1078,63 @@
        },
        "reason": {
         "type": "string"
+       }
+      }
+     },
+     "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "npm packages vendored for a repo review: lockfile, weakest pin and its meaning.",
+      "properties": {
+       "manager": {
+        "type": "string",
+        "enum": [
+         "npm"
+        ]
+       },
+       "lockfile": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "pinned_by": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "enum": [
+         "lockfile",
+         "lockfile_version",
+         "registry_range",
+         null
+        ]
+       },
+       "count": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "note": {
+        "type": "string"
+       },
+       "packages": {
+        "type": "array",
+        "maxItems": 60,
+        "items": {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "name": {
+           "type": "string"
+          },
+          "version": {
+           "type": "string"
+          },
+          "pinned_by": {
+           "type": "string"
+          }
+         }
+        }
        }
       }
      }

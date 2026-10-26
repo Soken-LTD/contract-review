@@ -1,7 +1,7 @@
 """Unit tests for adapters/evm/repo_candidate.py (05 4.2 step 6, 09 5.2).
 
 Tests every fail-closed branch:
-  - npm-only repo → insufficient_source
+  - npm repo (package.json deps) → candidate; vendored-package remappings appended
   - submodule on a non-allowlisted host → stays in manifest refused list, candidate succeeds
   - remapping escaping the tree → dropped silently (sanitize_remapping rejects it)
   - ffi=true → untrusted_inputs = True
@@ -17,7 +17,6 @@ from pathlib import Path
 
 from soken_review.adapters.evm.repo_candidate import (
     _has_ffi_or_hooks,
-    _npm_only_reason,
     _recheck_path,
     _select_scope_files,
     repo_candidate_from_manifest,
@@ -147,79 +146,6 @@ class TestFfiOrHooks:
 
 
 # ---------------------------------------------------------------------------
-# _npm_only_reason
-# ---------------------------------------------------------------------------
-
-class TestNpmOnlyReason:
-    def test_no_package_json(self):
-        files = {"src/A.sol": _SIMPLE_CONTRACT}
-        assert _npm_only_reason(files, {}) is None
-
-    def test_package_json_with_oz_no_in_tree_deps(self):
-        files = {
-            "src/A.sol": _SIMPLE_CONTRACT,
-            "package.json": json.dumps({"dependencies": {"@openzeppelin/contracts": "^5.0.0"}}),
-        }
-        reason = _npm_only_reason(files, {"submodules": []})
-        assert reason == "npm_only_deps"
-
-    def test_package_json_with_intree_lib(self):
-        files = {
-            "src/A.sol": _SIMPLE_CONTRACT,
-            "package.json": json.dumps({"dependencies": {"@openzeppelin/contracts": "^5.0.0"}}),
-            "lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol": "// openzeppelin",
-        }
-        assert _npm_only_reason(files, {"submodules": []}) is None
-
-    def test_package_json_with_fetched_submodule(self):
-        files = {
-            "src/A.sol": _SIMPLE_CONTRACT,
-            "package.json": json.dumps({"dependencies": {"@openzeppelin/contracts": "^5.0.0"}}),
-        }
-        manifest = {"submodules": [{"path": "lib/oz", "status": "fetched", "url": "https://github.com/oz/oz"}]}
-        assert _npm_only_reason(files, manifest) is None
-
-    def test_package_json_unrelated_no_npm_sol(self):
-        # package.json that doesn't reference solidity/contracts/hardhat/foundry
-        files = {
-            "src/A.sol": _SIMPLE_CONTRACT,
-            "package.json": json.dumps({"dependencies": {"lodash": "^4.0.0"}}),
-        }
-        # Should not be flagged as npm_only since no solidity-related deps
-        assert _npm_only_reason(files, {}) is None
-
-    def test_package_json_oz_test_helpers_not_sol_dep(self):
-        # @openzeppelin/test-helpers is JavaScript (not Solidity source) → not npm-only.
-        # Mirrors Uniswap v2-core pattern: description mentions "contracts" but the
-        # actual devDependency is a JS testing helper, not a Solidity compile-time dep.
-        files = {
-            "contracts/Token.sol": _SIMPLE_CONTRACT,
-            "package.json": json.dumps({
-                "name": "@project/core",
-                "description": "Core smart contracts of the protocol",
-                "devDependencies": {"@openzeppelin/test-helpers": "^0.5.16", "truffle": "^5.0.0"},
-            }),
-        }
-        assert _npm_only_reason(files, {"submodules": []}) is None
-
-    def test_package_json_oz_contracts_still_npm_only(self):
-        # @openzeppelin/contracts IS a Solidity source dep → npm-only (unchanged from before).
-        files = {
-            "src/A.sol": _SIMPLE_CONTRACT,
-            "package.json": json.dumps({"dependencies": {"@openzeppelin/contracts": "^5.0.0"}}),
-        }
-        assert _npm_only_reason(files, {"submodules": []}) == "npm_only_deps"
-
-    def test_package_json_oz_upgradeable_npm_only(self):
-        # @openzeppelin/contracts-upgradeable is a Solidity source dep → npm-only.
-        files = {
-            "src/A.sol": _SIMPLE_CONTRACT,
-            "package.json": json.dumps({"dependencies": {"@openzeppelin/contracts-upgradeable": "^5.0.0"}}),
-        }
-        assert _npm_only_reason(files, {"submodules": []}) == "npm_only_deps"
-
-
-# ---------------------------------------------------------------------------
 # _select_scope_files
 # ---------------------------------------------------------------------------
 
@@ -281,16 +207,22 @@ class TestRepoCandidateFromManifest:
         assert cand is not None
         assert cand.untrusted_inputs is True
 
-    def test_npm_only_repo_gives_insufficient_source(self, tmp_path):
+    def test_npm_repo_is_a_candidate_with_vendored_remappings(self, tmp_path):
+        """npm deps no longer stop the job here: the supervisor vendors them (npm_deps) and passes
+        their remappings; a missing one is caught by the build gate, not guessed from package.json."""
         pkg = json.dumps({"dependencies": {"@openzeppelin/contracts": "^5.0.0",
                                             "hardhat": "^2.0.0"}})
         src, manifest = _make_src(tmp_path, {
             "src/Counter.sol": _SIMPLE_CONTRACT,
             "package.json": pkg,
         })
-        cand, reason = _rcfm(src, manifest)
-        assert cand is None
-        assert reason == "npm_only_deps"
+        cand, reason = _rcfm(src, manifest, extra_remappings=[
+            "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+            "-bad/=../../etc/",                      # unsafe: dropped by sanitize_remapping
+        ])
+        assert reason is None
+        assert cand is not None
+        assert cand.settings["remappings"] == ["@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/"]
 
     def test_remapping_escaping_tree_dropped(self, tmp_path):
         """Remappings with absolute or .. targets are silently dropped (fail closed)."""
