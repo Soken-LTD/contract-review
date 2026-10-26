@@ -92,7 +92,9 @@ def map_result(
             upgrade_authority=upgrade_authority,
             untrusted_inputs=result.candidate.untrusted_inputs,
             deployed_hash=deployed_hash,
-            version_line_passed=solana_images.line_passed(version),
+            # a nearest-image build (no image of the program's own version) is never tier A
+            version_line_passed=solana_images.line_passed(version)
+            and (layout or {}).get("image_match", "exact") == "exact",
             build_declared=bool(settings.get("verify_args")),
             commit=commit,
         )

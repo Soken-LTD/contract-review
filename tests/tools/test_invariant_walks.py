@@ -148,3 +148,39 @@ async def test_set_section_walks_without_lifecycle(db_pool):
                                                 "invariant_walks": {"rows": [OK]}})
     assert r["accepted"] is False and "no invariant walks" in json.dumps(r["errors"][0])
     assert (await _f9(db_pool, job_id))["open"] == 0
+
+
+@ASYNC
+async def test_batch_call_carries_invariant_walks(db_pool):
+    """The batch form (one call, several section objects) runs invariant_walks through the same
+    checks as a single call and reports walks_open next to sections."""
+    ss, job_id = await _wired(db_pool)
+    row = {"walk_id": "IW-VS-1", "outcome": "holds", "refs": ["src/Vault.sol:5-8"], "note": NOTE}
+    args = {"job_id": job_id, "section": "context_notes",
+            "context_notes": {"notes": [{"p": "The whitepaper describes a single vault."}]},
+            "invariant_walks": {"rows": [row]}}
+    schema = {t["name"]: t for t in bundle_tools()}["review_set_section"]["inputSchema"]
+    assert list(Draft202012Validator(schema).iter_errors(args)) == []
+    unread = await ss.handle_review_set_section(args)
+    by = {r["section"]: r for r in unread["sections"]}
+    assert unread["accepted"] is False and by["context_notes"]["accepted"] and not by["invariant_walks"]["accepted"]
+    assert "not read in full" in json.dumps(by["invariant_walks"]["errors"])
+    async with db_pool.connection() as conn:
+        await conn.execute("insert into job_reads (job_id, path, start_line, end_line) values (%s, 'src/Vault.sol', 1, 9)",
+                           (job_id,))
+    ok = await ss.handle_review_set_section(args)
+    assert ok["accepted"] and ok["walks_open"] == ["IW-VS-4"]
+    assert [r["section"] for r in ok["sections"]] == ["context_notes", "invariant_walks"]
+    assert (await _f9(db_pool, job_id))["open"] == 1
+
+
+def test_guide_topics_include_invariants():
+    import asyncio
+
+    from soken_review.tools.guide import _get_guide
+
+    text = asyncio.run(_get_guide({"topics": ["severity_inputs", "invariants"]}))
+    assert "topic severity_inputs" in text and "topic invariants" in text and "IW-VS-1" in text
+    guide = {t["name"]: t for t in bundle_tools()}["review_get_guide"]
+    assert "invariants" in guide["inputSchema"]["properties"]["topics"]["items"]["enum"]
+    assert "invariants" in guide["description"]

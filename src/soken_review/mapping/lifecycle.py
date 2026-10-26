@@ -168,7 +168,7 @@ def _in_scope_functions(doc: dict[str, Any], family: str) -> list[dict[str, Any]
     dep = _dep_re(family)
     spans = [sp for sp in doc.get("spans") or [] if sp.get("kind") in ("function", "modifier")
              and not dep.search(sp.get("file", ""))]
-    contracts = _deployable_contracts(doc)
+    contracts = _deployable_contracts(doc) if family == "evm" else None
     if contracts:
         spans = [sp for sp in spans if str(sp.get("id", "")).split(".", 1)[0] in contracts]
     return spans
@@ -236,7 +236,7 @@ def build_lifecycle(family: str, files: dict[str, str], doc: dict[str, Any], sol
     fn_spans = _in_scope_functions(doc, family)
     names = {sp.get("name") or "" for sp in fn_spans}
     dep = _dep_re(family)
-    contracts = _deployable_contracts(doc)
+    contracts = _deployable_contracts(doc) if family == "evm" else None
     for sv in (sem or {}).get("state_vars") or []:
         unit = str(sv.get("unit", ""))
         if not dep.search(unit.rsplit(":", 1)[0]) and (contracts is None or unit.rsplit(":", 1)[-1] in contracts):

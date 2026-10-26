@@ -202,8 +202,53 @@ def _collect_text_fields(section: str, content: Any) -> list[tuple[str, str]]:
     return result
 
 
+_SECTION_KEYS = ("roles_notes", "out_of_scope_reasons", "coverage", "context_notes", "invariant_walks")
+
+
 @handler("review_set_section")
 async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
+    """One section, or every section whose object is in the call (03 §4.13).
+
+    The 2026-10-25 Solana blind run spent 10 set_section calls; a review needs up to four sections. When
+    the call carries the objects of several sections, each one goes through the same single-section path
+    (same gates, own revision, own idempotency) in the order: `section` first, then the schema order.
+    Sections are independent: one rejected section does not undo another. The result is the first
+    section's result, `accepted` only when every section was accepted, every error, and `sections`.
+    """
+    named = args["section"]
+    present = [k for k in _SECTION_KEYS if isinstance(args.get(k), dict)]
+    others = [k for k in present if k != named]
+    if not others:
+        return await _set_one_section(args)
+    order = ([named] if named in present else []) + others
+    results: list[tuple[str, dict[str, Any]]] = []
+    for name in order:
+        res = await _set_one_section({"job_id": args["job_id"], "section": name, name: args[name]})
+        results.append((name, res))
+    out = dict(results[0][1])
+    out["accepted"] = all(r.get("accepted") for _, r in results)
+    errors = [e for _, r in results for e in (r.get("errors") or [])]
+    if errors:
+        out["errors"] = errors[:20]
+        if len(errors) > 20:
+            out["errors_more"] = len(errors) - 20
+    rows = []
+    for name, r in results:
+        row: dict[str, Any] = {"section": name, "accepted": bool(r.get("accepted"))}
+        if "revision" in r:
+            row["revision"] = r["revision"]
+        if r.get("errors"):
+            row["errors"] = r["errors"][:20]
+        rows.append(row)
+    out["sections"] = rows
+    # invariant walks: the open-walk list belongs to the whole call, whichever section came first
+    walks = next((r for name, r in results if name == "invariant_walks" and "walks_open" in r), None)
+    if walks is not None:
+        out["walks_open"] = walks["walks_open"]
+    return out
+
+
+async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
     """Submit or update a report section (03 §4.13).
 
     Idempotent: same content hash → return current revision without inserting.

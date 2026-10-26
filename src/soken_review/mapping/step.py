@@ -56,6 +56,7 @@ def run_map_step(
     nsloc: int | None = None,
     analyzers: dict[str, str] | None = None,
     build_detail: str | None = None,
+    build_status: str | None = None,
 ) -> dict[str, Any]:
     """Build and store map, flags and static facts. Returns a summary for the step provenance.
 
@@ -76,8 +77,8 @@ def run_map_step(
         output = json.loads(solc_output_path.read_text(encoding="utf-8"))
         compiled_texts = compiled_texts_from_std_input(std_input_path)
     art = build_map(files, output, list(family_categories(family, chain)), build_ok=build_ok,
-                    compiled_texts=compiled_texts)
-    write_map(pin_root, job_id, art, build_detail=build_detail)
+                    compiled_texts=compiled_texts, parsed_family="solana" if family == "solana" else None)
+    write_map(pin_root, job_id, art, build_detail=build_detail, build_status=build_status)
 
     # Lifecycle and invariant pass (feat/lifecycle-invariant-pass): lifecycle leads merged into
     # leads.json and the job's invariant walks in map/lifecycle.json. Additive: a fault here is
@@ -126,6 +127,11 @@ def run_map_step(
         "files": len(files),
         "spans": len(art.doc["spans"]),
         "semantic": "semantic" in art.doc,
+        **({"semantic_layer": art.doc["semantic"]["chain_extras"]["solana"]["layer"],
+            "functions": len(art.doc["semantic"]["functions"]),
+            "entries": sum(1 for f in art.doc["semantic"]["functions"] if f["is_entry"])}
+           if family == "solana" and "semantic" in art.doc else {}),
+        **({"build_status": build_status, "nsloc": nsloc} if build_status is not None else {}),
         "flags": {r: sum(1 for f in flags if f["rule"] == r) for r in ("J1", "J2", "J3", "J4", "J5")},
         "facts": len(facts),
         "lifecycle": lifecycle,
