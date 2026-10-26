@@ -40,6 +40,7 @@ _VER_RE = _re.compile(r"^([0-9]+\.[0-9]+\.[0-9]+)")
 _SEMVER_RE = _re.compile(r"(?<![0-9.])([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{1,3})(?![0-9])")
 
 logger = logging.getLogger(__name__)
+_MAX_PRAGMA_SCAN = 4_000_000          # bytes of source the pragma fallback reads
 
 # SOKEN_TRON_SOLC_DIRECT=1: dev-only bypass, never set in production or tests
 _DIRECT_TRON_SOLC = os.environ.get("SOKEN_TRON_SOLC_DIRECT", "0") == "1"
@@ -86,6 +87,9 @@ def resolve_tron_solc(version: str | None, sources: dict[str, str],
     from soken_review.adapters.evm.files import PRAGMA, pick_solc, satisfies
 
     sol_sources = {p: t for p, t in sources.items() if p.endswith(".sol")}
+    if sum(len(t) for t in sol_sources.values()) > _MAX_PRAGMA_SCAN:
+        # PRAGMA's `[^;]+` rescans to the next ';' per match: bound the untrusted text it reads.
+        sol_sources = {}
     cache = get_cache(cache_dir)
     try:
         builds = cache._load_list().get("builds", [])

@@ -125,3 +125,11 @@ def test_build_tron_fails_closed_without_compiler(fake_caches):
                      std_json_input=None, entry_contract=None)
     br = tron_build.build_tron(cand)
     assert br.status == "failed" and br.reason == "tron_compiler_unmapped"
+
+
+def test_oversized_source_skips_pragma_scan(fake_caches, monkeypatch):
+    monkeypatch.setattr(tron_build, "_MAX_PRAGMA_SCAN", 10)
+    solc, _ = tron_build.resolve_tron_solc(None, {"A.sol": "pragma solidity >=0.8.0 <0.9.0;\n"})
+    assert solc is None                          # no explorer version and no pragma read: fail closed
+    solc, _ = tron_build.resolve_tron_solc("tron_0.6.2_Plato", {"A.sol": "pragma solidity ^0.6.0;\n"})
+    assert solc is not None and solc.version == "0.6.2+commit.bacdbe57"

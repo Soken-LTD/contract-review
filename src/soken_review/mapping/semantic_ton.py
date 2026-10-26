@@ -19,12 +19,29 @@ calls deep inside the parsed files; stdlib traits (Ownable, Deployable) are not 
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
 TON_LANGS = frozenset({"tact", "func", "tolk"})
+
+logger = logging.getLogger(__name__)
+
+# Work limits (security review 2026-10-26: the parse runs on untrusted source in the worker).
+# Brackets are matched once per token list (stack pass) and range questions are prefix sums, so
+# the parse is linear; these caps bound the constant. A file over the cap keeps the lexical
+# layer only (`partial`); a job over the total, the function cap or the time budget gets no
+# parsed semantic layer. The budget is cooperative and sits inside the map step's lease.
+_MAX_FILE_TOKENS = 60_000
+_MAX_TOTAL_TOKENS = 400_000
+_MAX_FUNCTIONS = 4_000
+_PARSE_BUDGET_S = 30.0
+_SCAN = 256              # forward window for a declaration header (`contract X with ... {`, `name: T;`)
+_ROLE_WINDOW = 64        # tokens of a guard condition searched for the compared `self.<x>`
+_MAX_REACH = 256         # functions one handler may inherit features from (call graph, depth 3)
 
 _IDENT_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]{0,63}$")
 _MAX_DEPTH = 3
@@ -132,20 +149,88 @@ class TonParse:
     globals_: list[tuple[str, int]] = field(default_factory=list)
 
 
-def _code(tokens: list[Any]) -> list[Any]:
-    return [t for t in tokens if t.kind != "comment"]
+_PAIRS = {"(": ")", "{": "}", "[": "]"}
+_CLOSERS = {v: k for k, v in _PAIRS.items()}
+_THROWISH = frozenset({"throw", "nativeThrow"})
+_MODE_FEATS = ("send_mode_drain", "excess_return", "ignore_errors", "destroy")
 
 
-def _match(toks: list[Any], i: int, open_: str, close: str) -> int | None:
-    """Index of the token closing toks[i] (== open_), or None when unbalanced."""
-    depth = 0
-    for j in range(i, len(toks)):
-        if toks[j].text == open_ and toks[j].kind in ("punct", "operator"):
-            depth += 1
-        elif toks[j].text == close and toks[j].kind in ("punct", "operator"):
-            depth -= 1
-            if depth == 0:
-                return j
+class _Overflow(Exception):
+    """A work limit was hit; the caller keeps the lexical layer."""
+
+
+class _Toks(list):
+    """Code tokens with bracket pairs and prefix sums, built in one pass (O(n)).
+
+    pairs/rpairs: open index <-> close index for (), {}, [] (one stack per bracket kind; an
+    unbalanced bracket has no entry). pre[name][k]: count of flagged tokens in toks[:k], so
+    "does toks[lo:hi] mention sender / a throw / a send mode" is O(1).
+    """
+
+    def __init__(self, tokens: list[Any]) -> None:
+        super().__init__(tokens)
+        self.pairs: dict[int, int] = {}
+        self.rpairs: dict[int, int] = {}
+        stacks: dict[str, list[int]] = {o: [] for o in _PAIRS}
+        names = ("sender", "throw", *_MODE_FEATS)
+        self.pre: dict[str, list[int]] = {k: [0] * (len(tokens) + 1) for k in names}
+        for k, t in enumerate(tokens):
+            if t.kind in ("punct", "operator"):
+                if t.text in _PAIRS:
+                    stacks[t.text].append(k)
+                elif t.text in _CLOSERS and stacks[_CLOSERS[t.text]]:
+                    o = stacks[_CLOSERS[t.text]].pop()
+                    self.pairs[o] = k
+                    self.rpairs[k] = o
+            nxt = tokens[k + 1].text if k + 1 < len(tokens) else ""
+            prev = tokens[k - 1].text if k > 0 else ""
+            flags = set()
+            low = t.text.lower()
+            if (t.text == "sender" and nxt == "(") or (t.kind == "identifier" and (
+                    "sender" in low or low.startswith("equal_slice"))):
+                flags.add("sender")
+            if t.text in _THROWISH or t.text in _THROW_FNS:
+                flags.add("throw")
+            if t.text in _MODE_NAMES:
+                flags.add(_MODE_NAMES[t.text])
+            elif t.kind == "literal_num" and prev in ("mode", ":", ",", "|", "+"):
+                try:
+                    v = int(t.text.replace("_", ""), 0)
+                except ValueError:
+                    v = 0
+                flags.update(feat for bit, feat in _MODE_BITS.items() if v & bit)
+            for name, arr in self.pre.items():
+                arr[k + 1] = arr[k] + (1 if name in flags else 0)
+
+    def any(self, name: str, lo: int, hi: int) -> bool:
+        arr = self.pre[name]
+        lo, hi = max(0, lo), min(len(self), hi)
+        return hi > lo and arr[hi] - arr[lo] > 0
+
+    def sub(self, lo: int, hi: int) -> _Toks:
+        return _Toks(self[lo:hi])
+
+
+def _code(tokens: list[Any]) -> _Toks:
+    code = [t for t in tokens if t.kind != "comment"]
+    if len(code) > _MAX_FILE_TOKENS:
+        raise _Overflow("file_tokens")
+    return _Toks(code)
+
+
+def _match(toks: _Toks, i: int | None, open_: str, close: str) -> int | None:
+    """Index of the token closing toks[i] (== open_), or None when unbalanced. O(1)."""
+    if i is None or i >= len(toks) or toks[i].text != open_:
+        return None
+    j = toks.pairs.get(i)
+    return j if j is not None and toks[j].text == close else None
+
+
+def _find(toks: list[Any], lo: int, hi: int, texts: tuple[str, ...]) -> int | None:
+    """First index in [lo, min(hi, lo + _SCAN)) whose token text is in `texts`."""
+    for k in range(lo, min(hi, lo + _SCAN)):
+        if toks[k].text in texts:
+            return k
     return None
 
 
@@ -185,11 +270,12 @@ def _parse_tact(toks: list[Any]) -> TonParse:
     while i < n:
         t = toks[i]
         if t.text in ("contract", "trait") and t.kind == "keyword" and i + 1 < n and toks[i + 1].kind == "identifier":
-            brace = next((k for k in range(i + 2, n) if toks[k].text == "{"), None)
-            end = _match(toks, brace, "{", "}") if brace is not None else None
+            brace = _find(toks, i + 2, n, ("{",))
+            end = _match(toks, brace, "{", "}")
             if brace is None or end is None:
                 res.status = "partial"
-                break
+                i += 1
+                continue
             bases = [x.text for x in toks[i + 2:brace] if x.kind == "identifier"]
             unit = TonUnit(toks[i + 1].text, t.text, t.line, toks[end].line, bases=bases)
             res.units.append(unit)
@@ -197,12 +283,13 @@ def _parse_tact(toks: list[Any]) -> TonParse:
             i = end + 1
             continue
         if t.text in ("message", "struct") and t.kind == "keyword":
-            brace = next((k for k in range(i + 1, n) if toks[k].text in ("{", ";")), None)
+            brace = _find(toks, i + 1, n, ("{", ";"))
             if brace is not None and toks[brace].text == "{":
                 end = _match(toks, brace, "{", "}")
                 if end is None:
                     res.status = "partial"
-                    break
+                    i += 1
+                    continue
                 i = end + 1
                 continue
         if t.text == "fun" and t.kind == "keyword":
@@ -237,20 +324,22 @@ def _tact_fun(toks: list[Any], i: int, unit: str | None, start_line: int, kind: 
     close = _match(toks, i + 2, "(", ")")
     if close is None:
         res.status = "partial"
-        return None, n
-    k = close + 1
-    while k < n and toks[k].text not in ("{", ";") and toks[k].text not in ("fun", "receive", "init", "get"):
-        k += 1
-    if k >= n or toks[k].text != "{":
-        return None, k + 1 if k < n and toks[k].text == ";" else k      # abstract / native: no body
+        return None, i + 3
+    k = _find(toks, close + 1, n, ("{", ";", "fun", "receive", "init", "get"))
+    if k is None:
+        res.status = "partial"
+        return None, close + 1
+    if toks[k].text != "{":
+        return None, k + 1 if toks[k].text == ";" else k                 # abstract / native: no body
     end = _match(toks, k, "{", "}")
     if end is None:
         res.status = "partial"
-        return None, n
+        return None, k + 1
     params = toks[i + 3:close]
     mods = [x.text for x in toks[max(0, i - 4):i] if x.text in _TACT_PREFIX]
     sig = f"{safe_name(name)}({','.join(_types_of(params))})"
-    return TonFn(unit, safe_name(name), sig, kind, start_line, toks[end].line, toks[k + 1:end], params, mods), end + 1
+    return TonFn(unit, safe_name(name), sig, kind, start_line, toks[end].line, toks.sub(k + 1, end), params,
+                 mods), end + 1
 
 
 def _tact_members(toks: list[Any], lo: int, hi: int, unit: TonUnit, res: TonParse) -> None:
@@ -267,7 +356,8 @@ def _tact_members(toks: list[Any], lo: int, hi: int, unit: TonUnit, res: TonPars
             end = _match(toks, brace, "{", "}")
             if end is None or end > hi:
                 res.status = "partial"
-                return
+                i = brace + 1
+                continue
             params = toks[i + 2:close]
             kind = {"receive": "receiver", "bounced": "bounced", "external": "external", "init": "init"}[t.text]
             if t.text == "init":
@@ -278,7 +368,8 @@ def _tact_members(toks: list[Any], lo: int, hi: int, unit: TonUnit, res: TonPars
                 sig = f"{t.text}(text_{safe_name(params[0].text.strip(chr(34)))})"
             else:
                 sig = f"{t.text}({','.join(_types_of(params))})"
-            res.fns.append(TonFn(unit.name, t.text, sig, kind, t.line, toks[end].line, toks[brace + 1:end], params))
+            res.fns.append(TonFn(unit.name, t.text, sig, kind, t.line, toks[end].line, toks.sub(brace + 1, end),
+                                 params))
             i = end + 1
             continue
         if t.text == "get" and t.kind == "keyword":
@@ -298,11 +389,13 @@ def _tact_members(toks: list[Any], lo: int, hi: int, unit: TonUnit, res: TonPars
             i = nxt
             continue
         if t.text == "const" and t.kind == "keyword":
-            i = next((k for k in range(i, hi) if toks[k].text == ";"), hi) + 1
+            semi = _find(toks, i, hi, (";",))
+            i = (semi if semi is not None else i) + 1
             continue
         if t.kind == "identifier" and i + 1 < hi and toks[i + 1].text == ":" and (i == lo or toks[i - 1].text in (";", "{", "}")):
             unit.fields.append((t.text, t.line))
-            i = next((k for k in range(i, hi) if toks[k].text == ";"), hi) + 1
+            semi = _find(toks, i, hi, (";",))
+            i = (semi if semi is not None else i) + 1
             continue
         i += 1
 
@@ -317,7 +410,11 @@ def _parse_func(toks: list[Any]) -> TonParse:
     while i < n:
         t = toks[i]
         if t.text == "global" and t.kind == "keyword":
-            semi = next((k for k in range(i, n) if toks[k].text == ";"), n)
+            semi = _find(toks, i, n, (";",))
+            if semi is None:
+                res.status = "partial"
+                i += 1
+                continue
             names = [x for x in toks[i + 1:semi] if x.kind == "identifier"]
             for x in names[1::2] or names[-1:]:
                 res.globals_.append((x.text, x.line))
@@ -330,7 +427,8 @@ def _parse_func(toks: list[Any]) -> TonParse:
             end = _match(toks, i, "{", "}")
             if end is None:
                 res.status = "partial"
-                break
+                i = decl_start = i + 1
+                continue
             k = i - 1
             mods: list[str] = []
             while k > decl_start and (toks[k].text in _FUNC_SPECIFIERS or toks[k].kind == "literal_num"
@@ -340,7 +438,7 @@ def _parse_func(toks: list[Any]) -> TonParse:
                     mods.append(toks[k].text)
                 k -= 1
             if toks[k].text == ")":
-                opn = _open_of(toks, k, "(", ")")
+                opn = toks.rpairs.get(k)
                 if opn is not None and opn - 1 >= decl_start and toks[opn - 1].kind == "identifier":
                     name = toks[opn - 1].text.lstrip(".~")
                     params = toks[opn + 1:k]
@@ -354,23 +452,11 @@ def _parse_func(toks: list[Any]) -> TonParse:
                         kind = "internal"
                     sig = f"{safe_name(name)}({','.join(_types_of_func(params))})"
                     res.fns.append(TonFn(None, safe_name(name), sig, kind, toks[decl_start].line, toks[end].line,
-                                         toks[i + 1:end], params, mods))
+                                         toks.sub(i + 1, end), params, mods))
             i = decl_start = end + 1
             continue
         i += 1
     return res
-
-
-def _open_of(toks: list[Any], k: int, open_: str, close: str) -> int | None:
-    depth = 0
-    for j in range(k, -1, -1):
-        if toks[j].text == close:
-            depth += 1
-        elif toks[j].text == open_:
-            depth -= 1
-            if depth == 0:
-                return j
-    return None
 
 
 def _types_of_func(params: list[Any]) -> list[str]:
@@ -399,12 +485,13 @@ def _parse_tolk(toks: list[Any]) -> TonParse:
         if t.text == "global" and t.kind == "keyword" and i + 1 < n and toks[i + 1].kind == "identifier":
             res.globals_.append((toks[i + 1].text, toks[i + 1].line))
         if t.text in ("struct",) and t.kind == "keyword":
-            brace = next((k for k in range(i + 1, n) if toks[k].text in ("{", ";")), None)
+            brace = _find(toks, i + 1, n, ("{", ";"))
             if brace is not None and toks[brace].text == "{":
                 end = _match(toks, brace, "{", "}")
                 if end is None:
                     res.status = "partial"
-                    break
+                    i += 1
+                    continue
                 i = end + 1
                 continue
         getter = t.text == "get" and t.kind == "keyword"
@@ -417,22 +504,23 @@ def _parse_tolk(toks: list[Any]) -> TonParse:
                 recv, j = toks[j].text, j + 2
             if j + 1 < n and toks[j].kind == "identifier" and toks[j + 1].text == "(":
                 close = _match(toks, j + 1, "(", ")")
-                brace = next((k for k in range((close or n), n) if toks[k].text in ("{", ";")), None) \
-                    if close is not None else None
+                brace = _find(toks, close, n, ("{", ";")) if close is not None else None
                 if close is None or brace is None:
                     res.status = "partial"
-                    break
+                    i += 1
+                    continue
                 if toks[brace].text == "{":
                     end = _match(toks, brace, "{", "}")
                     if end is None:
                         res.status = "partial"
-                        break
+                        i += 1
+                        continue
                     name = toks[j].text if recv is None else f"{recv}_{toks[j].text}"
                     kind = "getter" if getter else _TOLK_ENTRY.get(toks[j].text, "internal")
                     params = toks[j + 2:close]
                     sig = f"{safe_name(name)}({','.join(_types_of(params))})"
                     res.fns.append(TonFn(None, safe_name(name), sig, kind, t.line, toks[end].line,
-                                         toks[brace + 1:end], params))
+                                         toks.sub(brace + 1, end), params))
                     i = end + 1
                     continue
                 i = brace + 1
@@ -442,7 +530,11 @@ def _parse_tolk(toks: list[Any]) -> TonParse:
 
 
 def parse_ton(lang: str, tokens: list[Any], path: str) -> TonParse:
-    toks = _code(tokens)
+    try:
+        toks = _code(tokens)
+    except _Overflow:
+        logger.info("ton parse: %s over %d tokens, lexical layer only", path, _MAX_FILE_TOKENS)
+        return TonParse(lang=lang, status="partial")
     parsed = {"tact": _parse_tact, "func": _parse_func, "tolk": _parse_tolk}[lang](toks)
     if lang in ("func", "tolk"):
         stem = safe_name(re.sub(r"[^A-Za-z0-9_]", "_", PurePosixPath(path).stem) or "module")
@@ -483,12 +575,36 @@ class _Info:
     callees: dict[str, list[_Info]] = field(default_factory=dict)       # name -> resolvable functions
 
 
-def build_semantic_ton(files: dict[str, tuple[str, list[Any]]], categories: list[str]
+def build_semantic_ton(files: dict[str, tuple[str, list[Any]]], categories: list[str],
+                       budget_s: float = _PARSE_BUDGET_S,
                        ) -> tuple[dict, dict[tuple[str, int], tuple[str, str]]] | None:
-    """files: path -> (lang, lexer tokens). Returns (semantic, {(path, start): (span id, unit id)}) or None."""
+    """files: path -> (lang, lexer tokens). Returns (semantic, {(path, start): (span id, unit id)}) or None.
+
+    None also when a work limit is hit (total tokens, function count, time budget): the map then
+    keeps its lexical layer, which is what it had before the parse existed."""
+    if sum(len(toks) for lang, toks in files.values() if lang in TON_LANGS) > _MAX_TOTAL_TOKENS:
+        logger.info("ton parse: job over %d tokens, lexical layer only", _MAX_TOTAL_TOKENS)
+        return None
+    try:
+        return _build_semantic_ton(files, categories, time.monotonic() + budget_s)
+    except _Overflow as exc:
+        logger.info("ton parse: %s, lexical layer only", exc)
+        return None
+
+
+def _check(deadline: float) -> None:
+    if time.monotonic() > deadline:
+        raise _Overflow("time budget")
+
+
+def _build_semantic_ton(files: dict[str, tuple[str, list[Any]]], categories: list[str], deadline: float
+                        ) -> tuple[dict, dict[tuple[str, int], tuple[str, str]]] | None:
     parses = {p: parse_ton(lang, toks, p) for p, (lang, toks) in sorted(files.items()) if lang in TON_LANGS}
     if not any(pp.fns for pp in parses.values()):
         return None
+    if sum(len(pp.fns) for pp in parses.values()) > _MAX_FUNCTIONS:
+        raise _Overflow(f"over {_MAX_FUNCTIONS} functions")
+    _check(deadline)
     units_out: list[dict] = []
     state_vars: list[dict] = []
     fields_by_unit: dict[str, set[str]] = {}
@@ -532,19 +648,25 @@ def build_semantic_ton(files: dict[str, tuple[str, list[Any]]], categories: list
         if inf.fn.kind in ("internal", "getter"):
             by_name.setdefault(inf.fn.name, []).append(inf)
     lang_of = {path: pp.lang for path, pp in parses.items()}
+    scopes: dict[str | None, tuple[set[str], dict[str, list[_Info]]]] = {}
     for inf in infos:
-        visible: set[str] = set()
-        family = lineage(inf.fn.unit)
-        for u in family:
-            visible |= fields_by_unit.get(u, set())
-        # Call edges resolve inside the caller's contract and its local traits, or to free
-        # functions (Tact globals; FunC/Tolk share one namespace across included files): two
-        # contracts with a same-named helper never borrow each other's guards.
-        callable_ = {name: [c for c in cands if c.fn.unit is None or lang_of[c.path] != "tact" or c.fn.unit in family]
-                     for name, cands in by_name.items()}
-        inf.callees = {k: v for k, v in callable_.items() if v}
+        _check(deadline)
+        if inf.fn.unit not in scopes:
+            # Call edges resolve inside the caller's contract and its local traits, or to free
+            # functions (Tact globals; FunC/Tolk share one namespace across included files): two
+            # contracts with a same-named helper never borrow each other's guards. One scope per
+            # unit, not per function.
+            family = lineage(inf.fn.unit)
+            visible: set[str] = set()
+            for u in family:
+                visible |= fields_by_unit.get(u, set())
+            fam = set(family)
+            callable_ = {name: [c for c in cands if c.fn.unit is None or lang_of[c.path] != "tact" or c.fn.unit in fam]
+                         for name, cands in by_name.items()}
+            scopes[inf.fn.unit] = (visible, {k: v for k, v in callable_.items() if v})
+        visible, inf.callees = scopes[inf.fn.unit]
         _analyze_body(inf, visible, inf.callees)
-    _propagate_guards(infos)
+    _propagate_guards(infos, deadline)
 
     span_out: dict[tuple[str, int], tuple[str, str]] = {}
     functions = []
@@ -599,52 +721,32 @@ def _dedup_units(infos: list[_Info]) -> list[_Info]:
     return out
 
 
-def _args(body: list[Any], open_idx: int) -> tuple[list[Any], int]:
+def _args(body: _Toks, open_idx: int) -> tuple[int, int]:
+    """[lo, hi) of the tokens between the parentheses opened at open_idx; empty when unbalanced."""
     close = _match(body, open_idx, "(", ")")
     if close is None:
-        return body[open_idx + 1:], len(body)
-    return body[open_idx + 1:close], close
+        return open_idx + 1, open_idx + 1
+    return open_idx + 1, close
 
 
-def _mode_features(args: list[Any]) -> set[str]:
-    out: set[str] = set()
-    for k, t in enumerate(args):
-        if t.text in _MODE_NAMES:
-            out.add(_MODE_NAMES[t.text])
-        elif t.kind == "literal_num" and (k > 0 and args[k - 1].text in ("mode", ":", ",", "|", "+")):
-            try:
-                v = int(t.text.replace("_", ""), 0)
-            except ValueError:
-                continue
-            for bit, feat in _MODE_BITS.items():
-                if v & bit:
-                    out.add(feat)
-    return out
+def _mode_features(body: _Toks, lo: int, hi: int) -> set[str]:
+    return {feat for feat in _MODE_FEATS if body.any(feat, lo, hi)}
 
 
-def _mentions_sender(args: list[Any]) -> bool:
-    for k, t in enumerate(args):
-        low = t.text.lower()
-        if t.text == "sender" and k + 1 < len(args) and args[k + 1].text == "(":
-            return True
-        if t.kind == "identifier" and ("sender" in low or low.startswith("equal_slice")):
-            return True
-    return False
-
-
-def _role_from(args: list[Any]) -> tuple[str | None, bool]:
+def _role_from(body: _Toks, lo: int, hi: int) -> tuple[str | None, bool]:
     """The `self.<x>` (or called address function) a sender check compares with, and computed-ness."""
-    for k, t in enumerate(args):
-        if t.text == "self" and k + 2 < len(args) and args[k + 1].text == ".":
-            name = args[k + 2].text
-            computed = k + 3 < len(args) and args[k + 3].text in ("(", ".")
+    hi = min(hi, lo + _ROLE_WINDOW)
+    for k in range(lo, hi):
+        if body[k].text == "self" and k + 2 < hi and body[k + 1].text == ".":
+            name = body[k + 2].text
+            computed = k + 3 < hi and body[k + 3].text in ("(", ".")
             if _IDENT_RE.match(name):
                 return name, computed
     return None, False
 
 
 def _analyze_body(inf: _Info, fields: set[str], by_name: dict[str, list[_Info]]) -> None:
-    body = inf.fn.body
+    body = inf.fn.body if isinstance(inf.fn.body, _Toks) else _Toks(inf.fn.body)
     path = inf.path
     if inf.fn.kind == "external":
         inf.features.add("external")
@@ -689,20 +791,20 @@ def _analyze_body(inf: _Info, fields: set[str], by_name: dict[str, list[_Info]])
             continue
         if t.kind not in ("identifier", "keyword") or nxt != "(" or prev == ".":
             if prev == "." and nxt == "(" and t.text == "send":                     # Tolk msg.send(mode)
-                args, _ = _args(body, i + 1)
+                lo, hi = _args(body, i + 1)
                 inf.calls.append({"kind": "message", "target": "send", "line": line, "value_bearing": True})
-                inf.features.update({"send", "value_flow"} | _mode_features(args))
+                inf.features.update({"send", "value_flow"} | _mode_features(body, lo, hi))
             continue
         name = t.text.lstrip(".~")
         if name in _SEND_FNS:
-            args, _ = _args(body, i + 1)
+            lo, hi = _args(body, i + 1)
             inf.calls.append({"kind": "message", "target": name, "line": line, "value_bearing": True})
-            inf.features.update({"send", "value_flow"} | _mode_features(args))
+            inf.features.update({"send", "value_flow"} | _mode_features(body, lo, hi))
         elif name in _THROW_FNS:
-            args, _ = _args(body, i + 1)
-            if _mentions_sender(args):
+            lo, hi = _args(body, i + 1)
+            if body.any("sender", lo, hi):
                 inf.guards.append(("caller_check", line))
-                role, _computed = _role_from(args)
+                role, _computed = _role_from(body, lo, hi)
                 inf.roles.add(role or "inline_sender_check")
         elif name in _OWNER_CHECK_FNS:
             inf.guards.append(("caller_check", line))
@@ -725,26 +827,28 @@ def _analyze_body(inf: _Info, fields: set[str], by_name: dict[str, list[_Info]])
         elif name in _STORE_READ_FNS:
             inf.reads.append({"var": "storage", "line": line})
         elif name == "if":
-            cond, close = _args(body, i + 1)
-            if _mentions_sender(cond) and close + 1 < n and body[close + 1].text == "{":
+            lo, close = _args(body, i + 1)
+            if close > lo and body.any("sender", lo, close) and close + 1 < n and body[close + 1].text == "{":
                 blk_end = _match(body, close + 1, "{", "}") or n
-                if any(x.text in ("throw", "nativeThrow", "require", "throw_unless", "throw_if") or
-                       x.text in _THROW_FNS for x in body[close + 2:blk_end]):
+                if body.any("throw", close + 2, blk_end):
                     inf.guards.append(("caller_check", line))
-                    role, _computed = _role_from(cond)
+                    role, _computed = _role_from(body, lo, close)
                     inf.roles.add(role or "inline_sender_check")
         elif name in by_name:
             inf.calls.append({"kind": "internal", "target": name, "line": line})
             inf.internal.append((name, line))
 
 
-def _propagate_guards(infos: list[_Info]) -> None:
+def _propagate_guards(infos: list[_Info], deadline: float) -> None:
     """A guard (or a send, write or feature) reached through an internal function counts on the caller."""
     own = {id(inf): (list(inf.guards), set(inf.features), set(inf.roles)) for inf in infos}
     for inf in infos:
+        _check(deadline)
         frontier = [inf]
         seen = {id(inf)}
         for _ in range(_MAX_DEPTH):
+            if len(seen) > _MAX_REACH:
+                break
             nxt = []
             for cur in frontier:
                 for callee_name, _line in cur.internal:
