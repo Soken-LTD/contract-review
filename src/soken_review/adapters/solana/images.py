@@ -106,6 +106,28 @@ def build_image(version: str) -> BuildImage | None:
     )
 
 
+def _vkey(version: str) -> tuple[int, int, int]:
+    a, b, c = (int(x) for x in version.split("."))
+    return a, b, c
+
+
+def nearest_build_image(version: str) -> BuildImage | None:
+    """Analysis-build image when `version` has no image of its own: the oldest published image not
+    older than `version` (a newer platform-tools reads older crates and lockfiles), else the newest.
+
+    Its hash is never comparable with the deployed program (another toolchain than solana-verify
+    would pick), so the build meta marks it `image_match: nearest` and provenance never uses it for
+    tier A. Returns None when no version has a published image."""
+    if not _VERSION_RE.match(version or ""):
+        return None
+    published = sorted((v for v in load_map()["images"] if _VERSION_RE.match(v) and build_image(v) is not None),
+                       key=_vkey)
+    if not published:
+        return None
+    newer = [v for v in published if _vkey(v) >= _vkey(version)]
+    return build_image(newer[0] if newer else published[-1])
+
+
 def line_passed(version: str | None) -> bool:
     """True only when the U-S1 row of the version's line passed (06 2.4: else never A or C)."""
     if not version or not _VERSION_RE.match(version):

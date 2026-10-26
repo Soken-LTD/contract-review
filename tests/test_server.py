@@ -79,7 +79,7 @@ async def test_get_guide_missing_topic_names_the_field():
     # End to end through the client: the exact call the web session made (no topic) now returns an
     # actionable envelope naming 'topic', instead of an opaque "(root) breaks rule required".
     async with Client(SokenServer()) as client:
-        result = await client.call_tool("review_get_guide", {"job_id": "job_X"})
+        result = await client.call_tool("review_get_guide", {"job_id": "job_" + "A" * 26})  # valid id: only topic is missing
     assert result.is_error
     body = json.loads(result.content[0].text)
     assert body["errors"][0]["code"] == "E_INVALID_ARGUMENT"

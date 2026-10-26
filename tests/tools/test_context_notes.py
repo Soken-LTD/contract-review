@@ -111,7 +111,7 @@ async def test_context_notes_frozen_job_rejected(db_pool):
 
 def test_contract_lists_context_notes():
     tool = {t["name"]: t for t in bundle_tools()}["review_set_section"]
-    assert tool["inputSchema"]["properties"]["section"]["enum"][-1] == "context_notes"
-    assert tool["outputSchema"]["properties"]["section"]["enum"][-1] == "context_notes"
+    assert "context_notes" in tool["inputSchema"]["properties"]["section"]["enum"]
+    assert "context_notes" in tool["outputSchema"]["properties"]["section"]["enum"]
     notes = tool["inputSchema"]["properties"]["context_notes"]["properties"]["notes"]
     assert notes["maxItems"] == 8 and notes["minItems"] == 1 and "oneOf" in notes["items"]

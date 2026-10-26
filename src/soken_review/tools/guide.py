@@ -9,7 +9,8 @@ handler at all and every call ended in an internal error, which left clients gue
 (matrix.trigger "governance", impact_class "accounting_error") and burning submit attempts.
 
 Output: first line ``guide_version <v> topic <t> chain <c>``, then compact lines, at most 12,000
-characters (03 6).
+characters (03 6). With ``topics`` the blocks of several topics are joined by a blank line, each with
+its own header and cap (the 2026-10-25 blind runs spent 4 to 5 guide calls per review, one per topic).
 """
 
 from __future__ import annotations
@@ -204,12 +205,37 @@ def _topic_checklist(family: str) -> list[str]:
     return out
 
 
+def _topic_invariants(job_id: str | None, family: str) -> list[str]:
+    """Lifecycle and invariant pass (contract/rubric/invariants.yaml): the method, and with a job
+    the job's lifecycle leads, protocol types and walks with the code each answer must cover."""
+    from ..mapping.lifecycle import load_lifecycle, render_guide
+
+    lc = None
+    if job_id:
+        try:
+            from .read import _get_ctx
+
+            lc = load_lifecycle(_get_ctx().get_pin_root(), job_id)
+        except Exception:  # noqa: BLE001 - a guide read never fails on job lookup
+            lc = None
+    return render_guide(lc, family)
+
+
 @handler("review_get_guide")
 async def _get_guide(args: dict[str, Any]) -> str:
-    topic: str = args["topic"]
+    """One topic (`topic`) or several (`topics`, in the given order) in one call; each topic block keeps
+    its own header line and its own cap, so a multi-topic answer is the single answers joined."""
+    topics: list[str] = list(args.get("topics") or ([args["topic"]] if args.get("topic") else []))
+    if not topics:
+        raise ReviewError("E_INVALID_ARGUMENT", field="topic", rule="required", value80="none",
+                          example="topic 'checklist', or topics ['severity_inputs', 'categories']")
     chain: str | None = args.get("chain")
     if chain is None and args.get("job_id"):
         chain = _job_chain(args["job_id"])
+    return "\n\n".join(_render_topic(topic, chain, args.get("job_id")) for topic in dict.fromkeys(topics))
+
+
+def _render_topic(topic: str, chain: str | None, job_id: str | None = None) -> str:
     family = _family_for(chain)
     if topic == "categories":
         body = _topic_categories(family)
@@ -221,9 +247,11 @@ async def _get_guide(args: dict[str, Any]) -> str:
         body = _topic_checklist(family)
     elif topic == "context":
         body = _topic_context()
+    elif topic == "invariants":
+        body = _topic_invariants(job_id, family)
     else:  # the input schema already enumerates topics; keep the error shape consistent
         raise ReviewError("E_INVALID_ARGUMENT", field="topic", rule="enum", value80=topic[:80],
-                          example="one of checklist, categories, severity_inputs, challenge_rules, context")
+                          example="one of checklist, categories, severity_inputs, challenge_rules, context, invariants")
     text = "\n".join([f"guide_version {GUIDE_VERSION} topic {topic} chain {chain or 'evm'}", *body])
     if len(text) > _CAP:
         text = text[: _CAP - 20].rsplit("\n", 1)[0] + "\n(truncated)"

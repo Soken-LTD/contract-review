@@ -165,7 +165,7 @@ matrix:
                  external_failure, victim_unusual_action]
   reversibility: [irreversible, admin_reversible, self_recovering]
 quote_role: [location, bound_ref, role_path, context]
-section: [roles_notes, out_of_scope_reasons, coverage, context_notes]   # review_set_section; context_notes: context ingestion spec 6 and 7
+section: [roles_notes, out_of_scope_reasons, coverage, context_notes, invariant_walks]   # review_set_section; context_notes: context ingestion spec 6 and 7; invariant_walks: rubric invariants.yaml (F9)
 finding_status: [needs_text, needs_challenge, accepted, withdrawn]
 evidence_level: [analyzer_and_reasoning, reasoning_challenged, reasoning_only]
 lead_state: [open, promoted, merged, dismissed, not_reviewed]

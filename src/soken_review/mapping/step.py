@@ -20,6 +20,7 @@ from ..engine.injection import scan_file
 from ..pinning.store import PinnedSource
 from .build import build_map, load_map, load_tokens, write_map
 from .facts import load_facts, static_facts, write_facts
+from .lifecycle import apply_lifecycle
 from .project_url import discover_project_urls, write_suggested_context
 
 _ENUMS = Path(__file__).resolve().parents[3] / "contract" / "rubric" / "enums.yaml"
@@ -55,6 +56,7 @@ def run_map_step(
     nsloc: int | None = None,
     analyzers: dict[str, str] | None = None,
     build_detail: str | None = None,
+    build_status: str | None = None,
 ) -> dict[str, Any]:
     """Build and store map, flags and static facts. Returns a summary for the step provenance.
 
@@ -75,8 +77,18 @@ def run_map_step(
         output = json.loads(solc_output_path.read_text(encoding="utf-8"))
         compiled_texts = compiled_texts_from_std_input(std_input_path)
     art = build_map(files, output, list(family_categories(family, chain)), build_ok=build_ok,
-                    compiled_texts=compiled_texts)
-    write_map(pin_root, job_id, art, build_detail=build_detail)
+                    compiled_texts=compiled_texts, parsed_family="solana" if family == "solana" else None)
+    write_map(pin_root, job_id, art, build_detail=build_detail, build_status=build_status)
+
+    # Lifecycle and invariant pass (feat/lifecycle-invariant-pass): lifecycle leads merged into
+    # leads.json and the job's invariant walks in map/lifecycle.json. Additive: a fault here is
+    # logged and never fails the map step.
+    lifecycle: dict[str, Any] = {}
+    try:
+        lifecycle = apply_lifecycle(pin_root, job_id, family, files, art.doc, output, compiled_texts)
+    except Exception:
+        import logging as _logging
+        _logging.getLogger(__name__).exception("lifecycle pass failed for job %s", job_id[-8:])
 
     # Server-side project URL discovery: scan source for NatSpec @custom:website,
     # @custom:security-contact, and GitHub repo URLs; write as suggested context items
@@ -115,8 +127,14 @@ def run_map_step(
         "files": len(files),
         "spans": len(art.doc["spans"]),
         "semantic": "semantic" in art.doc,
+        **({"semantic_layer": art.doc["semantic"]["chain_extras"]["solana"]["layer"],
+            "functions": len(art.doc["semantic"]["functions"]),
+            "entries": sum(1 for f in art.doc["semantic"]["functions"] if f["is_entry"])}
+           if family == "solana" and "semantic" in art.doc else {}),
+        **({"build_status": build_status, "nsloc": nsloc} if build_status is not None else {}),
         "flags": {r: sum(1 for f in flags if f["rule"] == r) for r in ("J1", "J2", "J3", "J4", "J5")},
         "facts": len(facts),
+        "lifecycle": lifecycle,
     }
 
 
