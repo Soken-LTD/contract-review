@@ -66,11 +66,13 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     if not _materialize_sources(work_dir, proj_dir):
         return [], {"status": "not_run", "reason": "project_materialization_failed"}, {}
 
-    # Use the TRON compiler cache instead of the EVM one: _solc_path uses evm.get_cache()
-    # which doesn't know TRON version strings.  Resolve via TronSolcCache directly.
-    solc_path = _tron_solc_path(result)
-    if solc_path is None:
+    # The compiler the build ran (exact tron-solc, else the upstream substitute): the same
+    # resolver as build_tron, over the sources the build compiled. evm _solc_path does not know
+    # TRON version strings.
+    solc = _tron_solc(result, work_dir)
+    if solc is None:
         return [], {"status": "not_run", "reason": "compiler_binary_missing"}, {}
+    solc_path = str(solc.path)
 
     entry = (result.candidate.entry_contract or "").rpartition(":")[0] or None
 
@@ -88,7 +90,11 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
         reason = "sandbox_unavailable" if tron_img is None else "analyzer_failed"
         return [], {"status": "not_run", "reason": reason}, {}
 
-    aderyn_raw = _run_aderyn(proj_dir, out_dir)
+    # Aderyn resolves solc by bare semver: only an upstream release can be seeded offline.
+    if solc.kind == "upstream_solc":
+        aderyn_raw = _run_aderyn(proj_dir, out_dir, solc.version, solc_path, settings.get("remappings"))
+    else:
+        aderyn_raw = _run_aderyn(proj_dir, out_dir)
     all_raw: list[dict] = list(slither_raw)
     if aderyn_raw is not None:
         all_raw.extend(aderyn_raw)
@@ -102,6 +108,7 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     static_map["compiler_advisories"] = {
         "status": "not_covered", "reason": "tron_upstream_base_undocumented", "version": None, "rows": [],
     }
+    static_map["compiler_kind"] = solc.kind
     read_plan: dict[str, Any] = {"entries": [], "version": "1"}
 
     write_records(work_dir, leads, static_map, read_plan)  # host-only dir (09 3.5)
@@ -109,25 +116,21 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     return leads, static_map, read_plan
 
 
-def _tron_solc_path(result: BuildResult) -> str | None:
-    """Resolve the tron-solc binary path from TronSolcCache for this build result.
+def _tron_solc(result: BuildResult, work_dir: Path) -> Any:
+    """The TronSolc the build used, resolved again from the compiler field and the compiled sources.
 
-    Returns the path as a string (for Slither's --solc argument), or None if unavailable.
-    The binary is passed into the container via the cache mount at /cache/<tag>/solc.
+    Returns None when no compiler resolves (the analyzer then reports not_run). The binary is
+    passed into the container through the solc cache mount at /cache.
     """
-    from soken_review.adapters.tron.build import _resolve_tag
-    from soken_review.adapters.tron.compiler import TronCompilerCacheError, get_tron_cache
+    from soken_review.adapters.evm.analyze import build_input
+    from soken_review.adapters.tron.build import resolve_tron_solc
 
     compiler = result.candidate.compiler
-    if compiler is None:
-        return None
-    tag = _resolve_tag(compiler.version)
-    if tag is None:
-        return None
-    try:
-        return str(get_tron_cache().binary(tag))
-    except TronCompilerCacheError:
-        return None
+    inp = build_input(work_dir) or {}
+    sources = {p: s.get("content", "") for p, s in (inp.get("sources") or {}).items()
+               if isinstance(s, dict) and isinstance(s.get("content"), str)}
+    solc, _reason = resolve_tron_solc(compiler.version if compiler else None, sources)
+    return solc
 
 
 def _tron_image() -> str | None:
