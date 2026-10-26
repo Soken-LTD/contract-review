@@ -481,6 +481,29 @@ async def _demote_leads_to_open(
 
 @handler("review_submit_finding")
 async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
+    """Submit or revise a finding, then attach the disproof checklist when the draft needs it.
+
+    Every needs_challenge result was followed by a review_challenge call in the 2026-10-25 blind runs;
+    the checklist is computed, never stored, so returning it here is the same read review_challenge
+    does after the write committed (same revision, same checklist_sha256 that review_answer_challenge
+    checks). Any failure to compute it leaves the result as before: next_tools still names
+    review_challenge.
+    """
+    result = await _submit_finding(args)
+    if result.get("accepted") and result.get("status") == "needs_challenge":
+        from .challenge import handle_review_challenge
+
+        try:
+            challenge = await handle_review_challenge({"job_id": args["job_id"], "draft_key": args["draft_key"]})
+        except Exception:  # noqa: BLE001 - the inline checklist is a convenience, never a failure
+            challenge = None
+        if challenge and challenge.get("accepted"):
+            result["challenge"] = {k: v for k, v in challenge.items() if k != "accepted"}
+            result["next_tools"] = ["review_answer_challenge"]
+    return result
+
+
+async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
     """Submit or revise a finding (03 §4.10).
 
     Per 03 §7.1: most errors are rejections (accepted: false); E_INVALID_ARGUMENT
