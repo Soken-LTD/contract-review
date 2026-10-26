@@ -74,9 +74,9 @@ RUN ln -sf /opt/ton-node/node_modules/.bin/misti /usr/local/bin/misti \
     && misti --version
 
 # Verify all tact-* and tolk-* alias packages are present (fail-fast sanity check)
-RUN node -e "
+RUN node - <<'JS'
 const fs = require('fs');
-const v = JSON.parse(fs.readFileSync('/opt/ton-node/versions.json','utf8'));
+const v = JSON.parse(fs.readFileSync('/opt/ton-node/versions.json', 'utf8'));
 let ok = true;
 for (const ver of v.tact) {
   const pkg = '/opt/ton-node/node_modules/tact-' + ver + '/package.json';
@@ -88,7 +88,7 @@ for (const ver of v.tolk.filter(x => x !== 'latest')) {
 }
 if (!ok) process.exit(1);
 process.stdout.write('version check ok: ' + v.tact.length + ' tact, ' + v.tolk.length + ' tolk\n');
-"
+JS
 
 # Copy node_scripts from the adapter source (repo root is Docker build context)
 COPY src/soken_review/adapters/ton/node_scripts/ /opt/ton-node/node_scripts/

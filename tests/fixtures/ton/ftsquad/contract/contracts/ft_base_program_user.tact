@@ -1,1 +1,442 @@
-aW1wb3J0ICJAc3RkbGliL2RlcGxveSI7CgppbXBvcnQgIi4vaW5mb19leHRlbmRzLnRhY3QiOwppbXBvcnQgIi4vbWVzc2FnZXMudGFjdCI7Cgpjb250cmFjdCBGdEJhc2VQcm9ncmFtVXNlciB3aXRoIERlcGxveWFibGUgewogICAgY29uc3QgbWluVG9uc0ZvclN0b3JhZ2U6IEludCA9IHRvbigiMC4xIik7CgogICAgaWQ6IEludCBhcyB1aW50NjQ7CiAgICBvd25lcjogQWRkcmVzcz87CiAgICBwcm9ncmFtOiBBZGRyZXNzOwogICAgaW52aXRlZEFkZHJlc3M6IEFkZHJlc3M/OwogICAgaG9sZEJhbGFuY2U6IEludCBhcyBjb2lucyA9IHRvbigiMC4wIik7CgogICAgb3ZlcnRha2VJbmZvOiBtYXA8SW50IGFzIHVpbnQ4LCBJbnQgYXMgdWludDE2PiA9IGVtcHR5TWFwKCk7CiAgICBsZXZlbEluZm86IG1hcDxJbnQgYXMgdWludDgsIEluZm8+ID0gZW1wdHlNYXAoKTsKICAgIGxhc3RMZXZlbDogSW50IGFzIHVpbnQ4ID0gMDsKCiAgICBpbml0KGlkOiBJbnQsIHByb2dyYW06IEFkZHJlc3MpewogICAgICAgIG5hdGl2ZVRocm93VW5sZXNzKDEzMiwgc2VuZGVyKCkgPT0gcHJvZ3JhbSk7CgogICAgICAgIHNlbGYuaWQgPSBpZDsKICAgICAgICBzZWxmLnByb2dyYW0gPSBwcm9ncmFtOwogICAgfQoKICAgIHJlY2VpdmUoKXt9CgogICAgcmVjZWl2ZSgiZ2lmdCIpe30KCiAgICByZWNlaXZlKCJ3aXRoZHJhdyIpewogICAgICAgIHNlbGYucmVxdWlyZU93bmVyKCk7CiAgICAgICAgbmF0aXZlUmVzZXJ2ZShzZWxmLm1pblRvbnNGb3JTdG9yYWdlICsgc2VsZi5ob2xkQmFsYW5jZSwgMCk7CgogICAgICAgIHNlbmQoU2VuZFBhcmFtZXRlcnN7CiAgICAgICAgICAgIHRvOiBzZWxmLm93bmVyISEsCiAgICAgICAgICAgIHZhbHVlOiAwLAogICAgICAgICAgICBtb2RlOiBTZW5kUmVtYWluaW5nQmFsYW5jZSwKICAgICAgICAgICAgYm9keTogIllvdXIgd2l0aGRyYXciLmFzQ29tbWVudCgpLAogICAgICAgIH0pOwogICAgfQoKICAgIHJlY2VpdmUobXNnOiBBY3RpdmF0ZUxldmVsKXsKICAgICAgICBzZWxmLnJlcXVpcmVQcm9ncmFtKCk7CiAgICAgICAgc2VsZi5jaGVja1Bvc3NpYmlsaXR5QWN0aXZhdGVMZXZlbChtc2cubGV2ZWxOdW1iZXIpOwoKICAgICAgICBsZXQgYmFsYW5jZTogSW50ID0gbXlCYWxhbmNlKCkgLSBjb250ZXh0KCkudmFsdWU7CiAgICAgICAgbmF0aXZlUmVzZXJ2ZShtYXgoYmFsYW5jZSwgc2VsZi5taW5Ub25zRm9yU3RvcmFnZSksIDApOwoKICAgICAgICBzZWxmLmxhc3RMZXZlbCA9IG1zZy5sZXZlbE51bWJlcjsKICAgICAgICBzZWxmLmxldmVsSW5mby5zZXQobXNnLmxldmVsTnVtYmVyLCBJbmZve30pOwoKICAgICAgICBpZiAoc2VsZi5vd25lciA9PSBudWxsKXsKICAgICAgICAgICAgc2VsZi5vd25lciA9IG1zZy5vd25lcjsKICAgICAgICB9CiAgICAgICAgCiAgICAgICAgaWYgKHNlbGYuaW52aXRlZEFkZHJlc3MgPT0gbnVsbCl7CiAgICAgICAgICAgIHNlbGYuaW52aXRlZEFkZHJlc3MgPSBzZWxmLnByb2dyYW1Vc2VyQWRkcmVzcyhtc2cuaW52aXRlZElkKTsKICAgICAgICB9CgogICAgICAgIGlmKHNlbGYuaWQgIT0gMSl7CiAgICAgICAgICAgIHNlbGYuc2VuZFRvVXBsaW5lKHNlbGYuaWQsIG1zZy5sZXZlbE51bWJlciwgbXNnLmxldmVsUHJpY2UsIG1zZy5yZWNpcGllbnRFeGNlc3Nlcyk7CiAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgc2VsZi5sYXN0TGV2ZWwgPSAxMjsKICAgICAgICAgICAgc2VsZi5zZW5kRXhjZXNzZXMoc2VsZi5vd25lciEhKTsKICAgICAgICB9CiAgICB9CgogICAgcmVjZWl2ZShtc2c6IFVwZGF0ZU1hdHJpeCl7CiAgICAgICAgc2VsZi5yZXF1aXJlVXNlclByb2dyYW0obXNnLmZyb21JZCk7CiAgICAgICAgbGV0IGJhbGFuY2U6IEludCA9IG15QmFsYW5jZSgpIC0gY29udGV4dCgpLnZhbHVlOwoKICAgICAgICBpZiAoc2VsZi5pZCA9PSAxKXsKICAgICAgICAgICAgc2VsZi51cGRhdGVNYXRyaXhGb3JJZDEobXNnLCBiYWxhbmNlKTsKICAgICAgICB9IGVsc2UgaWYgKHNlbGYubGFzdExldmVsIDwgbXNnLmxldmVsTnVtYmVyKXsKICAgICAgICAgICAgbmF0aXZlUmVzZXJ2ZShiYWxhbmNlLCAwKTsKICAgICAgICAgICAgc2VsZi5tYWtlT3ZlcnRha2UobXNnLmlkLCBtc2cubGV2ZWxOdW1iZXIsIG1zZy5sZXZlbFByaWNlLCBtc2cucmVjaXBpZW50RXhjZXNzZXMpOwogICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgc2VsZi51cGRhdGVNYXRyaXhGb3JOb25JZDEobXNnLCBiYWxhbmNlKTsKICAgICAgICB9CiAgICB9CgogICAgcmVjZWl2ZShtc2c6IE92ZXJmbG93VXApewogICAgICAgIHNlbGYucmVxdWlyZVVzZXJQcm9ncmFtKG1zZy5mcm9tSWQpOwogICAgICAgIGxldCBiYWxhbmNlOiBJbnQgPSBteUJhbGFuY2UoKSAtIGNvbnRleHQoKS52YWx1ZTsKCiAgICAgICAgbGV0IGluZm86IEluZm8gPSBzZWxmLmdldEluZm8obXNnLmxldmVsTnVtYmVyKTsKICAgICAgICBsZXQgaXNGcm96ZW4gPSBpbmZvLmlzRnJvemVuTGV2ZWwobXNnLmxldmVsTnVtYmVyLCBzZWxmLmxhc3RMZXZlbCk7CiAgICAgICAgbGV0IHN0YXR1c0NvZGU6IEludCA9IGluZm8uZmluZFBsYWNlRm9yT3ZlcmZsb3dVcChtc2cuaWQsIG1zZy5mcm9tSWQsIG1zZy5sZXZlbFByaWNlLCBpc0Zyb3plbik7CiAgICAgICAgCiAgICAgICAgbGV0IHNwbGl0TGV2ZWxQcmljZSA9IG1zZy5sZXZlbFByaWNlIC8gMjsKCiAgICAgICAgaWYgKHN0YXR1c0NvZGUgPCA0MCkgewogICAgICAgICAgICBlbWl0KFJlaW52ZXN0TnVtYmVye3JlaW52ZXN0TnVtYmVyOiBpbmZvLnJlaW52ZXN0Q291bnQsIHN0YXR1c0NvZGU6IHN0YXR1c0NvZGV9LnRvQ2VsbCgpKTsKCiAgICAgICAgICAgIGlmIChzdGF0dXNDb2RlID4gMzAgJiYgc2VsZi5pZCAhPSAxKSB7CiAgICAgICAgICAgICAgICBzZWxmLmhvbGRCYWxhbmNlICs9IHNwbGl0TGV2ZWxQcmljZTsKICAgICAgICAgICAgfQoKICAgICAgICAgICAgaWYgKGlzRnJvemVuICYmIHN0YXR1c0NvZGUgPCAzMCkgewogICAgICAgICAgICAgICAgbmF0aXZlUmVzZXJ2ZShiYWxhbmNlLCAwKTsKICAgICAgICAgICAgICAgIHNlbGYuc2VuZEdpZnQoc3BsaXRMZXZlbFByaWNlKTsKICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgIG5hdGl2ZVJlc2VydmUoYmFsYW5jZSArIHNwbGl0TGV2ZWxQcmljZSwgMCk7CiAgICAgICAgICAgIH0KCiAgICAgICAgICAgIHNlbGYubGV2ZWxJbmZvLnNldChtc2cubGV2ZWxOdW1iZXIsIGluZm8pOwogICAgICAgICAgICBzZWxmLnNlbmRFeGNlc3Nlcyhtc2cucmVjaXBpZW50RXhjZXNzZXMpOwogICAgICAgIH0gZWxzZSBpZiAoc3RhdHVzQ29kZSA+IDQwKSB7CiAgICAgICAgICAgIHNlbGYuZmluaXNoQ3ljbGUoaW5mbywgbXNnLmxldmVsTnVtYmVyKTsKCiAgICAgICAgICAgIGlmIChzZWxmLmlkICE9IDEpIHsKICAgICAgICAgICAgICAgIHNlbGYuaG9sZEJhbGFuY2UgLT0gc3BsaXRMZXZlbFByaWNlOwogICAgICAgICAgICAgICAgbmF0aXZlUmVzZXJ2ZShiYWxhbmNlIC0gc3BsaXRMZXZlbFByaWNlLCAwKTsKICAgICAgICAgICAgICAgIHNlbGYuc2VuZFRvVXBsaW5lKHNlbGYuaWQsIG1zZy5sZXZlbE51bWJlciwgbXNnLmxldmVsUHJpY2UsIG1zZy5yZWNpcGllbnRFeGNlc3Nlcyk7CiAgICAgICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgICAgICBuYXRpdmVSZXNlcnZlKGJhbGFuY2UgKyBzcGxpdExldmVsUHJpY2UsIDApOwogICAgICAgICAgICAgICAgc2VsZi5zZW5kRXhjZXNzZXMobXNnLnJlY2lwaWVudEV4Y2Vzc2VzKTsKICAgICAgICAgICAgfQogICAgICAgIH0KICAgIH0KCiAgICByZWNlaXZlKG1zZzogT3ZlcmZsb3dEb3duKXsKICAgICAgICBzZWxmLnJlcXVpcmVVc2VyUHJvZ3JhbShtc2cuZnJvbUlkKTsKICAgICAgICBsZXQgYmFsYW5jZTogSW50ID0gbXlCYWxhbmNlKCkgLSBjb250ZXh0KCkudmFsdWU7CgogICAgICAgIGxldCBpbmZvOiBJbmZvID0gc2VsZi5nZXRJbmZvKG1zZy5sZXZlbE51bWJlcik7CiAgICAgICAgbGV0IGlzRnJvemVuOiBCb29sID0gaW5mby5pc0Zyb3plbkxldmVsKG1zZy5sZXZlbE51bWJlciwgc2VsZi5sYXN0TGV2ZWwpOwogICAgICAgIGluZm8uZmluZFBsYWNlRm9yT3ZlcmZsb3dEb3duKG1zZy5pZCwgbXNnLmxldmVsUHJpY2UsIGlzRnJvemVuKTsKICAgICAgICBzZWxmLmxldmVsSW5mby5zZXQobXNnLmxldmVsTnVtYmVyLCBpbmZvKTsKICAgICAgICAKICAgICAgICBlbWl0KFJlaW52ZXN0TnVtYmVye3JlaW52ZXN0TnVtYmVyOiBpbmZvLnJlaW52ZXN0Q291bnR9LnRvQ2VsbCgpKTsKCiAgICAgICAgbGV0IHNwbGl0TGV2ZWxQcmljZSA9IG1zZy5sZXZlbFByaWNlIC8gMjsKICAgICAgICBpZiAoaXNGcm96ZW4pIHsKICAgICAgICAgICAgbmF0aXZlUmVzZXJ2ZShiYWxhbmNlLCAwKTsKICAgICAgICAgICAgc2VsZi5zZW5kR2lmdChzcGxpdExldmVsUHJpY2UpOwogICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgIG5hdGl2ZVJlc2VydmUoYmFsYW5jZSArIHNwbGl0TGV2ZWxQcmljZSwgMCk7CiAgICAgICAgfQoKICAgICAgICBzZWxmLnNlbmRFeGNlc3Nlcyhtc2cucmVjaXBpZW50RXhjZXNzZXMpOwogICAgfQoKICAgIHJlY2VpdmUobXNnOiBVcGRhdGVVcHBlckFkZHJlc3MpewogICAgICAgIHNlbGYucmVxdWlyZVVzZXJQcm9ncmFtKG1zZy5mcm9tSWQpOwoKICAgICAgICBsZXQgaW5mbzogSW5mbyA9IHNlbGYuZ2V0SW5mbyhtc2cubGV2ZWxOdW1iZXIpOwogICAgICAgIGluZm8udXBkYXRlVXBwZXJBZGRyZXNzKG1zZy51cHBlckFkZHJlc3MpOwogICAgICAgIHNlbGYubGV2ZWxJbmZvLnNldChtc2cubGV2ZWxOdW1iZXIsIGluZm8pOwoKICAgICAgICBzZWxmLnNlbmRSZW1haW5pbmdWYWx1ZShtc2cucmVjaXBpZW50RXhjZXNzZXMpOwogICAgfQoKICAgIC8vIC0tLS0tLS0tLS0tLS0tLS0tLSBQcml2YXRlIEZ1bmN0aW9uICAtLS0tLS0tLS0tLS0tLS0tLS0gLy8KCiAgICBmdW4gdXBkYXRlTWF0cml4Rm9ySWQxKG1zZzogVXBkYXRlTWF0cml4LCBiYWxhbmNlOiBJbnQpewogICAgICAgIGxldCBpbmZvOiBJbmZvID0gc2VsZi5nZXRJbmZvKG1zZy5sZXZlbE51bWJlcik7CiAgICAgICAgbGV0IHN0YXR1c0NvZGU6IEludCA9IGluZm8uZmluZFBsYWNlSW5NYXRyaXgobXNnLmlkLCBtc2cuZnJvbUlkLCBtc2cubGV2ZWxOdW1iZXIsIG1zZy5sZXZlbFByaWNlLCBzZWxmLmxhc3RMZXZlbCk7CiAgICAgICAgc2VsZi5sZXZlbEluZm8uc2V0KG1zZy5sZXZlbE51bWJlciwgaW5mbyk7CgogICAgICAgIGxldCBzcGxpdExldmVsUHJpY2UgPSBtc2cubGV2ZWxQcmljZSAvIDI7CiAgICAgICAgbGV0IHJlc2VydmVWYWx1ZSA9IChzdGF0dXNDb2RlIDwgMTApID8gbXNnLmxldmVsUHJpY2UgOiBzcGxpdExldmVsUHJpY2U7CiAgICAgICAgbmF0aXZlUmVzZXJ2ZShiYWxhbmNlICsgcmVzZXJ2ZVZhbHVlLCAwKTsKCiAgICAgICAgaWYgKHN0YXR1c0NvZGUgPCA0MCkgewogICAgICAgICAgICBlbWl0KFJlaW52ZXN0TnVtYmVye3JlaW52ZXN0TnVtYmVyOiBpbmZvLnJlaW52ZXN0Q291bnQsIHN0YXR1c0NvZGU6IHN0YXR1c0NvZGV9LnRvQ2VsbCgpKTsKICAgICAgICB9CgogICAgICAgIGlmIChzdGF0dXNDb2RlIDwgMTApewogICAgICAgICAgICBzZWxmLnNlbmRVcGRhdGVVcHBlckFkZGVzcyhtc2cuaWQsIG15QWRkcmVzcygpLCBtc2cubGV2ZWxOdW1iZXIsIDAsIG1zZy5yZWNpcGllbnRFeGNlc3Nlcyk7CiAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgaWYgKHN0YXR1c0NvZGUgPiA0MCkgewogICAgICAgICAgICAgICAgc2VsZi5maW5pc2hDeWNsZShpbmZvLCBtc2cubGV2ZWxOdW1iZXIpOwogICAgICAgICAgICB9CgogICAgICAgICAgICBsZXQgcmVjaXBpZW50OiBJbnQgPSAoc3RhdHVzQ29kZSAlIDEwID09IDEpID8gaW5mby5tYXRyaXgudTEhISA6IGluZm8ubWF0cml4LnUyISE7CiAgICAgICAgICAgIHNlbGYuc2VuZE92ZXJmbG93RG93bihyZWNpcGllbnQsIG1zZy5pZCwgbXNnLmxldmVsTnVtYmVyLCBtc2cubGV2ZWxQcmljZSwgMCwgbXNnLnJlY2lwaWVudEV4Y2Vzc2VzKTsKICAgICAgICB9CiAgICB9CgogICAgZnVuIHVwZGF0ZU1hdHJpeEZvck5vbklkMShtc2c6IFVwZGF0ZU1hdHJpeCwgYmFsYW5jZTogSW50KXsKICAgICAgICBsZXQgaW5mbzogSW5mbyA9IHNlbGYuZ2V0SW5mbyhtc2cubGV2ZWxOdW1iZXIpOwoKICAgICAgICBpZiAobXNnLmxldmVsTnVtYmVyICE9IDEgJiYgaW5mby51cHBlckFkZHJlc3MgPT0gbnVsbCl7CiAgICAgICAgICAgIG5hdGl2ZVJlc2VydmUoYmFsYW5jZSwgMCk7CiAgICAgICAgICAgIHNlbGYubWFrZU92ZXJ0YWtlKG1zZy5pZCwgbXNnLmxldmVsTnVtYmVyLCBtc2cubGV2ZWxQcmljZSwgbXNnLnJlY2lwaWVudEV4Y2Vzc2VzKTsKICAgICAgICAgICAgcmV0dXJuOwogICAgICAgIH0gCgogICAgICAgIGxldCBzdGF0dXNDb2RlOiBJbnQgPSBpbmZvLmZpbmRQbGFjZUluTWF0cml4KG1zZy5pZCwgbXNnLmZyb21JZCwgbXNnLmxldmVsTnVtYmVyLCBtc2cubGV2ZWxQcmljZSwgc2VsZi5sYXN0TGV2ZWwpOwogICAgICAgIHNlbGYubGV2ZWxJbmZvLnNldChtc2cubGV2ZWxOdW1iZXIsIGluZm8pOwoKICAgICAgICBpZiAoc3RhdHVzQ29kZSA8IDQwKSB7CiAgICAgICAgICAgIGVtaXQoUmVpbnZlc3ROdW1iZXJ7cmVpbnZlc3ROdW1iZXI6IGluZm8ucmVpbnZlc3RDb3VudCwgc3RhdHVzQ29kZTogc3RhdHVzQ29kZX0udG9DZWxsKCkpOwogICAgICAgIH0KCiAgICAgICAgbGV0IGlzRnJvemVuOiBCb29sID0gaW5mby5pc0Zyb3plbkxldmVsKG1zZy5sZXZlbE51bWJlciwgc2VsZi5sYXN0TGV2ZWwpOwogICAgICAgIGxldCBzcGxpdExldmVsUHJpY2U6IEludCA9IG1zZy5sZXZlbFByaWNlIC8gMjsKICAgICAgICBsZXQgaXNGaXJzdDogQm9vbCA9IChzdGF0dXNDb2RlICUgMTAgPT0gMSk7CgogICAgICAgIGlmIChzdGF0dXNDb2RlIDwgMTApewogICAgICAgICAgICBpZiAoaXNGcm96ZW4pIHsKICAgICAgICAgICAgICAgIG5hdGl2ZVJlc2VydmUoYmFsYW5jZSwgMCk7CiAgICAgICAgICAgICAgICBzZWxmLnNlbmRHaWZ0KHNwbGl0TGV2ZWxQcmljZSk7CiAgICAgICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgICAgICBuYXRpdmVSZXNlcnZlKGJhbGFuY2UgKyBzcGxpdExldmVsUHJpY2UsIDApOwogICAgICAgICAgICB9CgogICAgICAgICAgICBzZWxmLnNlbmRVcGRhdGVVcHBlckFkZGVzcyhtc2cuaWQsIG15QWRkcmVzcygpLCBtc2cubGV2ZWxOdW1iZXIsIHRvbigiMC4wNSIpLCBtc2cucmVjaXBpZW50RXhjZXNzZXMpOwogICAgICAgICAgICBsZXQgcmVjaXBpZW50ID0gKGluZm8udXBwZXJBZGRyZXNzID09IG51bGwpID8gc2VsZi5pbnZpdGVkQWRkcmVzcyEhIDogaW5mby51cHBlckFkZHJlc3MhITsKICAgICAgICAgICAgc2VsZi5zZW5kT3ZlcmZsb3dVcChyZWNpcGllbnQsIG1zZy5pZCwgbXNnLmxldmVsTnVtYmVyLCBtc2cubGV2ZWxQcmljZSwgbXNnLnJlY2lwaWVudEV4Y2Vzc2VzKTsKICAgICAgICB9IGVsc2UgaWYgKHN0YXR1c0NvZGUgPCA0MCkgewogICAgICAgICAgICBpZiAoc3RhdHVzQ29kZSA+IDMwKSB7CiAgICAgICAgICAgICAgICBzZWxmLmhvbGRCYWxhbmNlICs9IHNwbGl0TGV2ZWxQcmljZTsKICAgICAgICAgICAgfQoKICAgICAgICAgICAgaWYgKGlzRnJvemVuICYmIHN0YXR1c0NvZGUgPCAzMCkgewogICAgICAgICAgICAgICAgbmF0aXZlUmVzZXJ2ZShiYWxhbmNlLCAwKTsKICAgICAgICAgICAgICAgIHNlbGYuc2VuZEdpZnQoc3BsaXRMZXZlbFByaWNlKTsKICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgIG5hdGl2ZVJlc2VydmUoYmFsYW5jZSArIHNwbGl0TGV2ZWxQcmljZSwgMCk7CiAgICAgICAgICAgIH0KCiAgICAgICAgICAgIGxldCByZWNpcGllbnQgPSBpc0ZpcnN0ID8gaW5mby5tYXRyaXgudTEhISA6IGluZm8ubWF0cml4LnUyISE7CiAgICAgICAgICAgIHNlbGYuc2VuZE92ZXJmbG93RG93bihyZWNpcGllbnQsIG1zZy5pZCwgbXNnLmxldmVsTnVtYmVyLCBtc2cubGV2ZWxQcmljZSwgMCwgbXNnLnJlY2lwaWVudEV4Y2Vzc2VzKTsKICAgICAgICB9IGVsc2UgewogICAgICAgICAgICBzZWxmLmhvbGRCYWxhbmNlIC09IHNwbGl0TGV2ZWxQcmljZTsKICAgICAgICAgICAgbmF0aXZlUmVzZXJ2ZShiYWxhbmNlIC0gc3BsaXRMZXZlbFByaWNlLCAwKTsKCiAgICAgICAgICAgIGxldCByZWNpcGllbnQgPSBpc0ZpcnN0ID8gaW5mby5tYXRyaXgudTEhISA6IGluZm8ubWF0cml4LnUyISE7CiAgICAgICAgICAgIHNlbGYuZmluaXNoQ3ljbGUoaW5mbywgbXNnLmxldmVsTnVtYmVyKTsKICAgICAgICAgICAgc2VsZi5zZW5kT3ZlcmZsb3dEb3duKHJlY2lwaWVudCwgbXNnLmlkLCBtc2cubGV2ZWxOdW1iZXIsIG1zZy5sZXZlbFByaWNlLCBzcGxpdExldmVsUHJpY2UsIG1zZy5yZWNpcGllbnRFeGNlc3Nlcyk7CiAgICAgICAgICAgIHNlbGYuc2VuZFRvVXBsaW5lKHNlbGYuaWQsIG1zZy5sZXZlbE51bWJlciwgbXNnLmxldmVsUHJpY2UsIG1zZy5yZWNpcGllbnRFeGNlc3Nlcyk7CiAgICAgICAgfQogICAgfQoKICAgIGZ1biBtYWtlT3ZlcnRha2UoaWQ6IEludCwgbGV2ZWxOdW1iZXI6IEludCwgbGV2ZWxQcmljZTogSW50LCByZWNpcGllbnRFeGNlc3NlczogQWRkcmVzcyl7CiAgICAgICAgc2VsZi51cGRhdGVPdmVydGFraW5nSW5mbyhsZXZlbE51bWJlcik7CiAgICAgICAgc2VsZi5zZW5kVG9VcGxpbmUoaWQsIGxldmVsTnVtYmVyLCBsZXZlbFByaWNlLCByZWNpcGllbnRFeGNlc3Nlcyk7CiAgICB9CgogICAgZnVuIHNlbmRUb1VwbGluZShpZDogSW50LCBsZXZlbE51bWJlcjogSW50LCBsZXZlbFByaWNlOiBJbnQsIHJlY2lwaWVudEV4Y2Vzc2VzOiBBZGRyZXNzKXsKICAgICAgICBzZW5kKFNlbmRQYXJhbWV0ZXJzewogICAgICAgICAgICB0bzogc2VsZi5pbnZpdGVkQWRkcmVzcyEhLAogICAgICAgICAgICB2YWx1ZTogMCwKICAgICAgICAgICAgbW9kZTogU2VuZFJlbWFpbmluZ0JhbGFuY2UsCiAgICAgICAgICAgIGJvZHk6IFVwZGF0ZU1hdHJpeHsKICAgICAgICAgICAgICAgIGlkOiBpZCwKICAgICAgICAgICAgICAgIGZyb21JZDogc2VsZi5pZCwKICAgICAgICAgICAgICAgIGxldmVsTnVtYmVyOiBsZXZlbE51bWJlciwKICAgICAgICAgICAgICAgIGxldmVsUHJpY2U6IGxldmVsUHJpY2UsCiAgICAgICAgICAgICAgICByZWNpcGllbnRFeGNlc3NlczogcmVjaXBpZW50RXhjZXNzZXMKICAgICAgICAgICAgfS50b0NlbGwoKQogICAgICAgIH0pOwogICAgfQoKICAgIGZ1biBzZW5kVXBkYXRlVXBwZXJBZGRlc3ModG9JZDogSW50LCB1cHBlckFkZHJlc3M6IEFkZHJlc3MsIGxldmVsTnVtYmVyOiBJbnQsIHZhbHVlOiBJbnQsIHJlY2lwaWVudEV4Y2Vzc2VzOiBBZGRyZXNzKXsKICAgICAgICBsZXQgbW9kZTogSW50ID0gMTI4OwoKICAgICAgICBpZiAodmFsdWUgIT0gMCkgewogICAgICAgICAgICBtb2RlID0gMzsKICAgICAgICB9CgogICAgICAgIHNlbmQoU2VuZFBhcmFtZXRlcnN7CiAgICAgICAgICAgIHRvOiBzZWxmLnByb2dyYW1Vc2VyQWRkcmVzcyh0b0lkKSwKICAgICAgICAgICAgdmFsdWU6IHZhbHVlLAogICAgICAgICAgICBtb2RlOiBtb2RlLAogICAgICAgICAgICBib2R5OiBVcGRhdGVVcHBlckFkZHJlc3N7CiAgICAgICAgICAgICAgICBmcm9tSWQ6IHNlbGYuaWQsCiAgICAgICAgICAgICAgICB1cHBlckFkZHJlc3M6IHVwcGVyQWRkcmVzcywKICAgICAgICAgICAgICAgIGxldmVsTnVtYmVyOiBsZXZlbE51bWJlciwKICAgICAgICAgICAgICAgIHJlY2lwaWVudEV4Y2Vzc2VzOiByZWNpcGllbnRFeGNlc3NlcwogICAgICAgICAgICB9LnRvQ2VsbCgpCiAgICAgICAgfSk7CiAgICB9CgogICAgZnVuIHNlbmRPdmVyZmxvd1VwKHJlY2lwaWVudDogQWRkcmVzcywgaWQ6IEludCwgbGV2ZWxOdW1iZXI6IEludCwgbGV2ZWxQcmljZTogSW50LCByZWNpcGllbnRFeGNlc3NlczogQWRkcmVzcyl7CiAgICAgICAgc2VuZChTZW5kUGFyYW1ldGVyc3sKICAgICAgICAgICAgdG86IHJlY2lwaWVudCwKICAgICAgICAgICAgdmFsdWU6IDAsCiAgICAgICAgICAgIG1vZGU6IFNlbmRSZW1haW5pbmdCYWxhbmNlLAogICAgICAgICAgICBib2R5OiBPdmVyZmxvd1VwewogICAgICAgICAgICAgICAgaWQ6IGlkLAogICAgICAgICAgICAgICAgZnJvbUlkOiBzZWxmLmlkLAogICAgICAgICAgICAgICAgbGV2ZWxOdW1iZXI6IGxldmVsTnVtYmVyLAogICAgICAgICAgICAgICAgbGV2ZWxQcmljZTogbGV2ZWxQcmljZSwKICAgICAgICAgICAgICAgIHJlY2lwaWVudEV4Y2Vzc2VzOiByZWNpcGllbnRFeGNlc3NlcwogICAgICAgICAgICB9LnRvQ2VsbCgpCiAgICAgICAgfSk7CiAgICB9CgogICAgZnVuIHNlbmRPdmVyZmxvd0Rvd24odG9JZDogSW50LCBmcm9tSWQ6IEludCwgbGV2ZWxOdW1iZXI6IEludCwgbGV2ZWxQcmljZTogSW50LCB2YWx1ZTogSW50LCByZWNpcGllbnRFeGNlc3NlczogQWRkcmVzcyl7CiAgICAgICAgbGV0IHJlY2lwaWVudDogQWRkcmVzcyA9IHNlbGYucHJvZ3JhbVVzZXJBZGRyZXNzKHRvSWQpOwogICAgICAgIHNlbGYuc2VuZFVwZGF0ZVVwcGVyQWRkZXNzKGZyb21JZCwgcmVjaXBpZW50LCBsZXZlbE51bWJlciwgdG9uKCIwLjAzIiksIHJlY2lwaWVudEV4Y2Vzc2VzKTsKICAgICAgICBsZXQgbW9kZTogSW50ID0gMTI4OwoKICAgICAgICBpZiAodmFsdWUgIT0gMCkgewogICAgICAgICAgICB2YWx1ZSArPSB0b24oIjAuMDYiKTsKICAgICAgICAgICAgbW9kZSA9IDM7CiAgICAgICAgfQoKICAgICAgICBzZW5kKFNlbmRQYXJhbWV0ZXJzewogICAgICAgICAgICB0bzogcmVjaXBpZW50LAogICAgICAgICAgICB2YWx1ZTogdmFsdWUsCiAgICAgICAgICAgIG1vZGU6IG1vZGUsCiAgICAgICAgICAgIGJvZHk6IE92ZXJmbG93RG93bnsKICAgICAgICAgICAgICAgIGlkOiBmcm9tSWQsCiAgICAgICAgICAgICAgICBmcm9tSWQ6IHNlbGYuaWQsCiAgICAgICAgICAgICAgICBsZXZlbE51bWJlcjogbGV2ZWxOdW1iZXIsCiAgICAgICAgICAgICAgICBsZXZlbFByaWNlOiBsZXZlbFByaWNlLAogICAgICAgICAgICAgICAgcmVjaXBpZW50RXhjZXNzZXM6IHJlY2lwaWVudEV4Y2Vzc2VzCiAgICAgICAgICAgIH0udG9DZWxsKCkKICAgICAgICB9KTsKICAgIH0KCiAgICBmdW4gc2VuZEdpZnQodmFsdWU6IEludCl7CiAgICAgICAgc2VuZChTZW5kUGFyYW1ldGVyc3sKICAgICAgICAgICAgdG86IHNlbGYuaW52aXRlZEFkZHJlc3MhISwKICAgICAgICAgICAgdmFsdWU6IHZhbHVlLAogICAgICAgICAgICBtb2RlOiBTZW5kUGF5RndkRmVlc1NlcGFyYXRlbHkgfCBTZW5kSWdub3JlRXJyb3JzLAogICAgICAgICAgICBib2R5OiAiZ2lmdCIuYXNDb21tZW50KCkKICAgICAgICB9KTsKICAgIH0KCiAgICBmdW4gc2VuZEV4Y2Vzc2VzKHJlY2lwaWVudDogQWRkcmVzcyl7CiAgICAgICAgIHNlbmQoU2VuZFBhcmFtZXRlcnN7CiAgICAgICAgICAgIHRvOiByZWNpcGllbnQsCiAgICAgICAgICAgIHZhbHVlOiAwLAogICAgICAgICAgICBtb2RlOiBTZW5kUmVtYWluaW5nQmFsYW5jZSwKICAgICAgICAgICAgYm9keTogIkV4Y2Vzc2VzIi5hc0NvbW1lbnQoKSwKICAgICAgICB9KTsKICAgIH0KCiAgICBmdW4gc2VuZFJlbWFpbmluZ1ZhbHVlKHJlY2lwaWVudDogQWRkcmVzcyl7CiAgICAgICAgIHNlbmQoU2VuZFBhcmFtZXRlcnN7CiAgICAgICAgICAgIHRvOiByZWNpcGllbnQsCiAgICAgICAgICAgIHZhbHVlOiAwLAogICAgICAgICAgICBtb2RlOiBTZW5kSWdub3JlRXJyb3JzIHwgU2VuZFJlbWFpbmluZ1ZhbHVlLAogICAgICAgICAgICBib2R5OiAiRXhjZXNzZXMiLmFzQ29tbWVudCgpLAogICAgICAgIH0pOwogICAgfQoKICAgIGZ1biBmaW5pc2hDeWNsZShpbmZvOiBJbmZvLCBsZXZlbE51bWJlcjogSW50KXsKICAgICAgICBlbWl0KEZpbmlzaEN5Y2xlewogICAgICAgICAgICBtYXRyaXg6IGluZm8ubWF0cml4LAogICAgICAgICAgICBsZXZlbE51bWJlcjogbGV2ZWxOdW1iZXIsCiAgICAgICAgICAgIHJlaW52ZXN0TnVtYmVyOiBpbmZvLnJlaW52ZXN0Q291bnQKICAgICAgICB9LnRvQ2VsbCgpKTsKICAgICAgICBzZWxmLnVwZGF0ZVJlaW52ZXN0Q291bnRlcihpbmZvLCBsZXZlbE51bWJlcik7CiAgICB9CgogICAgZnVuIHVwZGF0ZVJlaW52ZXN0Q291bnRlcihpbmZvOiBJbmZvLCBsZXZlbE51bWJlcjogSW50KXsKICAgICAgICBpbmZvLnJlc2V0SW5mb0ZvclJlaW52ZXN0KCk7CiAgICAgICAgc2VsZi5sZXZlbEluZm8uc2V0KGxldmVsTnVtYmVyLCBpbmZvKTsKICAgIH0KCiAgICBmdW4gdXBkYXRlT3ZlcnRha2luZ0luZm8obGV2ZWxOdW1iZXI6IEludCl7CiAgICAgICAgbGV0IGNvdW50OiBJbnQ/ID0gc2VsZi5vdmVydGFrZUluZm8uZ2V0KGxldmVsTnVtYmVyKTsKCiAgICAgICAgaWYgKGNvdW50ID09IG51bGwpIHsKICAgICAgICAgICAgY291bnQgPSAwOwogICAgICAgIH0KCiAgICAgICAgY291bnQgPSBjb3VudCEhICsgMTsKICAgICAgICBzZWxmLm92ZXJ0YWtlSW5mby5zZXQobGV2ZWxOdW1iZXIsIGNvdW50ISEpOwogICAgICAgIGVtaXQoT3ZlcnRvb2t7bGV2ZWxOdW1iZXI6IGxldmVsTnVtYmVyLCBuZXdWYWx1ZTogY291bnQhIX0udG9DZWxsKCkpOwogICAgfQoKICAgIGZ1biBnZXRJbmZvKGxldmVsTnVtYmVyOiBJbnQpOiBJbmZvIHsKICAgICAgICBsZXQgaW5mbzogSW5mbz8gPSBzZWxmLmxldmVsSW5mby5nZXQobGV2ZWxOdW1iZXIpOwoKICAgICAgICBpZihpbmZvID09IG51bGwpewogICAgICAgICAgICBzZWxmLmxldmVsSW5mby5zZXQobGV2ZWxOdW1iZXIsIEluZm97fSk7CiAgICAgICAgICAgIGluZm8gPSBJbmZve307CiAgICAgICAgfQogICAgICAgIAogICAgICAgIHJldHVybiBpbmZvISE7CiAgICB9CgogICAgZnVuIGNoZWNrUG9zc2liaWxpdHlBY3RpdmF0ZUxldmVsKGxldmVsTnVtYmVyOiBJbnQpewogICAgICAgIG5hdGl2ZVRocm93VW5sZXNzKDEzMSwgKGxldmVsTnVtYmVyIC0gc2VsZi5sYXN0TGV2ZWwpID09IDEpOwogICAgfQoKICAgIGZ1biByZXF1aXJlVXNlclByb2dyYW0oaWQ6IEludCl7CiAgICAgICAgbmF0aXZlVGhyb3dVbmxlc3MoMTMyLCBzZW5kZXIoKSA9PSBzZWxmLnByb2dyYW1Vc2VyQWRkcmVzcyhpZCkpOwogICAgfQoKICAgIGZ1biByZXF1aXJlUHJvZ3JhbSgpewogICAgICAgIG5hdGl2ZVRocm93VW5sZXNzKDEzMiwgc2VuZGVyKCkgPT0gc2VsZi5wcm9ncmFtKTsKICAgIH0KCiAgICBmdW4gcmVxdWlyZU93bmVyKCl7CiAgICAgICAgbmF0aXZlVGhyb3dVbmxlc3MoMTMyLCBzZW5kZXIoKSA9PSBzZWxmLm93bmVyISEpOwogICAgfQoKICAgIC8vIC0tLS0tLS0tLS0tLS0tLS0tLSBHZXQgRnVuY3Rpb25zIC0tLS0tLS0tLS0tLS0tLS0tLSAvLwoKICAgIGdldCBmdW4gaWQoKTogSW50IHsKICAgICAgICByZXR1cm4gc2VsZi5pZDsKICAgIH0KCiAgICBnZXQgZnVuIG93bmVyKCk6IEFkZHJlc3MgewogICAgICAgIHJldHVybiBzZWxmLm93bmVyISE7CiAgICB9CgogICAgZ2V0IGZ1biBiYWxhbmNlKCk6IEludCB7CiAgICAgICAgcmV0dXJuIG15QmFsYW5jZSgpOwogICAgfQoKICAgIGdldCBmdW4gd2l0aGRyYXdCYWxhbmNlKCk6IEludCB7CiAgICAgICAgcmV0dXJuIG15QmFsYW5jZSgpIC0gc2VsZi5ob2xkQmFsYW5jZSAtIHNlbGYubWluVG9uc0ZvclN0b3JhZ2U7CiAgICB9CgogICAgZ2V0IGZ1biBob2xkQmFsYW5jZSgpOiBJbnQgewogICAgICAgIHJldHVybiBzZWxmLmhvbGRCYWxhbmNlOwogICAgfQoKICAgIGdldCBmdW4gaW52aXRlZEFkZHJlc3MoKTogQWRkcmVzcyB7CiAgICAgICAgcmV0dXJuIHNlbGYuaW52aXRlZEFkZHJlc3MhITsKICAgIH0KCiAgICBnZXQgZnVuIG92ZXJ0YWtlSW5mbygpOiBtYXA8SW50IGFzIHVpbnQ4LCBJbnQgYXMgdWludDE2PiB7CiAgICAgICAgcmV0dXJuIHNlbGYub3ZlcnRha2VJbmZvOwogICAgfQoKICAgIGdldCBmdW4gbGV2ZWxJbmZvKCk6IG1hcDxJbnQgYXMgdWludDgsIEluZm8+IHsKICAgICAgICByZXR1cm4gc2VsZi5sZXZlbEluZm87CiAgICB9CgogICAgZ2V0IGZ1biBsYXN0TGV2ZWwoKTogSW50IHsKICAgICAgICByZXR1cm4gc2VsZi5sYXN0TGV2ZWw7CiAgICB9CgogICAgZ2V0IGZ1biBwcm9ncmFtQWRkcmVzcygpOiBBZGRyZXNzIHsKICAgICAgICByZXR1cm4gc2VsZi5wcm9ncmFtOwogICAgfQoKICAgIGdldCBmdW4gcHJvZ3JhbVVzZXJBZGRyZXNzKGlkOiBJbnQpOiBBZGRyZXNzIHsKICAgICAgICBsZXQgaW5pdDogU3RhdGVJbml0ID0gaW5pdE9mIEZ0QmFzZVByb2dyYW1Vc2VyKGlkLCBzZWxmLnByb2dyYW0pOwogICAgICAgIHJldHVybiBjb250cmFjdEFkZHJlc3MoaW5pdCk7CiAgICB9Cn0K
+import "@stdlib/deploy";
+
+import "./info_extends.tact";
+import "./messages.tact";
+
+contract FtBaseProgramUser with Deployable {
+    const minTonsForStorage: Int = ton("0.1");
+
+    id: Int as uint64;
+    owner: Address?;
+    program: Address;
+    invitedAddress: Address?;
+    holdBalance: Int as coins = ton("0.0");
+
+    overtakeInfo: map<Int as uint8, Int as uint16> = emptyMap();
+    levelInfo: map<Int as uint8, Info> = emptyMap();
+    lastLevel: Int as uint8 = 0;
+
+    init(id: Int, program: Address){
+        nativeThrowUnless(132, sender() == program);
+
+        self.id = id;
+        self.program = program;
+    }
+
+    receive(){}
+
+    receive("gift"){}
+
+    receive("withdraw"){
+        self.requireOwner();
+        nativeReserve(self.minTonsForStorage + self.holdBalance, 0);
+
+        send(SendParameters{
+            to: self.owner!!,
+            value: 0,
+            mode: SendRemainingBalance,
+            body: "Your withdraw".asComment(),
+        });
+    }
+
+    receive(msg: ActivateLevel){
+        self.requireProgram();
+        self.checkPossibilityActivateLevel(msg.levelNumber);
+
+        let balance: Int = myBalance() - context().value;
+        nativeReserve(max(balance, self.minTonsForStorage), 0);
+
+        self.lastLevel = msg.levelNumber;
+        self.levelInfo.set(msg.levelNumber, Info{});
+
+        if (self.owner == null){
+            self.owner = msg.owner;
+        }
+        
+        if (self.invitedAddress == null){
+            self.invitedAddress = self.programUserAddress(msg.invitedId);
+        }
+
+        if(self.id != 1){
+            self.sendToUpline(self.id, msg.levelNumber, msg.levelPrice, msg.recipientExcesses);
+        } else {
+            self.lastLevel = 12;
+            self.sendExcesses(self.owner!!);
+        }
+    }
+
+    receive(msg: UpdateMatrix){
+        self.requireUserProgram(msg.fromId);
+        let balance: Int = myBalance() - context().value;
+
+        if (self.id == 1){
+            self.updateMatrixForId1(msg, balance);
+        } else if (self.lastLevel < msg.levelNumber){
+            nativeReserve(balance, 0);
+            self.makeOvertake(msg.id, msg.levelNumber, msg.levelPrice, msg.recipientExcesses);
+        } else {
+           self.updateMatrixForNonId1(msg, balance);
+        }
+    }
+
+    receive(msg: OverflowUp){
+        self.requireUserProgram(msg.fromId);
+        let balance: Int = myBalance() - context().value;
+
+        let info: Info = self.getInfo(msg.levelNumber);
+        let isFrozen = info.isFrozenLevel(msg.levelNumber, self.lastLevel);
+        let statusCode: Int = info.findPlaceForOverflowUp(msg.id, msg.fromId, msg.levelPrice, isFrozen);
+        
+        let splitLevelPrice = msg.levelPrice / 2;
+
+        if (statusCode < 40) {
+            emit(ReinvestNumber{reinvestNumber: info.reinvestCount, statusCode: statusCode}.toCell());
+
+            if (statusCode > 30 && self.id != 1) {
+                self.holdBalance += splitLevelPrice;
+            }
+
+            if (isFrozen && statusCode < 30) {
+                nativeReserve(balance, 0);
+                self.sendGift(splitLevelPrice);
+            } else {
+                nativeReserve(balance + splitLevelPrice, 0);
+            }
+
+            self.levelInfo.set(msg.levelNumber, info);
+            self.sendExcesses(msg.recipientExcesses);
+        } else if (statusCode > 40) {
+            self.finishCycle(info, msg.levelNumber);
+
+            if (self.id != 1) {
+                self.holdBalance -= splitLevelPrice;
+                nativeReserve(balance - splitLevelPrice, 0);
+                self.sendToUpline(self.id, msg.levelNumber, msg.levelPrice, msg.recipientExcesses);
+            } else {
+                nativeReserve(balance + splitLevelPrice, 0);
+                self.sendExcesses(msg.recipientExcesses);
+            }
+        }
+    }
+
+    receive(msg: OverflowDown){
+        self.requireUserProgram(msg.fromId);
+        let balance: Int = myBalance() - context().value;
+
+        let info: Info = self.getInfo(msg.levelNumber);
+        let isFrozen: Bool = info.isFrozenLevel(msg.levelNumber, self.lastLevel);
+        info.findPlaceForOverflowDown(msg.id, msg.levelPrice, isFrozen);
+        self.levelInfo.set(msg.levelNumber, info);
+        
+        emit(ReinvestNumber{reinvestNumber: info.reinvestCount}.toCell());
+
+        let splitLevelPrice = msg.levelPrice / 2;
+        if (isFrozen) {
+            nativeReserve(balance, 0);
+            self.sendGift(splitLevelPrice);
+        } else {
+            nativeReserve(balance + splitLevelPrice, 0);
+        }
+
+        self.sendExcesses(msg.recipientExcesses);
+    }
+
+    receive(msg: UpdateUpperAddress){
+        self.requireUserProgram(msg.fromId);
+
+        let info: Info = self.getInfo(msg.levelNumber);
+        info.updateUpperAddress(msg.upperAddress);
+        self.levelInfo.set(msg.levelNumber, info);
+
+        self.sendRemainingValue(msg.recipientExcesses);
+    }
+
+    // ------------------ Private Function  ------------------ //
+
+    fun updateMatrixForId1(msg: UpdateMatrix, balance: Int){
+        let info: Info = self.getInfo(msg.levelNumber);
+        let statusCode: Int = info.findPlaceInMatrix(msg.id, msg.fromId, msg.levelNumber, msg.levelPrice, self.lastLevel);
+        self.levelInfo.set(msg.levelNumber, info);
+
+        let splitLevelPrice = msg.levelPrice / 2;
+        let reserveValue = (statusCode < 10) ? msg.levelPrice : splitLevelPrice;
+        nativeReserve(balance + reserveValue, 0);
+
+        if (statusCode < 40) {
+            emit(ReinvestNumber{reinvestNumber: info.reinvestCount, statusCode: statusCode}.toCell());
+        }
+
+        if (statusCode < 10){
+            self.sendUpdateUpperAddess(msg.id, myAddress(), msg.levelNumber, 0, msg.recipientExcesses);
+        } else {
+            if (statusCode > 40) {
+                self.finishCycle(info, msg.levelNumber);
+            }
+
+            let recipient: Int = (statusCode % 10 == 1) ? info.matrix.u1!! : info.matrix.u2!!;
+            self.sendOverflowDown(recipient, msg.id, msg.levelNumber, msg.levelPrice, 0, msg.recipientExcesses);
+        }
+    }
+
+    fun updateMatrixForNonId1(msg: UpdateMatrix, balance: Int){
+        let info: Info = self.getInfo(msg.levelNumber);
+
+        if (msg.levelNumber != 1 && info.upperAddress == null){
+            nativeReserve(balance, 0);
+            self.makeOvertake(msg.id, msg.levelNumber, msg.levelPrice, msg.recipientExcesses);
+            return;
+        } 
+
+        let statusCode: Int = info.findPlaceInMatrix(msg.id, msg.fromId, msg.levelNumber, msg.levelPrice, self.lastLevel);
+        self.levelInfo.set(msg.levelNumber, info);
+
+        if (statusCode < 40) {
+            emit(ReinvestNumber{reinvestNumber: info.reinvestCount, statusCode: statusCode}.toCell());
+        }
+
+        let isFrozen: Bool = info.isFrozenLevel(msg.levelNumber, self.lastLevel);
+        let splitLevelPrice: Int = msg.levelPrice / 2;
+        let isFirst: Bool = (statusCode % 10 == 1);
+
+        if (statusCode < 10){
+            if (isFrozen) {
+                nativeReserve(balance, 0);
+                self.sendGift(splitLevelPrice);
+            } else {
+                nativeReserve(balance + splitLevelPrice, 0);
+            }
+
+            self.sendUpdateUpperAddess(msg.id, myAddress(), msg.levelNumber, ton("0.05"), msg.recipientExcesses);
+            let recipient = (info.upperAddress == null) ? self.invitedAddress!! : info.upperAddress!!;
+            self.sendOverflowUp(recipient, msg.id, msg.levelNumber, msg.levelPrice, msg.recipientExcesses);
+        } else if (statusCode < 40) {
+            if (statusCode > 30) {
+                self.holdBalance += splitLevelPrice;
+            }
+
+            if (isFrozen && statusCode < 30) {
+                nativeReserve(balance, 0);
+                self.sendGift(splitLevelPrice);
+            } else {
+                nativeReserve(balance + splitLevelPrice, 0);
+            }
+
+            let recipient = isFirst ? info.matrix.u1!! : info.matrix.u2!!;
+            self.sendOverflowDown(recipient, msg.id, msg.levelNumber, msg.levelPrice, 0, msg.recipientExcesses);
+        } else {
+            self.holdBalance -= splitLevelPrice;
+            nativeReserve(balance - splitLevelPrice, 0);
+
+            let recipient = isFirst ? info.matrix.u1!! : info.matrix.u2!!;
+            self.finishCycle(info, msg.levelNumber);
+            self.sendOverflowDown(recipient, msg.id, msg.levelNumber, msg.levelPrice, splitLevelPrice, msg.recipientExcesses);
+            self.sendToUpline(self.id, msg.levelNumber, msg.levelPrice, msg.recipientExcesses);
+        }
+    }
+
+    fun makeOvertake(id: Int, levelNumber: Int, levelPrice: Int, recipientExcesses: Address){
+        self.updateOvertakingInfo(levelNumber);
+        self.sendToUpline(id, levelNumber, levelPrice, recipientExcesses);
+    }
+
+    fun sendToUpline(id: Int, levelNumber: Int, levelPrice: Int, recipientExcesses: Address){
+        send(SendParameters{
+            to: self.invitedAddress!!,
+            value: 0,
+            mode: SendRemainingBalance,
+            body: UpdateMatrix{
+                id: id,
+                fromId: self.id,
+                levelNumber: levelNumber,
+                levelPrice: levelPrice,
+                recipientExcesses: recipientExcesses
+            }.toCell()
+        });
+    }
+
+    fun sendUpdateUpperAddess(toId: Int, upperAddress: Address, levelNumber: Int, value: Int, recipientExcesses: Address){
+        let mode: Int = 128;
+
+        if (value != 0) {
+            mode = 3;
+        }
+
+        send(SendParameters{
+            to: self.programUserAddress(toId),
+            value: value,
+            mode: mode,
+            body: UpdateUpperAddress{
+                fromId: self.id,
+                upperAddress: upperAddress,
+                levelNumber: levelNumber,
+                recipientExcesses: recipientExcesses
+            }.toCell()
+        });
+    }
+
+    fun sendOverflowUp(recipient: Address, id: Int, levelNumber: Int, levelPrice: Int, recipientExcesses: Address){
+        send(SendParameters{
+            to: recipient,
+            value: 0,
+            mode: SendRemainingBalance,
+            body: OverflowUp{
+                id: id,
+                fromId: self.id,
+                levelNumber: levelNumber,
+                levelPrice: levelPrice,
+                recipientExcesses: recipientExcesses
+            }.toCell()
+        });
+    }
+
+    fun sendOverflowDown(toId: Int, fromId: Int, levelNumber: Int, levelPrice: Int, value: Int, recipientExcesses: Address){
+        let recipient: Address = self.programUserAddress(toId);
+        self.sendUpdateUpperAddess(fromId, recipient, levelNumber, ton("0.03"), recipientExcesses);
+        let mode: Int = 128;
+
+        if (value != 0) {
+            value += ton("0.06");
+            mode = 3;
+        }
+
+        send(SendParameters{
+            to: recipient,
+            value: value,
+            mode: mode,
+            body: OverflowDown{
+                id: fromId,
+                fromId: self.id,
+                levelNumber: levelNumber,
+                levelPrice: levelPrice,
+                recipientExcesses: recipientExcesses
+            }.toCell()
+        });
+    }
+
+    fun sendGift(value: Int){
+        send(SendParameters{
+            to: self.invitedAddress!!,
+            value: value,
+            mode: SendPayFwdFeesSeparately | SendIgnoreErrors,
+            body: "gift".asComment()
+        });
+    }
+
+    fun sendExcesses(recipient: Address){
+         send(SendParameters{
+            to: recipient,
+            value: 0,
+            mode: SendRemainingBalance,
+            body: "Excesses".asComment(),
+        });
+    }
+
+    fun sendRemainingValue(recipient: Address){
+         send(SendParameters{
+            to: recipient,
+            value: 0,
+            mode: SendIgnoreErrors | SendRemainingValue,
+            body: "Excesses".asComment(),
+        });
+    }
+
+    fun finishCycle(info: Info, levelNumber: Int){
+        emit(FinishCycle{
+            matrix: info.matrix,
+            levelNumber: levelNumber,
+            reinvestNumber: info.reinvestCount
+        }.toCell());
+        self.updateReinvestCounter(info, levelNumber);
+    }
+
+    fun updateReinvestCounter(info: Info, levelNumber: Int){
+        info.resetInfoForReinvest();
+        self.levelInfo.set(levelNumber, info);
+    }
+
+    fun updateOvertakingInfo(levelNumber: Int){
+        let count: Int? = self.overtakeInfo.get(levelNumber);
+
+        if (count == null) {
+            count = 0;
+        }
+
+        count = count!! + 1;
+        self.overtakeInfo.set(levelNumber, count!!);
+        emit(Overtook{levelNumber: levelNumber, newValue: count!!}.toCell());
+    }
+
+    fun getInfo(levelNumber: Int): Info {
+        let info: Info? = self.levelInfo.get(levelNumber);
+
+        if(info == null){
+            self.levelInfo.set(levelNumber, Info{});
+            info = Info{};
+        }
+        
+        return info!!;
+    }
+
+    fun checkPossibilityActivateLevel(levelNumber: Int){
+        nativeThrowUnless(131, (levelNumber - self.lastLevel) == 1);
+    }
+
+    fun requireUserProgram(id: Int){
+        nativeThrowUnless(132, sender() == self.programUserAddress(id));
+    }
+
+    fun requireProgram(){
+        nativeThrowUnless(132, sender() == self.program);
+    }
+
+    fun requireOwner(){
+        nativeThrowUnless(132, sender() == self.owner!!);
+    }
+
+    // ------------------ Get Functions ------------------ //
+
+    get fun id(): Int {
+        return self.id;
+    }
+
+    get fun owner(): Address {
+        return self.owner!!;
+    }
+
+    get fun balance(): Int {
+        return myBalance();
+    }
+
+    get fun withdrawBalance(): Int {
+        return myBalance() - self.holdBalance - self.minTonsForStorage;
+    }
+
+    get fun holdBalance(): Int {
+        return self.holdBalance;
+    }
+
+    get fun invitedAddress(): Address {
+        return self.invitedAddress!!;
+    }
+
+    get fun overtakeInfo(): map<Int as uint8, Int as uint16> {
+        return self.overtakeInfo;
+    }
+
+    get fun levelInfo(): map<Int as uint8, Info> {
+        return self.levelInfo;
+    }
+
+    get fun lastLevel(): Int {
+        return self.lastLevel;
+    }
+
+    get fun programAddress(): Address {
+        return self.program;
+    }
+
+    get fun programUserAddress(id: Int): Address {
+        let init: StateInit = initOf FtBaseProgramUser(id, self.program);
+        return contractAddress(init);
+    }
+}

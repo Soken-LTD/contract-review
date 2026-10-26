@@ -1,1 +1,141 @@
-aW1wb3J0ICIuL3N0cnVjdHMudGFjdCI7CgpleHRlbmRzIG11dGF0ZXMgZnVuIGZpbmRQbGFjZUluTWF0cml4KHNlbGY6IEluZm8sIGlkOiBJbnQsIGZyb21JZDogSW50LCBsZXZlbE51bWJlcjogSW50LCBsZXZlbFByaWNlOiBJbnQsIGxhc3RMZXZlbDogSW50KTogSW50IHsKICAgIGxldCByZWZlcnJhbFR5cGU6IEludCA9IGlkID09IGZyb21JZCA/IDEgOiAyOwogICAgbGV0IHN0YXR1c0NvZGU6IEludCA9IDA7CgogICAgaWYgKHJlZmVycmFsVHlwZSA9PSAxKXsKICAgICAgICBzZWxmLnBlcnNvbmFsUmVmZXJyYWxzQ291bnQgKz0gMTsKICAgIH0KCiAgICBpZiAoc2VsZi5tYXRyaXgudTEgPT0gbnVsbCkgewogICAgICAgIHNlbGYubWF0cml4LnUxID0gaWQ7CiAgICAgICAgc2VsZi5tYXRyaXgudTF0ID0gcmVmZXJyYWxUeXBlOwogICAgICAgIHNlbGYud2FzVXNlVXBwZXJBZGRyZXNzID0gdHJ1ZTsKICAgICAgICBzdGF0dXNDb2RlID0gMTsKICAgIH0gZWxzZSBpZiAoc2VsZi5tYXRyaXgudTIgPT0gbnVsbCkgewogICAgICAgIHNlbGYubWF0cml4LnUyID0gaWQ7CiAgICAgICAgc2VsZi5tYXRyaXgudTJ0ID0gcmVmZXJyYWxUeXBlOwogICAgICAgIHNlbGYud2FzVXNlVXBwZXJBZGRyZXNzID0gdHJ1ZTsKICAgICAgICBzdGF0dXNDb2RlID0gMTsKICAgIH0gZWxzZSBpZiAoc2VsZi5tYXRyaXgudTMgPT0gbnVsbCkgewogICAgICAgIHNlbGYubWF0cml4LnUzID0gaWQ7CiAgICAgICAgc2VsZi5tYXRyaXgudTN0ID0gcmVmZXJyYWxUeXBlOwogICAgICAgIHN0YXR1c0NvZGUgPSAyMTsKICAgIH0gZWxzZSBpZiAoc2VsZi5tYXRyaXgudTQgPT0gbnVsbCkgewogICAgICAgIHNlbGYubWF0cml4LnU0ID0gaWQ7CiAgICAgICAgc2VsZi5tYXRyaXgudTR0ID0gcmVmZXJyYWxUeXBlOwogICAgICAgIHN0YXR1c0NvZGUgPSAyMjsKICAgIH0gZWxzZSBpZiAoc2VsZi5tYXRyaXgudTUgPT0gbnVsbCkgewogICAgICAgIHNlbGYubWF0cml4LnU1ID0gaWQ7CiAgICAgICAgc2VsZi5tYXRyaXgudTV0ID0gNDsKCiAgICAgICAgaWYgKHNlbGYubWF0cml4LnU2ICE9IG51bGwpIHsKICAgICAgICAgICAgc3RhdHVzQ29kZSA9IDQxOwogICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgIHN0YXR1c0NvZGUgPSAzMTsKICAgICAgICB9CiAgICB9IGVsc2UgaWYgKHNlbGYubWF0cml4LnU2ID09IG51bGwpIHsKICAgICAgICBzZWxmLm1hdHJpeC51NiA9IGlkOwogICAgICAgIHNlbGYubWF0cml4LnU2dCA9IDQ7CgogICAgICAgIGlmIChzZWxmLm1hdHJpeC51NSAhPSBudWxsKSB7CiAgICAgICAgICAgIHN0YXR1c0NvZGUgPSA0MjsKICAgICAgICB9IGVsc2UgewogICAgICAgICAgICBzdGF0dXNDb2RlID0gMzI7CiAgICAgICAgfQogICAgfQoKICAgIGlmIChzdGF0dXNDb2RlID09IDEgfHwgc3RhdHVzQ29kZSA9PSAyMSB8fCBzdGF0dXNDb2RlID09IDIyKSB7CiAgICAgICAgaWYgc2VsZi5pc0Zyb3plbkxldmVsKGxldmVsTnVtYmVyLCBsYXN0TGV2ZWwpIHsKICAgICAgICAgICAgc2VsZi5pbmNyZW1lbnRMb3N0UHJvZml0KGxldmVsUHJpY2UpOwogICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgIHNlbGYuaW5jcmVtZW50UHJvZml0KGxldmVsUHJpY2UpOwogICAgICAgIH0KICAgIH0KICAgIAogICAgcmV0dXJuIHN0YXR1c0NvZGU7Cn0KCmV4dGVuZHMgbXV0YXRlcyBmdW4gZmluZFBsYWNlRm9yT3ZlcmZsb3dVcChzZWxmOiBJbmZvLCBpZDogSW50LCBmcm9tSWQ6IEludCwgbGV2ZWxQcmljZTogSW50LCBpc0Zyb3plbjogQm9vbCk6IEludCB7CiAgICBsZXQgc3RhdHVzQ29kZTogSW50ID0gMDsKCiAgICBpZiAoc2VsZi5tYXRyaXgudTIgPT0gZnJvbUlkKSB7CiAgICAgICAgaWYgKHNlbGYubWF0cml4LnU0ID09IG51bGwpIHsKICAgICAgICAgICAgc2VsZi5tYXRyaXgudTQgPSBpZDsKICAgICAgICAgICAgc2VsZi5tYXRyaXgudTR0ID0gMjsKICAgICAgICAgICAgc3RhdHVzQ29kZSA9IDIyOwogICAgICAgIH0gZWxzZSBpZiAoc2VsZi5tYXRyaXgudTYgPT0gbnVsbCkgewogICAgICAgICAgICBzZWxmLm1hdHJpeC51NiA9IGlkOwogICAgICAgICAgICBzZWxmLm1hdHJpeC51NnQgPSA0OwogICAgICAgICAgICBzdGF0dXNDb2RlID0gKHNlbGYubWF0cml4LnU1ID09IG51bGwgPyAzMiA6IDQyKTsKICAgICAgICB9CiAgICB9IGVsc2UgaWYgKHNlbGYubWF0cml4LnUxID09IGZyb21JZCkgewogICAgICAgIGlmIChzZWxmLm1hdHJpeC51MyA9PSBudWxsKSB7CiAgICAgICAgICAgIHNlbGYubWF0cml4LnUzID0gaWQ7CiAgICAgICAgICAgIHNlbGYubWF0cml4LnUzdCA9IDI7CiAgICAgICAgICAgIHN0YXR1c0NvZGUgPSAyMTsKICAgICAgICB9IGVsc2UgaWYgKHNlbGYubWF0cml4LnU1ID09IG51bGwpIHsKICAgICAgICAgICAgc2VsZi5tYXRyaXgudTUgPSBpZDsKICAgICAgICAgICAgc2VsZi5tYXRyaXgudTV0ID0gNDsKICAgICAgICAgICAgc3RhdHVzQ29kZSA9IChzZWxmLm1hdHJpeC51NiA9PSBudWxsID8gMzEgOiA0MSk7CiAgICAgICAgfQogICAgfQoKICAgIGlmIChzdGF0dXNDb2RlID09IDIxIHx8IHN0YXR1c0NvZGUgPT0gMjIpIHsKICAgICAgICBpZiAoaXNGcm96ZW4pIHsKICAgICAgICAgICAgc2VsZi5pbmNyZW1lbnRMb3N0UHJvZml0KGxldmVsUHJpY2UpOwogICAgICAgIH0gZWxzZSB7CiAgICAgICAgICAgIHNlbGYuaW5jcmVtZW50UHJvZml0KGxldmVsUHJpY2UpOwogICAgICAgIH0KICAgIH0KCiAgICByZXR1cm4gc3RhdHVzQ29kZTsKfQoKZXh0ZW5kcyBtdXRhdGVzIGZ1biBmaW5kUGxhY2VGb3JPdmVyZmxvd0Rvd24oc2VsZjogSW5mbywgaWQ6IEludCwgbGV2ZWxQcmljZTogSW50LCBpc0Zyb3plbjogQm9vbCkgewogICAgaWYgKHNlbGYubWF0cml4LnUxID09IG51bGwpIHsKICAgICAgICBzZWxmLm1hdHJpeC51MSA9IGlkOwogICAgICAgIHNlbGYubWF0cml4LnUxdCA9IDM7CiAgICB9IGVsc2UgaWYgKHNlbGYubWF0cml4LnUyID09IG51bGwpIHsKICAgICAgICBzZWxmLm1hdHJpeC51MiA9IGlkOyAKICAgICAgICBzZWxmLm1hdHJpeC51MnQgPSAzOwogICAgfQoKICAgIGlmIChpc0Zyb3plbikgewogICAgICAgIHNlbGYuaW5jcmVtZW50TG9zdFByb2ZpdChsZXZlbFByaWNlKTsKICAgIH0gZWxzZSB7CiAgICAgICAgc2VsZi5pbmNyZW1lbnRQcm9maXQobGV2ZWxQcmljZSk7CiAgICB9Cn0KCmV4dGVuZHMgbXV0YXRlcyBmdW4gcmVzZXRJbmZvRm9yUmVpbnZlc3Qoc2VsZjogSW5mbykgewogICAgc2VsZi5yZWludmVzdENvdW50ICs9IDE7CgogICAgaWYgKHNlbGYubmV4dFVwcGVyQWRkcmVzcyAhPSBudWxsICYmIHNlbGYudXBwZXJBZGRyZXNzICE9IHNlbGYubmV4dFVwcGVyQWRkcmVzcykgewogICAgICAgIHNlbGYudXBwZXJBZGRyZXNzID0gc2VsZi5uZXh0VXBwZXJBZGRyZXNzOwogICAgfQogICAgICAgIAogICAgc2VsZi53YXNVc2VVcHBlckFkZHJlc3MgPSBmYWxzZTsKICAgIHNlbGYubWF0cml4ID0gTWF0cml4e307Cn0KCmV4dGVuZHMgbXV0YXRlcyBmdW4gdXBkYXRlVXBwZXJBZGRyZXNzKHNlbGY6IEluZm8sIG5ld1VwcGVyQWRkcmVzczogQWRkcmVzcykgewogICAgIGlmIChzZWxmLndhc1VzZVVwcGVyQWRkcmVzcykgewogICAgICAgIHNlbGYubmV4dFVwcGVyQWRkcmVzcyA9IG5ld1VwcGVyQWRkcmVzczsKICAgIH0gZWxzZSB7CiAgICAgICAgc2VsZi51cHBlckFkZHJlc3MgPSBuZXdVcHBlckFkZHJlc3M7CiAgICB9Cn0KCmV4dGVuZHMgbXV0YXRlcyBmdW4gaW5jcmVtZW50UHJvZml0KHNlbGY6IEluZm8sIHZhbHVlOiBJbnQpIHsKICAgIHNlbGYudG90YWxQcm9maXQgKz0gKHZhbHVlIC8gMik7Cn0KCmV4dGVuZHMgbXV0YXRlcyBmdW4gaW5jcmVtZW50TG9zdFByb2ZpdChzZWxmOiBJbmZvLCB2YWx1ZTogSW50KSB7CiAgICBzZWxmLmxvc3RQcm9maXQgKz0gKHZhbHVlIC8gMik7Cn0KCmV4dGVuZHMgZnVuIGlzRnJvemVuTGV2ZWwoc2VsZjogSW5mbywgY3VycmVudExldmVsOiBJbnQsIGxhc3RMZXZlbDogSW50KTogQm9vbCB7CiAgICByZXR1cm4gY3VycmVudExldmVsIDwgMTIgJiYgY3VycmVudExldmVsID09IGxhc3RMZXZlbCAmJiBzZWxmLnJlaW52ZXN0Q291bnQgPiAxOwp9Cg==
+import "./structs.tact";
+
+extends mutates fun findPlaceInMatrix(self: Info, id: Int, fromId: Int, levelNumber: Int, levelPrice: Int, lastLevel: Int): Int {
+    let referralType: Int = id == fromId ? 1 : 2;
+    let statusCode: Int = 0;
+
+    if (referralType == 1){
+        self.personalReferralsCount += 1;
+    }
+
+    if (self.matrix.u1 == null) {
+        self.matrix.u1 = id;
+        self.matrix.u1t = referralType;
+        self.wasUseUpperAddress = true;
+        statusCode = 1;
+    } else if (self.matrix.u2 == null) {
+        self.matrix.u2 = id;
+        self.matrix.u2t = referralType;
+        self.wasUseUpperAddress = true;
+        statusCode = 1;
+    } else if (self.matrix.u3 == null) {
+        self.matrix.u3 = id;
+        self.matrix.u3t = referralType;
+        statusCode = 21;
+    } else if (self.matrix.u4 == null) {
+        self.matrix.u4 = id;
+        self.matrix.u4t = referralType;
+        statusCode = 22;
+    } else if (self.matrix.u5 == null) {
+        self.matrix.u5 = id;
+        self.matrix.u5t = 4;
+
+        if (self.matrix.u6 != null) {
+            statusCode = 41;
+        } else {
+            statusCode = 31;
+        }
+    } else if (self.matrix.u6 == null) {
+        self.matrix.u6 = id;
+        self.matrix.u6t = 4;
+
+        if (self.matrix.u5 != null) {
+            statusCode = 42;
+        } else {
+            statusCode = 32;
+        }
+    }
+
+    if (statusCode == 1 || statusCode == 21 || statusCode == 22) {
+        if self.isFrozenLevel(levelNumber, lastLevel) {
+            self.incrementLostProfit(levelPrice);
+        } else {
+            self.incrementProfit(levelPrice);
+        }
+    }
+    
+    return statusCode;
+}
+
+extends mutates fun findPlaceForOverflowUp(self: Info, id: Int, fromId: Int, levelPrice: Int, isFrozen: Bool): Int {
+    let statusCode: Int = 0;
+
+    if (self.matrix.u2 == fromId) {
+        if (self.matrix.u4 == null) {
+            self.matrix.u4 = id;
+            self.matrix.u4t = 2;
+            statusCode = 22;
+        } else if (self.matrix.u6 == null) {
+            self.matrix.u6 = id;
+            self.matrix.u6t = 4;
+            statusCode = (self.matrix.u5 == null ? 32 : 42);
+        }
+    } else if (self.matrix.u1 == fromId) {
+        if (self.matrix.u3 == null) {
+            self.matrix.u3 = id;
+            self.matrix.u3t = 2;
+            statusCode = 21;
+        } else if (self.matrix.u5 == null) {
+            self.matrix.u5 = id;
+            self.matrix.u5t = 4;
+            statusCode = (self.matrix.u6 == null ? 31 : 41);
+        }
+    }
+
+    if (statusCode == 21 || statusCode == 22) {
+        if (isFrozen) {
+            self.incrementLostProfit(levelPrice);
+        } else {
+            self.incrementProfit(levelPrice);
+        }
+    }
+
+    return statusCode;
+}
+
+extends mutates fun findPlaceForOverflowDown(self: Info, id: Int, levelPrice: Int, isFrozen: Bool) {
+    if (self.matrix.u1 == null) {
+        self.matrix.u1 = id;
+        self.matrix.u1t = 3;
+    } else if (self.matrix.u2 == null) {
+        self.matrix.u2 = id; 
+        self.matrix.u2t = 3;
+    }
+
+    if (isFrozen) {
+        self.incrementLostProfit(levelPrice);
+    } else {
+        self.incrementProfit(levelPrice);
+    }
+}
+
+extends mutates fun resetInfoForReinvest(self: Info) {
+    self.reinvestCount += 1;
+
+    if (self.nextUpperAddress != null && self.upperAddress != self.nextUpperAddress) {
+        self.upperAddress = self.nextUpperAddress;
+    }
+        
+    self.wasUseUpperAddress = false;
+    self.matrix = Matrix{};
+}
+
+extends mutates fun updateUpperAddress(self: Info, newUpperAddress: Address) {
+     if (self.wasUseUpperAddress) {
+        self.nextUpperAddress = newUpperAddress;
+    } else {
+        self.upperAddress = newUpperAddress;
+    }
+}
+
+extends mutates fun incrementProfit(self: Info, value: Int) {
+    self.totalProfit += (value / 2);
+}
+
+extends mutates fun incrementLostProfit(self: Info, value: Int) {
+    self.lostProfit += (value / 2);
+}
+
+extends fun isFrozenLevel(self: Info, currentLevel: Int, lastLevel: Int): Bool {
+    return currentLevel < 12 && currentLevel == lastLevel && self.reinvestCount > 1;
+}

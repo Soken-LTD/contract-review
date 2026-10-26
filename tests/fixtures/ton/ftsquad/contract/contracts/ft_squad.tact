@@ -1,1 +1,48 @@
-aW1wb3J0ICJAc3RkbGliL2RlcGxveSI7CgppbXBvcnQgIi4vbWVzc2FnZXMudGFjdCI7CgoKY29udHJhY3QgRnRTcXVhZCB3aXRoIERlcGxveWFibGUgewogICAgY29uc3QgbWluVG9uc0ZvclN0b3JhZ2U6IEludCA9IHRvbigiMC4wNCIpOwogICAgbWFzdGVyOiBBZGRyZXNzOwogICAgb3duZXI6IEFkZHJlc3M7CiAgICBjYW5DcmVhdGVVbnRpbDogSW50IGFzIHVpbnQyNTYgPSAwOwoKICAgIGluaXQob3duZXI6IEFkZHJlc3MsIG1hc3RlcjogQWRkcmVzcykgewogICAgICAgIHNlbGYubWFzdGVyID0gbWFzdGVyOwogICAgICAgIHNlbGYub3duZXIgPSBvd25lcjsKICAgIH0KCiAgICByZWNlaXZlKG1zZzogUGF5Rm9yU3F1YWRDcmVhdGlvbikgewogICAgICAgIG5hdGl2ZVRocm93VW5sZXNzKDEzMiwgc2VuZGVyKCkgPT0gc2VsZi5tYXN0ZXIpOwogICAgICAgIG5hdGl2ZVJlc2VydmUoc2VsZi5taW5Ub25zRm9yU3RvcmFnZSwgMCk7CgogICAgICAgIHNlbGYuY2FuQ3JlYXRlVW50aWwgPSBub3coKSArIDYwNDgwMDsKCiAgICAgICAgc2VuZChTZW5kUGFyYW1ldGVyc3sKICAgICAgICAgICAgdG86IG1zZy5yZWNlaXZlciwKICAgICAgICAgICAgdmFsdWU6IG1zZy5wcmljZSwKICAgICAgICAgICAgbW9kZTogU2VuZFBheUZ3ZEZlZXNTZXBhcmF0ZWx5LAogICAgICAgICAgICBib2R5OiAiUGF5bWVudEZvclNxdWFkQ3JlYXRpb24iLmFzQ29tbWVudCgpCiAgICAgICAgfSk7CgogICAgICAgIHNlbmQoU2VuZFBhcmFtZXRlcnN7CiAgICAgICAgICAgIHRvOiBzZWxmLm93bmVyLAogICAgICAgICAgICB2YWx1ZTogMCwKICAgICAgICAgICAgbW9kZTogU2VuZFJlbWFpbmluZ0JhbGFuY2UsCiAgICAgICAgICAgIGJvZHk6ICJFeGNlc3NlcyIuYXNDb21tZW50KCkKICAgICAgICB9KTsKICAgIH0KCiAgICBnZXQgZnVuIGNhbkNyZWF0ZSgpOiBCb29sIHsKICAgICAgICBpZiAobm93KCkgPiBzZWxmLmNhbkNyZWF0ZVVudGlsKSB7CiAgICAgICAgICAgIHJldHVybiBmYWxzZTsKICAgICAgICB9IAogICAgICAgIHJldHVybiB0cnVlOwogICAgfQoKICAgIGdldCBmdW4gYmFsYW5jZSgpOiBJbnQgewogICAgICAgIHJldHVybiBteUJhbGFuY2UoKTsKICAgIH0KfQo=
+import "@stdlib/deploy";
+
+import "./messages.tact";
+
+
+contract FtSquad with Deployable {
+    const minTonsForStorage: Int = ton("0.04");
+    master: Address;
+    owner: Address;
+    canCreateUntil: Int as uint256 = 0;
+
+    init(owner: Address, master: Address) {
+        self.master = master;
+        self.owner = owner;
+    }
+
+    receive(msg: PayForSquadCreation) {
+        nativeThrowUnless(132, sender() == self.master);
+        nativeReserve(self.minTonsForStorage, 0);
+
+        self.canCreateUntil = now() + 604800;
+
+        send(SendParameters{
+            to: msg.receiver,
+            value: msg.price,
+            mode: SendPayFwdFeesSeparately,
+            body: "PaymentForSquadCreation".asComment()
+        });
+
+        send(SendParameters{
+            to: self.owner,
+            value: 0,
+            mode: SendRemainingBalance,
+            body: "Excesses".asComment()
+        });
+    }
+
+    get fun canCreate(): Bool {
+        if (now() > self.canCreateUntil) {
+            return false;
+        } 
+        return true;
+    }
+
+    get fun balance(): Int {
+        return myBalance();
+    }
+}

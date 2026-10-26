@@ -3,6 +3,7 @@
 !slither_plugins
 !docker/ton-build/package.json
 !docker/ton-build/package-lock.json
+!docker/ton-build/versions.json
 !src/soken_review/adapters/ton/node_scripts
 !src/soken_review/sandbox/git_materializer.py
 slither_plugins/**/__pycache__

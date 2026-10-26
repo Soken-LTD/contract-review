@@ -65,7 +65,7 @@ def test_rebuild_hash_tact_1_6_5() -> None:
     import sys
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-    from soken_review.adapters.base import Candidate, CompilerInfo
+    from soken_review.adapters.base import Candidate, Compiler
     from soken_review.adapters.ton.build import build
 
     settings = json.loads(_SETTINGS_FILE.read_text())
@@ -85,7 +85,7 @@ def test_rebuild_hash_tact_1_6_5() -> None:
         files=sources,
         sha256="0" * 64,
         language="tact",
-        compiler=CompilerInfo(language="tact", version=TACT_VERSION),
+        compiler=Compiler(version=TACT_VERSION, version_pinned_by="ton_verifier"),
         settings={
             "entry": entrypoint,
             "verifier": {
@@ -113,12 +113,11 @@ def test_rebuild_hash_tact_1_6_5() -> None:
     hashes = {a.contract: a.runtime for a in result.artifacts}
     print(f"Produced artifacts: {hashes}")
 
-    # The deployed contract EQAvJuEln0lP... has code hash c845917d...
-    # FtMaster is the contract compiled from ft_master.tact
-    ftmaster_hash = hashes.get("FtMaster")
-    assert ftmaster_hash is not None, (
-        f"FtMaster artifact not found in build output. Got: {list(hashes.keys())}"
-    )
+    # The deployed contract EQAvJuEln0lP... has code hash c845917d...; Tact names the output
+    # <project>_<Contract>.code.boc, so the FtMaster target is the one ending in FtMaster.
+    ftmaster = [name for name in hashes if name == "FtMaster" or name.endswith("_FtMaster")]
+    assert ftmaster, f"FtMaster artifact not found in build output. Got: {list(hashes.keys())}"
+    ftmaster_hash = hashes[ftmaster[0]]
     assert ftmaster_hash == EXPECTED_CODE_HASH, (
         f"Code hash mismatch for FtMaster (Tact {TACT_VERSION}):\n"
         f"  Got:      {ftmaster_hash}\n"

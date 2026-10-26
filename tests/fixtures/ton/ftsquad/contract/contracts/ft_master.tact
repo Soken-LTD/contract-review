@@ -1,1 +1,195 @@
-aW1wb3J0ICJAc3RkbGliL293bmFibGUiOwppbXBvcnQgIkBzdGRsaWIvZGVwbG95IjsKaW1wb3J0ICIuL21lc3NhZ2VzLnRhY3QiOwoKaW1wb3J0ICIuL2Z0X3NxdWFkLnRhY3QiOwppbXBvcnQgIi4vZnRfdXNlcl9zdG9yYWdlLnRhY3QiOwppbXBvcnQgIi4vZnRfdXNlcl9tYWluLnRhY3QiOwppbXBvcnQgIi4vZnRfYmFzZV9wcm9ncmFtX21haW4udGFjdCI7Cgpjb250cmFjdCBGdE1hc3RlciB3aXRoIERlcGxveWFibGUsIE93bmFibGUgewogICAgY29uc3QgbWluVG9uc0ZvclN0b3JhZ2U6IEludCA9IHRvbigiMC4wNCIpOwogICAgam9pblByaWNlOiBJbnQgYXMgY29pbnMgPSB0b24oIjMuMCIpOwogICAgc3F1YWRQcmljZTogSW50IGFzIGNvaW5zID0gdG9uKCIxMC4wIik7CiAgICBpc1NldHVwOiBCb29sID0gZmFsc2U7CgogICAgaW5kZXg6IEludCBhcyB1aW50MzI7CgogICAgb3duZXI6IEFkZHJlc3M7CiAgICBuZXh0VXNlckluZGV4OiBJbnQgYXMgdWludDY0ID0gMTsKICAgIHByb2dyYW1zOiBtYXA8SW50IGFzIHVpbnQ4LCBBZGRyZXNzPjsKCiAgICBpbml0KGluZGV4OiBJbnQpIHsKICAgICAgICBzZWxmLmluZGV4ID0gaW5kZXg7CiAgICAgICAgc2VsZi5vd25lciA9IHNlbmRlcigpOwogICAgICAgIHNlbGYuZGVwbG95QmFzZVByb2dyYW0oKTsKICAgIH0KCiAgICByZWNlaXZlKG1zZzogU2V0dXBNYXN0ZXIpewogICAgICAgIG5hdGl2ZVRocm93VW5sZXNzKDEzMiwgc2VuZGVyKCkgPT0gc2VsZi5wcm9ncmFtcy5nZXQoMCkhISk7CiAgICAgICAgbmF0aXZlVGhyb3dVbmxlc3MoMTMxLCAhc2VsZi5pc1NldHVwKTsKICAgICAgICBzZWxmLmlzU2V0dXAgPSB0cnVlOwoKICAgICAgICBzZWxmLnJlZ2lzdGVyVXNlcihzZWxmLm93bmVyLCAxKTsKICAgIH0KCiAgICByZWNlaXZlKG1zZzogU2V0dXBKb2luUHJpY2UpIHsKICAgICAgICBzZWxmLnJlcXVpcmVPd25lcigpOwogICAgICAgIHNlbGYuam9pblByaWNlID0gbXNnLm5ld0pvaW5QcmljZTsKICAgICAgICBzZWxmLnJlcGx5KCJKb2luIHByaWNlIHN1Y2Nlc3NmdWxseSBjaGFuZ2VkIi5hc0NvbW1lbnQoKSk7CiAgICB9CgogICAgIHJlY2VpdmUobXNnOiBTZXR1cFNxdWFkUHJpY2UpIHsKICAgICAgICBzZWxmLnJlcXVpcmVPd25lcigpOwogICAgICAgIHNlbGYuc3F1YWRQcmljZSA9IG1zZy5uZXdTcXVhZFByaWNlOwogICAgICAgIHNlbGYucmVwbHkoIlNxdWFkIHByaWNlIHN1Y2Nlc3NmdWxseSBjaGFuZ2VkIi5hc0NvbW1lbnQoKSk7CiAgICB9CgogICAgcmVjZWl2ZShtc2c6IFVwZGF0ZVByb2dyYW1BZGRyZXNzKSB7CiAgICAgICAgc2VsZi5yZXF1aXJlT3duZXIoKTsKICAgICAgICBuYXRpdmVUaHJvd1VubGVzcyg1LCBtc2cucHJvZ3JhbUluZGV4ID4gMCk7CiAgICAgICAgc2VsZi5wcm9ncmFtcy5zZXQobXNnLnByb2dyYW1JbmRleCwgbXNnLnByb2dyYW1BZGRyZXNzKTsKICAgIH0KCiAgICByZWNlaXZlKG1zZzogR2lmdEpvaW4pIHsKICAgICAgICBsZXQgY3R4OiBDb250ZXh0ID0gY29udGV4dCgpOwogICAgICAgIGxldCBtc2dWYWx1ZTogSW50ID0gY3R4LnZhbHVlOwoKICAgICAgICBuYXRpdmVUaHJvd1VubGVzcygxMzEsIChtc2cuaW52aXRlZElkID49IDEgJiYgbXNnLmludml0ZWRJZCA8IHNlbGYubmV4dFVzZXJJbmRleCkpOwogICAgICAgIG5hdGl2ZVRocm93VW5sZXNzKDEzMSwgc2VsZi5qb2luUHJpY2UgPD0gbXNnVmFsdWUpOwogICAgICAgIHNlbGYucmVnaXN0ZXJVc2VyKG1zZy51c2VyQWRkcmVzcywgbXNnLmludml0ZWRJZCk7CiAgICB9CgogICAgcmVjZWl2ZShtc2c6IEpvaW4pIHsKICAgICAgICBsZXQgY3R4OiBDb250ZXh0ID0gY29udGV4dCgpOwogICAgICAgIGxldCBtc2dWYWx1ZTogSW50ID0gY3R4LnZhbHVlOwoKICAgICAgICBpZihtc2cudXNlckFkZHJlc3MgIT0gbnVsbCl7CiAgICAgICAgICAgIGxldCB1c2VyU3RvcmFnZUFkZHJlc3M6IEFkZHJlc3MgPSBzZWxmLnVzZXJTdG9yYWdlQWRkcmVzcyhtc2cudXNlckFkZHJlc3MhISk7CiAgICAgICAgICAgIG5hdGl2ZVRocm93VW5sZXNzKDEzMiwgc2VuZGVyKCkgPT0gdXNlclN0b3JhZ2VBZGRyZXNzKTsKICAgICAgICAgICAgc2VsZi5jcmVhdGVVc2VyKHVzZXJTdG9yYWdlQWRkcmVzcywgbXNnLnVzZXJBZGRyZXNzISEsIG1zZy5pbnZpdGVkSWQsIG1zZ1ZhbHVlKTsKICAgICAgICB9IGVsc2UgewogICAgICAgICAgICBuYXRpdmVUaHJvd1VubGVzcygxMzEsIChtc2cuaW52aXRlZElkID49IDEgJiYgbXNnLmludml0ZWRJZCA8IHNlbGYubmV4dFVzZXJJbmRleCkpOwogICAgICAgICAgICBuYXRpdmVUaHJvd1VubGVzcygxMzEsIHNlbGYuam9pblByaWNlIDw9IG1zZ1ZhbHVlKTsKICAgICAgICAgICAgc2VsZi5yZWdpc3RlclVzZXIoc2VuZGVyKCksIG1zZy5pbnZpdGVkSWQpOwogICAgICAgIH0KICAgIH0KCiAgICByZWNlaXZlKG1zZzogQ3JlYXRlU3F1YWQpIHsKICAgICAgICBuYXRpdmVUaHJvd1VubGVzcygxMzEsIHNlbGYuc3F1YWRQcmljZSArIHRvbigiMC41IikgPD0gY29udGV4dCgpLnZhbHVlKTsKICAgICAgICBsZXQgb3duZXI6IEFkZHJlc3MgPSBtc2cub3duZXIgPT0gbnVsbCA/IHNlbmRlcigpIDogbXNnLm93bmVyISE7CiAgICAgICAgc2VsZi5jcmVhdGVTcXVhZChvd25lcik7CiAgICB9CgogICAgcmVjZWl2ZSgiR2V0UHJvZ3JhbUFkZHJlc3NlcyIpIHsKICAgICAgICBzZWxmLnJlcGx5KAogICAgICAgICAgICBQcm9ncmFtQWRkcmVzc2VzewogICAgICAgICAgICAgICAgcHJvZ3JhbXM6IHNlbGYucHJvZ3JhbXMKICAgICAgICAgICAgfS50b0NlbGwoKQogICAgICAgICk7CiAgICB9CgogICAgLy8gLS0tLS0tLS0tLS0tLS0tLS0tIFByaXZhdGUgRnVuY3Rpb24gIC0tLS0tLS0tLS0tLS0tLS0tLSAvLwoKICAgIGZ1biByZWdpc3RlclVzZXIodXNlckFkZHJlc3M6IEFkZHJlc3MsIGludml0ZWRJZDogSW50KSB7CiAgICAgICAgbGV0IGluaXQ6IFN0YXRlSW5pdCA9IGluaXRPZiBGdFVzZXJTdG9yYWdlKHVzZXJBZGRyZXNzLCBteUFkZHJlc3MoKSk7CiAgICAgICAgc2VuZChTZW5kUGFyYW1ldGVyc3sKICAgICAgICAgICAgdG86IGNvbnRyYWN0QWRkcmVzcyhpbml0KSwKICAgICAgICAgICAgdmFsdWU6IDAsCiAgICAgICAgICAgIG1vZGU6IFNlbmRJZ25vcmVFcnJvcnMgfCBTZW5kUmVtYWluaW5nVmFsdWUsCiAgICAgICAgICAgIGJvZHk6IFZlcmlmeUV4aXN0ZW5jZXsKICAgICAgICAgICAgICAgIGludml0ZWRJZDogaW52aXRlZElkCiAgICAgICAgICAgIH0udG9DZWxsKCksCiAgICAgICAgICAgIGNvZGU6IGluaXQuY29kZSwKICAgICAgICAgICAgZGF0YTogaW5pdC5kYXRhCiAgICAgICAgfSk7CiAgICB9CgogICAgZnVuIGNyZWF0ZVVzZXIodXNlclN0b3JhZ2VBZGRyZXNzOiBBZGRyZXNzLCB1c2VyQWRkcmVzczogQWRkcmVzcywgaW52aXRlZElkOiBJbnQsIHZhbHVlOiBJbnQpIHsKICAgICAgICBsZXQgdXNlcklkOiBJbnQgPSBzZWxmLm5leHRVc2VySW5kZXg7CiAgICAgICAgc2VsZi5uZXh0VXNlckluZGV4ID0gc2VsZi5uZXh0VXNlckluZGV4ICsgMTsKICAgICAgICBsZXQgZm9yd2FyZFBheWxvYWQ6IENlbGwgPSBTZXR1cFVzZXJNYWlue293bmVyOiB1c2VyQWRkcmVzcywgaW52aXRlZElkOiBpbnZpdGVkSWQsIHByb2dyYW1zOiBzZWxmLnByb2dyYW1zfS50b0NlbGwoKTsKCiAgICAgICAgc2VuZChTZW5kUGFyYW1ldGVyc3sKICAgICAgICAgICAgdG86IHVzZXJTdG9yYWdlQWRkcmVzcywKICAgICAgICAgICAgdmFsdWU6IDAsCiAgICAgICAgICAgIG1vZGU6IFNlbmRSZW1haW5pbmdWYWx1ZSwKICAgICAgICAgICAgYm9keTogU2V0dXBVc2VyU3RvcmFnZXsKICAgICAgICAgICAgICAgIHVzZXJJZDogdXNlcklkLAogICAgICAgICAgICAgICAgZm9yd2FyZFBheWxvYWQ6IGZvcndhcmRQYXlsb2FkCiAgICAgICAgICAgIH0udG9DZWxsKCkKICAgICAgICB9KTsKICAgIH0KCiAgICBmdW4gY3JlYXRlU3F1YWQob3duZXI6IEFkZHJlc3MpewogICAgICAgIGxldCBpbml0OiBTdGF0ZUluaXQgPSBpbml0T2YgRnRTcXVhZChvd25lciwgbXlBZGRyZXNzKCkpOwogICAgICAgIG5hdGl2ZVJlc2VydmUoc2VsZi5taW5Ub25zRm9yU3RvcmFnZSwgMCk7CgogICAgICAgIHNlbmQoU2VuZFBhcmFtZXRlcnN7CiAgICAgICAgICAgIHRvOiBjb250cmFjdEFkZHJlc3MoaW5pdCksCiAgICAgICAgICAgIHZhbHVlOiAwLAogICAgICAgICAgICBtb2RlOiBTZW5kUmVtYWluaW5nQmFsYW5jZSwKICAgICAgICAgICAgYm9keTogUGF5Rm9yU3F1YWRDcmVhdGlvbnsKICAgICAgICAgICAgICAgIHJlY2VpdmVyOiBzZWxmLnByb2dyYW1zLmdldCgwKSEhLAogICAgICAgICAgICAgICAgcHJpY2U6IHNlbGYuc3F1YWRQcmljZQogICAgICAgICAgICB9LnRvQ2VsbCgpLAogICAgICAgICAgICBjb2RlOiBpbml0LmNvZGUsCiAgICAgICAgICAgIGRhdGE6IGluaXQuZGF0YQogICAgICAgIH0pOwogICAgfQoKICAgIGZ1biBkZXBsb3lCYXNlUHJvZ3JhbSgpewogICAgICAgIG5hdGl2ZVJlc2VydmUoc2VsZi5taW5Ub25zRm9yU3RvcmFnZSwgMCk7CiAgICAgICAgbGV0IGluaXQ6IFN0YXRlSW5pdCA9IGluaXRPZiBGdEJhc2VQcm9ncmFtTWFpbihteUFkZHJlc3MoKSk7CiAgICAgICAgbGV0IGNvbnRyYWN0QWRkcmVzczogQWRkcmVzcyA9IGNvbnRyYWN0QWRkcmVzcyhpbml0KTsKICAgICAgICBzZWxmLnByb2dyYW1zLnNldCgwLCBjb250cmFjdEFkZHJlc3MpOwoKICAgICAgICBzZW5kKFNlbmRQYXJhbWV0ZXJzewogICAgICAgICAgICB0bzogY29udHJhY3RBZGRyZXNzLAogICAgICAgICAgICB2YWx1ZTogMCwKICAgICAgICAgICAgbW9kZTogU2VuZFJlbWFpbmluZ0JhbGFuY2UsCiAgICAgICAgICAgIGJvZHk6IFNldHVwQmFzZVByb2dyYW1NYWluIHsKICAgICAgICAgICAgICAgIG93bmVyOiBzZWxmLm93bmVyCiAgICAgICAgICAgIH0udG9DZWxsKCksCiAgICAgICAgICAgIGNvZGU6IGluaXQuY29kZSwKICAgICAgICAgICAgZGF0YTogaW5pdC5kYXRhCiAgICAgICAgfSk7CiAgICB9CiAgICAKICAgIC8vIC0tLS0tLS0tLS0tLS0tLS0tLSBHZXQgRnVuY3Rpb24gIC0tLS0tLS0tLS0tLS0tLS0tLSAvLwoKICAgIGdldCBmdW4gYmFsYW5jZSgpOiBJbnQgewogICAgICAgIHJldHVybiBteUJhbGFuY2UoKTsKICAgIH0KCiAgICBnZXQgZnVuIGpvaW5QcmljZSgpOiBJbnQgewogICAgICAgIHJldHVybiBzZWxmLmpvaW5QcmljZTsKICAgIH0KCiAgICBnZXQgZnVuIHNxdWFkUHJpY2UoKTogSW50IHsKICAgICAgICByZXR1cm4gc2VsZi5zcXVhZFByaWNlOwogICAgfQoKICAgIGdldCBmdW4gbGFzdFVzZXJJbmRleCgpOiBJbnQgewogICAgICAgIHJldHVybiBzZWxmLm5leHRVc2VySW5kZXggLSAxOwogICAgfQoKICAgIGdldCBmdW4gcHJvZ3JhbXMoKTogIG1hcDxJbnQgYXMgdWludDgsIEFkZHJlc3M+IHsKICAgICAgICByZXR1cm4gc2VsZi5wcm9ncmFtczsKICAgIH0KCiAgICBnZXQgZnVuIHVzZXJTdG9yYWdlQWRkcmVzcyhhZGRyZXNzOiBBZGRyZXNzKTogQWRkcmVzcyB7CiAgICAgICAgbGV0IGluaXQ6IFN0YXRlSW5pdCA9IGluaXRPZiBGdFVzZXJTdG9yYWdlKGFkZHJlc3MsIG15QWRkcmVzcygpKTsKICAgICAgICByZXR1cm4gY29udHJhY3RBZGRyZXNzKGluaXQpOwogICAgfQoKICAgIGdldCBmdW4gdXNlck1haW5BZGRyZXNzKGlkOiBJbnQpOiBBZGRyZXNzIHsKICAgICAgICBsZXQgaW5pdDogU3RhdGVJbml0ID0gaW5pdE9mIEZ0VXNlck1haW4oaWQsIG15QWRkcmVzcygpKTsKICAgICAgICByZXR1cm4gY29udHJhY3RBZGRyZXNzKGluaXQpOwogICAgfQoKICAgIGdldCBmdW4gdXNlclNxdWFkQWRkcmVzcyhhZGRyZXNzOiBBZGRyZXNzKTogQWRkcmVzcyB7CiAgICAgICAgbGV0IGluaXQ6IFN0YXRlSW5pdCA9IGluaXRPZiBGdFNxdWFkKGFkZHJlc3MsIG15QWRkcmVzcygpKTsKICAgICAgICByZXR1cm4gY29udHJhY3RBZGRyZXNzKGluaXQpOwogICAgfQp9Cg==
+import "@stdlib/ownable";
+import "@stdlib/deploy";
+import "./messages.tact";
+
+import "./ft_squad.tact";
+import "./ft_user_storage.tact";
+import "./ft_user_main.tact";
+import "./ft_base_program_main.tact";
+
+contract FtMaster with Deployable, Ownable {
+    const minTonsForStorage: Int = ton("0.04");
+    joinPrice: Int as coins = ton("3.0");
+    squadPrice: Int as coins = ton("10.0");
+    isSetup: Bool = false;
+
+    index: Int as uint32;
+
+    owner: Address;
+    nextUserIndex: Int as uint64 = 1;
+    programs: map<Int as uint8, Address>;
+
+    init(index: Int) {
+        self.index = index;
+        self.owner = sender();
+        self.deployBaseProgram();
+    }
+
+    receive(msg: SetupMaster){
+        nativeThrowUnless(132, sender() == self.programs.get(0)!!);
+        nativeThrowUnless(131, !self.isSetup);
+        self.isSetup = true;
+
+        self.registerUser(self.owner, 1);
+    }
+
+    receive(msg: SetupJoinPrice) {
+        self.requireOwner();
+        self.joinPrice = msg.newJoinPrice;
+        self.reply("Join price successfully changed".asComment());
+    }
+
+     receive(msg: SetupSquadPrice) {
+        self.requireOwner();
+        self.squadPrice = msg.newSquadPrice;
+        self.reply("Squad price successfully changed".asComment());
+    }
+
+    receive(msg: UpdateProgramAddress) {
+        self.requireOwner();
+        nativeThrowUnless(5, msg.programIndex > 0);
+        self.programs.set(msg.programIndex, msg.programAddress);
+    }
+
+    receive(msg: GiftJoin) {
+        let ctx: Context = context();
+        let msgValue: Int = ctx.value;
+
+        nativeThrowUnless(131, (msg.invitedId >= 1 && msg.invitedId < self.nextUserIndex));
+        nativeThrowUnless(131, self.joinPrice <= msgValue);
+        self.registerUser(msg.userAddress, msg.invitedId);
+    }
+
+    receive(msg: Join) {
+        let ctx: Context = context();
+        let msgValue: Int = ctx.value;
+
+        if(msg.userAddress != null){
+            let userStorageAddress: Address = self.userStorageAddress(msg.userAddress!!);
+            nativeThrowUnless(132, sender() == userStorageAddress);
+            self.createUser(userStorageAddress, msg.userAddress!!, msg.invitedId, msgValue);
+        } else {
+            nativeThrowUnless(131, (msg.invitedId >= 1 && msg.invitedId < self.nextUserIndex));
+            nativeThrowUnless(131, self.joinPrice <= msgValue);
+            self.registerUser(sender(), msg.invitedId);
+        }
+    }
+
+    receive(msg: CreateSquad) {
+        nativeThrowUnless(131, self.squadPrice + ton("0.5") <= context().value);
+        let owner: Address = msg.owner == null ? sender() : msg.owner!!;
+        self.createSquad(owner);
+    }
+
+    receive("GetProgramAddresses") {
+        self.reply(
+            ProgramAddresses{
+                programs: self.programs
+            }.toCell()
+        );
+    }
+
+    // ------------------ Private Function  ------------------ //
+
+    fun registerUser(userAddress: Address, invitedId: Int) {
+        let init: StateInit = initOf FtUserStorage(userAddress, myAddress());
+        send(SendParameters{
+            to: contractAddress(init),
+            value: 0,
+            mode: SendIgnoreErrors | SendRemainingValue,
+            body: VerifyExistence{
+                invitedId: invitedId
+            }.toCell(),
+            code: init.code,
+            data: init.data
+        });
+    }
+
+    fun createUser(userStorageAddress: Address, userAddress: Address, invitedId: Int, value: Int) {
+        let userId: Int = self.nextUserIndex;
+        self.nextUserIndex = self.nextUserIndex + 1;
+        let forwardPayload: Cell = SetupUserMain{owner: userAddress, invitedId: invitedId, programs: self.programs}.toCell();
+
+        send(SendParameters{
+            to: userStorageAddress,
+            value: 0,
+            mode: SendRemainingValue,
+            body: SetupUserStorage{
+                userId: userId,
+                forwardPayload: forwardPayload
+            }.toCell()
+        });
+    }
+
+    fun createSquad(owner: Address){
+        let init: StateInit = initOf FtSquad(owner, myAddress());
+        nativeReserve(self.minTonsForStorage, 0);
+
+        send(SendParameters{
+            to: contractAddress(init),
+            value: 0,
+            mode: SendRemainingBalance,
+            body: PayForSquadCreation{
+                receiver: self.programs.get(0)!!,
+                price: self.squadPrice
+            }.toCell(),
+            code: init.code,
+            data: init.data
+        });
+    }
+
+    fun deployBaseProgram(){
+        nativeReserve(self.minTonsForStorage, 0);
+        let init: StateInit = initOf FtBaseProgramMain(myAddress());
+        let contractAddress: Address = contractAddress(init);
+        self.programs.set(0, contractAddress);
+
+        send(SendParameters{
+            to: contractAddress,
+            value: 0,
+            mode: SendRemainingBalance,
+            body: SetupBaseProgramMain {
+                owner: self.owner
+            }.toCell(),
+            code: init.code,
+            data: init.data
+        });
+    }
+    
+    // ------------------ Get Function  ------------------ //
+
+    get fun balance(): Int {
+        return myBalance();
+    }
+
+    get fun joinPrice(): Int {
+        return self.joinPrice;
+    }
+
+    get fun squadPrice(): Int {
+        return self.squadPrice;
+    }
+
+    get fun lastUserIndex(): Int {
+        return self.nextUserIndex - 1;
+    }
+
+    get fun programs():  map<Int as uint8, Address> {
+        return self.programs;
+    }
+
+    get fun userStorageAddress(address: Address): Address {
+        let init: StateInit = initOf FtUserStorage(address, myAddress());
+        return contractAddress(init);
+    }
+
+    get fun userMainAddress(id: Int): Address {
+        let init: StateInit = initOf FtUserMain(id, myAddress());
+        return contractAddress(init);
+    }
+
+    get fun userSquadAddress(address: Address): Address {
+        let init: StateInit = initOf FtSquad(address, myAddress());
+        return contractAddress(init);
+    }
+}

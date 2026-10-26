@@ -1,1 +1,30 @@
-c3RydWN0IE1hdHJpeCB7CiAgICB1MTogSW50PyBhcyB1aW50NjQ7CiAgICB1MXQ6IEludD8gYXMgdWludDg7CgogICAgdTI6IEludD8gYXMgdWludDY0OwogICAgdTJ0OiBJbnQ/IGFzIHVpbnQ4OwoKICAgIHUzOiBJbnQ/IGFzIHVpbnQ2NDsKICAgIHUzdDogSW50PyBhcyB1aW50ODsKCiAgICB1NDogSW50PyBhcyB1aW50NjQ7CiAgICB1NHQ6IEludD8gYXMgdWludDg7CgogICAgdTU6IEludD8gYXMgdWludDY0OwogICAgdTV0OiBJbnQ/IGFzIHVpbnQ4OwoKICAgIHU2OiBJbnQ/IGFzIHVpbnQ2NDsKICAgIHU2dDogSW50PyBhcyB1aW50ODsKfQoKc3RydWN0IEluZm8gewogICAgdG90YWxQcm9maXQ6IEludCBhcyBjb2lucyA9IHRvbigiMC4wIik7CiAgICBsb3N0UHJvZml0OiBJbnQgYXMgY29pbnMgPSB0b24oIjAuMCIpOwogICAgcmVpbnZlc3RDb3VudDogSW50IGFzIHVpbnQxNiA9IDE7CiAgICBwZXJzb25hbFJlZmVycmFsc0NvdW50OiBJbnQgYXMgdWludDMyID0gMDsKICAgIHdhc1VzZVVwcGVyQWRkcmVzczogQm9vbCA9IGZhbHNlOwogICAgdXBwZXJBZGRyZXNzOiBBZGRyZXNzPzsKICAgIG5leHRVcHBlckFkZHJlc3M6IEFkZHJlc3M/OwogICAgbWF0cml4OiBNYXRyaXggPSBNYXRyaXh7fTsKfQo=
+struct Matrix {
+    u1: Int? as uint64;
+    u1t: Int? as uint8;
+
+    u2: Int? as uint64;
+    u2t: Int? as uint8;
+
+    u3: Int? as uint64;
+    u3t: Int? as uint8;
+
+    u4: Int? as uint64;
+    u4t: Int? as uint8;
+
+    u5: Int? as uint64;
+    u5t: Int? as uint8;
+
+    u6: Int? as uint64;
+    u6t: Int? as uint8;
+}
+
+struct Info {
+    totalProfit: Int as coins = ton("0.0");
+    lostProfit: Int as coins = ton("0.0");
+    reinvestCount: Int as uint16 = 1;
+    personalReferralsCount: Int as uint32 = 0;
+    wasUseUpperAddress: Bool = false;
+    upperAddress: Address?;
+    nextUpperAddress: Address?;
+    matrix: Matrix = Matrix{};
+}

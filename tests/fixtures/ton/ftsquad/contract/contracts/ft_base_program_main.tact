@@ -1,1 +1,199 @@
-aW1wb3J0ICJAc3RkbGliL293bmFibGUiOwppbXBvcnQgIkBzdGRsaWIvZGVwbG95IjsKCmltcG9ydCAiLi9mdF9iYXNlX3Byb2dyYW1fdXNlci50YWN0IjsKaW1wb3J0ICIuL2Z0X3VzZXJfc3RvcmFnZS50YWN0IjsKaW1wb3J0ICIuL2Z0X3VzZXJfbWFpbi50YWN0IjsKCmNvbnRyYWN0IEZ0QmFzZVByb2dyYW1NYWluIHdpdGggRGVwbG95YWJsZSwgT3duYWJsZSB7CiAgICBjb25zdCBwcm9ncmFtTmFtZTogU3RyaW5nID0gIkJhc2UiOwogICAgY29uc3QgbWluVG9uc0ZvclN0b3JhZ2U6IEludCA9IHRvbigiMC4wNCIpOwogICAgCiAgICBnYXNNdWx0aXBsaWVyOiBJbnQgYXMgY29pbnMgPSB0b24oIjEuMCIpOwogICAgaXNTZXR1cDogQm9vbCA9IGZhbHNlOwoKICAgIG93bmVyOiBBZGRyZXNzOwogICAgbWFzdGVyOiBBZGRyZXNzOwogICAgcmVjaXBpZW50OiBBZGRyZXNzOwogICAgbGV2ZWxQcmljZXM6IG1hcDxJbnQgYXMgdWludDgsIEludD47CiAgICBsZXZlbEZlZXM6IG1hcDxJbnQgYXMgdWludDgsIEludD47CiAgICB0b3RhbFByb2ZpdDogSW50IGFzIGNvaW5zID0gdG9uKCIwLjAiKTsKCiAgICBpbml0KG1hc3RlcjogQWRkcmVzcyl7CiAgICAgICAgbmF0aXZlVGhyb3dVbmxlc3MoMTMyLCBzZW5kZXIoKSA9PSBtYXN0ZXIpOwoKICAgICAgICBzZWxmLm1hc3RlciA9IG1hc3RlcjsKICAgICAgICBzZWxmLm93bmVyID0gc2VuZGVyKCk7CiAgICAgICAgc2VsZi5yZWNpcGllbnQgPSBzZW5kZXIoKTsKCiAgICAgICAgc2VsZi5zZXR1cExldmVsUHJpY2UoKTsKICAgICAgICBzZWxmLnNldHVwTGV2ZWxGZWUoKTsKICAgIH0KCiAgICByZWNlaXZlKCl7fQoKICAgIHJlY2VpdmUoIlBheW1lbnRGb3JTcXVhZENyZWF0aW9uIil7fQoKICAgIHJlY2VpdmUoIndpdGhkcmF3Iil7CiAgICAgICAgc2VsZi5yZXF1aXJlT3duZXIoKTsKICAgICAgICBuYXRpdmVSZXNlcnZlKHNlbGYubWluVG9uc0ZvclN0b3JhZ2UsIDApOwoKICAgICAgICBzZW5kKFNlbmRQYXJhbWV0ZXJzewogICAgICAgICAgICB0bzogc2VsZi5yZWNpcGllbnQsCiAgICAgICAgICAgIHZhbHVlOiAwLAogICAgICAgICAgICBtb2RlOiBTZW5kUmVtYWluaW5nQmFsYW5jZSwKICAgICAgICAgICAgYm9keTogIllvdXIgd2l0aGRyYXciLmFzQ29tbWVudCgpLAogICAgICAgIH0pOwogICAgfQoKICAgIHJlY2VpdmUobXNnOiBTZXR1cEJhc2VQcm9ncmFtTWFpbil7CiAgICAgICAgbmF0aXZlVGhyb3dVbmxlc3MoMTMyLCBzZW5kZXIoKSA9PSBzZWxmLm1hc3Rlcik7CiAgICAgICAgbmF0aXZlVGhyb3dVbmxlc3MoMTMxLCAhc2VsZi5pc1NldHVwKTsKCiAgICAgICAgc2VsZi5vd25lciA9IG1zZy5vd25lcjsKICAgICAgICBzZWxmLnJlY2lwaWVudCA9IG1zZy5vd25lcjsKICAgICAgICBzZWxmLmlzU2V0dXAgPSB0cnVlOwogICAgICAgIHNlbGYucmVwbHkoU2V0dXBNYXN0ZXJ7fS50b0NlbGwoKSk7CiAgICB9CgogICAgcmVjZWl2ZShtc2c6IEJ1eUxldmVsKXsKICAgICAgICBzZWxmLnJlcXVpcmVVc2VyTWFpbihtc2cudXNlcklkKTsKICAgICAgICBsZXQgbXNnVmFsdWU6IEludCA9IGNvbnRleHQoKS52YWx1ZTsKICAgICAgICBsZXQgYmFsYW5jZTogSW50ID0gbXlCYWxhbmNlKCkgLSBtc2dWYWx1ZTsKCiAgICAgICAgbmF0aXZlVGhyb3dVbmxlc3MoMTMxLCAgbXNnLmxldmVsTnVtYmVyID4gMCAmJiAgbXNnLmxldmVsTnVtYmVyIDw9IDEyKTsKCiAgICAgICAgbGV0IGluY3JlbWVudDogSW50ID0gbXNnLmxldmVsTnVtYmVyICogc2VsZi5nYXNNdWx0aXBsaWVyOwogICAgICAgIGxldCBsZXZlbEZlZTogSW50ID0gc2VsZi5sZXZlbEZlZXMuZ2V0KG1zZy5sZXZlbE51bWJlcikhITsKICAgICAgICBsZXQgbGV2ZWxQcmljZTogSW50ID0gc2VsZi5sZXZlbFByaWNlcy5nZXQobXNnLmxldmVsTnVtYmVyKSEhOwoKICAgICAgICBsZXQgcmVxdWlyZU1pblZhbHVlOiBJbnQgPSBsZXZlbFByaWNlICsgaW5jcmVtZW50ICsgbGV2ZWxGZWU7CiAgICAgICAgbmF0aXZlVGhyb3dVbmxlc3MoMTMxLCAocmVxdWlyZU1pblZhbHVlIDw9IG1zZ1ZhbHVlIHx8IG1zZy51c2VySWQgPT0gMSkpOwogICAgICAgIAogICAgICAgIG5hdGl2ZVJlc2VydmUoYmFsYW5jZSArIGxldmVsRmVlLCAwKTsKICAgICAgICBzZWxmLnRvdGFsUHJvZml0ICs9IGxldmVsUHJpY2U7CiAgICAgICAgbGV0IGluaXQ6IFN0YXRlSW5pdCA9IGluaXRPZiBGdEJhc2VQcm9ncmFtVXNlcihtc2cudXNlcklkLCBteUFkZHJlc3MoKSk7CgogICAgICAgIHNlbmQoU2VuZFBhcmFtZXRlcnN7CiAgICAgICAgICAgIHRvOiBjb250cmFjdEFkZHJlc3MoaW5pdCksCiAgICAgICAgICAgIHZhbHVlOiAwLAogICAgICAgICAgICBtb2RlOiBTZW5kUmVtYWluaW5nQmFsYW5jZSwKICAgICAgICAgICAgYm9keTogQWN0aXZhdGVMZXZlbHsKICAgICAgICAgICAgICAgIG93bmVyOiBtc2cub3duZXIsCiAgICAgICAgICAgICAgICBpbnZpdGVkSWQ6IG1zZy5pbnZpdGVkSWQsCiAgICAgICAgICAgICAgICBsZXZlbE51bWJlcjogbXNnLmxldmVsTnVtYmVyLAogICAgICAgICAgICAgICAgbGV2ZWxQcmljZTogbGV2ZWxQcmljZSwKICAgICAgICAgICAgICAgIHJlY2lwaWVudEV4Y2Vzc2VzOiBtc2cucmVjaXBpZW50RXhjZXNzZXMKICAgICAgICAgICAgfS50b0NlbGwoKSwKICAgICAgICAgICAgY29kZTogbXNnLmxldmVsTnVtYmVyID09IDEgPyBpbml0LmNvZGUgOiBudWxsLAogICAgICAgICAgICBkYXRhOiBtc2cubGV2ZWxOdW1iZXIgPT0gMSA/IGluaXQuZGF0YSA6IG51bGwKICAgICAgICB9KTsKICAgIH0KCiAgICByZWNlaXZlKG1zZzogVXBkYXRlTGV2ZWxQcmljZSl7CiAgICAgICAgc2VsZi5yZXF1aXJlT3duZXIoKTsKICAgICAgICBuYXRpdmVUaHJvd1VubGVzcyg1LCAobXNnLmxldmVsTnVtYmVyID4gMCAmJiBtc2cubGV2ZWxOdW1iZXIgPD0gMTIpKTsKICAgICAgICBzZWxmLmxldmVsUHJpY2VzLnNldChtc2cubGV2ZWxOdW1iZXIsIG1zZy5sZXZlbFByaWNlKTsKICAgICAgICBzZWxmLnJlcGx5KCJMZXZlbCBwcmljZSBzdWNjZXNzZnVsbHkgY2hhbmdlZCIuYXNDb21tZW50KCkpOwogICAgfQoKICAgIHJlY2VpdmUobXNnOiBVcGRhdGVMZXZlbEZlZSl7CiAgICAgICAgc2VsZi5yZXF1aXJlT3duZXIoKTsKICAgICAgICBuYXRpdmVUaHJvd1VubGVzcyg1LCAobXNnLmxldmVsTnVtYmVyID4gMCAmJiBtc2cubGV2ZWxOdW1iZXIgPD0gMTIpKTsKICAgICAgICBzZWxmLmxldmVsRmVlcy5zZXQobXNnLmxldmVsTnVtYmVyLCBtc2cubGV2ZWxGZWUpOwogICAgICAgIHNlbGYucmVwbHkoIkxldmVsIGZlZSBzdWNjZXNzZnVsbHkgY2hhbmdlZCIuYXNDb21tZW50KCkpOwogICAgfQoKICAgIHJlY2VpdmUobXNnOiBVcGRhdGVHYXNNdWx0aXBsaWVyKXsKICAgICAgICBzZWxmLnJlcXVpcmVPd25lcigpOwogICAgICAgIG5hdGl2ZVRocm93VW5sZXNzKDUsIG1zZy5uZXdWYWx1ZSA+IHRvbigiMC41IikpOwogICAgICAgIHNlbGYuZ2FzTXVsdGlwbGllciA9IG1zZy5uZXdWYWx1ZTsKICAgICAgICBzZWxmLnJlcGx5KCJHYXMgbXVsdGlwbGllciBzdWNjZXNzZnVsbHkgY2hhbmdlZCIuYXNDb21tZW50KCkpOwogICAgfQoKICAgIHJlY2VpdmUobXNnOiBVcGRhdGVSZWNpcGllbnRBZGRyZXNzKXsKICAgICAgICBzZWxmLnJlcXVpcmVPd25lcigpOwogICAgICAgIHNlbGYucmVjaXBpZW50ID0gbXNnLm5ld0FkZHJlc3M7CiAgICAgICAgc2VsZi5yZXBseSgiUmVjaXBpZW50IGFkZHJlc3Mgc3VjY2Vzc2Z1bGx5IGNoYW5nZWQiLmFzQ29tbWVudCgpKTsKICAgIH0KCiAgICAvLyAtLS0tLS0tLS0tLS0tLS0tLS0gUHJpdmF0ZSBGdW5jdGlvbiAgLS0tLS0tLS0tLS0tLS0tLS0tIC8vCgogICAgZnVuIHJlcXVpcmVVc2VyTWFpbihpZDogSW50KXsKICAgICAgICBuYXRpdmVUaHJvd1VubGVzcygxMzIsIHNlbmRlcigpID09IHNlbGYudXNlck1haW5BZGRyZXNzKGlkKSk7CiAgICB9CgogICAgZnVuIHNldHVwTGV2ZWxQcmljZSgpewogICAgICAgIHNlbGYubGV2ZWxQcmljZXMuc2V0KDEsIHRvbigiMS4wIikpOwogICAgICAgIHNlbGYubGV2ZWxQcmljZXMuc2V0KDIsIHRvbigiMi4wIikpOwogICAgICAgIHNlbGYubGV2ZWxQcmljZXMuc2V0KDMsIHRvbigiNC4wIikpOwogICAgICAgIHNlbGYubGV2ZWxQcmljZXMuc2V0KDQsIHRvbigiNy4wIikpOwogICAgICAgIHNlbGYubGV2ZWxQcmljZXMuc2V0KDUsIHRvbigiMTIuMCIpKTsKICAgICAgICBzZWxmLmxldmVsUHJpY2VzLnNldCg2LCB0b24oIjIyLjAiKSk7CiAgICAgICAgc2VsZi5sZXZlbFByaWNlcy5zZXQoNywgdG9uKCI0MC4wIikpOwogICAgICAgIHNlbGYubGV2ZWxQcmljZXMuc2V0KDgsIHRvbigiNzAuMCIpKTsKICAgICAgICBzZWxmLmxldmVsUHJpY2VzLnNldCg5LCB0b24oIjEyMC4wIikpOwogICAgICAgIHNlbGYubGV2ZWxQcmljZXMuc2V0KDEwLCB0b24oIjIyMC4wIikpOwogICAgICAgIHNlbGYubGV2ZWxQcmljZXMuc2V0KDExLCB0b24oIjQwMC4wIikpOwogICAgICAgIHNlbGYubGV2ZWxQcmljZXMuc2V0KDEyLCB0b24oIjc5MC4wIikpOwogICAgfQoKICAgIGZ1biBzZXR1cExldmVsRmVlKCl7CiAgICAgICAgc2VsZi5sZXZlbEZlZXMuc2V0KDEsIHRvbigiMC4yNSIpKTsKICAgICAgICBzZWxmLmxldmVsRmVlcy5zZXQoMiwgdG9uKCIwLjUiKSk7CiAgICAgICAgc2VsZi5sZXZlbEZlZXMuc2V0KDMsIHRvbigiMS4wIikpOwogICAgICAgIHNlbGYubGV2ZWxGZWVzLnNldCg0LCB0b24oIjEuNzUiKSk7CiAgICAgICAgc2VsZi5sZXZlbEZlZXMuc2V0KDUsIHRvbigiMy4wIikpOwogICAgICAgIHNlbGYubGV2ZWxGZWVzLnNldCg2LCB0b24oIjUuNSIpKTsKICAgICAgICBzZWxmLmxldmVsRmVlcy5zZXQoNywgdG9uKCIxMC4wIikpOwogICAgICAgIHNlbGYubGV2ZWxGZWVzLnNldCg4LCB0b24oIjE3LjUiKSk7CiAgICAgICAgc2VsZi5sZXZlbEZlZXMuc2V0KDksIHRvbigiMzAuMCIpKTsKICAgICAgICBzZWxmLmxldmVsRmVlcy5zZXQoMTAsIHRvbigiNTUuMCIpKTsKICAgICAgICBzZWxmLmxldmVsRmVlcy5zZXQoMTEsIHRvbigiMTAwLjAiKSk7CiAgICAgICAgc2VsZi5sZXZlbEZlZXMuc2V0KDEyLCB0b24oIjE5Ny41IikpOwogICAgfQoKICAgIC8vIC0tLS0tLS0tLS0tLS0tLS0tLSBHZXQgRnVuY3Rpb25zIC0tLS0tLS0tLS0tLS0tLS0tLSAvLwoKICAgIGdldCBmdW4gcHJvZ3JhbU5hbWUoKTogU3RyaW5nIHsKICAgICAgICByZXR1cm4gc2VsZi5wcm9ncmFtTmFtZTsKICAgIH0KCiAgICBnZXQgZnVuIGdhc011bHRpcGxpZXIoKTogSW50IHsKICAgICAgICByZXR1cm4gc2VsZi5nYXNNdWx0aXBsaWVyOwogICAgfQoKICAgIGdldCBmdW4gbGV2ZWxQcmljZXMoKTogbWFwPEludCBhcyB1aW50OCwgSW50PiB7CiAgICAgICAgcmV0dXJuIHNlbGYubGV2ZWxQcmljZXM7CiAgICB9CgogICAgZ2V0IGZ1biBsZXZlbEZlZXMoKTogbWFwPEludCBhcyB1aW50OCwgSW50PiB7CiAgICAgICAgcmV0dXJuIHNlbGYubGV2ZWxGZWVzOwogICAgfQoKICAgIGdldCBmdW4gdG90YWxQcm9maXQoKTogSW50IHsKICAgICAgICByZXR1cm4gc2VsZi50b3RhbFByb2ZpdDsKICAgIH0KCiAgICBnZXQgZnVuIG1hc3RlckFkZHJlc3MoKTogQWRkcmVzcyB7CiAgICAgICAgcmV0dXJuIHNlbGYubWFzdGVyOwogICAgfQoKICAgIGdldCBmdW4gcmVjaXBpZW50QWRkcmVzcygpOiBBZGRyZXNzIHsKICAgICAgICByZXR1cm4gc2VsZi5yZWNpcGllbnQ7CiAgICB9CgogICAgZ2V0IGZ1biBiYWxhbmNlKCk6IEludCB7CiAgICAgICAgcmV0dXJuIG15QmFsYW5jZSgpOwogICAgfQoKICAgIGdldCBmdW4gdXNlck1haW5BZGRyZXNzKGlkOiBJbnQpOiBBZGRyZXNzewogICAgICAgIGxldCBpbml0OiBTdGF0ZUluaXQgPSBpbml0T2YgRnRVc2VyTWFpbihpZCwgc2VsZi5tYXN0ZXIpOwogICAgICAgIHJldHVybiBjb250cmFjdEFkZHJlc3MoaW5pdCk7CiAgICB9CgogICAgZ2V0IGZ1biBwcm9ncmFtVXNlckFkZHJlc3MoaWQ6IEludCk6IEFkZHJlc3N7CiAgICAgICAgbGV0IGluaXQ6IFN0YXRlSW5pdCA9IGluaXRPZiBGdEJhc2VQcm9ncmFtVXNlcihpZCwgbXlBZGRyZXNzKCkpOwogICAgICAgIHJldHVybiBjb250cmFjdEFkZHJlc3MoaW5pdCk7CiAgICB9Cn0K
+import "@stdlib/ownable";
+import "@stdlib/deploy";
+
+import "./ft_base_program_user.tact";
+import "./ft_user_storage.tact";
+import "./ft_user_main.tact";
+
+contract FtBaseProgramMain with Deployable, Ownable {
+    const programName: String = "Base";
+    const minTonsForStorage: Int = ton("0.04");
+    
+    gasMultiplier: Int as coins = ton("1.0");
+    isSetup: Bool = false;
+
+    owner: Address;
+    master: Address;
+    recipient: Address;
+    levelPrices: map<Int as uint8, Int>;
+    levelFees: map<Int as uint8, Int>;
+    totalProfit: Int as coins = ton("0.0");
+
+    init(master: Address){
+        nativeThrowUnless(132, sender() == master);
+
+        self.master = master;
+        self.owner = sender();
+        self.recipient = sender();
+
+        self.setupLevelPrice();
+        self.setupLevelFee();
+    }
+
+    receive(){}
+
+    receive("PaymentForSquadCreation"){}
+
+    receive("withdraw"){
+        self.requireOwner();
+        nativeReserve(self.minTonsForStorage, 0);
+
+        send(SendParameters{
+            to: self.recipient,
+            value: 0,
+            mode: SendRemainingBalance,
+            body: "Your withdraw".asComment(),
+        });
+    }
+
+    receive(msg: SetupBaseProgramMain){
+        nativeThrowUnless(132, sender() == self.master);
+        nativeThrowUnless(131, !self.isSetup);
+
+        self.owner = msg.owner;
+        self.recipient = msg.owner;
+        self.isSetup = true;
+        self.reply(SetupMaster{}.toCell());
+    }
+
+    receive(msg: BuyLevel){
+        self.requireUserMain(msg.userId);
+        let msgValue: Int = context().value;
+        let balance: Int = myBalance() - msgValue;
+
+        nativeThrowUnless(131,  msg.levelNumber > 0 &&  msg.levelNumber <= 12);
+
+        let increment: Int = msg.levelNumber * self.gasMultiplier;
+        let levelFee: Int = self.levelFees.get(msg.levelNumber)!!;
+        let levelPrice: Int = self.levelPrices.get(msg.levelNumber)!!;
+
+        let requireMinValue: Int = levelPrice + increment + levelFee;
+        nativeThrowUnless(131, (requireMinValue <= msgValue || msg.userId == 1));
+        
+        nativeReserve(balance + levelFee, 0);
+        self.totalProfit += levelPrice;
+        let init: StateInit = initOf FtBaseProgramUser(msg.userId, myAddress());
+
+        send(SendParameters{
+            to: contractAddress(init),
+            value: 0,
+            mode: SendRemainingBalance,
+            body: ActivateLevel{
+                owner: msg.owner,
+                invitedId: msg.invitedId,
+                levelNumber: msg.levelNumber,
+                levelPrice: levelPrice,
+                recipientExcesses: msg.recipientExcesses
+            }.toCell(),
+            code: msg.levelNumber == 1 ? init.code : null,
+            data: msg.levelNumber == 1 ? init.data : null
+        });
+    }
+
+    receive(msg: UpdateLevelPrice){
+        self.requireOwner();
+        nativeThrowUnless(5, (msg.levelNumber > 0 && msg.levelNumber <= 12));
+        self.levelPrices.set(msg.levelNumber, msg.levelPrice);
+        self.reply("Level price successfully changed".asComment());
+    }
+
+    receive(msg: UpdateLevelFee){
+        self.requireOwner();
+        nativeThrowUnless(5, (msg.levelNumber > 0 && msg.levelNumber <= 12));
+        self.levelFees.set(msg.levelNumber, msg.levelFee);
+        self.reply("Level fee successfully changed".asComment());
+    }
+
+    receive(msg: UpdateGasMultiplier){
+        self.requireOwner();
+        nativeThrowUnless(5, msg.newValue > ton("0.5"));
+        self.gasMultiplier = msg.newValue;
+        self.reply("Gas multiplier successfully changed".asComment());
+    }
+
+    receive(msg: UpdateRecipientAddress){
+        self.requireOwner();
+        self.recipient = msg.newAddress;
+        self.reply("Recipient address successfully changed".asComment());
+    }
+
+    // ------------------ Private Function  ------------------ //
+
+    fun requireUserMain(id: Int){
+        nativeThrowUnless(132, sender() == self.userMainAddress(id));
+    }
+
+    fun setupLevelPrice(){
+        self.levelPrices.set(1, ton("1.0"));
+        self.levelPrices.set(2, ton("2.0"));
+        self.levelPrices.set(3, ton("4.0"));
+        self.levelPrices.set(4, ton("7.0"));
+        self.levelPrices.set(5, ton("12.0"));
+        self.levelPrices.set(6, ton("22.0"));
+        self.levelPrices.set(7, ton("40.0"));
+        self.levelPrices.set(8, ton("70.0"));
+        self.levelPrices.set(9, ton("120.0"));
+        self.levelPrices.set(10, ton("220.0"));
+        self.levelPrices.set(11, ton("400.0"));
+        self.levelPrices.set(12, ton("790.0"));
+    }
+
+    fun setupLevelFee(){
+        self.levelFees.set(1, ton("0.25"));
+        self.levelFees.set(2, ton("0.5"));
+        self.levelFees.set(3, ton("1.0"));
+        self.levelFees.set(4, ton("1.75"));
+        self.levelFees.set(5, ton("3.0"));
+        self.levelFees.set(6, ton("5.5"));
+        self.levelFees.set(7, ton("10.0"));
+        self.levelFees.set(8, ton("17.5"));
+        self.levelFees.set(9, ton("30.0"));
+        self.levelFees.set(10, ton("55.0"));
+        self.levelFees.set(11, ton("100.0"));
+        self.levelFees.set(12, ton("197.5"));
+    }
+
+    // ------------------ Get Functions ------------------ //
+
+    get fun programName(): String {
+        return self.programName;
+    }
+
+    get fun gasMultiplier(): Int {
+        return self.gasMultiplier;
+    }
+
+    get fun levelPrices(): map<Int as uint8, Int> {
+        return self.levelPrices;
+    }
+
+    get fun levelFees(): map<Int as uint8, Int> {
+        return self.levelFees;
+    }
+
+    get fun totalProfit(): Int {
+        return self.totalProfit;
+    }
+
+    get fun masterAddress(): Address {
+        return self.master;
+    }
+
+    get fun recipientAddress(): Address {
+        return self.recipient;
+    }
+
+    get fun balance(): Int {
+        return myBalance();
+    }
+
+    get fun userMainAddress(id: Int): Address{
+        let init: StateInit = initOf FtUserMain(id, self.master);
+        return contractAddress(init);
+    }
+
+    get fun programUserAddress(id: Int): Address{
+        let init: StateInit = initOf FtBaseProgramUser(id, myAddress());
+        return contractAddress(init);
+    }
+}

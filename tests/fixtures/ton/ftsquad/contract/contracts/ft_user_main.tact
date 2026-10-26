@@ -1,1 +1,148 @@
-aW1wb3J0ICJAc3RkbGliL293bmFibGUiOwppbXBvcnQgIkBzdGRsaWIvZGVwbG95IjsKCmltcG9ydCAiLi9tZXNzYWdlcy50YWN0IjsKaW1wb3J0ICIuL2Z0X3VzZXJfc3RvcmFnZS50YWN0IjsKCmNvbnRyYWN0IEZ0VXNlck1haW4gd2l0aCBEZXBsb3lhYmxlLCBPd25hYmxlIHsKICAgIGNvbnN0IG1pblRvbnNGb3JTdG9yYWdlOiBJbnQgPSB0b24oIjAuMSIpOwogICAgb3duZXI6IEFkZHJlc3M7CiAgICBtYXN0ZXI6IEFkZHJlc3M7CiAgICBqb2luQXQ6IEludDsKCiAgICBpZDogSW50IGFzIHVpbnQ2NDsKICAgIGludml0ZWRJZDogSW50IGFzIHVpbnQ2NCA9IDA7CiAgICByZWZlcnJhbENvdW50OiBJbnQgYXMgdWludDMyID0gMDsKCiAgICBwcm9ncmFtczogbWFwPEludCBhcyB1aW50OCwgQWRkcmVzcz4gPSBlbXB0eU1hcCgpOwoKICAgIGluaXQoaWQ6IEludCwgbWFzdGVyOiBBZGRyZXNzKXsKICAgICAgICBzZWxmLmlkID0gaWQ7CiAgICAgICAgc2VsZi5vd25lciA9IHNlbmRlcigpOwogICAgICAgIHNlbGYubWFzdGVyID0gbWFzdGVyOwogICAgICAgIHNlbGYuam9pbkF0ID0gbm93KCk7CiAgICB9CgogICAgcmVjZWl2ZShtc2c6IFNldHVwVXNlck1haW4pewogICAgICAgIG5hdGl2ZVRocm93VW5sZXNzKDEzMiwgc2VuZGVyKCkgPT0gc2VsZi51c2VyU3RvcmFnZUFkZHJlc3MobXNnLm93bmVyKSk7CiAgICAgICAgbmF0aXZlUmVzZXJ2ZShzZWxmLm1pblRvbnNGb3JTdG9yYWdlLCAwKTsKCiAgICAgICAgc2VsZi5vd25lciA9IG1zZy5vd25lcjsKICAgICAgICBzZWxmLmludml0ZWRJZCA9IG1zZy5pbnZpdGVkSWQ7CiAgICAgICAgc2VsZi5wcm9ncmFtcyA9IG1zZy5wcm9ncmFtczsKCiAgICAgICAgc2VsZi5hZGRSZWZlcnJhbCgpOwogICAgICAgIHNlbGYuYnV5KDAsIDEsIG1zZy5vd25lcik7CiAgICB9CgogICAgcmVjZWl2ZShtc2c6IEFkZFJlZmVycmFsKXsKICAgICAgICBuYXRpdmVUaHJvd1VubGVzcygxMzIsIHNlbmRlcigpID09IHNlbGYudXNlck1haW5BZGRyZXNzKG1zZy51c2VySWQpKTsKICAgICAgICBzZWxmLnJlZmVycmFsQ291bnQgKz0gMTsKICAgICAgICBjb21taXQoKTsKICAgICAgICAKICAgICAgICBzZW5kKFNlbmRQYXJhbWV0ZXJzewogICAgICAgICAgICB0bzogbXNnLnVzZXJBZGRyZXNzLAogICAgICAgICAgICB2YWx1ZTogMCwKICAgICAgICAgICAgbW9kZTogU2VuZElnbm9yZUVycm9ycyB8IFNlbmRSZW1haW5pbmdWYWx1ZSwKICAgICAgICAgICAgYm9keTogIkV4Y2Vzc2VzIi5hc0NvbW1lbnQoKSwKICAgICAgICB9KTsKICAgIH0KCiAgICByZWNlaXZlKG1zZzogQnV5KXsKICAgICAgICBuYXRpdmVUaHJvd1VubGVzcygxMzEsIHNlbGYucHJvZ3JhbXMuZ2V0KG1zZy5wcm9ncmFtSWQpICE9IG51bGwpOwogICAgICAgIG5hdGl2ZVJlc2VydmUoc2VsZi5taW5Ub25zRm9yU3RvcmFnZSwgMCk7CiAgICAgICAgc2VsZi5idXkobXNnLnByb2dyYW1JZCwgbXNnLmxldmVsTnVtYmVyLCBzZW5kZXIoKSk7CiAgICB9CgogICAgcmVjZWl2ZSgiVXBkYXRlUHJvZ3JhbXMiKXsKICAgICAgICBzZW5kKFNlbmRQYXJhbWV0ZXJzewogICAgICAgICAgICB0bzogc2VsZi5tYXN0ZXIsCiAgICAgICAgICAgIHZhbHVlOiAwLAogICAgICAgICAgICBtb2RlOiBTZW5kUmVtYWluaW5nVmFsdWUgfCBTZW5kSWdub3JlRXJyb3JzLAogICAgICAgICAgICBib2R5OiAiR2V0UHJvZ3JhbUFkZHJlc3NlcyIuYXNDb21tZW50KCkKICAgICAgICB9KTsKICAgIH0KCiAgICByZWNlaXZlKG1zZzogR2V0SW52aXRlZElkKSB7CiAgICAgICAgc2VsZi5yZXBseShVcGRhdGVJbnZpdGVkSWR7CiAgICAgICAgICAgIGludml0ZWRJZDogc2VsZi5pbnZpdGVkSWQsCiAgICAgICAgICAgIGZvcndhcmRQYXlsb2FkOiBtc2cuZm9yd2FyZFBheWxvYWQKICAgICAgICB9LnRvQ2VsbCgpKTsKICAgIH0KCiAgICByZWNlaXZlKG1zZzogUHJvZ3JhbUFkZHJlc3Nlcyl7CiAgICAgICAgbmF0aXZlVGhyb3dVbmxlc3MoMTMyLCBzZW5kZXIoKSA9PSBzZWxmLm1hc3Rlcik7CiAgICAgICAgc2VsZi5wcm9ncmFtcyA9IG1zZy5wcm9ncmFtczsKICAgICAgICBzZW5kKFNlbmRQYXJhbWV0ZXJzewogICAgICAgICAgICB0bzogc2VsZi5vd25lciwKICAgICAgICAgICAgdmFsdWU6IDAsCiAgICAgICAgICAgIG1vZGU6IFNlbmRSZW1haW5pbmdWYWx1ZSB8IFNlbmRJZ25vcmVFcnJvcnMsCiAgICAgICAgICAgIGJvZHk6ICJFeGNlc3NlcyIuYXNDb21tZW50KCkKICAgICAgICB9KTsKICAgIH0KCiAgICAvLyAtLS0tLS0tLS0tLS0tLS0tLS0gUHJpdmF0ZSBGdW5jdGlvbiAgLS0tLS0tLS0tLS0tLS0tLS0tIC8vCgogICAgZnVuIGJ1eShwcm9ncmFtSWQ6IEludCwgbGV2ZWxOdW1iZXI6IEludCwgcmVjaXBpZW50RXhjZXNzZXM6IEFkZHJlc3MpewogICAgICAgIHNlbmQoU2VuZFBhcmFtZXRlcnN7CiAgICAgICAgICAgIHRvOiBzZWxmLnByb2dyYW1zLmdldChwcm9ncmFtSWQpISEsCiAgICAgICAgICAgIHZhbHVlOiAwLAogICAgICAgICAgICBtb2RlOiBTZW5kUmVtYWluaW5nQmFsYW5jZSB8IFNlbmRQYXlGd2RGZWVzU2VwYXJhdGVseSwKICAgICAgICAgICAgYm9keTogQnV5TGV2ZWx7CiAgICAgICAgICAgICAgICBvd25lcjogc2VsZi5vd25lciwKICAgICAgICAgICAgICAgIHVzZXJJZDogc2VsZi5pZCwKICAgICAgICAgICAgICAgIGludml0ZWRJZDogc2VsZi5pbnZpdGVkSWQsCiAgICAgICAgICAgICAgICBsZXZlbE51bWJlcjogbGV2ZWxOdW1iZXIsCiAgICAgICAgICAgICAgICByZWNpcGllbnRFeGNlc3NlczogcmVjaXBpZW50RXhjZXNzZXMKICAgICAgICAgICAgfS50b0NlbGwoKQogICAgICAgIH0pOwogICAgfQoKICAgIGZ1biBhZGRSZWZlcnJhbCgpewogICAgICAgIHNlbmQoU2VuZFBhcmFtZXRlcnN7CiAgICAgICAgICAgIHRvOiBzZWxmLnVzZXJNYWluQWRkcmVzcyhzZWxmLmludml0ZWRJZCksCiAgICAgICAgICAgIHZhbHVlOiB0b24oIjAuMDUiKSwKICAgICAgICAgICAgbW9kZTogU2VuZElnbm9yZUVycm9ycyB8IFNlbmRQYXlGd2RGZWVzU2VwYXJhdGVseSwKICAgICAgICAgICAgYm9keTogQWRkUmVmZXJyYWwgewogICAgICAgICAgICAgICAgdXNlcklkOiBzZWxmLmlkLAogICAgICAgICAgICAgICAgdXNlckFkZHJlc3M6IHNlbGYub3duZXIKICAgICAgICAgICAgfS50b0NlbGwoKQogICAgICAgIH0pOwogICAgfQoKICAgIC8vIC0tLS0tLS0tLS0tLS0tLS0tLSBHZXQgRnVuY3Rpb24gIC0tLS0tLS0tLS0tLS0tLS0tLSAvLwoKICAgIGdldCBmdW4gaWQoKTogSW50IHsKICAgICAgICByZXR1cm4gc2VsZi5pZDsKICAgIH0KCiAgICBnZXQgZnVuIGJhbGFuY2UoKTogSW50IHsKICAgICAgICByZXR1cm4gbXlCYWxhbmNlKCk7CiAgICB9CgogICAgZ2V0IGZ1biBpbnZpdGVkSWQoKTogSW50PyB7CiAgICAgICAgcmV0dXJuIHNlbGYuaW52aXRlZElkOwogICAgfQoKICAgIGdldCBmdW4gcmVmZXJyYWxDb3VudCgpOiBJbnQgewogICAgICAgIHJldHVybiBzZWxmLnJlZmVycmFsQ291bnQ7CiAgICB9CgogICAgZ2V0IGZ1biBwcm9ncmFtcygpOiBtYXA8SW50IGFzIHVpbnQ4LCBBZGRyZXNzPiB7CiAgICAgICAgcmV0dXJuIHNlbGYucHJvZ3JhbXM7CiAgICB9CgogICAgZ2V0IGZ1biB1c2VyTWFpbkFkZHJlc3MoaWQ6IEludCk6IEFkZHJlc3N7CiAgICAgICAgbGV0IGluaXQ6IFN0YXRlSW5pdCA9IGluaXRPZiBGdFVzZXJNYWluKGlkLCBzZWxmLm1hc3Rlcik7CiAgICAgICAgcmV0dXJuIGNvbnRyYWN0QWRkcmVzcyhpbml0KTsKICAgIH0KCiAgICBnZXQgZnVuIHVzZXJTdG9yYWdlQWRkcmVzcyhhZGRyZXNzOiBBZGRyZXNzKTogQWRkcmVzc3sKICAgICAgICBsZXQgaW5pdDogU3RhdGVJbml0ID0gaW5pdE9mIEZ0VXNlclN0b3JhZ2UoYWRkcmVzcywgc2VsZi5tYXN0ZXIpOwogICAgICAgIHJldHVybiBjb250cmFjdEFkZHJlc3MoaW5pdCk7CiAgICB9CgogICAgZ2V0IGZ1biBqb2luQXQoKTogSW50IHsKICAgICAgICByZXR1cm4gc2VsZi5qb2luQXQ7CiAgICB9Cn0K
+import "@stdlib/ownable";
+import "@stdlib/deploy";
+
+import "./messages.tact";
+import "./ft_user_storage.tact";
+
+contract FtUserMain with Deployable, Ownable {
+    const minTonsForStorage: Int = ton("0.1");
+    owner: Address;
+    master: Address;
+    joinAt: Int;
+
+    id: Int as uint64;
+    invitedId: Int as uint64 = 0;
+    referralCount: Int as uint32 = 0;
+
+    programs: map<Int as uint8, Address> = emptyMap();
+
+    init(id: Int, master: Address){
+        self.id = id;
+        self.owner = sender();
+        self.master = master;
+        self.joinAt = now();
+    }
+
+    receive(msg: SetupUserMain){
+        nativeThrowUnless(132, sender() == self.userStorageAddress(msg.owner));
+        nativeReserve(self.minTonsForStorage, 0);
+
+        self.owner = msg.owner;
+        self.invitedId = msg.invitedId;
+        self.programs = msg.programs;
+
+        self.addReferral();
+        self.buy(0, 1, msg.owner);
+    }
+
+    receive(msg: AddReferral){
+        nativeThrowUnless(132, sender() == self.userMainAddress(msg.userId));
+        self.referralCount += 1;
+        commit();
+        
+        send(SendParameters{
+            to: msg.userAddress,
+            value: 0,
+            mode: SendIgnoreErrors | SendRemainingValue,
+            body: "Excesses".asComment(),
+        });
+    }
+
+    receive(msg: Buy){
+        nativeThrowUnless(131, self.programs.get(msg.programId) != null);
+        nativeReserve(self.minTonsForStorage, 0);
+        self.buy(msg.programId, msg.levelNumber, sender());
+    }
+
+    receive("UpdatePrograms"){
+        send(SendParameters{
+            to: self.master,
+            value: 0,
+            mode: SendRemainingValue | SendIgnoreErrors,
+            body: "GetProgramAddresses".asComment()
+        });
+    }
+
+    receive(msg: GetInvitedId) {
+        self.reply(UpdateInvitedId{
+            invitedId: self.invitedId,
+            forwardPayload: msg.forwardPayload
+        }.toCell());
+    }
+
+    receive(msg: ProgramAddresses){
+        nativeThrowUnless(132, sender() == self.master);
+        self.programs = msg.programs;
+        send(SendParameters{
+            to: self.owner,
+            value: 0,
+            mode: SendRemainingValue | SendIgnoreErrors,
+            body: "Excesses".asComment()
+        });
+    }
+
+    // ------------------ Private Function  ------------------ //
+
+    fun buy(programId: Int, levelNumber: Int, recipientExcesses: Address){
+        send(SendParameters{
+            to: self.programs.get(programId)!!,
+            value: 0,
+            mode: SendRemainingBalance | SendPayFwdFeesSeparately,
+            body: BuyLevel{
+                owner: self.owner,
+                userId: self.id,
+                invitedId: self.invitedId,
+                levelNumber: levelNumber,
+                recipientExcesses: recipientExcesses
+            }.toCell()
+        });
+    }
+
+    fun addReferral(){
+        send(SendParameters{
+            to: self.userMainAddress(self.invitedId),
+            value: ton("0.05"),
+            mode: SendIgnoreErrors | SendPayFwdFeesSeparately,
+            body: AddReferral {
+                userId: self.id,
+                userAddress: self.owner
+            }.toCell()
+        });
+    }
+
+    // ------------------ Get Function  ------------------ //
+
+    get fun id(): Int {
+        return self.id;
+    }
+
+    get fun balance(): Int {
+        return myBalance();
+    }
+
+    get fun invitedId(): Int? {
+        return self.invitedId;
+    }
+
+    get fun referralCount(): Int {
+        return self.referralCount;
+    }
+
+    get fun programs(): map<Int as uint8, Address> {
+        return self.programs;
+    }
+
+    get fun userMainAddress(id: Int): Address{
+        let init: StateInit = initOf FtUserMain(id, self.master);
+        return contractAddress(init);
+    }
+
+    get fun userStorageAddress(address: Address): Address{
+        let init: StateInit = initOf FtUserStorage(address, self.master);
+        return contractAddress(init);
+    }
+
+    get fun joinAt(): Int {
+        return self.joinAt;
+    }
+}

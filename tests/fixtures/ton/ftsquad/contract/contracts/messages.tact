@@ -1,1 +1,189 @@
-aW1wb3J0ICIuL3N0cnVjdHMudGFjdCI7CgovLyAtLS0tLS0tLS0tLS0tLS0tLS0gRnRNYXN0ZXIgLS0tLS0tLS0tLS0tLS0tLS0tIC8vCgptZXNzYWdlIFNldHVwTWFzdGVyewoKfQoKbWVzc2FnZSBTZXR1cEpvaW5QcmljZXsKICAgIG5ld0pvaW5QcmljZTogSW50IGFzIGNvaW5zOwp9CgptZXNzYWdlIFNldHVwU3F1YWRQcmljZXsKICAgIG5ld1NxdWFkUHJpY2U6IEludCBhcyBjb2luczsKfQoKbWVzc2FnZSBVcGRhdGVQcm9ncmFtQWRkcmVzc3sKICAgIHByb2dyYW1JbmRleDogSW50IGFzIHVpbnQ4OwogICAgcHJvZ3JhbUFkZHJlc3M6IEFkZHJlc3M7Cn0KCm1lc3NhZ2UgR2lmdEpvaW57CiAgICB1c2VyQWRkcmVzczogQWRkcmVzczsKICAgIGludml0ZWRJZDogSW50IGFzIHVpbnQ2NDsKfQoKbWVzc2FnZSBKb2luewogICAgdXNlckFkZHJlc3M6IEFkZHJlc3M/OwogICAgaW52aXRlZElkOiBJbnQgYXMgdWludDY0Owp9CgptZXNzYWdlIENyZWF0ZVNxdWFkewogICAgb3duZXI6IEFkZHJlc3M/Owp9CgptZXNzYWdlIFByb2dyYW1BZGRyZXNzZXN7CiAgICBwcm9ncmFtczogbWFwPEludCBhcyB1aW50OCwgQWRkcmVzcz47Cn0KCgovLyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0gRnRTcXVhZCAtLS0tLS0tLS0tLS0tLS0tLS0gLy8KCm1lc3NhZ2UgUGF5Rm9yU3F1YWRDcmVhdGlvbnsKICAgIHJlY2VpdmVyOiBBZGRyZXNzOwogICAgcHJpY2U6IEludCBhcyBjb2luczsKfQoKCi8vIC0tLS0tLS0tLS0tLS0tLS0tLSBGdFVzZXJTdG9yYWdlIC0tLS0tLS0tLS0tLS0tLS0tLSAvLwoKbWVzc2FnZSBTZXR1cFVzZXJTdG9yYWdlewogICAgdXNlcklkOiBJbnQgYXMgdWludDY0OwogICAgZm9yd2FyZFBheWxvYWQ6IENlbGw7Cn0KCm1lc3NhZ2UgVmVyaWZ5RXhpc3RlbmNlewogICAgaW52aXRlZElkOiBJbnQgYXMgdWludDY0Owp9CgovLyAtLS0tLS0tLS0tLS0tLS0tLS0gRnRVc2VyTWFpbiAtLS0tLS0tLS0tLS0tLS0tLS0gLy8KCm1lc3NhZ2UgU2V0dXBVc2VyTWFpbnsKICAgIG93bmVyOiBBZGRyZXNzOwogICAgaW52aXRlZElkOiBJbnQgYXMgdWludDY0OwogICAgcHJvZ3JhbXM6IG1hcDxJbnQgYXMgdWludDgsIEFkZHJlc3M+Owp9CgptZXNzYWdlIEFkZFJlZmVycmFsewogICAgdXNlcklkOiBJbnQgYXMgdWludDY0OwogICAgdXNlckFkZHJlc3M6IEFkZHJlc3M7Cn0KCm1lc3NhZ2UgQnV5ewogICAgcHJvZ3JhbUlkOiBJbnQgYXMgdWludDg7CiAgICBsZXZlbE51bWJlcjogSW50IGFzIHVpbnQ4Owp9CgptZXNzYWdlICgweDYxY2E2ZWViKSBHZXRJbnZpdGVkSWR7CiAgICBmb3J3YXJkUGF5bG9hZDogQ2VsbDsKfQoKbWVzc2FnZSAoMHg5ODVhZWUzNSkgVXBkYXRlSW52aXRlZElkewogICAgaW52aXRlZElkOiBJbnQgYXMgdWludDY0OwogICAgZm9yd2FyZFBheWxvYWQ6IENlbGw7Cn0KCi8vIC0tLS0tLS0tLS0tLS0tLS0tLSBGdEJhc2VQcm9ncmFtTWFpbiAtLS0tLS0tLS0tLS0tLS0tLS0gLy8KCm1lc3NhZ2UgU2V0dXBCYXNlUHJvZ3JhbU1haW57CiAgICBvd25lcjogQWRkcmVzczsKfQoKbWVzc2FnZSAoMHhkNTg3MTAwYikgQnV5TGV2ZWx7CiAgICBvd25lcjogQWRkcmVzczsKICAgIHVzZXJJZDogSW50IGFzIHVpbnQ2NDsKICAgIGludml0ZWRJZDogSW50IGFzIHVpbnQ2NDsKICAgIGxldmVsTnVtYmVyOiBJbnQgYXMgdWludDg7CiAgICByZWNpcGllbnRFeGNlc3NlczogQWRkcmVzczsKfQoKbWVzc2FnZSBVcGRhdGVMZXZlbFByaWNlewogICAgbGV2ZWxOdW1iZXI6IEludCBhcyB1aW50ODsKICAgIGxldmVsUHJpY2U6IEludCBhcyBjb2luczsKfQoKbWVzc2FnZSBVcGRhdGVMZXZlbEZlZXsKICAgIGxldmVsTnVtYmVyOiBJbnQgYXMgdWludDg7CiAgICBsZXZlbEZlZTogSW50IGFzIGNvaW5zOwp9CgptZXNzYWdlIFVwZGF0ZUdhc011bHRpcGxpZXJ7CiAgICBuZXdWYWx1ZTogSW50IGFzIGNvaW5zOwp9CgptZXNzYWdlIFVwZGF0ZVJlY2lwaWVudEFkZHJlc3N7CiAgICBuZXdBZGRyZXNzOiBBZGRyZXNzOwp9CgovLyAtLS0tLS0tLS0tLS0tLS0tLS0gRnRCYXNlUHJvZ3JhbVVzZXIgLS0tLS0tLS0tLS0tLS0tLS0tIC8vCgptZXNzYWdlKDB4YjViMjMwMTcpIEFjdGl2YXRlTGV2ZWx7CiAgICBvd25lcjogQWRkcmVzczsKICAgIGludml0ZWRJZDogSW50IGFzIHVpbnQ2NDsKICAgIGxldmVsTnVtYmVyOiBJbnQgYXMgdWludDg7CiAgICBsZXZlbFByaWNlOiBJbnQgYXMgY29pbnM7CiAgICByZWNpcGllbnRFeGNlc3NlczogQWRkcmVzczsKfQoKbWVzc2FnZSgweDk3NGRkM2YwKSBVcGRhdGVNYXRyaXh7CiAgICBpZDogSW50IGFzIHVpbnQ2NDsKICAgIGZyb21JZDogSW50IGFzIHVpbnQ2NDsKICAgIGxldmVsTnVtYmVyOiBJbnQgYXMgdWludDg7CiAgICBsZXZlbFByaWNlOiBJbnQgYXMgY29pbnM7CiAgICByZWNpcGllbnRFeGNlc3NlczogQWRkcmVzczsKfQoKbWVzc2FnZSgweDhhMDI1N2Y0KSBPdmVyZmxvd0Rvd257CiAgICBpZDogSW50IGFzIHVpbnQ2NDsKICAgIGZyb21JZDogSW50IGFzIHVpbnQ2NDsKICAgIGxldmVsTnVtYmVyOiBJbnQgYXMgdWludDg7CiAgICBsZXZlbFByaWNlOiBJbnQgYXMgY29pbnM7CiAgICByZWNpcGllbnRFeGNlc3NlczogQWRkcmVzczsKfQoKbWVzc2FnZSgweDM5MDI1OGZlKSBPdmVyZmxvd1VwewogICAgaWQ6IEludCBhcyB1aW50NjQ7CiAgICBmcm9tSWQ6IEludCBhcyB1aW50NjQ7CiAgICBsZXZlbE51bWJlcjogSW50IGFzIHVpbnQ4OwogICAgbGV2ZWxQcmljZTogSW50IGFzIGNvaW5zOwogICAgcmVjaXBpZW50RXhjZXNzZXM6IEFkZHJlc3M7Cn0KCm1lc3NhZ2UoMHg5NDcyNTMyZCkgR2lmdHsKICAgIGlkOiBJbnQgYXMgdWludDY0OwogICAgZnJvbUlkOiBJbnQgYXMgdWludDY0OwogICAgbGV2ZWxQcmljZTogSW50IGFzIGNvaW5zOwogICAgcmVjaXBpZW50RXhjZXNzZXM6IEFkZHJlc3M7Cn0KCm1lc3NhZ2UoMHgzOTlhYWE1NykgVXBkYXRlVXBwZXJBZGRyZXNzewogICAgZnJvbUlkOiBJbnQgYXMgdWludDY0OwogICAgdXBwZXJBZGRyZXNzOiBBZGRyZXNzOwogICAgbGV2ZWxOdW1iZXI6IEludDsKICAgIHJlY2lwaWVudEV4Y2Vzc2VzOiBBZGRyZXNzOwp9CgovLyAtLS0tLS0tLS0tLS0tLS0tLS0gRnRCYXNlUHJvZ3JhbVVzZXIgLSBlbWl0IC0tLS0tLS0tLS0tLS0tLS0tLSAvLwoKbWVzc2FnZSgweDUyYWZhMGFmKSBPdmVydG9va3sKICAgIGxldmVsTnVtYmVyOiBJbnQgYXMgdWludDg7CiAgICBuZXdWYWx1ZTogSW50IGFzIHVpbnQxNjsKfQoKbWVzc2FnZSgweGNjNTY1NTU2KSBSZWludmVzdE51bWJlcnsKICAgIHJlaW52ZXN0TnVtYmVyOiBJbnQgYXMgdWludDE2OwogICAgc3RhdHVzQ29kZTogSW50PyBhcyB1aW50ODsKfQoKbWVzc2FnZSgweGYwZjUwYTUpIEZpbmlzaEN5Y2xlewogICAgbWF0cml4OiBNYXRyaXg7CiAgICBsZXZlbE51bWJlcjogSW50IGFzIHVpbnQ4OwogICAgcmVpbnZlc3ROdW1iZXI6IEludCBhcyB1aW50MTY7Cn0KCi8vIEZPUiBURVNUCgptZXNzYWdlIE1ha2VVcHBlckFkZHJlc3NOdWxsewogICAgbGV2ZWxOdW1iZXI6IEludCBhcyB1aW50ODsKfQo=
+import "./structs.tact";
+
+// ------------------ FtMaster ------------------ //
+
+message SetupMaster{
+
+}
+
+message SetupJoinPrice{
+    newJoinPrice: Int as coins;
+}
+
+message SetupSquadPrice{
+    newSquadPrice: Int as coins;
+}
+
+message UpdateProgramAddress{
+    programIndex: Int as uint8;
+    programAddress: Address;
+}
+
+message GiftJoin{
+    userAddress: Address;
+    invitedId: Int as uint64;
+}
+
+message Join{
+    userAddress: Address?;
+    invitedId: Int as uint64;
+}
+
+message CreateSquad{
+    owner: Address?;
+}
+
+message ProgramAddresses{
+    programs: map<Int as uint8, Address>;
+}
+
+
+// ------------------------ FtSquad ------------------ //
+
+message PayForSquadCreation{
+    receiver: Address;
+    price: Int as coins;
+}
+
+
+// ------------------ FtUserStorage ------------------ //
+
+message SetupUserStorage{
+    userId: Int as uint64;
+    forwardPayload: Cell;
+}
+
+message VerifyExistence{
+    invitedId: Int as uint64;
+}
+
+// ------------------ FtUserMain ------------------ //
+
+message SetupUserMain{
+    owner: Address;
+    invitedId: Int as uint64;
+    programs: map<Int as uint8, Address>;
+}
+
+message AddReferral{
+    userId: Int as uint64;
+    userAddress: Address;
+}
+
+message Buy{
+    programId: Int as uint8;
+    levelNumber: Int as uint8;
+}
+
+message (0x61ca6eeb) GetInvitedId{
+    forwardPayload: Cell;
+}
+
+message (0x985aee35) UpdateInvitedId{
+    invitedId: Int as uint64;
+    forwardPayload: Cell;
+}
+
+// ------------------ FtBaseProgramMain ------------------ //
+
+message SetupBaseProgramMain{
+    owner: Address;
+}
+
+message (0xd587100b) BuyLevel{
+    owner: Address;
+    userId: Int as uint64;
+    invitedId: Int as uint64;
+    levelNumber: Int as uint8;
+    recipientExcesses: Address;
+}
+
+message UpdateLevelPrice{
+    levelNumber: Int as uint8;
+    levelPrice: Int as coins;
+}
+
+message UpdateLevelFee{
+    levelNumber: Int as uint8;
+    levelFee: Int as coins;
+}
+
+message UpdateGasMultiplier{
+    newValue: Int as coins;
+}
+
+message UpdateRecipientAddress{
+    newAddress: Address;
+}
+
+// ------------------ FtBaseProgramUser ------------------ //
+
+message(0xb5b23017) ActivateLevel{
+    owner: Address;
+    invitedId: Int as uint64;
+    levelNumber: Int as uint8;
+    levelPrice: Int as coins;
+    recipientExcesses: Address;
+}
+
+message(0x974dd3f0) UpdateMatrix{
+    id: Int as uint64;
+    fromId: Int as uint64;
+    levelNumber: Int as uint8;
+    levelPrice: Int as coins;
+    recipientExcesses: Address;
+}
+
+message(0x8a0257f4) OverflowDown{
+    id: Int as uint64;
+    fromId: Int as uint64;
+    levelNumber: Int as uint8;
+    levelPrice: Int as coins;
+    recipientExcesses: Address;
+}
+
+message(0x390258fe) OverflowUp{
+    id: Int as uint64;
+    fromId: Int as uint64;
+    levelNumber: Int as uint8;
+    levelPrice: Int as coins;
+    recipientExcesses: Address;
+}
+
+message(0x9472532d) Gift{
+    id: Int as uint64;
+    fromId: Int as uint64;
+    levelPrice: Int as coins;
+    recipientExcesses: Address;
+}
+
+message(0x399aaa57) UpdateUpperAddress{
+    fromId: Int as uint64;
+    upperAddress: Address;
+    levelNumber: Int;
+    recipientExcesses: Address;
+}
+
+// ------------------ FtBaseProgramUser - emit ------------------ //
+
+message(0x52afa0af) Overtook{
+    levelNumber: Int as uint8;
+    newValue: Int as uint16;
+}
+
+message(0xcc565556) ReinvestNumber{
+    reinvestNumber: Int as uint16;
+    statusCode: Int? as uint8;
+}
+
+message(0xf0f50a5) FinishCycle{
+    matrix: Matrix;
+    levelNumber: Int as uint8;
+    reinvestNumber: Int as uint16;
+}
+
+// FOR TEST
+
+message MakeUpperAddressNull{
+    levelNumber: Int as uint8;
+}
