@@ -53,12 +53,24 @@ def _args(job: dict[str, Any]) -> dict[str, Any]:
     return json.loads(a) if isinstance(a, str) else a
 
 
-async def _terminal(sup: Any, step: dict[str, Any], state: str, error_code: str | None = None) -> None:
+async def _terminal(sup: Any, step: dict[str, Any], state: str, error_code: str | None = None,
+                    error_detail: dict[str, Any] | None = None) -> None:
     async with sup._pool.connection() as conn:
         repo = JobRepo(conn)
         async with conn.transaction():
             await repo.complete_step(step["id"], "done")
-            await repo.transition(step["job_id"], state, error_code=error_code)
+            await repo.transition(step["job_id"], state, error_code=error_code, error_detail=error_detail)
+
+
+# The automatic sources an address-only Solana job is looked up in (06 3.2); named in the
+# E_SOURCE_NOT_FOUND detail so the client knows a repo start is the next step, not a retry.
+_SOURCE_PROVIDERS = "OtterSec verify registry, program security.txt"
+
+
+def _program_state(address: str) -> dict[str, Any]:
+    """chain_state.json fields of a deployed program: slot, loader, F5 hash, upgrade authority and
+    the embedded security.txt, from the supervisor's own RPC read (never a registry value)."""
+    return onchain.deployed_program(address).as_chain_state()
 
 
 async def run_step(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
@@ -98,15 +110,20 @@ async def _chain_state(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> N
         return
 
     address = job.get("address")
-    # A repo or inline-source job has no deployed address: it is always the program-source flow.
+    loop = asyncio.get_event_loop()
+    # A repo or inline-source job is always the program-source flow. With a deployment address the
+    # deployed program is still read here (hash, authority, slot): the build step compares against
+    # it for the tier. Without that read every repo+deployment job stayed without a tier (F1 open).
     if not address or job.get("source_kind") in ("repo", "files"):
+        cs: dict[str, Any] = {"kind": "program"}
+        if address:
+            cs = await loop.run_in_executor(None, lambda: _program_state(address))
         kind_path.write_text(json.dumps({"kind": "program"}), encoding="utf-8")
-        (out_dir / "chain_state.json").write_text(json.dumps({"kind": "program"}), encoding="utf-8")
-        await sup._mark_step(step["id"], "done")
+        (out_dir / "chain_state.json").write_text(json.dumps(cs), encoding="utf-8")
+        await sup._mark_step(step["id"], "done", provenance={"slot": cs.get("slot")} if cs.get("slot") else None)
         await sup._after_chain_state(step, job)
         return
 
-    loop = asyncio.get_event_loop()
     m = await loop.run_in_executor(None, lambda: onchain.spl_mint(address))
 
     if m.why is None:  # a real, initialized mint -> token-safety flow
@@ -120,11 +137,14 @@ async def _chain_state(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> N
         return
 
     if m.program in _LOADERS:  # a deployed program -> source flow via the SolanaAdapter
-        kind_path.write_text(json.dumps({"kind": "program", "address": address, "slot": m.slot}),
+        # The full program read: F5 hash and upgrade authority for the tier decision, security.txt
+        # for the source lookup (06 3.2.1). A failed read keeps the slot and names why.
+        cs = await loop.run_in_executor(None, lambda: _program_state(address))
+        cs.setdefault("slot", m.slot)
+        kind_path.write_text(json.dumps({"kind": "program", "address": address, "slot": cs.get("slot")}),
                              encoding="utf-8")
-        (out_dir / "chain_state.json").write_text(
-            json.dumps({"kind": "program", "address": address, "slot": m.slot}), encoding="utf-8")
-        await sup._mark_step(step["id"], "done", provenance={"slot": m.slot})
+        (out_dir / "chain_state.json").write_text(json.dumps(cs), encoding="utf-8")
+        await sup._mark_step(step["id"], "done", provenance={"slot": cs.get("slot")})
         await sup._after_chain_state(step, job)
         return
 
@@ -198,7 +218,12 @@ async def _fetch_program(sup: Any, step: dict[str, Any], job: dict[str, Any], ou
         None, lambda: SolanaAdapter().fetch_source(j, cs))
     if not bundles or not bundles[0].candidates:
         (out_dir / "candidates.json").write_text("[]", encoding="utf-8")
-        await _terminal(sup, step, "insufficient_source", error_code="E_SOURCE_NOT_FOUND")
+        # Named for the client (status error.what): which registries were read and that a repo
+        # start with this deployment address is the way forward (2026-10-26 Solana arm).
+        detail = {"reason": "NO_VERIFIED_BUILD" if not args.get("repo_url") else "REPO_EMPTY",
+                  "providers": _SOURCE_PROVIDERS,
+                  "security_txt": bool(cs.get("security_txt"))}
+        await _terminal(sup, step, "insufficient_source", error_code="E_SOURCE_NOT_FOUND", error_detail=detail)
         return
     cand = bundles[0].candidates[0]
     pin = PinnedSource.from_files({p: t.encode("utf-8") for p, t in cand.files.items()},
@@ -230,6 +255,13 @@ async def _build(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
         await sup._mark_step(step["id"], "done")
         await sup._after_build(step, result)
         return
+    build_path = out_dir / "build_result.json"
+    if build_path.exists():  # restartability (09 3.4): the tier is still set from the recorded build
+        result = json.loads(build_path.read_text(encoding="utf-8"))
+        prov = await record_provenance(sup, job, out_dir, result) if not (out_dir / "deployment.json").exists() else None
+        await sup._mark_step(step["id"], "done", provenance=prov)
+        await sup._after_build(step, result)
+        return
     await _build_program(sup, step, job, out_dir)
 
 
@@ -255,8 +287,108 @@ async def _build_program(sup: Any, step: dict[str, Any], job: dict[str, Any], ou
               "untrusted_inputs": getattr(cand, "untrusted_inputs", False), "provenance": None,
               "detail": build_detail(r.reason, r.stderr_head) if r.status != "ok" else None}
     (out_dir / "build_result.json").write_text(json.dumps(result), encoding="utf-8")
-    await sup._mark_step(step["id"], "done")
+    prov = await record_provenance(sup, job, out_dir, result)
+    await sup._mark_step(step["id"], "done", provenance=prov)
     await sup._after_build(step, result)
+
+
+# --------------------------------------------------------------------------------- provenance (06 2.4)
+
+def _read_json(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def resolve_program_provenance(job: dict[str, Any], out_dir: Path, result: dict[str, Any]) -> dict[str, Any]:
+    """The deployment.json document for a built Solana program, from files only: build_result.json,
+    the build's host/ records (hash, image, version), candidates.json and chain_state.json (the
+    deployed hash and authority read at chain_state). No network: the decision is reproducible from
+    the job directory, which is what the startup backfill relies on."""
+    from ..adapters.base import BuildResult, Candidate, Compiler
+    from ..adapters.solana.build import sandbox_layout
+    from ..adapters.solana.map import deployment_doc, map_result
+
+    cands = _read_json(out_dir / "candidates.json", [])
+    raw = cands[0] if cands else None
+    cs = _read_json(out_dir / "chain_state.json", {}) or {}
+    address = job.get("address") or cs.get("address")
+    work_dir = result.get("work_dir")
+    layout = sandbox_layout(Path(work_dir)) if work_dir else None
+    provenance: dict[str, Any] | None = None
+    if raw and result.get("status") == "ok" and work_dir:
+        comp = raw.get("compiler")
+        untrusted = bool(result.get("untrusted_inputs")) or (Path(work_dir) / "host" / "untrusted_inputs.txt").exists()
+        cand = Candidate(provider=raw["provider"], files={}, sha256=raw["sha256"], language=raw.get("language", "rust"),
+                         compiler=Compiler(**comp) if comp else None, settings=dict(raw.get("settings") or {}),
+                         std_json_input=None, entry_contract=raw.get("entry_contract"),
+                         source_url=raw.get("source_url"), untrusted_inputs=untrusted)
+        if job.get("resolved_commit"):
+            cand.settings.setdefault("commit", job["resolved_commit"])
+        br = BuildResult(candidate=cand, status="ok", nsloc=int(result.get("nsloc") or 0), work_dir=work_dir)
+        extras, _rows = map_result(br, {"program_id": address, "verify_items": []}, cs)
+        provenance = extras.get("provenance") or None
+    doc = deployment_doc(provenance, candidate=raw, chain_state=cs, address=address, layout=layout,
+                         build_status=str(result.get("status") or "failed"))
+    doc["candidate"] = {**(doc["candidate"] or {}), "untrusted_inputs": bool(
+        (doc["candidate"] or {}).get("untrusted_inputs") or result.get("untrusted_inputs"))} if doc["candidate"] else None
+    return doc
+
+
+async def record_provenance(sup: Any, job: dict[str, Any], out_dir: Path, result: dict[str, Any]) -> dict[str, Any]:
+    """Write deployment.json and set jobs.tier (and code_hash) for a built program (06 2.4).
+
+    Returns the step provenance summary. The mint flow never comes here: a mint has no build."""
+    doc = resolve_program_provenance(job, out_dir, result)
+    (out_dir / "deployment.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    fields: dict[str, Any] = {"tier": doc["tier"]}
+    onchain_hash = ((doc.get("dep") or {}).get("comparison") or {}).get("onchain_hash")
+    if onchain_hash and not job.get("code_hash"):
+        fields["code_hash"] = onchain_hash
+    async with sup._pool.connection() as conn:
+        await JobRepo(conn).update_job_fields(job["job_id"], **fields)
+    dep = doc.get("dep") or {}
+    logger.info("solana job %s: dep.match=%s reason=%s tier=%s", job["job_id"][-8:], dep.get("match"),
+                dep.get("reason"), doc["tier"])
+    return {"tier": doc["tier"], "dep_match": dep.get("match"), "dep_reason": dep.get("reason")}
+
+
+async def backfill_tiers(sup: Any) -> int:
+    """Set the tier of every ready Solana job built before the provenance step existed
+    (2026-10-26: job_F6FZ... sat at F1 open with tier null). Runs once at supervisor start, from the
+    job directory alone; a job whose chain_state has no deployed hash is read once over RPC first.
+    Returns the number of jobs updated."""
+    done = 0
+    try:
+        async with sup._pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("select job_id from jobs where chain = 'solana' and tier is null "
+                              "and state in ('ready', 'finalized') order by created_at")
+            job_ids = [r[0] for r in await cur.fetchall()]
+    except Exception:
+        logger.exception("solana tier backfill: job listing failed")
+        return 0
+    for job_id in job_ids:
+        try:
+            job = await sup._get_job(job_id)
+            out_dir = sup._job_dir(job_id)
+            result = _read_json(out_dir / "build_result.json", None)
+            if not job or not isinstance(result, dict) or _load_kind(out_dir).get("kind") == "mint":
+                continue
+            cs_path = out_dir / "chain_state.json"
+            cs = _read_json(cs_path, {}) or {}
+            if job.get("address") and not cs.get("deployed_program_hash"):
+                loop = asyncio.get_event_loop()
+                fresh = await loop.run_in_executor(None, lambda a=job["address"]: _program_state(a))
+                cs = {**cs, **{k: v for k, v in fresh.items() if v is not None}}
+                cs_path.write_text(json.dumps(cs), encoding="utf-8")
+            await record_provenance(sup, job, out_dir, result)
+            done += 1
+        except Exception:
+            logger.exception("solana tier backfill failed for %s", job_id[-8:])
+    if done:
+        logger.info("solana tier backfill: %d job(s) tiered", done)
+    return done
 
 
 def build_files(pinned: dict[str, str], workspace_path: Path, settings: dict[str, Any]) -> dict[str, str]:

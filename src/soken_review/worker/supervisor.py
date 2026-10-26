@@ -150,6 +150,34 @@ def _read_json_nofollow(path: Path, max_bytes: int = _MAX_SUPERVISOR_JSON_BYTES)
     return json.loads(data)
 
 
+_TRON_CHAIN_ID = 728126428      # chains.json: the TRON mainnet record (family tron, address_format tron_base58)
+
+
+async def _tron_chain_state(display_address: str, runtime_hex: str) -> dict[str, Any]:
+    """chain_state.json of a TRON deployed-address job, written at fetch from the runtime the TRON
+    fetcher read (05 4.2, F25/F26): the EVM comparison needs `chain_id` (registry family), the
+    runtime and, for a library unit, the 20-byte self address. The block is the TronGrid head at the
+    time of the read when it answers, else None (TronGrid reads are not block-pinned)."""
+    from ..adapters.tron.address import TronAddressError, b58_to_hex
+    from ..adapters.tron.rpc import TronGridClient
+
+    self_address: str | None = None
+    try:
+        internal = b58_to_hex(display_address) if display_address.startswith("T") else display_address
+        internal = internal.lower().removeprefix("0x")
+        internal = internal[2:] if len(internal) == 42 and internal.startswith("41") else internal
+        self_address = "0x" + internal if len(internal) == 40 else None
+    except (TronAddressError, ValueError):
+        self_address = None
+    block: int | None = None
+    try:
+        block = int(await TronGridClient().eth_block_number())
+    except Exception as exc:  # noqa: BLE001 - the block is a label, never a gate
+        logger.info("tron chain_state: block number unavailable (%s)", type(exc).__name__)
+    return {"chain_id": _TRON_CHAIN_ID, "address": display_address, "self_address": self_address,
+            "bytecode": "0x" + runtime_hex.removeprefix("0x"), "block": block}
+
+
 def _rpc_urls(chain_id: int) -> list[str]:
     """Return the ordered list of usable RPC URLs for *chain_id* (05 4.1, failover).
 
@@ -219,6 +247,9 @@ class Supervisor:
         """Main loop: seed new jobs, claim and run steps, heartbeat (09 3.3)."""
         hb_task = asyncio.create_task(self._heartbeat_loop())
         try:
+            # Solana jobs built before the provenance step (2026-10-26) have no tier; set it once
+            # from their job directories so finalize check F1 can close without a new job.
+            await _solana_steps.backfill_tiers(self)
             while True:
                 await self._seed_loop()
                 step = await self._try_claim()
@@ -701,6 +732,12 @@ class Supervisor:
             if tron_addr:
                 _tron_cands, _runtime_hex, _creation_hex = await fetch_source_tron(tron_addr)
                 candidates = _tron_cands
+                if _runtime_hex and not cs_path.exists():
+                    # TRON jobs carry no EVM chain id, so chain_state 0 reads nothing and the build
+                    # compared the rebuild with no runtime: every TRON job was tier B "not checked"
+                    # (CRS Token, 2026-10-26). The runtime TronScan/TronGrid returned here is the
+                    # pinned deployment; the registry id lets _resolve_provenance pick the family.
+                    cs_path.write_text(json.dumps(await _tron_chain_state(tron_addr, _runtime_hex)), encoding="utf-8")
             else:
                 candidates = []
         elif not chain_id or not address:
@@ -1321,10 +1358,13 @@ class Supervisor:
                     dep = DepResult("not_checkable", "build_failed",
                                     notes=[f"chain {cs.get('chain_id')} not in the registry"])
                 else:
+                    # self_address: the 20-byte form a library runtime pushes (TRON chain_state
+                    # keeps the base58 address for display and the hex form for the comparison).
+                    self_address = cs.get("self_address") or address
                     dep = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: evm_deployment_check(family=chain.family, build=build,
                                                            onchain_runtime=cs.get("bytecode"),
-                                                           address=address)
+                                                           address=self_address)
                     )
             prov = resolve_provenance(candidate=build.candidate if build else None, address=address, dep=dep)
             prov["block"] = cs.get("block")

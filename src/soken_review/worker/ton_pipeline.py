@@ -35,7 +35,7 @@ from ..adapters.ton import analyze as _analyze_mod
 from ..adapters.ton import build as _build_mod
 from ..adapters.ton.detect import parse_ton_address
 from ..adapters.ton.fetch import TonReadError, fetch_ton_sources, read_ton_chain_state
-from ..adapters.ton.provenance import Attempt, Dep, Out, resolve_provenance
+from ..adapters.ton.provenance import Attempt, Dep, Out, deployment_doc, resolve_provenance
 from ..adapters.ton.units import count_nsloc_ton
 from ..db.job_repo import JobRepo
 from ..db.leads_repo import persist_leads_from_pin
@@ -278,6 +278,9 @@ async def _build(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
     out, results = await asyncio.get_event_loop().run_in_executor(None, _resolve, out_dir, cs, cands)
     prov = {**out.to_json(), "mc_seqno": cs.get("mc_seqno"), "address": next(iter(cs["accounts"]), None)}
     _write_json(out_dir / "provenance.json", prov)
+    # The report assembly reads deployment.json (never provenance.json): tier A renders from it
+    cand_summary = summary[out.src] if out.src is not None and 0 <= out.src < len(summary) else None
+    _write_json(out_dir / "deployment.json", deployment_doc(prov, cand_summary, job.get("address")))
     logger.info("ton job %s: provenance %s %s", job["job_id"][-8:], out.reason, out.tier)
 
     async with sup._pool.connection() as conn:

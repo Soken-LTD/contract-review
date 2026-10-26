@@ -131,3 +131,89 @@ def map_result(
     ]
 
     return chain_extras, deployment_rows
+
+
+# dep.match (contract/rubric/dep_match.yaml) and the tier for a program the supervisor could not
+# resolve through resolve_provenance: no deployment, or a build that produced no artifact.
+_NO_DEPLOYMENT = {"tier": "B", "match": None, "reason": "NO_DEPLOYMENT_GIVEN"}
+_BUILD_FAILED = {"tier": "B", "match": "not_checkable", "reason": "SOURCE_NOT_REBUILT", "why": "build_failed"}
+
+
+def deployment_doc(
+    provenance: dict[str, Any] | None,
+    *,
+    candidate: dict[str, Any] | None,
+    chain_state: dict[str, Any] | None,
+    address: str | None,
+    layout: dict[str, Any] | None,
+    build_status: str,
+) -> dict[str, Any]:
+    """The `deployment.json` document the report assembly reads for a Solana program (06 2.4).
+
+    `provenance` is the `resolve_provenance` result (map_result's `chain_extras.provenance`), or
+    None when the build produced no hash. The shape is the EVM supervisor's (engine/provenance.py
+    `resolve_provenance`: tier, dep, candidate, block) plus `code_hash` (the F5 hash of the
+    deployed program the supervisor read, "sha256:" prefixed), `unit` "slot" and `chain`.
+
+    Honest tiers (matrix run 2026-10-26, agent-loans): a repo job with a deployment that was built
+    with the nearest published image, or from untrusted inputs, is tier B `not_checkable` with the
+    reason named; tier A needs the exact image of the program's version on a passed U-S1 line and
+    equal hashes; tier C needs a declared build (verify args) that differs. Before this the Solana
+    pipeline set no tier at all, so finalize check F1 stayed open for every Solana job.
+    """
+    cs = chain_state or {}
+    if not address:
+        decision: dict[str, Any] = dict(_NO_DEPLOYMENT)
+    elif build_status != "ok" or not provenance or not provenance.get("tier"):
+        decision = dict(_BUILD_FAILED)
+    else:
+        decision = dict(provenance)
+    tier = decision.get("tier") or "B"
+    match = decision.get("match")
+    reason = str(decision.get("reason") or "")
+    deployed_hash = decision.get("deployed_hash") or cs.get("deployed_program_hash")
+    notes: list[str] = []
+    if decision.get("why"):
+        notes.append(str(decision["why"]))
+    image_match = (layout or {}).get("image_match")
+    if image_match == "nearest":
+        notes.append(f"built with the nearest published image {(layout or {}).get('image_version')} "
+                     f"for solana {(layout or {}).get('version')}; the hash is not compared")
+    dep: dict[str, Any] | None = None
+    if address and match is not None:
+        dep = {
+            "match": match,
+            "reason": reason.lower() or None,
+            "contract": (layout or {}).get("library_name") or ((candidate or {}).get("settings") or {}).get("library_name"),
+            "comparison": {
+                "outcome": match,
+                "local_hash": decision.get("hash"),
+                "onchain_hash": deployed_hash,
+                "hash_equal": bool(decision.get("hash_equal")),
+                "version": (layout or {}).get("version"),
+                "image_match": image_match,
+                "image_version": (layout or {}).get("image_version"),
+                "version_line_passed": bool(decision.get("version_line_passed")),
+            },
+            "notes": notes,
+        }
+    comp = (candidate or {}).get("compiler")
+    comp = comp if isinstance(comp, dict) else {}
+    return {
+        "tier": tier,
+        "label_reason": None,
+        "checks": [],
+        "dep": dep,
+        "candidate": {
+            "provider": candidate.get("provider"),
+            "sha256": candidate.get("sha256"),
+            "compiler": comp.get("version"),
+            "version_pinned_by": comp.get("version_pinned_by"),
+            "untrusted_inputs": bool(candidate.get("untrusted_inputs", False)),
+        } if candidate else None,
+        "block": cs.get("slot"),
+        "unit": "slot",
+        "chain": "solana",
+        "address": address,
+        "code_hash": f"sha256:{deployed_hash}" if deployed_hash else None,
+    }

@@ -643,11 +643,13 @@ _TERMINAL_OR_READY = {
 }
 
 
-def _compute_percent(state: str, steps: list[dict[str, Any]]) -> int:
+def _compute_percent(state: str, steps: list[dict[str, Any]], medians: dict[str, float] | None = None) -> int:
     """Compute progress percent from job state and job_steps rows (03 §3.1 weights).
 
     Weights: fetching=10, building=25, analyzing=50, rendering=15.
-    Within each state, interpolate linearly across done steps.
+    Within each state, interpolate linearly across done steps; the running step counts for the
+    share of its expected time that has elapsed (at most 90 percent of it), so a seven-minute
+    Solana build no longer sits at 10 percent from its first second to its last (2026-10-26).
     """
     # For terminal/complete states return fixed values
     _FIXED: dict[str, int] = {
@@ -690,7 +692,16 @@ def _compute_percent(state: str, steps: list[dict[str, Any]]) -> int:
     if not bucket_steps:
         return base
     done = sum(1 for s in bucket_steps if s["status"] in ("done", "failed", "timeout"))
-    return base + int(rng * done / len(bucket_steps))
+    running = [s for s in bucket_steps if s["status"] == "running" and s.get("started_at") is not None]
+    frac = 0.0
+    if running:
+        from datetime import datetime
+
+        s = running[0]
+        expected = max(1.0, (medians or {}).get(s["step"], _STEP_DEFAULT_S.get(s["step"], 30.0)))
+        elapsed = max(0.0, (datetime.now(UTC) - s["started_at"]).total_seconds())
+        frac = min(0.9, elapsed / expected)
+    return base + int(rng * (done + frac) / len(bucket_steps))
 
 
 # ETA (03 3.1): median of each remaining step over the last 50 jobs of the chain, else these
@@ -699,6 +710,7 @@ _ETA_STATES = frozenset({"queued", "fetching", "building", "analyzing"})
 _STEP_DEFAULT_S: dict[str, float] = {"chain_state": 5, "fetch": 20, "deps": 60, "build": 60, "analyze": 180,
                                      "map": 10, "verify": 30}
 _PIPELINE = [("chain_state", 0), ("fetch", 0), ("build", 0), ("analyze", 0), ("map", 0), ("chain_state", 1)]
+_ETA_FLOOR_S = 30.0        # a running step past its median never reports less than this
 
 
 def _compute_eta(state: str, steps: list[dict[str, Any]], medians: dict[str, float]) -> int | None:
@@ -717,7 +729,11 @@ def _compute_eta(state: str, steps: list[dict[str, Any]], medians: dict[str, flo
         expected = medians.get(name, _STEP_DEFAULT_S.get(name, 30.0))
         run = next((s for s in running if s["step"] == name and s.get("seq", 0) == seq), None)
         if run is not None and run.get("started_at") is not None:
-            expected = max(0.0, expected - (now - run["started_at"]).total_seconds())
+            elapsed = (now - run["started_at"]).total_seconds()
+            # A step past its median is still running: the remaining time is unknown, so the
+            # estimate keeps a floor instead of the "3 s" it repeated for four minutes on a Solana
+            # build (2026-10-26, median from no-op mint builds).
+            expected = expected - elapsed if elapsed < expected else max(_ETA_FLOOR_S, 0.25 * expected)
         total += expected
     return round(total)
 
@@ -827,7 +843,7 @@ def _build_status_response(
         "job_id": job["job_id"],
         "state": state,
         "step": _STATE_STEP.get(state, "stopped"),
-        "percent": _compute_percent(state, _steps),
+        "percent": _compute_percent(state, _steps, medians or {}),
     }
 
     # Upload fields only in awaiting_upload (03 §4.2)

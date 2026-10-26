@@ -141,11 +141,62 @@ def _bytecode_hash(chain_state: dict[str, Any] | None) -> str | None:
     return "sha256:" + hashlib.sha256(raw_bytes).hexdigest()
 
 
+_PIN_UNITS = frozenset({"block", "slot", "seqno"})
+
+
 def _tier_a_unit(chain_state: dict[str, Any] | None, deployment: dict[str, Any] | None) -> str:
-    """Block-counting unit name for the tier A label: 'block' for all EVM families."""
-    # Solana uses 'slot'; for EVM variants (evm, hyperevm, tron) use 'block'.
-    # chain_state and deployment do not store family directly, so default to 'block'.
-    return "block"
+    """Pin-counting unit name for the tier A label and the verification table: the `unit` the
+    family pipeline wrote in deployment.json (Solana 'slot', TON 'seqno'), else 'block' (EVM,
+    HyperEVM, TRON, whose supervisor path writes no unit)."""
+    unit = (deployment or {}).get("unit")
+    return unit if unit in _PIN_UNITS else "block"
+
+
+def _deployed_code_hash(chain_state: dict[str, Any] | None, deployment: dict[str, Any] | None) -> str | None:
+    """On-chain code hash for the cover: sha256 of the EVM runtime in chain_state, else the hash the
+    family pipeline recorded in deployment.json (TON code cell hash, Solana F5 program hash)."""
+    from_state = _bytecode_hash(chain_state)
+    if from_state:
+        return from_state
+    recorded = (deployment or {}).get("code_hash")
+    return str(recorded)[:130] if recorded else None
+
+
+# meta.chain values outside the EVM registry (report schema enum); `job.chain` holds them as is.
+_NON_EVM_CHAINS = frozenset({"solana", "ton", "sui", "aptos", "starknet"})
+_CHAIN_NETWORK = {"solana": "Solana mainnet", "ton": "TON mainnet", "sui": "Sui mainnet",
+                  "aptos": "Aptos mainnet", "starknet": "Starknet mainnet"}
+_DEPLOYED_NOUN = {"solana": "program", "sui": "package", "aptos": "package"}
+# report chain -> checklist family (enums.yaml `family`), as tools/submit._family_from_chain
+_CHAIN_FAMILY = {"solana": "solana", "ton": "ton", "sui": "move", "aptos": "move", "starknet": "cairo"}
+
+
+def _report_chain(job: dict[str, Any]) -> str:
+    """meta.chain: the registry family for EVM chain ids (evm, hyperevm, tron), else the job chain
+    when it is a report chain (solana, ton, ...), else evm."""
+    chain_id = job.get("chain_id")
+    rec = get_chain(int(chain_id)) if chain_id is not None else None
+    if rec is not None:
+        fam = getattr(rec, "family", "evm")
+        return fam if fam in ("hyperevm", "tron") else "evm"
+    chain = str(job.get("chain") or "")
+    return chain if chain in _NON_EVM_CHAINS else "evm"
+
+
+def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
+                   deployment: dict[str, Any] | None) -> str:
+    """Server text for meta.network and the verification table: registry name and id for EVM
+    chains; the chain's mainnet for a deployed non-EVM unit; 'Not deployed' without an address."""
+    chain_id = (chain_state or {}).get("chain_id") or job.get("chain_id")
+    rec = get_chain(int(chain_id)) if chain_id is not None else None
+    if rec is not None:
+        return f"{rec.name} ({chain_id})"[:60]
+    if chain_id:
+        return str(chain_id)[:60]
+    chain = str((deployment or {}).get("chain") or job.get("chain") or "")
+    if job.get("address") and chain in _CHAIN_NETWORK:
+        return _CHAIN_NETWORK[chain]
+    return "Not deployed"
 
 
 def _pin_date_text(chain_state: dict[str, Any] | None, today: date) -> str:
@@ -174,16 +225,15 @@ def _build_verification_blocks(
     dep = deployment.get("dep") or {}
     comparison = dep.get("comparison") or {}
     address = (chain_state or {}).get("address") or job.get("address") or ""
-    chain_id = (chain_state or {}).get("chain_id") or job.get("chain_id")
     block = deployment.get("block") or (chain_state or {}).get("block")
-    code_hash = _bytecode_hash(chain_state) or ""
+    code_hash = _deployed_code_hash(chain_state, deployment) or ""
+    unit_label = {"block": "Block", "slot": "Slot", "seqno": "Masterchain seqno"}[_tier_a_unit(chain_state, deployment)]
     entry_contract_full = dep.get("contract") or ""
     # Shorten "File.sol:ContractName" to just the contract name for display
     entry_contract = entry_contract_full.rsplit(":", 1)[-1] if ":" in entry_contract_full else entry_contract_full
 
     # Chain / network label
-    rec = get_chain(int(chain_id)) if chain_id is not None else None
-    network = f"{rec.name} ({chain_id})" if rec else (str(chain_id) if chain_id else "Not deployed")
+    network = _network_label(job, chain_state, deployment)
 
     blocks: list[dict[str, Any]] = []
 
@@ -193,7 +243,7 @@ def _build_verification_blocks(
         dep_rows.append(["Address", {"addr": address}])
     dep_rows.append(["Chain / network", network])
     if block is not None:
-        dep_rows.append(["Block", int(block)])
+        dep_rows.append([unit_label, int(block)])
     if code_hash:
         dep_rows.append(["On-chain code hash", code_hash])
     if entry_contract:
@@ -274,7 +324,12 @@ def provenance(
         unit = _tier_a_unit(chain_state, deployment)
         date_str = _pin_date_text(chain_state, _today)
         label = t["tier_a"].format(unit=unit, n=block, date=date_str)
-        code_hash = _bytecode_hash(chain_state)
+        code_hash = _deployed_code_hash(chain_state, deployment)
+        if not code_hash:
+            # The schema requires the on-chain code hash on a tier A cover; a pipeline that matched
+            # a rebuild without recording the deployed hash is a server defect, named as such.
+            raise AssemblyError("schema", "tier A provenance requires the deployed code hash "
+                                          "(chain_state bytecode or deployment.json code_hash)")
         as_of = {"block_or_slot": int(block) if block is not None else 0, "date": date_str}
         prov: dict[str, Any] = {
             "tier": "A",
@@ -297,7 +352,7 @@ def provenance(
     if tier == "C":
         if deployment is None:
             raise AssemblyError("schema", "tier C provenance requires deployment.json data")
-        code_hash = _bytecode_hash(chain_state)
+        code_hash = _deployed_code_hash(chain_state, deployment)
         prov = {
             "tier": "C",
             "label": t["tier_c"],
@@ -668,7 +723,8 @@ def _deployment_method_detail(job: dict[str, Any], deployment: dict[str, Any] | 
     dep = (deployment or {}).get("dep") or {}
     cmp_ = dep.get("comparison") or {}
     block = (deployment or {}).get("block")
-    where = f" at block {int(block):,}" if isinstance(block, int) else ""
+    unit = _tier_a_unit(None, deployment)
+    where = f" at {unit} {int(block):,}" if isinstance(block, int) else ""
     if tier == "A" and deployment:
         how = "byte for byte" if dep.get("match") == "exact" else "with immutables, library links and metadata masked"
         return f"The pinned source was rebuilt and compared with the deployed runtime code{where}: matched {how}"
@@ -695,6 +751,16 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     cands = _json(work / "candidates.json", [])
     chain_state = _json(work / "chain_state.json", None)
     deployment = _json(work / "deployment.json", None)
+    if deployment is None and job.get("chain") == "ton":
+        # TON jobs built before 2026-10-26 wrote provenance.json only; the same document is
+        # derived from it so a finalized job renders without a new build (re-finalize path).
+        ton_prov = _json(work / "provenance.json", None)
+        if isinstance(ton_prov, dict) and ton_prov.get("tier"):
+            from ..adapters.ton.provenance import deployment_doc as _ton_deployment_doc
+
+            src_idx = ton_prov.get("src")
+            cand_row = cands[src_idx] if isinstance(src_idx, int) and 0 <= src_idx < len(cands) else None
+            deployment = _ton_deployment_doc(ton_prov, cand_row, job.get("address"))
     map_doc = load_map(pin_root, job_id)[0] if job.get("map_status") != "failed" else None
     facts = load_facts(pin_root, job_id) or []
     file_leads: list[dict[str, Any]] = _json(pin_root / job_id / "leads.json", [])
@@ -705,13 +771,13 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         st = lead_state.get(lead["id"])
         leads.append({**lead, "state": st["state"] if st else lead.get("state", "open"),
                       "reason": st["reason"] if st else None})
-    family = "evm"
     chain_id = job.get("chain_id")
     rec = get_chain(int(chain_id)) if chain_id is not None else None
-    network = f"{rec.name} ({chain_id})" if rec else (str(chain_id) if chain_id else "Not deployed")
-    chain = "evm"
-    if rec is not None and getattr(rec, "family", "evm") in ("hyperevm", "tron"):
-        chain = rec.family
+    network = _network_label(job, chain_state, deployment)
+    # meta.chain and the coverage family: the EVM registry family for chain ids, else the job's own
+    # chain (a TON or Solana job printed as an EVM review listed the EVM checklist areas).
+    chain = _report_chain(job)
+    family = _CHAIN_FAMILY.get(chain, "evm")
 
     # Findings (03 4.14 final ids, 08 2.3 card)
     drafts = await _rows(conn, """
@@ -930,7 +996,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         "report_type": "automated", "kind": texts["sub_line"], "subject": subj["value"], "subject_source": subj["source"],
         "chain": chain, "network": network[:60], "chain_id": chain_id, "explorer": None,
         "addr_url": getattr(rec, "addr_url", None) if rec else None,
-        "deployed_noun": "contract", "source_id_label": "Bytecode hash" if job.get("address") else
+        "deployed_noun": _DEPLOYED_NOUN.get(chain, "contract"),
+        "source_id_label": "Bytecode hash" if job.get("address") else
         ("Commit" if job.get("resolved_commit") else "Files sha256"),
         "provenance": provenance(job, cands, chain_state, deployment, today=today), "report_id": rid, "report_id_short": short,
         "ownership_proven": bool(job["ownership_proven"]), "profile": profile,

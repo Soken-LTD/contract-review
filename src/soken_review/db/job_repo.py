@@ -574,7 +574,11 @@ class JobRepo:
             return await cur.fetchall()  # type: ignore[return-value]
 
     async def step_medians(self, chain: str | None, limit_jobs: int = 50) -> dict[str, float]:
-        """Median seconds per step over the last `limit_jobs` finished jobs of the chain (03 3.1 ETA)."""
+        """Median seconds per step over the last `limit_jobs` finished jobs of the chain (03 3.1 ETA).
+
+        Steps under one second are restarts and no-op steps (a mint job's build, a skipped
+        chain_state), not measurements: on the stand they pulled the Solana build median to 3 s
+        while a real build takes minutes (2026-10-26)."""
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """with recent as (
@@ -586,6 +590,7 @@ class JobRepo:
                             order by extract(epoch from (s.finished_at - s.started_at))) as median_s
                    from job_steps s join recent r on r.job_id = s.job_id
                    where s.status = 'done' and s.started_at is not null and s.finished_at is not null
+                     and extract(epoch from (s.finished_at - s.started_at)) >= 1
                    group by s.step""",
                 (chain, limit_jobs),
             )
