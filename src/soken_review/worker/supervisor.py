@@ -44,6 +44,8 @@ from ..adapters.evm import fetch as _fetch_mod
 from ..adapters.evm import files as _files_mod
 from ..adapters.evm.repo_candidate import repo_candidate_from_manifest, safe_read_repo_tree
 from ..adapters.evm.rpc import RpcAllEndpointsFailed, RpcClientPool
+from ..adapters.tron import analyze as _tron_analyze_mod
+from ..adapters.tron import build as _tron_build_mod
 from ..db.job_repo import JobRepo
 from ..db.leads_repo import persist_leads_from_pin
 from ..engine.injection import server_draft_flags
@@ -1201,11 +1203,15 @@ class Supervisor:
                 logger.warning("job %s: failed to read full tree for B4 integrity check",
                                job_id[-8:], exc_info=True)
 
-        # Run build (synchronous; offload to thread to avoid blocking the loop)
+        # Run build (synchronous; offload to thread to avoid blocking the loop). A TRON job
+        # compiles with the TRON compiler choice (exact tron-solc, else upstream solc of the same
+        # version); the evm build only knows binaries.soliditylang.org version strings and
+        # failed every Tronscan field ("tron_0.6.2_Plato_v4.2": compiler_binary_missing).
         work_dir = out_dir / "work"
         work_dir.mkdir(exist_ok=True)
+        builder = _tron_build_mod.build_tron if await self._is_tron_job(job_id) else _build_mod.build
         build_result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: _build_mod.build(candidate, work_dir=work_dir)
+            None, lambda: builder(candidate, work_dir=work_dir)
         )
 
         result = {
@@ -1283,6 +1289,8 @@ class Supervisor:
 
         # The candidate is the one this supervisor reconstructed and built, never one a step returned
         prov = await self._resolve_provenance(job_id, out_dir, dataclasses.replace(build_result, candidate=candidate))
+        if result.get("compiler_kind"):
+            prov = {**prov, "compiler_kind": result["compiler_kind"], "compiler_used": result.get("compiler_used")}
         await self._mark_step(step_id, "done", provenance=prov)
         await self._after_build(step, result)
 
@@ -1327,6 +1335,10 @@ class Supervisor:
                     (prov.get("dep") or {}).get("match"), prov["tier"])
         return {"tier": prov["tier"], "dep_match": (prov.get("dep") or {}).get("match"),
                 "dep_reason": (prov.get("dep") or {}).get("reason")}
+
+    async def _is_tron_job(self, job_id: str) -> bool:
+        job = await self._get_job(job_id)
+        return bool(job) and job.get("chain") == "tron"
 
     async def _after_build(self, step: dict[str, Any], build_result: dict[str, Any]) -> None:
         """Transition job to analyzing and insert analyze step after build (09 3.6)."""
@@ -1429,9 +1441,12 @@ class Supervisor:
         # repo files the scope selection excluded are known non-review files of this run.
         scope_files, excluded_files = await asyncio.get_event_loop().run_in_executor(
             None, lambda: self._review_file_sets(job_id, out_dir, cand_raw.get("provider")))
+        # TRON: Slither in the tron-analyze image (TRON shim) with the compiler the build used.
+        is_tron = await self._is_tron_job(job_id)
         try:
             leads, static_map, _read_plan = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _analyze_mod.analyze(br, scope_files=scope_files, excluded_files=excluded_files)
+                None, lambda: _tron_analyze_mod.analyze(br) if is_tron
+                else _analyze_mod.analyze(br, scope_files=scope_files, excluded_files=excluded_files)
             )
             degraded = static_map.get("status") in ("not_run", "degraded")
         except Exception:
@@ -1511,6 +1526,9 @@ class Supervisor:
             candidate=cands[0] if cands else None,
             nsloc=int(build["nsloc"]) if build.get("nsloc") is not None else None,
             analyzers=analyzers, build_detail=detail,
+            # the real build outcome for review_status build.status (TRON compiles with a substitute
+            # solc and still gets a `full` map; the map status is not the build status)
+            build_status="ok" if build_ok else "failed",
         ))
         async with self._pool.connection() as conn:
             repo = JobRepo(conn)
@@ -1760,6 +1778,7 @@ _SOLC_OUTPUT_COPY = "solc_output.json"
 _BUILD_NOTE_KEYS = frozenset({
     "b4_source", "b4_rejected", "b4_detail", "libraries_unverified", "had_unknown_settings",
     "forge_version_mismatch", "forge_rc", "forge_stderr_head",
+    "compiler_kind", "compiler_used",
 })
 _MAX_SOLC_OUTPUT_BYTES = 512 * 1024 * 1024
 

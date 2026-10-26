@@ -1,10 +1,11 @@
 """Build, validate and store `map.v1` for a pinned job (04 sections 2.1, 2.2, 1.3; 03 section 3.1 `map`).
 
 `build_map(files, solc_output, categories)` is pure: pinned texts in, map document and per-file
-tokens out. The lexical layer is always present; the semantic layer only when the build produced
-an AST. `map_status`: `full` (semantic layer, every file parsed by a grammar or without error),
-`partial` (semantic layer with fallback or error files, or no AST), `failed` (build failed:
-lexical layer only, 03 3.1).
+tokens out. The lexical layer is always present; the semantic layer when the build produced an AST
+(Solidity) or parsed from source (Solana: semantic_solana, TON: semantic_ton). `map_status`:
+`full` (solc semantic layer, every file parsed by a grammar or without error), `partial`
+(semantic layer with fallback or error files, no AST, or a layer parsed from source, with or
+without a build), `failed` (build failed: lexical layer only, 03 3.1).
 
 `write_map` / `load_map` keep the artifacts next to the pin: `<root>/<job_id>/map/map.json` and
 `<root>/<job_id>/map/tokens/<sha256(path)[:16]>.jsonl` (index in `map/tokens.json`), so a path
@@ -26,6 +27,7 @@ import jsonschema
 
 from .lexers import LexResult, fold_constant, lex_file
 from .semantic_evm import build_semantic
+from .semantic_ton import TON_LANGS, build_semantic_ton
 
 _SCHEMA = Path(__file__).resolve().parents[3] / "contract" / "rubric" / "schemas" / "map.v1.json"
 logger = logging.getLogger(__name__)
@@ -163,7 +165,25 @@ def build_map(files: dict[str, str], solc_output: dict | None, categories: list[
             semantic["functions"] = [f for f in semantic["functions"] if f["span"] in known]
             _dedup_span_ids(spans)
             doc["semantic"] = semantic
-    if parsed:
+    ton_parsed = False
+    if semantic is None and not solc_output and any(res.lang in TON_LANGS for res in lex.values()):
+        # TON: no compiler AST; the semantic layer is parsed from the source (semantic_ton), with or
+        # without a build, so a missing exact compiler no longer leaves a lexical-only map.
+        built_ton = build_semantic_ton({p: (res.lang, res.tokens) for p, res in lex.items()}, categories)
+        if built_ton is not None:
+            semantic, span_ids = built_ton
+            for sp in spans:
+                hit = span_ids.get((sp["file"], sp["start"]))
+                if hit is not None:
+                    sp["id"], sp["unit"] = hit
+            _dedup_span_ids(spans)
+            known = {sp["id"] for sp in spans}
+            semantic["functions"] = [f for f in semantic["functions"] if f["span"] in known]
+            doc["semantic"] = semantic
+            ton_parsed = True
+    if parsed or ton_parsed:
+        # A layer parsed from source (Solana, TON), not a compiler AST: always `partial`, so the
+        # unreachability auto-proof stays off; never `failed`, the layer is there with or without a build.
         status = "partial"
     elif not build_ok:
         status = "failed"

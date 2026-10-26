@@ -594,8 +594,8 @@ async def _contract_map(args: dict[str, Any]) -> str:
     facts = load_facts(root, job_id) or []
     page = units[offset : offset + page_size]
     out = [f"contract map {status}, units {len(units)}, page {offset // page_size + 1}"]
-    layer = ((doc["semantic"].get("chain_extras") or {}).get("solana") or {}).get("layer")
-    if layer == "parsed":
+    extras = doc["semantic"].get("chain_extras") or {}
+    if any(isinstance(v, dict) and v.get("layer") == "parsed" for v in extras.values()):   # Solana, TON
         # Parsed from source (no compiler resolution); the build outcome is stated, never implied.
         build_status = load_map_status(root, job_id).get("build_status") or "unknown"
         out[0] += f"; layer parsed from source, build {build_status} (see review_status build)"
