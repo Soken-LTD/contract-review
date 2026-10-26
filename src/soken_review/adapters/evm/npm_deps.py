@@ -65,6 +65,8 @@ _PKG_RE = re.compile(r"^(?:@[a-z0-9][a-z0-9._~-]{0,100}/)?[a-z0-9][a-z0-9._~-]{0
 _SEMVER_RE = re.compile(
     r"^v?(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})"
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$")
+_STRICT_SEMVER_RE = re.compile(r"^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})(?:-[0-9A-Za-z.-]{1,40})?$")
+_SRI_RE = re.compile(r"^sha512-[A-Za-z0-9+/]{86}==$")
 _SAFE_SEG_RE = re.compile(r"^[A-Za-z0-9@_.+ -]{1,200}$")
 _COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
 _IMPORT_RE = re.compile(r"\bimport\s+(?:[^;\"']*?\bfrom\s+)?[\"']([^\"'\n]{1,400})[\"']", re.DOTALL)
@@ -85,9 +87,14 @@ class DepPackage:
     real_name: str | None = None   # registry name when `name` is an npm alias
 
     def as_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"name": self.name, "version": self.version, "pinned_by": self.pinned_by,
-                               "integrity": self.integrity, "files": self.files}
-        if self.real_name and self.real_name != self.name:
+        # Every string here may reach the client (review_status.dependencies): names must be npm
+        # names, versions strict semver, integrity a plain SRI value; anything else is dropped.
+        out: dict[str, Any] = {"name": self.name, "pinned_by": self.pinned_by, "files": self.files}
+        if safe_version(self.version):
+            out["version"] = self.version
+        if _SRI_RE.fullmatch(self.integrity):
+            out["integrity"] = self.integrity
+        if self.real_name and self.real_name != self.name and _PKG_RE.fullmatch(self.real_name):
             out["registry_name"] = self.real_name
         return out
 
@@ -99,10 +106,11 @@ class DepFailure:
     detail: str = ""
 
     def as_dict(self) -> dict[str, str]:
-        out = {"name": self.name, "reason": self.reason}
-        if self.detail:
-            out["detail"] = self.detail[:160]
-        return out
+        """Client-safe row: the validated npm name and the enum reason only. `detail` carries
+        lockfile / package.json text (ranges, URLs): repository data, kept for host logs only."""
+        name = self.name if _PKG_RE.fullmatch(self.name) else "<invalid>"
+        reason = self.reason if self.reason in FAILURE_REASONS or self.reason == "not_declared" else "unknown"
+        return {"name": name, "reason": reason}
 
 
 # Reasons that stop the job with E_DEPENDENCY_UNRESOLVED. `not_declared` is informational: the
@@ -149,6 +157,11 @@ class NpmResolution:
 # ---------------------------------------------------------------------------
 # Imports
 # ---------------------------------------------------------------------------
+
+
+def safe_version(version: str | None) -> bool:
+    """True for a plain semver string (charset and shape), the only version form sent to a client."""
+    return bool(version) and bool(_STRICT_SEMVER_RE.fullmatch(version or ""))
 
 
 def parse_imports(source: str) -> list[str]:

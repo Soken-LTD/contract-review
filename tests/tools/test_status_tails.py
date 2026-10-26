@@ -358,3 +358,19 @@ def test_status_dependencies_block_concise_and_detailed():
 def test_status_no_dependencies_block_without_vendored_packages():
     body = start_status._build_status_response(_tiered_job("repo"), "json", steps=[])
     assert "dependencies" not in body
+
+
+# ── detailed build.status: schema enum, never a map status ────────────────────
+
+
+def test_build_status_value_from_build_result_and_map_status(tmp_path):
+    pins = tmp_path / "pins"
+    work = tmp_path / "work" / "job_X"
+    work.mkdir(parents=True)
+    assert start_status._build_status_value(pins, "job_X", "none") is None
+    assert start_status._build_status_value(pins, "job_X", "failed") == "failed"
+    assert start_status._build_status_value(pins, "job_X", "full") == "ok"
+    (work / "build_result.json").write_text(json.dumps({"status": "ok"}))
+    assert start_status._build_status_value(pins, "job_X", "partial") == "ok"
+    (work / "build_result.json").write_text(json.dumps({"status": "weird"}))
+    assert start_status._build_status_value(pins, "job_X", "lexical") is None

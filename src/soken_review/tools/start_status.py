@@ -21,6 +21,7 @@ import re
 import secrets
 import time
 from datetime import UTC
+from pathlib import Path
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
@@ -922,11 +923,38 @@ def _dependencies_status(steps: list[dict[str, Any]], *, detailed: bool) -> dict
         "note": _PIN_NOTES.get(str(pins), ""),
     }
     if detailed:
-        out["packages"] = [
-            {"name": str(p.get("name")), "version": str(p.get("version")), "pinned_by": str(p.get("pinned_by"))}
-            for p in (deps.get("packages") or [])[:60] if isinstance(p, dict)
-        ]
+        from ..adapters.evm.npm_deps import safe_version
+
+        rows = []
+        for p in (deps.get("packages") or [])[:60]:
+            if not isinstance(p, dict):
+                continue
+            row = {"name": str(p.get("name")), "pinned_by": str(p.get("pinned_by"))}
+            if safe_version(p.get("version") if isinstance(p.get("version"), str) else None):
+                row["version"] = p["version"]
+            rows.append(row)
+        out["packages"] = rows
     return out
+
+
+_BUILD_STATUS = {"ok": "ok", "failed": "failed", "refused": "refused", "not_needed": "not_needed"}
+
+
+def _build_status_value(pin_root: Any, job_id: str, map_status: str | None) -> str | None:
+    """`build.status` in the schema enum (ok, failed, refused, not_needed), never a map status.
+
+    The supervisor's build_result.json (job work dir) is the source; without it, a failed map
+    means a failed build and a full semantic map means a successful one; otherwise unknown (None).
+    """
+    try:
+        path = Path(pin_root).parent / "work" / job_id / "build_result.json"
+        if path.is_file() and not path.is_symlink() and path.stat().st_size < 4 * 1024 * 1024:
+            value = json.loads(path.read_text(encoding="utf-8")).get("status")
+            if value in _BUILD_STATUS:
+                return _BUILD_STATUS[value]
+    except (OSError, ValueError, AttributeError):
+        pass
+    return {"failed": "failed", "full": "ok"}.get(map_status or "")
 
 
 def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
@@ -954,7 +982,10 @@ def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
         build_detail = map_status_doc.get("build_detail")
         facts = load_facts(pin_root, job_id) or []
         compiler_version = next((f["value"] for f in facts if f["key"] == "compiler.version"), None)
-        build_info: dict[str, Any] = {"status": job.get("map_status") or "none"}
+        build_info: dict[str, Any] = {}
+        status = _build_status_value(pin_root, job_id, job.get("map_status"))
+        if status is not None:
+            build_info["status"] = status
         if compiler_version:
             build_info["version"] = compiler_version
         if build_detail:

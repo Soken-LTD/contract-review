@@ -81,6 +81,22 @@ _MISSING_IMPORT_MAX_PKGS = 10
 _DEP_SEG_RE = re.compile(r"^[A-Za-z0-9._@~\-]{1,128}$")
 
 
+def _dependency_error_detail(res: Any) -> dict[str, Any]:
+    """error_detail for E_DEPENDENCY_UNRESOLVED. x-text-class: it reaches the client, so it holds
+    only validated npm package names, enum reasons and the lockfile name from a fixed set; no
+    version, range, URL or other lockfile / package.json text ever goes in."""
+    rows = [f.as_dict() for f in res.fatal][:_MISSING_IMPORT_MAX_PKGS]
+    rows = [r for r in rows if r["name"] != "<invalid>" and _validate_npm_pkg(r["name"])]
+    lockfile = res.lockfile if res.lockfile in ("package-lock.json", "npm-shrinkwrap.json",
+                                                 "yarn.lock", "pnpm-lock.yaml") else None
+    return {
+        "stage": "dependencies",
+        "lockfile": lockfile,
+        "missing": rows,
+        "packages": ", ".join(r["name"] for r in rows) or "unnamed packages",
+    }
+
+
 def _validate_npm_pkg(name: str) -> bool:
     """Return True if *name* is a valid npm package name (strict subset)."""
     return len(name) <= _NPM_PKG_MAX_LEN and bool(_NPM_PKG_RE.match(name))
@@ -1020,13 +1036,7 @@ class Supervisor:
                     job_id[-8:], res.lockfile, len(res.packages), len(fatal), len(res.not_declared))
         if not fatal:
             return summary
-        detail: dict[str, Any] = {
-            "stage": "dependencies",
-            "lockfile": res.lockfile,
-            # x-text-class: package names come from repo import strings (validated npm names)
-            "missing": [f.as_dict() for f in fatal][:_MISSING_IMPORT_MAX_PKGS],
-            "packages": ", ".join(f.name for f in fatal[:_MISSING_IMPORT_MAX_PKGS]),
-        }
+        detail = _dependency_error_detail(res)
         async with self._pool.connection() as conn:
             repo = JobRepo(conn)
             async with conn.transaction():
@@ -1415,9 +1425,13 @@ class Supervisor:
             work_dir=str(work_dir),
         )
 
+        # Lead scoping (repo jobs): the pinned files are the review; vendored npm packages and the
+        # repo files the scope selection excluded are known non-review files of this run.
+        scope_files, excluded_files = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self._review_file_sets(job_id, out_dir, cand_raw.get("provider")))
         try:
             leads, static_map, _read_plan = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _analyze_mod.analyze(br)
+                None, lambda: _analyze_mod.analyze(br, scope_files=scope_files, excluded_files=excluded_files)
             )
             degraded = static_map.get("status") in ("not_run", "degraded")
         except Exception:
@@ -1432,6 +1446,23 @@ class Supervisor:
 
         await self._mark_step(step_id, "done")
         await self._after_analyze(step, degraded=degraded)
+
+    def _review_file_sets(self, job_id: str, out_dir: Path,
+                          provider: str | None) -> tuple[set[str] | None, set[str] | None]:
+        """(pinned scope files, files known to be outside the review) for lead scoping.
+
+        Excluded = every .sol of the materialized repo tree (vendored node_modules included) that
+        is not pinned. (None, None) when the pin cannot be read: then no lead is dropped.
+        """
+        try:
+            scope = set(PinnedSource.load(self._pin_root, job_id).entries)
+        except (OSError, ValueError, KeyError):
+            logger.warning("job %s: pin unreadable for lead scoping; no lead filtered", job_id[-8:])
+            return None, None
+        if provider != "repo":
+            return scope, None
+        tree, _refused = safe_read_repo_tree(out_dir / "repo_fetch" / "src")
+        return scope, {p for p in tree if p.endswith(".sol") and p not in scope}
 
     async def _after_analyze(self, step: dict[str, Any], degraded: bool = False) -> None:
         """Queue the map step after the analyze step (03 3.1: map runs in `analyzing`)."""

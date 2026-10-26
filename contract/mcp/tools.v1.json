@@ -777,6 +777,12 @@
          "string",
          "null"
         ]
+       },
+       "version": {
+        "type": "string"
+       },
+       "error": {
+        "type": "string"
        }
       }
      },

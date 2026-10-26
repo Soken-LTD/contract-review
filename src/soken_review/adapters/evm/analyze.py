@@ -142,8 +142,14 @@ except Exception as _exc:
 # Public API
 # ---------------------------------------------------------------------------
 
-def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
-    """Run Slither (+ Aderyn if available) inside the sandbox, return (leads, static_map, read_plan)."""
+def analyze(result: BuildResult, *, scope_files: set[str] | None = None,
+            excluded_files: set[str] | None = None) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
+    """Run Slither (+ Aderyn if available) inside the sandbox, return (leads, static_map, read_plan).
+
+    scope_files: the reviewed (pinned) sources; a lead located in one of them is always kept.
+    excluded_files: files the host knows are not reviewed in this run (vendored npm packages and
+    the repo files the scope selection excluded); leads located only there are dropped.
+    """
     if result.status != "ok" or not result.work_dir:
         return [], {"status": "not_run", "reason": "build_failed"}, {}
     if (result.candidate.language or "").lower() == "vyper":  # 05 15: Vyper plug-in
@@ -165,10 +171,11 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     all_raw: list[dict] = []
 
     entry = (result.candidate.entry_contract or "").rpartition(":")[0] or None
+    aggregate: str | None = None
     if entry is None:
         # Repo and files candidates name no entry contract: Slither's solc mode takes one file, so
         # a host-written entry that imports every reviewed source compiles them all in one run.
-        entry = _write_aggregate_entry(proj_dir / "src")
+        entry = aggregate = _write_aggregate_entry(proj_dir / "src", scope_files)
     slither_raw = _run_slither(proj_dir, out_dir, solc_path, settings, entry)
     if slither_raw is None:
         reason = "sandbox_unavailable" if _ANALYZE_IMAGE is None and not _DIRECT_TOOLS else "analyzer_failed"
@@ -186,7 +193,8 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
 
     # Leads are about the reviewed sources: rows located in vendored dependencies (node_modules/,
     # lib/) or in the host-written aggregate entry are not review leads.
-    all_raw = [r for r in all_raw if not _outside_review(r.get("file") or "")]
+    all_raw = [r for r in all_raw
+               if not _outside_review(r.get("file") or "", scope_files, excluded_files, aggregate)]
     leads = _build_leads(all_raw)
     static_map = _build_static_map(out_dir, aderyn_available=aderyn_raw is not None)
     static_map["compiler_advisories"] = {
@@ -416,36 +424,52 @@ def _materialize_sources(work_dir: Path, proj_dir: Path) -> bool:
     return True
 
 
-_DEPENDENCY_ROOTS = ("node_modules/", "lib/", "dependencies/")
-_AGGREGATE_ENTRY = "soken_review_entry.sol"
+_AGGREGATE_ENTRY = "soken_review_entry"
 
 
-def _write_aggregate_entry(src_dir: Path) -> str | None:
-    """Write <src>/soken_review_entry.sol importing every non-dependency .sol source; return its
-    name, or None when there is nothing to import or the name is taken by a reviewed file.
+def _write_aggregate_entry(src_dir: Path, scope_files: set[str] | None = None) -> str | None:
+    """Write a host-owned .sol entry importing the reviewed sources; return its name (relative to
+    src_dir), or None when there is nothing to import.
 
-    Dependency trees (node_modules/, lib/, dependencies/) are compiled only through what the
-    reviewed files import, as in the build."""
-    entry = src_dir / _AGGREGATE_ENTRY
-    if entry.exists() or entry.is_symlink():
-        return None
+    With `scope_files` the entry imports exactly those; without, every .sol outside node_modules/.
+    The name never collides with a repo file: a numbered suffix is chosen until it is free, so a
+    repo file named like the entry stays a reviewed file.
+    """
     base = src_dir.resolve()
-    paths = sorted(
-        p.relative_to(base).as_posix() for p in base.rglob("*.sol")
-        if p.is_file() and not p.is_symlink()
-        and not p.relative_to(base).as_posix().startswith(_DEPENDENCY_ROOTS)
-    )
+    if scope_files is not None:
+        paths = sorted(p for p in scope_files if p.endswith(".sol") and (base / p).is_file())
+    else:
+        paths = sorted(
+            p.relative_to(base).as_posix() for p in base.rglob("*.sol")
+            if p.is_file() and not p.is_symlink() and not p.relative_to(base).as_posix().startswith("node_modules/")
+        )
     paths = [p for p in paths if _safe_relative_path(p) and '"' not in p]
     if not paths:
         return None
-    body = "// SPDX-License-Identifier: UNLICENSED\n" + "".join(f'import "./{p}";\n' for p in paths)
-    entry.write_text(body, encoding="utf-8")
-    return _AGGREGATE_ENTRY
+    for n in range(100):
+        name = f"{_AGGREGATE_ENTRY}_{n}.sol" if n else f"{_AGGREGATE_ENTRY}.sol"
+        entry = src_dir / name
+        try:
+            fd = os.open(entry, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        except FileExistsError:
+            continue
+        body = "// SPDX-License-Identifier: UNLICENSED\n" + "".join(f'import "./{p}";\n' for p in paths)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        return name
+    return None
 
 
-def _outside_review(file_rel: str) -> bool:
+def _outside_review(file_rel: str, scope_files: set[str] | None, excluded_files: set[str] | None,
+                    aggregate: str | None) -> bool:
+    """True only for a lead the host knows is outside the review in this run. A lead in a reviewed
+    (pinned) file is always kept, whatever its path or name."""
     path = file_rel.removeprefix("./")
-    return path == _AGGREGATE_ENTRY or path.startswith(("node_modules/", "lib/"))
+    if scope_files is not None and path in scope_files:
+        return False
+    if aggregate is not None and path == aggregate:
+        return True
+    return excluded_files is not None and path in excluded_files
 
 
 # ---------------------------------------------------------------------------
