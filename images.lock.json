@@ -81,7 +81,7 @@
     "git-fetch": {
       "repository": "ghcr.io/soken-ltd/git-fetch",
       "tag": "0.1.0-dev",
-      "digest": "sha256:eb647c2aaa8a85173156682e9aca1c6939bf579ae8db45c599962f2b3d13ad6b",
+      "digest": "sha256:7c1b2076c3e2623357ce75d1bf10771c9b00b987a8ce8c53ac009832ec8b9934",
       "tools": {
         "git": "2.47.3",
         "python3": "3.13"
@@ -89,10 +89,10 @@
       "platforms": [
         "linux/amd64"
       ],
-      "note": "soken-fetch: git materializer (09 5.2, sandbox/git_materializer.py) on Debian trixie (git 2.47, GIT_NO_LAZY_FETCH).",
+      "note": "soken-fetch: git materializer (09 5.2, sandbox/git_materializer.py) on Debian trixie (git 2.47, GIT_NO_LAZY_FETCH); soken-npm-fetch: registry.npmjs.org downloader for EVM npm deps (sandbox/npm_materializer.py).",
       "built": {
-        "commit": "81b357ad78c4814614a421d491e1131456a782e1",
-        "run_id": "39909694496",
+        "commit": "d5a1665e1875d077e5f67bf4ddadcdc288bb2d70",
+        "run_id": "40286614244",
         "trivy_critical": 0
       }
     },
@@ -135,7 +135,7 @@
     "soken-render": {
       "repository": "ghcr.io/soken-ltd/soken-render",
       "tag": "0.1.0-dev",
-      "digest": "sha256:a9ce811eba00d4bac3bb3ab9eebcc2dbc337f28660aeec37fb3f2e86ea2aa143",
+      "digest": "sha256:54b71bd899137d560c24c17dc8cdf31ac8ba58a6d1d555da5d36aec9aa4ea929",
       "tools": {
         "python": "3.12",
         "node": "22",
@@ -150,8 +150,8 @@
       ],
       "note": "08 3.2 render sandbox (docker/soken-render/Dockerfile, root context). Digest placeholder until the CI push; render_image() fails closed while unpinned (SOKEN_IMAGE_SOKEN_RENDER for local images). chrome-headless-shell zip sha256 39dcb8c4... pinned in the Dockerfile.",
       "built": {
-        "commit": "bd99daba0fe678f14f247ced6f1291666d3df4ce",
-        "run_id": "40290326817",
+        "commit": "9d81f66f51bb973b8fbefe1ee6492eee5b2df01c",
+        "run_id": "40292777410",
         "trivy_critical": 3
       }
     },

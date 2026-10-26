@@ -285,7 +285,7 @@ def pin_nsloc(files: dict[str, str]) -> int:
 
 
 def build_detail(reason: str | None, stderr_head: str | None) -> str:
-    """`reason: last stderr lines` for review_status build.error (map_view prints error classes only)."""
+    """`reason: last stderr lines`, kept in host status.json; clients only see map_view.build_error_summary."""
     tail = " | ".join(line.strip() for line in (stderr_head or "").splitlines()[-6:] if line.strip())
     return f"{reason or 'failed'}: {tail}"[:600] if tail else (reason or "failed")
 
