@@ -165,6 +165,10 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     all_raw: list[dict] = []
 
     entry = (result.candidate.entry_contract or "").rpartition(":")[0] or None
+    if entry is None:
+        # Repo and files candidates name no entry contract: Slither's solc mode takes one file, so
+        # a host-written entry that imports every reviewed source compiles them all in one run.
+        entry = _write_aggregate_entry(proj_dir / "src")
     slither_raw = _run_slither(proj_dir, out_dir, solc_path, settings, entry)
     if slither_raw is None:
         reason = "sandbox_unavailable" if _ANALYZE_IMAGE is None and not _DIRECT_TOOLS else "analyzer_failed"
@@ -180,6 +184,9 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     bug_report = compiler_bug_report(result)
     all_raw.extend(bug_report.raw_leads)
 
+    # Leads are about the reviewed sources: rows located in vendored dependencies (node_modules/,
+    # lib/) or in the host-written aggregate entry are not review leads.
+    all_raw = [r for r in all_raw if not _outside_review(r.get("file") or "")]
     leads = _build_leads(all_raw)
     static_map = _build_static_map(out_dir, aderyn_available=aderyn_raw is not None)
     static_map["compiler_advisories"] = {
@@ -407,6 +414,38 @@ def _materialize_sources(work_dir: Path, proj_dir: Path) -> bool:
         dest.write_text(content, encoding="utf-8")
 
     return True
+
+
+_DEPENDENCY_ROOTS = ("node_modules/", "lib/", "dependencies/")
+_AGGREGATE_ENTRY = "soken_review_entry.sol"
+
+
+def _write_aggregate_entry(src_dir: Path) -> str | None:
+    """Write <src>/soken_review_entry.sol importing every non-dependency .sol source; return its
+    name, or None when there is nothing to import or the name is taken by a reviewed file.
+
+    Dependency trees (node_modules/, lib/, dependencies/) are compiled only through what the
+    reviewed files import, as in the build."""
+    entry = src_dir / _AGGREGATE_ENTRY
+    if entry.exists() or entry.is_symlink():
+        return None
+    base = src_dir.resolve()
+    paths = sorted(
+        p.relative_to(base).as_posix() for p in base.rglob("*.sol")
+        if p.is_file() and not p.is_symlink()
+        and not p.relative_to(base).as_posix().startswith(_DEPENDENCY_ROOTS)
+    )
+    paths = [p for p in paths if _safe_relative_path(p) and '"' not in p]
+    if not paths:
+        return None
+    body = "// SPDX-License-Identifier: UNLICENSED\n" + "".join(f'import "./{p}";\n' for p in paths)
+    entry.write_text(body, encoding="utf-8")
+    return _AGGREGATE_ENTRY
+
+
+def _outside_review(file_rel: str) -> bool:
+    path = file_rel.removeprefix("./")
+    return path == _AGGREGATE_ENTRY or path.startswith(("node_modules/", "lib/"))
 
 
 # ---------------------------------------------------------------------------
