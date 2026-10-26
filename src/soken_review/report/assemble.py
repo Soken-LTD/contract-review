@@ -588,12 +588,20 @@ def context_facts(facts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """`context.*` fact records (spec 5) as report facts, so `{{fact:context.*}}` in context notes
     expands at build. A value that fails the server text gate (document text) is left out; the
     build then reports the placeholder as unresolved instead of printing gated text."""
+    return report_facts(facts, prefix=CONTEXT_FACT_PREFIX)
+
+
+def report_facts(facts: list[dict[str, Any]], prefix: str = "") -> dict[str, dict[str, Any]]:
+    """Every job fact the kit may expand (`{{fact:key}}`, `{{calc:...}}`): `report.facts` per the
+    schema (value, unit, amount_at_risk). Blind run 2026-10-26: only `context.*` facts were passed,
+    so a finding that cited `{{fact:state.initial_minted}}` (accepted by the submit gate against the
+    full fact list) failed the build with "fact ... not in facts" and no PDF was delivered."""
     from ..engine.text_gate import check_text
 
     out: dict[str, dict[str, Any]] = {}
     for f in facts:
         key = str(f.get("key") or "")
-        if not key.startswith(CONTEXT_FACT_PREFIX) or not re.fullmatch(r"[a-z][a-z0-9_.]{0,79}", key):
+        if not key.startswith(prefix) or not re.fullmatch(r"[a-z][a-z0-9_.]{0,79}", key):
             continue
         value = _src_text(f.get("value"), 80)
         if re.fullmatch(r"[0-9]{5,}", value):  # plain integers print grouped (calc operands strip the commas)
@@ -869,6 +877,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     for lead in leads:
         tool = (lead.get("tools") or ["analyzer@"])[0]
         name, _, ver = tool.partition("@")
+        name = name.removeprefix("soken-")  # server passes print under a plain name (text gate T25)
         row = per_tool.setdefault((name, ver or "unknown"), {"leads": 0, "promoted": 0, "dismissed": 0})
         row["leads"] += 1
         row["promoted"] += lead["id"] in promoted_ids
@@ -917,7 +926,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     dismissed = [lead for lead in leads if lead["state"] == "dismissed"]
     # Project context (spec 7): documents, declared vs observed, context_notes; KPI when n > 0
     ctx = context_section(pin_root, job_id, job, sections, today)
-    context_facts_map = ctx.pop("facts")
+    context_facts_map = {**report_facts(facts), **ctx.pop("facts")}
     n_documents = sum(1 for d in ctx["documents"] if d["status"] == "ok")
     summary: dict[str, Any] = {"kpis": [
         {"key": "files", "value": len(scope_files), "label": texts["kpi_labels"]["files"]},
