@@ -128,6 +128,36 @@ async def test_ton_map_step_after_failed_build_still_flags_and_readies(tmp_path,
 
 
 @pytest.mark.asyncio
+async def test_ton_map_is_parsed_when_the_exact_compiler_is_missing(tmp_path, monkeypatch):
+    """Matrix run 2026-10-25 (Forton): Tact 1.6.5 not in the image, map lexical with 0 spans,
+    source.nsloc 0, no analyzer facts. The parsed map has handlers and a semantic layer."""
+    repo = _FakeRepo()
+    sup = _fake_sup(tmp_path, repo, monkeypatch, ton_pipeline)
+    job = {"job_id": "job_TON4", "chain": "ton"}
+    out = sup._job_dir("job_TON4")
+    src = ("contract A {\n    owner: Address;\n    receive(msg: Set) {\n        self.owner = msg.owner;\n"
+           "    }\n}\n")
+    _pin(sup, "job_TON4", {"a.tact": src}, "tact")
+    _write(out / "build_result.json", {"status": "failed", "nsloc": 5, "reason": "unsupported_toolchain",
+                                       "stderr_head": "tact 1.6.5 is not in the image", "work_dir": None, "src": 0})
+    _write(out / "candidates.json", [{"provider": "ton_verifier", "sha256": "44" * 32}])
+    _write(out / "static_map.json", {"status": "ok", "analyzer": "misti@0.9.0",
+                                      "rule_pack": "soken-ton-rules@0.1.0", "build": "failed"})
+
+    await ton_pipeline.run_step(sup, {"id": 10, "job_id": "job_TON4", "step": "map", "seq": 0}, job)
+
+    status = json.loads((sup._pin_root / "job_TON4" / "map" / "status.json").read_text())
+    assert status["map_status"] == "partial"
+    doc = json.loads((sup._pin_root / "job_TON4" / "map" / "map.json").read_text())
+    assert [s["id"] for s in doc["spans"]] == ["A.receive(Set)"]
+    assert doc["semantic"]["functions"][0]["writes"] == [{"var": "owner", "line": "a.tact:4"}]
+    facts = {f["key"]: f["value"] for f in json.loads((sup._pin_root / "job_TON4" / "facts.json").read_text())}
+    assert facts["source.nsloc"] == "5"
+    assert facts["analyzer.soken_ton_rules"] == "0.1.0" and facts["analyzer.misti"] == "0.9.0"
+    assert repo.transitions == [("job_TON4", "ready")]
+
+
+@pytest.mark.asyncio
 async def test_ton_unknown_step_is_still_marked_done(tmp_path, monkeypatch):
     repo = _FakeRepo()
     sup = _fake_sup(tmp_path, repo, monkeypatch, ton_pipeline)

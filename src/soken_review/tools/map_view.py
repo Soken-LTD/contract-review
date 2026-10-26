@@ -14,6 +14,7 @@ _ERROR_CLASS_RE = re.compile(r"\b([A-Z][A-Za-z]{2,40}Error|not_checkable|failed|
                              r"compiler_version_unknown|sandbox_unavailable|pin_load_error)\b")
 
 _CAP = 20_000
+_HANDLER_NAMES = frozenset({"receive", "bounced", "external"})
 
 
 def _spans(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -29,7 +30,12 @@ def _range(span: dict[str, Any] | None) -> str:
 def unit_entries(doc: dict[str, Any], unit: dict[str, Any]) -> list[dict[str, Any]]:
     """Entry functions callable on a unit: own and inherited, most-derived definition first."""
     sem = doc.get("semantic") or {}
-    extras = ((sem.get("chain_extras") or {}).get("evm") or {}).get("units") or {}
+    # bases per unit: chain_extras.evm (solc AST) or chain_extras.ton (parsed source)
+    extras: dict[str, Any] = {}
+    for fam in ("evm", "ton"):
+        extras = ((sem.get("chain_extras") or {}).get(fam) or {}).get("units") or {}
+        if extras:
+            break
     bases = (extras.get(unit["id"]) or {}).get("bases") or [unit["name"]]
     order = {name: i for i, name in enumerate(bases)}
     picked: dict[str, dict[str, Any]] = {}
@@ -84,7 +90,10 @@ def render_unit(doc: dict[str, Any], unit: dict[str, Any], facts: list[dict[str,
     writers: dict[str, set[str]] = {}
     for f in entries:
         reach = [f, *_callees(sem, doc, f["span"])]
-        short = f["span"].partition(".")[2].split("(")[0]
+        sig = f["span"].partition(".")[2]
+        short = sig.split("(")[0]
+        if short in _HANDLER_NAMES:          # TON handlers share one name; the message type tells them apart
+            short = sig
         for g in reach:
             for c in g.get("calls") or []:
                 if c["kind"] != "internal":

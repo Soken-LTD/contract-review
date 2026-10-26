@@ -6,7 +6,8 @@ initializers (for `constants[].folded_value`). Pure: no I/O beyond loading `lexe
 
 Grammar parsers: tree-sitter Solidity and Rust (lexers.yaml `grammar`). A file whose parse tree has
 error nodes keeps the grammar tokens with status `partial`; a grammar that cannot load or a parse
-that yields no tree goes through the fallback lexer (tokens, no spans).
+that yields no tree goes through the fallback lexer (tokens, no spans). TON files (Tact, FunC,
+Tolk) get their spans from the structural parse in `semantic_ton` over the fallback tokens.
 """
 
 from __future__ import annotations
@@ -118,7 +119,18 @@ def lex_file(path: str, text: str) -> LexResult:
         result = _lex_grammar(lang, parser, text)
         if result is not None:
             return result
-    return lex_fallback(lang, text)
+    res = lex_fallback(lang, text)
+    if lang in ("tact", "func", "tolk"):
+        # No tree-sitter grammar for TON: handlers, functions and units come from the structural
+        # parse of the fallback tokens (mapping/semantic_ton.py), so the map has spans to cite.
+        from .semantic_ton import ton_spans
+
+        spans, units, status = ton_spans(lang, res.tokens, path)
+        res.spans.extend(Span(name, kind, start, end, unit) for name, kind, start, end, unit in spans)
+        res.units.extend(LexUnit(name, kind, start, end) for name, kind, start, end in units)
+        if status != "ok":
+            res.status = "partial"
+    return res
 
 
 # ── column helper ────────────────────────────────────────────────────────────

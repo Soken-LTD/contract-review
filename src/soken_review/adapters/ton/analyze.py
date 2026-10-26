@@ -43,6 +43,11 @@ _SEVERITY_PATH = _RUBRIC / "analyzer_severity.yaml"
 _RULE_MAP_PATH = Path(__file__).parent / "data" / "rule_map.json"
 
 _MISTI_VERSION = "0.9.0"
+_MISTI_SARIF = "warnings.sarif"      # Misti writes <output-path dir>/warnings.sarif
+# Gas and import-style results are not security leads (same role as evm _NOISE_DETECTORS): on
+# Forton they were 49 of 81 Misti results, each one a lead a reviewer must triage.
+_MISTI_NOISE_CATEGORIES = frozenset({"Optimization"})
+_MISTI_NOISE = frozenset({"TransitiveImport"})
 _MAX_SARIF_BYTES = 16 * 1024 * 1024
 _ANALYZE_IMAGE = locked_image("ton-build")
 
@@ -74,12 +79,21 @@ except Exception as _exc:
 
 # ── Public API ─────────────────────────────────────────────────────────────
 
-def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
-    """Run soken-ton-rules (+ Misti for Tact) and return (leads, static_map, read_plan)."""
-    if result.status != "ok" or not result.work_dir:
-        return [], {"status": "not_run", "reason": "build_failed"}, {}
+def analyze(result: BuildResult, source_dir: Path | None = None) -> tuple[list[Lead], dict[str, Any], dict[str, Any]]:
+    """Run soken-ton-rules (+ Misti for Tact) and return (leads, static_map, read_plan).
 
-    work_dir = Path(result.work_dir)
+    Both analyzers read the sources, not the build output: soken-ton-rules runs on the file texts
+    and Misti compiles the Tact project itself. So a failed or refused build (exact compiler not in
+    the image: matrix run 2026-10-25, Forton, tier B) still runs them when the caller passes
+    `source_dir`, a fresh dir for the analyzer's own files; static_map.build records the build state.
+    """
+    if result.status == "ok" and result.work_dir:
+        work_dir = Path(result.work_dir)
+    elif source_dir is not None and result.candidate.files:
+        work_dir = Path(source_dir)
+        work_dir.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        return [], {"status": "not_run", "reason": "build_failed"}, {}
     language = _get_language(result)
     files = result.candidate.files  # already path-safe (filter_candidate_files applied at fetch)
 
@@ -92,7 +106,8 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     # 2. Misti for Tact (plan 06 4.4)
     misti_ran = False
     if language == "tact":
-        misti_raw = _run_misti(work_dir, files)
+        misti_raw = _run_misti(work_dir, files, result.candidate.entry_contract
+                               or (result.candidate.settings or {}).get("entry"))
         if misti_raw is not None:
             all_raw.extend(misti_raw)
             misti_ran = True
@@ -101,6 +116,7 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
 
     leads = _build_leads(all_raw)
     static_map = _build_static_map(language, misti_ran)
+    static_map["build"] = "ok" if result.status == "ok" else "failed"
     if language == "tact" and not misti_ran:
         static_map["status"] = "degraded"
         static_map["not_run"] = [f"misti@{_MISTI_VERSION}"]
@@ -141,7 +157,16 @@ def _run_ton_rules(files: dict[str, str]) -> list[dict[str, Any]]:
 
 # ── Misti (Tact, sandbox) ─────────────────────────────────────────────────
 
-def _run_misti(work_dir: Path, files: dict[str, str]) -> list[dict[str, Any]] | None:
+def _tact_entry(candidate_entry: str | None, tact_files: list[str]) -> str:
+    """The declared entry when it is one of the Tact files, else the first file in path order."""
+    if candidate_entry:
+        path = candidate_entry.split(":", 1)[0]
+        if path in tact_files:
+            return path
+    return tact_files[0]
+
+
+def _run_misti(work_dir: Path, files: dict[str, str], candidate_entry: str | None = None) -> list[dict[str, Any]] | None:
     """Run Misti 0.9.0 on Tact source and return raw leads or None (plan 06 4.4, F19).
 
     Misti runs in its own fresh dir next to the attempt dir (`<attempt>.misti`): sources and
@@ -173,7 +198,10 @@ def _run_misti(work_dir: Path, files: dict[str, str]) -> list[dict[str, Any]] | 
         dest = src_dir / safe
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(files[path], encoding="utf-8")
-    cfg = {"projects": [{"name": "analysis", "path": safe_store_path(tact_files[0]), "output": "/tmp/tact_out",
+    # The project root is the entry contract (it imports the rest); the first file in path order
+    # only analysed what that file imported (Forton: ft_base_program_main, not ft_master).
+    entry = _tact_entry(candidate_entry, tact_files)
+    cfg = {"projects": [{"name": "analysis", "path": safe_store_path(entry), "output": "/tmp/tact_out",
                          "options": {}}]}
     (src_dir / "tact.config.json").write_text(json.dumps(cfg), encoding="utf-8")
 
@@ -182,7 +210,7 @@ def _run_misti(work_dir: Path, files: dict[str, str]) -> list[dict[str, Any]] | 
         if not misti_bin:
             return None
         cmd = [misti_bin, str(src_dir / "tact.config.json"), "--output-format", "sarif",
-               "--output-path", str(mdir / "out" / "misti_out.sarif")]
+               "--output-path", str(mdir / "out")]
         try:
             subprocess.run(cmd, capture_output=True, timeout=180, check=False, cwd=str(src_dir))
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -197,8 +225,10 @@ def _run_misti(work_dir: Path, files: dict[str, str]) -> list[dict[str, Any]] | 
             cache_dir=None,
             limits=_ANALYZE_LIMITS,
             env={"HOME": "/tmp"},
+            # --output-path is a directory: Misti 0.9.0 writes <dir>/warnings.sarif. A file path here
+            # made it create a directory of that name, so no SARIF was ever read (Misti always not_run).
             command=["misti", "/work/src/tact.config.json", "--output-format", "sarif",
-                     "--output-path", "/work/out/misti_out.sarif"],
+                     "--output-path", "/work/out"],
             runtime=os.environ.get("SOKEN_SANDBOX_RUNTIME"),
             mounts=[(mdir, "/work", False), (src_dir, "/work/src", True)],
         )
@@ -208,13 +238,13 @@ def _run_misti(work_dir: Path, files: dict[str, str]) -> list[dict[str, Any]] | 
             return None
 
     try:
-        found = read_output_files(mdir / "out", "misti_out.sarif", 1, _MAX_SARIF_BYTES)
+        found = read_output_files(mdir / "out", _MISTI_SARIF, 1, _MAX_SARIF_BYTES)
     except (FileNotFoundError, UnsafeOutput) as exc:
         logger.warning("misti output not read: %s", exc)
         return None
-    if "misti_out.sarif" not in found:
+    if _MISTI_SARIF not in found:
         return None
-    return _parse_misti_sarif(found["misti_out.sarif"])
+    return _parse_misti_sarif(found[_MISTI_SARIF])
 
 
 def _parse_misti_sarif(data: bytes) -> list[dict[str, Any]] | None:
@@ -229,6 +259,8 @@ def _parse_misti_sarif(data: bytes) -> list[dict[str, Any]] | None:
         tool_name = f"misti@{_MISTI_VERSION}"
         for result in run.get("results", []):
             rule_id = result.get("ruleId", "")
+            if rule_id in _MISTI_NOISE or (result.get("properties") or {}).get("category") in _MISTI_NOISE_CATEGORIES:
+                continue
             level = result.get("level", "warning")  # SARIF level: error/warning/note/none
             for loc in result.get("locations", []):
                 phys = loc.get("physicalLocation", {})

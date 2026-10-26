@@ -36,6 +36,7 @@ from ..adapters.ton import build as _build_mod
 from ..adapters.ton.detect import parse_ton_address
 from ..adapters.ton.fetch import TonReadError, fetch_ton_sources, read_ton_chain_state
 from ..adapters.ton.provenance import Attempt, Dep, Out, resolve_provenance
+from ..adapters.ton.units import count_nsloc_ton
 from ..db.job_repo import JobRepo
 from ..db.leads_repo import persist_leads_from_pin
 from ..mapping import step as _map_step
@@ -301,8 +302,10 @@ async def _build(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
         langs={p: src.language for p in src.files},
     )
     pin.persist(sup._pin_root, job["job_id"])
+    # nsloc of the pinned sources whether or not the build ran (a refused build reported 0)
+    nsloc = br.nsloc or sum(count_nsloc_ton(text, src.language) for text in src.files.values())
     result = {
-        "status": br.status, "nsloc": br.nsloc, "reason": br.reason, "stderr_head": br.stderr_head,
+        "status": br.status, "nsloc": nsloc, "reason": br.reason, "stderr_head": br.stderr_head,
         "work_dir": br.work_dir, "src": out.src,
     }
     _write_json(build_path, result)
@@ -326,12 +329,19 @@ async def _analyze(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -
 
     result = json.loads((out_dir / "build_result.json").read_text())
     cand = _cand_from_json(json.loads((out_dir / "cands" / f"{result['src']}.json").read_text()))
-    degraded = True
-    leads: list[dict[str, Any]] = []
     if result["status"] == "ok" and result.get("work_dir"):
         br = BuildResult(candidate=cand, status="ok", nsloc=result.get("nsloc", 0), work_dir=result["work_dir"])
-        leads, static_map, _ = await asyncio.get_event_loop().run_in_executor(None, _analyze_mod.analyze, br)
-        degraded = static_map.get("status") != "ok"
+        source_dir = None
+    else:
+        # The exact compiler is missing or the build failed (tier B/C): the rule pack and Misti
+        # still read the pinned sources (matrix run 2026-10-25: Forton got 0 leads from a verified
+        # Tact source because analyze required a successful build).
+        br = BuildResult(candidate=cand, status="failed", reason=result.get("reason"))
+        source_dir = out_dir / "attempts" / "source_only"
+    leads, static_map, _ = await asyncio.get_event_loop().run_in_executor(
+        None, _analyze_mod.analyze, br, source_dir)
+    degraded = static_map.get("status") != "ok"
+    _write_json(out_dir / "static_map.json", static_map)
     leads_out.parent.mkdir(parents=True, exist_ok=True)
     leads_out.write_text(json.dumps(leads, indent=2), encoding="utf-8")
     await sup._mark_step(step["id"], "done")
@@ -345,9 +355,9 @@ async def _map(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> No
     """Lexical map.v1, J1 to J5 flags and static facts from the pin (04 2.1, 12), family `ton`.
 
     Queued by _analyze through sup._after_analyze; the only step that moves a TON job to `ready`
-    (03 3.1: map runs in `analyzing`). No semantic layer: there is no solc output for FunC, Tact
-    or Tolk, so the map is `partial` after a good build and `failed` after a failed one, exactly
-    as the Move pipeline reports it.
+    (03 3.1: map runs in `analyzing`). The semantic layer is parsed from the
+    Tact/FunC/Tolk sources (mapping/semantic_ton.py; there is no compiler AST): `full` after a
+    good build with a clean parse, `partial` when the build failed or the exact compiler is missing.
     """
     job_id = job["job_id"]
     out_dir = sup._job_dir(job_id)
@@ -361,12 +371,19 @@ async def _map(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> No
     src = build.get("src")
     candidate = cands[src] if isinstance(src, int) and 0 <= src < len(cands) else None
     detail = None if build_ok else (build.get("stderr_head") or build.get("reason"))
+    sm_path = out_dir / "static_map.json"
+    static_map = json.loads(sm_path.read_text()) if sm_path.exists() else {}
+    analyzers: dict[str, str] = {}
+    if static_map.get("status") in ("ok", "degraded"):
+        analyzers["soken_ton_rules"] = str(static_map.get("rule_pack") or "").partition("@")[2] or "0"
+        if str(static_map.get("analyzer") or "").startswith("misti@"):
+            analyzers["misti"] = _analyze_mod._MISTI_VERSION
     summary = await asyncio.get_event_loop().run_in_executor(None, lambda: _map_step.run_map_step(
         sup._pin_root, job_id,
         family="ton", chain="ton",
         solc_output_path=None, build_ok=build_ok, job=job,
         chain_state=chain_state, candidate=candidate,
-        nsloc=build.get("nsloc"), analyzers={}, build_detail=detail,
+        nsloc=build.get("nsloc"), analyzers=analyzers, build_detail=detail,
     ))
     async with sup._pool.connection() as conn:
         repo = JobRepo(conn)
