@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -26,10 +25,10 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from soken_review.adapters.solana.build import build
 from soken_review.adapters.solana.analyze import analyze
-from soken_review.adapters.solana.fetch import _clone_repo, _make_candidate, _walk_source_files
+from soken_review.adapters.solana.build import build
 from soken_review.adapters.solana.detect import detect_framework_from_files
+from soken_review.adapters.solana.fetch import _clone_repo, _make_candidate
 
 
 def main():
@@ -74,7 +73,7 @@ def main():
         "fetched_at": candidate.fetched_at,
     }
     (out_dir / "candidates.json").write_text(json.dumps([cand_data], indent=2))
-    print(f"[+] Saved candidates.json")
+    print("[+] Saved candidates.json")
 
     print("[+] Building ...")
     result = build(candidate, work_dir=out_dir / "work")
@@ -93,7 +92,7 @@ def main():
         sys.exit(1)
 
     print("[+] Analyzing ...")
-    leads, static_map, read_plan = analyze(result)
+    leads, static_map, _read_plan = analyze(result)
     (out_dir / "leads.json").write_text(json.dumps(leads, indent=2))
     (out_dir / "static_map.json").write_text(json.dumps(static_map, indent=2, default=str))
     print(f"[+] Leads: {len(leads)}, static_map keys: {list(static_map.keys())}")

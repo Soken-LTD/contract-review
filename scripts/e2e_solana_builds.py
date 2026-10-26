@@ -151,7 +151,7 @@ def _fetch_ottersec_hash(address: str) -> str | None:
             d = json.load(r)
         if d.get("is_verified"):
             return d.get("on_chain_hash")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"  [warn] Could not fetch OtterSec hash for {address}: {e}")
     return None
 
@@ -203,11 +203,11 @@ def build_program(case: str, prog: dict[str, Any]) -> dict[str, Any]:
 
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=3600,
+            cmd, capture_output=True, text=True, timeout=3600, check=False,
         )
     except subprocess.TimeoutExpired:
         return {"status": "BUILD_FAILED", "error": "build timed out after 3600s"}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return {"status": "BUILD_FAILED", "error": str(exc)}
 
     if result.returncode != 0:

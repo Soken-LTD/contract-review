@@ -84,6 +84,7 @@ def test_fetch_source_attaches_workspace(tmp_path: Path, monkeypatch: pytest.Mon
     assert cand.settings["library_name"] == "locker"
     assert cand.settings["workspace_unread_paths"] == ["artifacts/hook.so"]
     assert "Cargo.lock" in cand._full_tree
+    assert (cand.compiler.version, cand.compiler.version_pinned_by) == ("2.2.1", "lock")
 
 
 def test_build_files_overlays_pin_on_workspace(tmp_path: Path) -> None:

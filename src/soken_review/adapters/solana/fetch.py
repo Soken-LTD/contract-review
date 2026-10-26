@@ -597,6 +597,15 @@ def attach_build_workspace(candidate: Any, subdir: str, workspace: dict[str, str
         candidate.settings["library_name"] = lib
     candidate.settings["workspace_unread_paths"] = list(getattr(workspace, "unread_paths", []))
     candidate._full_tree = dict(workspace)
+    if candidate.compiler is not None and candidate.compiler.version == "unknown":
+        # the subdir has no Cargo.lock of its own: the workspace lock pins the Solana version
+        from soken_review.adapters.base import Compiler
+        from soken_review.adapters.solana.build import _detect_version_from_lock
+
+        lock = workspace.get("Cargo.lock")
+        version = _detect_version_from_lock(lock) if isinstance(lock, str) else None
+        if version:
+            candidate.compiler = Compiler(version=version, version_pinned_by="lock")
 
 
 def _name_from_url(repo_url: str) -> str:
