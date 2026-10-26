@@ -1424,6 +1424,9 @@ class Supervisor:
             candidate=cands[0] if cands else None,
             nsloc=int(build["nsloc"]) if build.get("nsloc") is not None else None,
             analyzers=analyzers, build_detail=detail,
+            # the real build outcome for review_status build.status (TRON compiles with a substitute
+            # solc and still gets a `full` map; the map status is not the build status)
+            build_status="ok" if build_ok else "failed",
         ))
         async with self._pool.connection() as conn:
             repo = JobRepo(conn)

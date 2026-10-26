@@ -1652,6 +1652,55 @@
               }
             }
           }
+        },
+        "invariant_walks": {
+          "type": "array",
+          "maxItems": 20,
+          "description": "Invariant walks of the job (rubric invariants.yaml) with the requester's session answer; present only when the job had walks",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "walk_id",
+              "title",
+              "verdict",
+              "lines"
+            ],
+            "properties": {
+              "walk_id": {
+                "type": "string",
+                "pattern": "^IW-[A-Z]{2,4}-[0-9]{1,2}$",
+                "x-text-class": "server"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 80,
+                "description": "Rubric text, reference data",
+                "x-text-class": "server"
+              },
+              "verdict": {
+                "enum": [
+                  "holds",
+                  "violated",
+                  "not_applicable",
+                  "not_answered"
+                ],
+                "description": "Printed with kit invariant_walks.verdict.<value>"
+              },
+              "lines": {
+                "type": "array",
+                "maxItems": 4,
+                "items": {
+                  "$ref": "#/$defs/code_ref"
+                }
+              },
+              "finding": {
+                "type": "string",
+                "pattern": "^[CHMLI]-[0-9]{3}$",
+                "x-text-class": "server"
+              }
+            }
+          }
         }
       }
     },

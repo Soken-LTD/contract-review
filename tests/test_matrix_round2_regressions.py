@@ -58,7 +58,7 @@ def test_set_section_extracts_roles_notes_from_section_key():
 
     from soken_review.tools import set_section as ss_mod
 
-    src = inspect.getsource(ss_mod.handle_review_set_section)
+    src = inspect.getsource(ss_mod._set_one_section)  # single-section path behind the batch wrapper
     # The handler must extract from args[section]["rows"] for these sections
     assert "roles_notes" in src and "rows" in src, (
         "Bug 3: handler must extract content from args[section]['rows'] for roles_notes/coverage/out_of_scope_reasons"

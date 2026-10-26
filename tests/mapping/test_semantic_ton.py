@@ -138,7 +138,7 @@ def _fn(doc: dict, span: str) -> dict:
 
 def test_tact_units_handlers_and_spans() -> None:
     doc, status = _map({"c/master.tact": TACT}, build_ok=False)
-    assert status == "partial"                        # parsed without a build: never `failed`, never `full`
+    assert status == "partial"                        # parsed from source: never `failed`, never `full`
     sem = doc["semantic"]
     assert [u["name"] for u in sem["units"]] == ["Master", "Other"]   # traits are not units
     spans = {s["id"]: s for s in doc["spans"]}
@@ -182,11 +182,13 @@ def test_tact_guards_writes_sends_and_internal_edges() -> None:
     assert bases == ["Master", "Ownable", "Fees"]
 
 
-def test_tact_status_full_only_with_build() -> None:
-    _, status = _map({"c/master.tact": TACT}, build_ok=True)
-    assert status == "full"
-    _, status = _map({"c/master.tact": TACT.rsplit("}", 1)[0]}, build_ok=True)   # unbalanced
-    assert status == "partial"
+def test_parsed_ton_map_is_partial_with_or_without_build() -> None:
+    """Same rule as the parsed Solana layer on main: a layer parsed from source is never `full`
+    (the unreachability auto-proof needs a compiler AST) and never `failed`."""
+    doc, status = _map({"c/master.tact": TACT}, build_ok=True)
+    assert status == "partial" and "semantic" in doc
+    doc, status = _map({"c/master.tact": TACT.rsplit("}", 1)[0]}, build_ok=True)   # unbalanced
+    assert status == "partial" and "semantic" not in doc
 
 
 def test_func_entry_guard_send_and_storage() -> None:

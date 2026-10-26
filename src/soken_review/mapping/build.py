@@ -2,9 +2,9 @@
 
 `build_map(files, solc_output, categories)` is pure: pinned texts in, map document and per-file
 tokens out. The lexical layer is always present; the semantic layer when the build produced an AST
-(Solidity) or, for TON, from the parsed source (semantic_ton). `map_status`: `full` (semantic
-layer, every file parsed by a grammar or without error; TON: parsed cleanly and the build
-compiled), `partial` (semantic layer with fallback or error files, no AST, or a TON map parsed
+(Solidity) or parsed from source (Solana: semantic_solana, TON: semantic_ton). `map_status`:
+`full` (solc semantic layer, every file parsed by a grammar or without error), `partial`
+(semantic layer with fallback or error files, no AST, or a layer parsed from source, with or
 without a build), `failed` (build failed: lexical layer only, 03 3.1).
 
 `write_map` / `load_map` keep the artifacts next to the pin: `<root>/<job_id>/map/map.json` and
@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
 # the map. Anything else (non-ASCII, over-long, ERROR-node text) is replaced by a stable id.
 _NAME_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]{0,63}$")
 _TEXT_KINDS = frozenset({"comment", "literal_str"})
-_TON_SUFFIXES = (".tact", ".fc", ".func", ".tolk")
 
 
 def safe_name(name: str) -> str:
@@ -75,13 +74,19 @@ def validate_map(doc: dict[str, Any]) -> None:
 
 
 def build_map(files: dict[str, str], solc_output: dict | None, categories: list[str],
-              build_ok: bool = True, compiled_texts: dict[str, str] | None = None) -> MapArtifacts:
+              build_ok: bool = True, compiled_texts: dict[str, str] | None = None,
+              parsed_family: str | None = None) -> MapArtifacts:
     """Lexical layer for every file; semantic layer from the solc AST when the build succeeded.
 
     `compiled_texts` are the exact source strings the compiler received (per path). The build step
     compiles the fetched Standard JSON byte for byte, so these may keep CRLF while `files` is the
     LF-normalised pin; AST byte offsets are resolved against them so every semantic function lands
-    on its own lexical span."""
+    on its own lexical span.
+
+    `parsed_family="solana"`: the semantic layer comes from the Rust parse (semantic_solana), with or
+    without a build. Such a map is `partial` at best (not compiler-resolved), never `full`, so the
+    unreachability auto-proof that needs `full` stays off; the build outcome is reported separately
+    (map/status.json `build_status`)."""
     lex: dict[str, LexResult] = {p: lex_file(p, t) for p, t in sorted(files.items())}
     file_rows = []
     spans: list[dict[str, Any]] = []
@@ -125,7 +130,22 @@ def build_map(files: dict[str, str], solc_output: dict | None, categories: list[
         "constants": constants,
     }
     semantic = None
-    if build_ok and solc_output:
+    parsed = False
+    if parsed_family == "solana":
+        from .semantic_solana import build_semantic_solana
+
+        built = build_semantic_solana(files, categories)
+        if built is not None:
+            semantic, span_ids = built
+            parsed = True
+            for sp in spans:
+                hit = span_ids.get((sp["file"], sp["start"]))
+                if hit is not None:
+                    sp["id"], sp["unit"] = hit
+            known = {sp["id"] for sp in spans}
+            semantic["functions"] = [f for f in semantic["functions"] if f["span"] in known]
+            doc["semantic"] = semantic
+    elif build_ok and solc_output:
         built = build_semantic(solc_output, files, categories, compiled_texts)
         if built is not None:
             semantic, span_ids = built
@@ -161,11 +181,10 @@ def build_map(files: dict[str, str], solc_output: dict | None, categories: list[
             semantic["functions"] = [f for f in semantic["functions"] if f["span"] in known]
             doc["semantic"] = semantic
             ton_parsed = True
-    if ton_parsed:
-        # `full` needs a build that compiled these sources and a clean parse of every TON file;
-        # a parsed map without a build (compiler missing or failing) is `partial`, never `failed`.
-        clean = all(r["status"] == "ok" for r in file_rows if Path(r["path"]).suffix in _TON_SUFFIXES)
-        status = "full" if build_ok and clean else "partial"
+    if parsed or ton_parsed:
+        # A layer parsed from source (Solana, TON), not a compiler AST: always `partial`, so the
+        # unreachability auto-proof stays off; never `failed`, the layer is there with or without a build.
+        status = "partial"
     elif not build_ok:
         status = "failed"
     elif semantic is None:
@@ -203,7 +222,8 @@ def token_file_name(path: str) -> str:
     return hashlib.sha256(path.encode("utf-8")).hexdigest()[:16] + ".jsonl"
 
 
-def write_map(root: Path, job_id: str, art: MapArtifacts, build_detail: str | None = None) -> None:
+def write_map(root: Path, job_id: str, art: MapArtifacts, build_detail: str | None = None,
+              build_status: str | None = None) -> None:
     d = _map_dir(root, job_id)
     (d / "tokens").mkdir(parents=True, exist_ok=True)
     index = {}
@@ -214,8 +234,10 @@ def write_map(root: Path, job_id: str, art: MapArtifacts, build_detail: str | No
                                          encoding="utf-8")
     (d / "tokens.json").write_text(json.dumps(index, sort_keys=True), encoding="utf-8")
     (d / "map.json").write_text(json.dumps(art.doc, sort_keys=True, separators=(",", ":")), encoding="utf-8")
-    (d / "status.json").write_text(json.dumps({"map_status": art.status, "build_detail": build_detail}),
-                                   encoding="utf-8")
+    status: dict[str, Any] = {"map_status": art.status, "build_detail": build_detail}
+    if build_status is not None:
+        status["build_status"] = build_status
+    (d / "status.json").write_text(json.dumps(status), encoding="utf-8")
 
 
 def load_map(root: Path, job_id: str) -> tuple[dict[str, Any] | None, str | None]:

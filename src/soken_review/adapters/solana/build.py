@@ -509,7 +509,8 @@ def _do_build(candidate: Candidate, work_dir: Path) -> BuildResult:
     # Step 1: Trust scan (06 3.3.4). It decides tier A only: an untrusted candidate is still built
     # and analyzed in the sandbox, and resolve_provenance answers not_checkable BUILD_INPUT_UNTRUSTED.
     from soken_review.adapters.solana.trust_scan import scan_candidate_files
-    untrusted, reasons = scan_candidate_files(candidate.files, settings.get("unread_paths") or ())
+    untrusted, reasons = scan_candidate_files(
+        candidate.files, [*(settings.get("unread_paths") or ()), *(settings.get("workspace_unread_paths") or ())])
     if untrusted:
         candidate.untrusted_inputs = True
         _write_host_file(host_dir / "untrusted_inputs.txt", "\n".join(reasons).encode())
@@ -522,7 +523,8 @@ def _do_build(candidate: Candidate, work_dir: Path) -> BuildResult:
         return _fail(candidate, "unsupported_toolchain", "bpf_line_not_proven")
     mount = vargs["mount_path"] or (getattr(candidate, "mount_path", None) or "").strip("/")
     manifests = _manifests_under(candidate.files, mount)
-    library = vargs["library_name"]
+    # Verify args name the library; a subdir job names its crate (fetch.attach_build_workspace).
+    library = vargs["library_name"] or settings.get("library_name")
     crate_rel = ""
     if library:
         found = _library_dir(manifests, library)
@@ -563,8 +565,14 @@ def _do_build(candidate: Candidate, work_dir: Path) -> BuildResult:
     if version is None:
         return _fail(candidate, "unsupported_toolchain", "solana_version_unknown")
 
-    # Step 5: Image of that exact version (06 3.3.1); no image = nothing built
+    # Step 5: Image of that exact version (06 3.3.1). Without one, the nearest published image builds
+    # for analysis only (image_match nearest: the hash is never compared for tier A). A declared
+    # --base-image is the owner's exact choice: no substitute for it.
     image = solana_images.build_image(version) if not _DIRECT_BUILD else None
+    image_match = "exact"
+    if not _DIRECT_BUILD and image is None and not vargs["base_image"]:
+        image = solana_images.nearest_build_image(version)
+        image_match = "nearest"
     if not _DIRECT_BUILD and image is None:
         return _fail(candidate, "unsupported_toolchain", f"no_image_for_version_{version}")
     if vargs["arch"] and (image is None or vargs["arch"] not in image.arch_values):
@@ -601,7 +609,7 @@ def _do_build(candidate: Candidate, work_dir: Path) -> BuildResult:
         "upstream": image.upstream, "working_dir": image.working_dir, "cargo_home": image.cargo_home,
         "home": image.home, "active_toolchain": image.active_toolchain, "mount": mount,
         "crate_rel": crate_rel, "ws_rel": ws_rel, "library_name": library, "cargo_args": build_args,
-        "arch": vargs["arch"],
+        "arch": vargs["arch"], "image_match": image_match, "image_version": image.version,
     }
     _write_host_file(host_dir / "build_meta.json", json.dumps(meta, indent=2).encode())
     return _build_docker(candidate, src_dir, output_dir, host_dir, work_dir, image, meta)

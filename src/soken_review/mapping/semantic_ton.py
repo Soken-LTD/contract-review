@@ -705,7 +705,7 @@ def _build_semantic_ton(files: dict[str, tuple[str, list[Any]]], categories: lis
         "roles": _roles(entries),
         "upgrade_surface": [{"unit": inf.unit_id, "mechanism": "set_code", "authority_fact_key": "onchain.owner"}
                             for inf in _dedup_units(entries) if "code_update" in inf.features],
-        "chain_extras": {"ton": {"parsed_from": "source", "units": {
+        "chain_extras": {"ton": {"layer": "parsed", "units": {
             unit_ids[name]: {"bases": [safe_name(name), *[safe_name(b) for b in bases_of.get(name, [])]]}
             for name in unit_ids}}},
     }

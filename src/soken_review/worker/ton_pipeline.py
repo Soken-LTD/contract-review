@@ -384,6 +384,7 @@ async def _map(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> No
         solc_output_path=None, build_ok=build_ok, job=job,
         chain_state=chain_state, candidate=candidate,
         nsloc=build.get("nsloc"), analyzers=analyzers, build_detail=detail,
+        build_status="ok" if build_ok else "failed",
     ))
     async with sup._pool.connection() as conn:
         repo = JobRepo(conn)

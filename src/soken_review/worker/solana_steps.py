@@ -37,6 +37,10 @@ from ..pinning.store import PinnedSource
 logger = logging.getLogger(__name__)
 
 _KIND_FILE = "solana_kind.json"
+# Repo tree around a subdir candidate (fetch.attach_build_workspace): host-only, never mounted, never
+# pinned; the build step writes the pinned scope over it so the reviewed bytes are the built bytes.
+_WORKSPACE_FILE = "build_workspace.json"
+_RUNTIME_ONLY = frozenset({"files", "src_tree_dir", "_full_tree"})
 _LOADERS = (onchain.BPF_LOADER_UPGRADEABLE, onchain.BPF_LOADER_V2, onchain.BPF_LOADER_V1)
 
 
@@ -200,8 +204,11 @@ async def _fetch_program(sup: Any, step: dict[str, Any], job: dict[str, Any], ou
     pin = PinnedSource.from_files({p: t.encode("utf-8") for p, t in cand.files.items()},
                                   langs={p: cand.language for p in cand.files})
     pin.persist(sup._pin_root, job["job_id"])
-    meta = {k: v for k, v in asdict(cand).items() if k != "files"}
+    meta = {k: v for k, v in asdict(cand).items() if k not in _RUNTIME_ONLY}
     (out_dir / "candidates.json").write_text(json.dumps([meta], indent=1, default=str), encoding="utf-8")
+    if cand._full_tree and (cand.settings or {}).get("subdir"):
+        (out_dir / _WORKSPACE_FILE).write_text(json.dumps({"subdir": cand.settings["subdir"],
+                                                           "files": cand._full_tree}), encoding="utf-8")
     async with sup._pool.connection() as conn:
         await JobRepo(conn).update_job_fields(job["job_id"], source_pin=pin.source_pin)
     await sup._mark_step(step["id"], "done", provenance={"provider": cand.provider, "sha256": cand.sha256})
@@ -234,18 +241,53 @@ async def _build_program(sup: Any, step: dict[str, Any], job: dict[str, Any], ou
     pin = PinnedSource.load(sup._pin_root, job["job_id"])
     files = {p: "\n".join(pin.read_all(p)) for p in pin.entries}
     comp = raw.get("compiler")
-    cand = Candidate(provider=raw["provider"], files=files, sha256=raw["sha256"], language=raw["language"],
-                     compiler=Compiler(**comp) if comp else None, settings=raw.get("settings") or {},
+    settings = dict(raw.get("settings") or {})
+    cand = Candidate(provider=raw["provider"], files=build_files(files, out_dir / _WORKSPACE_FILE, settings),
+                     sha256=raw["sha256"], language=raw["language"],
+                     compiler=Compiler(**comp) if comp else None, settings=settings,
                      std_json_input=None, entry_contract=raw.get("entry_contract"),
                      source_url=raw.get("source_url"), fetched_at=raw.get("fetched_at"))
     # The SolanaAdapter.build wrapper manages its own sandbox work dir (adapters/solana/build.py).
     loop = asyncio.get_event_loop()
     r = await loop.run_in_executor(None, lambda: SolanaAdapter().build(cand))
-    result = {"status": r.status, "reason": r.reason, "nsloc": r.nsloc, "work_dir": r.work_dir,
-              "untrusted_inputs": getattr(cand, "untrusted_inputs", False), "provenance": None}
+    # nSLOC is the reviewed scope (the pin), not the workspace the build needed around it.
+    result = {"status": r.status, "reason": r.reason, "nsloc": pin_nsloc(files), "work_dir": r.work_dir,
+              "untrusted_inputs": getattr(cand, "untrusted_inputs", False), "provenance": None,
+              "detail": build_detail(r.reason, r.stderr_head) if r.status != "ok" else None}
     (out_dir / "build_result.json").write_text(json.dumps(result), encoding="utf-8")
     await sup._mark_step(step["id"], "done")
     await sup._after_build(step, result)
+
+
+def build_files(pinned: dict[str, str], workspace_path: Path, settings: dict[str, Any]) -> dict[str, str]:
+    """Files the build gets: the pinned scope, inside its repo workspace when the fetch kept one.
+
+    The workspace copy of the subdir is dropped and the pinned files are written under the subdir
+    prefix, so what is built is exactly what is reviewed. Without a workspace file: the pin as is.
+    """
+    if not workspace_path.exists():
+        return pinned
+    data = json.loads(workspace_path.read_text(encoding="utf-8"))
+    subdir = str(data.get("subdir") or settings.get("subdir") or "").strip("/")
+    if not subdir:
+        return pinned
+    prefix = subdir + "/"
+    out = {p: c for p, c in (data.get("files") or {}).items()
+           if isinstance(c, str) and not p.startswith(prefix)}
+    out.update({prefix + p: c for p, c in pinned.items()})
+    return out
+
+
+def pin_nsloc(files: dict[str, str]) -> int:
+    from ..adapters.solana.units import count_nsloc_rust, is_in_scope_rust
+
+    return sum(count_nsloc_rust(c) for p, c in files.items() if is_in_scope_rust(p) and isinstance(c, str))
+
+
+def build_detail(reason: str | None, stderr_head: str | None) -> str:
+    """`reason: last stderr lines` for review_status build.error (map_view prints error classes only)."""
+    tail = " | ".join(line.strip() for line in (stderr_head or "").splitlines()[-6:] if line.strip())
+    return f"{reason or 'failed'}: {tail}"[:600] if tail else (reason or "failed")
 
 
 # --------------------------------------------------------------------------------- analyze
@@ -276,21 +318,28 @@ async def _analyze_program(sup: Any, step: dict[str, Any], job: dict[str, Any],
     from ..adapters.solana import SolanaAdapter
 
     res = json.loads((out_dir / "build_result.json").read_text())
-    if res["status"] != "ok" or not res.get("work_dir"):
-        leads_out.write_text("[]", encoding="utf-8")
-        (out_dir / "static_map.json").write_text(
-            json.dumps({"status": "not_run", "reason": "build_failed"}), encoding="utf-8")
-        await sup._mark_step(step["id"], "done")
-        await sup._after_analyze(step, degraded=True)
-        return
     raw = json.loads((out_dir / "candidates.json").read_text())[0]
     pin = PinnedSource.load(sup._pin_root, job["job_id"])
     files = {p: "\n".join(pin.read_all(p)) for p in pin.entries}
+    if res["status"] != "ok" or not res.get("work_dir"):
+        # No build: clippy and cargo-audit cannot run; the source rules still do (degraded, named).
+        from ..adapters.solana.analyze import analyze_source_only
+
+        loop = asyncio.get_event_loop()
+        leads, static_map, _plan = await loop.run_in_executor(
+            None, lambda: analyze_source_only(files, f"build_{res.get('reason') or 'failed'}"))
+        leads_out.write_text(json.dumps(leads, indent=2), encoding="utf-8")
+        (out_dir / "static_map.json").write_text(json.dumps(static_map), encoding="utf-8")
+        await sup._mark_step(step["id"], "done")
+        await sup._after_analyze(step, degraded=True)
+        return
     comp = raw.get("compiler")
     cand = Candidate(provider=raw["provider"], files=files, sha256=raw["sha256"], language=raw["language"],
                      compiler=Compiler(**comp) if comp else None, settings=raw.get("settings") or {},
                      std_json_input=None, entry_contract=raw.get("entry_contract"),
                      source_url=raw.get("source_url"), fetched_at=raw.get("fetched_at"))
+    # The analysis reads the built tree (work_dir/src) for clippy and cargo-audit; the source rules
+    # read the candidate files, which must be the pinned scope (lead paths are pin paths).
     r = BuildResult(candidate=cand, status="ok", nsloc=res.get("nsloc", 0), work_dir=res["work_dir"])
     loop = asyncio.get_event_loop()
     leads, static_map, _read_plan = await loop.run_in_executor(None, lambda: SolanaAdapter().analyze(r))
@@ -317,10 +366,11 @@ async def _map(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
         sup._pin_root, job_id, family="solana", chain="solana",
         solc_output_path=None, build_ok=build_ok, job=job, chain_state=chain_state,
         candidate=cands[0] if cands else None,
-        nsloc=int(build["nsloc"]) if build.get("nsloc") is not None else None,
+        nsloc=int(build["nsloc"]) if build.get("nsloc") else None,
         analyzers={"spl_mint": "1"} if cands and
         (cands[0].get("settings") or {}).get("kind") == "mint" else {},
-        build_detail=None if build_ok else (build.get("reason")),
+        build_detail=None if build_ok else (build.get("detail") or build.get("reason")),
+        build_status="ok" if build_ok else "failed",
     ))
     async with sup._pool.connection() as conn:
         repo = JobRepo(conn)

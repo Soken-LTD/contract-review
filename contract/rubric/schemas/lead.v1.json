@@ -109,6 +109,11 @@
     "not_reviewed"
    ],
    "description": "out_of_scope applies to analyzer leads only; a previous_report lead in an out-of-scope file stays open and closes not_reviewed at finalize (04 section 10)"
+  },
+  "message": {
+   "type": "string",
+   "maxLength": 600,
+   "description": "server text explaining the lead (rubric templates with identifiers only); printed by review_leads detailed"
   }
  }
 }

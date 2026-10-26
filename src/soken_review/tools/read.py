@@ -33,6 +33,7 @@ from ..engine.injection import escape_invisible
 from ..errors import ReviewError
 from ..mapping.build import load_map, load_map_status
 from ..mapping.facts import load_facts
+from ..mapping.lifecycle import load_lifecycle, map_pointer
 from ..mapping.step import load_flags
 from ..pinning.store import PinnedSource
 from ..server import handler
@@ -66,6 +67,8 @@ _CURSOR_SECRET: bytes = os.environ.get("SOKEN_CURSOR_SECRET", "").encode() or se
 # ── size hard caps (03 section 6) ────────────────────────────────────────────
 
 _CAP_READ_CODE = 30_000
+_CAP_READ_BATCH = 60_000   # all ranges of one batched review_read_code call
+_MIN_RANGE_BUDGET = 10_000  # a range starts only when one capped line (_LINE_CAP_BYTES) plus headers fits
 _CAP_SEARCH = 20_000
 _CAP_LEADS = 20_000
 _CAP_FACTS = 20_000
@@ -154,14 +157,47 @@ def _parse_cursor(cursor: str, job_id: str, tool: str, filters: dict) -> int:
 
 @handler("review_read_code")
 async def _read_code(args: dict[str, Any]) -> str:
-    """Read numbered pinned lines; logs range to job_reads (03 4.4)."""
+    """Read numbered pinned lines; logs range to job_reads (03 4.4).
+
+    One range (path, start_line, end_line) or up to 8 `ranges` in one call. The 2026-10-25 blind runs
+    spent 31 read calls on three reviews, most of them in bursts a few seconds apart; a batch returns the
+    same per-range blocks joined by a blank line. Each range keeps the 400-line window and the per-call
+    cap of a single read; the whole batch is capped at _CAP_READ_BATCH, and a range that no longer fits
+    is listed as not read (nothing is logged for it), so a read is only ever recorded for printed lines.
+    """
     job_id: str = args["job_id"]
-    path: str = args["path"]
-    start: int = args["start_line"]
-    end: int = args["end_line"]
+    ranges = args.get("ranges")
+    detailed = args.get("response_format") == "detailed"
+    if not ranges:
+        missing = [k for k in ("path", "start_line", "end_line") if args.get(k) is None]
+        if missing:
+            raise ReviewError("E_INVALID_ARGUMENT", field=missing[0], rule="required", value80="none",
+                              example="path, start_line and end_line, or ranges [{path, start_line, end_line}]")
+        _check_job_readable(job_id)
+        return _read_range(job_id, args["path"], args["start_line"], args["end_line"], detailed, _CAP_READ_CODE)
 
     _check_job_readable(job_id)
+    blocks: list[str] = []
+    budget = _CAP_READ_BATCH
+    for i, rng in enumerate(ranges):
+        path, start, end = rng["path"], rng["start_line"], rng["end_line"]
+        if budget < _MIN_RANGE_BUDGET:
+            blocks.append(f"range {i + 1} not_read {path}:{start}-{end} (output cap; read it in a later call)")
+            continue
+        try:
+            body = _read_range(job_id, path, start, end, detailed, min(_CAP_READ_CODE, budget))
+        except ReviewError as err:
+            if err.channel != "rejection":
+                raise
+            env = err.envelope()
+            body = f"range {i + 1} rejected {env['code']}: {env['what']} {env['fix']}"
+        budget -= len(body.encode("utf-8")) + 2
+        blocks.append(body)
+    return "\n\n".join(blocks)
 
+
+def _read_range(job_id: str, path: str, start: int, end: int, detailed_fmt: bool, cap: int) -> str:
+    """One numbered window of a pinned file or project document, logged to job_reads."""
     pin = _load_pin(job_id)
     context = _load_context(job_id)
     # A `context/` path reads from the document store with the same window, cap and job_reads log
@@ -195,7 +231,7 @@ async def _read_code(args: dict[str, Any]) -> str:
     if job_flags is None:
         # Flags are written at pin time with the map (04 12); a readable job without them is a fault.
         raise ReviewError("E_INTERNAL", incident=f"flags-missing-{job_id[-8:]}")
-    detailed = args.get("response_format") == "detailed" and not is_context_path(path)
+    detailed = detailed_fmt and not is_context_path(path)
     doc = load_map(root, job_id)[0] if detailed else None
 
     def _tail(a: int, b: int) -> str:
@@ -219,14 +255,14 @@ async def _read_code(args: dict[str, Any]) -> str:
     rendered = [_render_line(start + i, line) for i, line in enumerate(lines)]
     n = len(rendered)
     body = _body(n)
-    while len(body.encode("utf-8")) > _CAP_READ_CODE and n > 1:
-        over = len(body.encode("utf-8")) - _CAP_READ_CODE
+    while len(body.encode("utf-8")) > cap and n > 1:
+        over = len(body.encode("utf-8")) - cap
         drop = 1
         while drop < n - 1 and sum(len(r.encode("utf-8")) + 1 for r in rendered[n - drop : n]) < over:
             drop += 1
         n -= drop
         body = _body(n)
-    if len(body.encode("utf-8")) > _CAP_READ_CODE:
+    if len(body.encode("utf-8")) > cap:
         raise ReviewError("E_INTERNAL", incident=f"read-cap-{job_id[-8:]}")
 
     _get_ctx().append_read(job_id, path, start, start + n - 1)
@@ -480,10 +516,12 @@ def _format_lead(lead: dict, fmt: str) -> str:
         prev_id = lead.get("prev_finding_id", "")
         line += f" prev {prev_id}"
 
-    if fmt == "detailed":
+    if fmt == "detailed" or str(lead.get("rule_id", "")).startswith("soken-lifecycle:"):
+        # lifecycle leads carry their reason in the message (rubric invariants.yaml); without it
+        # the concise line names a location and nothing to check there
         msg = lead.get("message", "")[:400]
         if msg:
-            line += f' "{msg}"'
+            line += f' {lead.get("rule_id", "")} "{msg}"' if fmt != "detailed" else f' "{msg}"'
 
     return line
 
@@ -544,8 +582,10 @@ async def _contract_map(args: dict[str, Any]) -> str:
     doc, status = load_map(root, job_id)
     if doc is None:
         raise ReviewError("E_INTERNAL", incident=f"map-missing-{job_id[-8:]}")
+    pointer = map_pointer(load_lifecycle(root, job_id))
     if not doc.get("semantic"):
-        return "\n".join(map_view.render_lexical(doc, status, load_map_status(root, job_id).get("build_detail")))
+        lines = map_view.render_lexical(doc, status, load_map_status(root, job_id).get("build_detail"))
+        return "\n".join([*lines, pointer] if pointer else lines)
 
     filters = {"contract": contract or "", "detailed": detailed, "page_size": page_size}
     offset = _parse_cursor(cursor, job_id, "review_contract_map", filters) if cursor else 0
@@ -554,6 +594,13 @@ async def _contract_map(args: dict[str, Any]) -> str:
     facts = load_facts(root, job_id) or []
     page = units[offset : offset + page_size]
     out = [f"contract map {status}, units {len(units)}, page {offset // page_size + 1}"]
+    extras = doc["semantic"].get("chain_extras") or {}
+    if any(isinstance(v, dict) and v.get("layer") == "parsed" for v in extras.values()):   # Solana, TON
+        # Parsed from source (no compiler resolution); the build outcome is stated, never implied.
+        build_status = load_map_status(root, job_id).get("build_status") or "unknown"
+        out[0] += f"; layer parsed from source, build {build_status} (see review_status build)"
+    if pointer and offset == 0:
+        out.append(pointer)
     used = len(out[0])
     shown = 0
     for unit in page:
