@@ -40,7 +40,31 @@ _VER_RE = _re.compile(r"^([0-9]+\.[0-9]+\.[0-9]+)")
 _SEMVER_RE = _re.compile(r"(?<![0-9.])([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{1,3})(?![0-9])")
 
 logger = logging.getLogger(__name__)
-_MAX_PRAGMA_SCAN = 4_000_000          # bytes of source the pragma fallback reads
+
+# `pragma solidity <expr>;` read line by line with a bounded expression (security review 2026-10-26:
+# the unbounded `[^;]+` of evm/files.PRAGMA rescans to the next ';' per match on untrusted text).
+_PRAGMA_LINE_RE = _re.compile(r"^\s*pragma\s+solidity\s+([^;\n]{1,256});")
+_MAX_PRAGMA_LINES = 64
+_MAX_LINE = 1024
+
+
+def pragma_exprs(sources: dict[str, str]) -> tuple[list[str] | None, str]:
+    """Every `pragma solidity` expression of the .sol sources, or (None, reason) when there are more
+    than _MAX_PRAGMA_LINES of them: the build then fails closed with that reason (never a pick
+    that ignores pragmas it did not read)."""
+    out: list[str] = []
+    for path, text in sources.items():
+        if not path.endswith(".sol"):
+            continue
+        for line in text.splitlines():
+            if len(line) > _MAX_LINE or "pragma" not in line:
+                continue
+            m = _PRAGMA_LINE_RE.match(line)
+            if m:
+                out.append(m.group(1))
+                if len(out) > _MAX_PRAGMA_LINES:
+                    return None, "pragma_limit_exceeded"
+    return out, ""
 
 # SOKEN_TRON_SOLC_DIRECT=1: dev-only bypass, never set in production or tests
 _DIRECT_TRON_SOLC = os.environ.get("SOKEN_TRON_SOLC_DIRECT", "0") == "1"
@@ -84,28 +108,34 @@ def resolve_tron_solc(version: str | None, sources: dict[str, str],
             reason = exc.reason_detail
 
     from soken_review.adapters.evm.compiler import CompilerCacheError, get_cache
-    from soken_review.adapters.evm.files import PRAGMA, pick_solc, satisfies
+    from soken_review.adapters.evm.files import satisfies
 
-    sol_sources = {p: t for p, t in sources.items() if p.endswith(".sol")}
-    if sum(len(t) for t in sol_sources.values()) > _MAX_PRAGMA_SCAN:
-        # PRAGMA's `[^;]+` rescans to the next ';' per match: bound the untrusted text it reads.
-        sol_sources = {}
+    exprs, pragma_reason = pragma_exprs(sources)
+    if exprs is None:
+        return None, pragma_reason
     cache = get_cache(cache_dir)
     try:
         builds = cache._load_list().get("builds", [])
     except (OSError, ValueError) as exc:
         logger.warning("tron: solc list.json unavailable: %s", exc)
         return None, reason
+    releases = []
+    for b in builds:
+        try:
+            v = tuple(int(x) for x in str(b.get("version", "")).split("."))
+        except ValueError:
+            continue
+        if len(v) == 3 and not b.get("prerelease"):
+            releases.append((v, b.get("longVersion") or b["version"]))
     long_version = None
-    m = _SEMVER_RE.search(version or "")
+    m = _SEMVER_RE.search((version or "")[:80])
     if m:
         want = tuple(int(x) for x in m.groups())
-        exprs = [p.group(1) for text in sol_sources.values() for p in PRAGMA.finditer(text)]
         if all(satisfies(e, want) for e in exprs):  # type: ignore[arg-type]
-            long_version = next((b.get("longVersion") or b.get("version") for b in builds
-                                 if b.get("version") == ".".join(m.groups()) and not b.get("prerelease")), None)
-    if long_version is None and sol_sources:
-        long_version = pick_solc(sol_sources, builds)
+            long_version = next((lv for v, lv in releases if v == want), None)
+    if long_version is None and exprs:
+        long_version = next((lv for v, lv in sorted(releases, reverse=True)
+                             if all(satisfies(e, v) for e in exprs)), None)  # type: ignore[arg-type]
     if long_version is None:
         return None, reason
     try:

@@ -268,3 +268,35 @@ def test_job_over_function_cap_or_budget_has_no_semantic_layer(monkeypatch) -> N
     monkeypatch.setattr(semantic_ton, "_MAX_FUNCTIONS", 4_000)
     monkeypatch.setattr(semantic_ton, "_PARSE_BUDGET_S", -1.0)
     assert semantic_ton.build_semantic_ton({"a.tact": ("tact", [])}, [], budget_s=-1.0) is None
+
+
+def test_broken_contract_header_keeps_the_file_lexical() -> None:
+    """An unclosed contract must not leak its members as free functions with their guards."""
+    src = ("contract Vault with Ownable {\n    owner: Address;\n"
+           "    fun onlyOwner() {\n        require(sender() == self.owner, \"no\");\n    }\n"
+           "    receive(msg: Take) {\n        self.onlyOwner();\n")          # never closed
+    _e, status, doc = _timed_map({"v.tact": src})
+    assert status == "partial" and doc["spans"] == [] and "semantic" not in doc
+    src2 = "contract Broken with A, B\nfun free() {\n    require(sender() == x, 1);\n}\n"   # header without "{"
+    _e, status, doc = _timed_map({"b.tact": src2, "ok.tact": TACT})
+    assert not [s for s in doc["spans"] if s["file"] == "b.tact"]
+    assert any(s["file"] == "ok.tact" for s in doc["spans"])        # other files still parsed
+
+
+def test_call_fan_out_bomb_is_bounded() -> None:
+    """300 helpers each calling all 300 (90k edges, under every token cap), one handler with 5k
+    call sites: dedup, the site cap and the reach cap keep it fast."""
+    def helper(k: int) -> str:
+        return f"() h{k}() {{\n" + "".join(f"h{j}();" for j in range(300)) + "\n}\n"
+
+    files = {f"h{f}.fc": "".join(helper(k) for k in range(f * 40, min(300, f * 40 + 40))) for f in range(8)}
+    files["c.fc"] = ("() recv_internal() impure {\n" + "h0();\n" * 5_000
+                     + "throw_unless(1, equal_slices(sender, owner));\n}\n")
+    t0 = time.monotonic()
+    art = build_map(files, None, list(family_categories("ton", "ton")), build_ok=True)
+    assert time.monotonic() - t0 < 30
+    sem = art.doc.get("semantic")
+    assert sem is not None
+    entry = next(f for f in sem["functions"] if f["span"].startswith("c.recv_internal"))
+    assert all(len(f["calls"]) <= semantic_ton._MAX_SITES for f in sem["functions"])
+    assert entry["guards"]                                         # its own guard is still recorded

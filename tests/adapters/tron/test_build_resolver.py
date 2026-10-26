@@ -127,9 +127,24 @@ def test_build_tron_fails_closed_without_compiler(fake_caches):
     assert br.status == "failed" and br.reason == "tron_compiler_unmapped"
 
 
-def test_oversized_source_skips_pragma_scan(fake_caches, monkeypatch):
-    monkeypatch.setattr(tron_build, "_MAX_PRAGMA_SCAN", 10)
-    solc, _ = tron_build.resolve_tron_solc(None, {"A.sol": "pragma solidity >=0.8.0 <0.9.0;\n"})
-    assert solc is None                          # no explorer version and no pragma read: fail closed
-    solc, _ = tron_build.resolve_tron_solc("tron_0.6.2_Plato", {"A.sol": "pragma solidity ^0.6.0;\n"})
-    assert solc is not None and solc.version == "0.6.2+commit.bacdbe57"
+def test_pathological_pragma_file_is_linear_and_bounded(fake_caches):
+    import time
+
+    # 200k pragma lines with no ';' plus one huge line: the old `[^;]+` rescanned to the end per line.
+    text = "pragma solidity ^0.6.0\n" * 200_000 + "pragma solidity " + "x" * 2_000_000 + "\n"
+    t0 = time.monotonic()
+    exprs, reason = tron_build.pragma_exprs({"A.sol": text})
+    assert time.monotonic() - t0 < 5
+    assert exprs == [] and reason == ""
+
+
+def test_too_many_pragmas_fail_closed_with_a_reason(fake_caches):
+    src = {"A.sol": "pragma solidity ^0.6.0;\n" * (tron_build._MAX_PRAGMA_LINES + 1)}
+    solc, reason = tron_build.resolve_tron_solc("tron_0.6.2_Plato", src)
+    assert solc is None and reason == "pragma_limit_exceeded"
+    cand = Candidate(provider="tronscan", files=src, sha256="0" * 64, language="solidity",
+                     compiler=Compiler("tron_0.6.2_Plato", "tronscan"), settings={},
+                     std_json_input=None, entry_contract=None)
+    br = tron_build.build_tron(cand)
+    assert br.status == "failed" and br.reason == "pragma_limit_exceeded"   # honest status, sources kept
+    assert br.candidate.files == src
