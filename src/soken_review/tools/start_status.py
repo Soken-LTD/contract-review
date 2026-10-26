@@ -936,7 +936,11 @@ def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
         build_detail = map_status_doc.get("build_detail")
         facts = load_facts(pin_root, job_id) or []
         compiler_version = next((f["value"] for f in facts if f["key"] == "compiler.version"), None)
-        build_info: dict[str, Any] = {"status": job.get("map_status") or "none"}
+        # The build outcome itself when the map step recorded it (a parsed Solana map is `partial`
+        # whether or not the program built); else the map status, as before.
+        build_info: dict[str, Any] = {"status": map_status_doc.get("build_status") or job.get("map_status") or "none"}
+        if map_status_doc.get("build_status"):
+            build_info["map_status"] = job.get("map_status") or map_status_doc.get("map_status")
         if compiler_version:
             build_info["version"] = compiler_version
         if build_detail:

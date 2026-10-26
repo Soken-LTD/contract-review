@@ -9,14 +9,14 @@ on:
         description: "space-separated target names (empty = all)"
         default: ""
       mode:
-        description: "e2e (adapter path) or reference (upstream solana-verify build, U-S1 diagnosis only)"
+        description: "e2e (adapter path), repo (repo subdir job: build, parsed map, leads; pinned ghcr images) or reference (upstream solana-verify build, U-S1 diagnosis only)"
         default: "e2e"
 permissions:
   contents: read
 
 jobs:
   e2e:
-    if: inputs.mode != 'reference'
+    if: inputs.mode != 'reference' && inputs.mode != 'repo'
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
@@ -58,6 +58,46 @@ jobs:
           SOKEN_SANDBOX_DEV_PERMS: "1"
           TARGETS: ${{ inputs.targets }}
         run: uv run python scripts/e2e_solana_adapter.py $TARGETS
+  # Repo: a repo subdir job through the worker's own functions (scripts/e2e_solana_repo_map.py) with
+  # the images the stand runs: build and analysis images pulled by the digests in image_map.json and
+  # images.lock.json, never rebuilt here.
+  repo:
+    if: inputs.mode == 'repo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Free disk for the build images
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv sync --locked
+      - name: Sandbox images (fetch and egress built here; Solana images pulled by digest)
+        run: |
+          set -euo pipefail
+          docker build -t soken/git-fetch:ci -f docker/git-fetch/Dockerfile .
+          docker build -t soken/smokescreen:ci -f docker/smokescreen/Dockerfile .
+          uv run python -m soken_review.sandbox.egress up solana --image soken/smokescreen:ci
+          for v in $(uv run python scripts/e2e_solana_repo_map.py --versions); do
+            ref="$(uv run python -c "import sys; from soken_review.adapters.solana.images import build_image; print(build_image(sys.argv[1]).ref)" "$v")"
+            docker pull "$ref"
+          done
+          docker pull "$(uv run python -c "from soken_review.sandbox.profile import locked_image; print(locked_image('solana-analyze'))")"
+          df -h /
+      - name: Fetch pinned RustSec advisory-db (sandboxed git, outside the offline analysis)
+        env:
+          SOKEN_IMAGE_GIT_FETCH: soken/git-fetch:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+        run: uv run python -m soken_review.adapters.solana.rustsec fetch
+      - name: Run repo job e2e
+        env:
+          SOKEN_IMAGE_GIT_FETCH: soken/git-fetch:ci
+          SOKEN_SANDBOX_RUNTIME: runc
+          SOKEN_SANDBOX_DEV_PERMS: "1"
+          TARGETS: ${{ inputs.targets }}
+        run: uv run python scripts/e2e_solana_repo_map.py $TARGETS
   # Reference: upstream `solana-verify build` on the same targets (not our adapter). Tells a difference in
   # our sandbox from a difference in image or args.
   reference:

@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
 def _pg_running() -> bool:
     result = subprocess.run(
         ["docker", "inspect", "-f", "{{.State.Running}}", PG_CONTAINER],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     return result.returncode == 0 and result.stdout.strip() == "true"
 
@@ -62,7 +62,7 @@ def start_postgres() -> None:
         return
 
     # Remove a stopped container if it exists
-    subprocess.run(["docker", "rm", PG_CONTAINER], capture_output=True)
+    subprocess.run(["docker", "rm", PG_CONTAINER], capture_output=True, check=False)
 
     logger.info("Starting Postgres container %s", PG_CONTAINER)
     subprocess.run([
@@ -78,7 +78,7 @@ def start_postgres() -> None:
     for attempt in range(30):
         result = subprocess.run(
             ["docker", "exec", PG_CONTAINER, "pg_isready", "-U", "soken"],
-            capture_output=True,
+            capture_output=True, check=False,
         )
         if result.returncode == 0:
             logger.info("Postgres ready after %ds", attempt + 1)
@@ -106,6 +106,7 @@ async def run_migrations(dsn: str) -> None:
 
 async def run_worker(dsn: str, pin_root: Path) -> None:
     import psycopg_pool
+
     from soken_review.worker.supervisor import Supervisor
 
     logger.info("Starting worker (pin_root=%s)", pin_root)
@@ -124,6 +125,7 @@ async def run_worker(dsn: str, pin_root: Path) -> None:
 
 async def run_server(dsn: str, pin_root: Path, port: int) -> None:
     import uvicorn
+
     from soken_review.tools.context_pg import create_app
 
     os.environ.setdefault("SOKEN_DATABASE_URL", dsn)
