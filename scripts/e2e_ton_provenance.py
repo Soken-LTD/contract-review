@@ -73,10 +73,13 @@ async def main() -> int:
     results["A"] = run_case("A", dep, copy.deepcopy(bundle), root)
 
     mutated = copy.deepcopy(bundle)
-    entry = mutated.settings["entry"]
+    needle = "throw_unless(error::not_owner,"
+    entry = mutated.settings.get("entry")
+    if entry not in mutated.files or needle not in mutated.files[entry]:
+        entry = next(path for path, body in sorted(mutated.files.items()) if needle in body)
     text = mutated.files[entry]
     # one error code in the admin check: `error::not_owner` (73) becomes the literal 999
-    mutated.files[entry] = text.replace("throw_unless(error::not_owner,", "throw_unless(999,", 1)
+    mutated.files[entry] = text.replace(needle, "throw_unless(999,", 1)
     assert mutated.files[entry] != text, "control mutation did not apply"
     results["N1"] = run_case("N1", dep, mutated, root)
 

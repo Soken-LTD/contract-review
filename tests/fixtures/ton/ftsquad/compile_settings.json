@@ -1,0 +1,9 @@
+{
+  "compiler": "tact",
+  "version": "1.6.5",
+  "entrypoint": "contract/contracts/ft_master.tact",
+  "options": {"debug": false},
+  "expected_hash": "c845917da4a4ce1cb22aa00f65a82c3775e4c6a3c74453f9352e96d8d14fbfea",
+  "known_contract_address": "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ",
+  "note": "Sources extracted from verifier_FtSquad.pkg (IPFS QmQoxy25kzRCWv4Jg7myj7T9ttLpsLdSa5Zx1uDYG12KnR). Compiler settings from registry_ipfs_manifest.json. Expected hash from TON registry (registry_get_source_item_data.json stack[1])."
+}

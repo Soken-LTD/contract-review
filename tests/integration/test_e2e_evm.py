@@ -86,10 +86,19 @@ async def mcp_client(pg_pool, pin_root: Path):
 
     os.environ["SOKEN_DATABASE_URL"] = os.environ["SOKEN_DATABASE_URL"]
     os.environ["SOKEN_PIN_ROOT"] = str(pin_root)
+    # App startup refuses to run without a report signing key (require_report_keys). A random
+    # per-run key, never a committed one. Checked here because asgi-lifespan 2.1.0 ignores
+    # `lifespan.startup.failed` and reports any startup error as a bare 5 s TimeoutError.
+    import secrets
+
+    os.environ.setdefault("SOKEN_REPORT_KEY_V1", secrets.token_hex(32))
 
     from asgi_lifespan import LifespanManager
 
     from soken_review.tools.context_pg import create_app
+    from soken_review.tools.report import require_report_keys
+
+    require_report_keys()
 
     app = create_app()
     async with LifespanManager(app) as manager, httpx.AsyncClient(
