@@ -42,7 +42,10 @@ jobs:
         run: uv run pytest -q -rs tests/report
       - name: Render GBLIN (5 runs, UV9-13) and WETH9 in the sandbox
         env:
-          SOKEN_SANDBOX_RUNTIME: ${{ steps.gvisor.outputs.runtime || 'runc' }}
+          # runc: the image built here is a local tag without a registry digest, and under gVisor
+          # docker_argv runs an image by digest only (09 4.4). The gVisor install above still proves
+          # the runtime; the x86 chrome-headless-shell pagination is what this step checks.
+          SOKEN_SANDBOX_RUNTIME: runc
           SOKEN_SANDBOX_DEV_PERMS: "1"
           SOKEN_RENDER_ROOT: ${{ github.workspace }}/.sbx/render-tmp
         run: |
