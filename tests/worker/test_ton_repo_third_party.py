@@ -569,3 +569,16 @@ def test_solana_network_label_never_calls_a_localnet_id_mainnet(cs, want):
     job = {"chain": "solana", "address": PUMP_ID}
     label = _network_label(job, cs, {"chain": "solana"})
     assert label == want and len(label) <= 60
+
+
+def test_unlinked_cover_label_says_the_deployment_is_not_matched():
+    from soken_review.report.assemble import provenance
+
+    job = {"tier": "B", "address": "EQCLyZHP4Xe8fpchQz76O-_RmUhaVc_9BAoGyJrwJrcbz2eZ", "chain": "ton",
+           "source_kind": "repo", "source_args": {"kind": "repo", "repo_url": "https://github.com/HipoFinance/contract"},
+           "resolved_commit": SHA, "source_pin": "sha256:" + "0" * 64}
+    dep = {"tier": "B", "chain": "ton", "unlinked_reason": "the rebuilt code differs from the deployed code"}
+    prov = provenance(job, [{"provider": "repo"}], None, dep)
+    assert prov["label_key"] == "tier_b_unmatched"
+    assert prov["label"] == "Deployment given; deployment not matched to this source"
+    assert provenance(job, [{"provider": "repo"}], None, {"tier": "B"})["label_key"] == "tier_b_not_checked"
