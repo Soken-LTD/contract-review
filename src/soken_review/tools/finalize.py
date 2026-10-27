@@ -42,7 +42,7 @@ from ..mapping.build import load_map
 from ..mapping.lifecycle import load_lifecycle
 from ..mapping.semantic_evm import detect_token_review, units_holding
 from ..mapping.step import load_flags
-from ..report.render import MAX_RENDER_RESETS, queue_render, render_failure_client_caused
+from ..report.render import MAX_RENDER_RESETS, MAX_TOTAL_REOPENS, queue_render, render_failure_client_caused
 from ..server import handler
 from .context import JobContext
 from .coverage import EnumsLoadError, category_allowed_na_reasons, compute_coverage_rows
@@ -879,15 +879,17 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
             # jobs.render_resets counts the reviewer's text failures only (job_steps rows miscount
             # because each retry inserts a new row).
             render_resets = int(job.get("render_resets") or 0)
-            if client_caused and render_resets >= MAX_RENDER_RESETS:
+            # Hard cap whatever the cause (jobs.render_reopens): no classification bug yields endless retries.
+            total_reopens = int(job.get("render_reopens") or 0)
+            if total_reopens >= MAX_TOTAL_REOPENS or (client_caused and render_resets >= MAX_RENDER_RESETS):
                 return {"accepted": False, "state": "render_failed",
                         "errors": [ReviewError("E_JOB_TERMINAL", state="render_failed",
                                                exit_code="E_RENDER_FAILED").envelope()]}
-            if client_caused:
-                await conn.execute(
-                    "update jobs set render_resets = render_resets + 1 where job_id = %s",
-                    (job_id,),
-                )
+            await conn.execute(
+                "update jobs set render_reopens = render_reopens + 1, render_resets = render_resets + %s"
+                " where job_id = %s",
+                (1 if client_caused else 0, job_id),
+            )
             repo = JobRepo(conn)
             await repo.transition(job_id, "ready")
             # Undo what finalize froze, so the revised job finalizes from a clean slate: final ids

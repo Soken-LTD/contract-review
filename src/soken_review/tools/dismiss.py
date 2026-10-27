@@ -347,7 +347,12 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
             for item in items:
                 lead_id: str = item["lead_id"]
                 reason: str = item["reason"]
-                quotes: list[dict[str, Any]] = item.get("quotes") or []
+                # Client quotes carry no trust marker: `by` is the server's own key on the evidence
+                # it derives below (security review PR #83), so it is dropped from input here.
+                quotes: list[dict[str, Any]] = [
+                    {k: v for k, v in q.items() if k != "by"}
+                    for q in (item.get("quotes") or []) if isinstance(q, dict)]
+                server_quote: dict[str, Any] | None = None
                 duplicate_of: str | None = item.get("duplicate_of")
                 fix_item_id: str | None = item.get("item_id")
                 note: str = item.get("note", "")
@@ -561,11 +566,11 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                             # location) is still the reviewer's to close: the pinned lines at the
                             # lead's own location are the recorded evidence (blind run 2026-10-26,
                             # E_QUOTE_TRIVIAL on `_accrue();`).
-                            derived, err = _lead_location_evidence(pin, lead, lead_id, n_lines)
+                            server_quote, err = _lead_location_evidence(pin, lead, lead_id, n_lines)
                             if err is not None:
                                 item_errors.append(err)
                             else:
-                                quotes = [derived]
+                                quotes = [server_quote]
                         for q in quotes[:3]:
                             qt = q.get("text")
                             q_file, q_start, q_end = q.get("file"), q.get("start"), q.get("end")
@@ -575,8 +580,8 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                                     rule="file, start, end, text are required", value80="",
                                 ).envelope())
                                 break
-                            if q.get("by") == "server":
-                                continue  # the lead location itself, read from the pin above
+                            if q is server_quote:
+                                continue  # the lead location itself, read from the pin above (identity, not a field)
                             if _is_comment_only_text(qt):
                                 item_errors.append(ReviewError("E_DISMISS_COMMENT_ONLY").envelope())
                                 break

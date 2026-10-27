@@ -77,45 +77,51 @@ MAX_RESULT_BYTES = 64 * 1024
 # server fault, reopens for free, and never makes the job terminal (blind run 2026-10-26/27:
 # three server-caused failures froze a finished review inside a job that could not render).
 MAX_RENDER_RESETS = 3
+# Hard cap on reopens of one job whatever the cause (jobs.render_reopens, migration 014): a
+# classification bug must never yield unlimited retries (security review PR #83).
+MAX_TOTAL_REOPENS = 10
 
-_LATE_GATE_PATH_RE = re.compile(r"(\$[\w.\[\]]*)\s*$")
+_JSON_PATH_RE = re.compile(r"^\$[\w.\[\]]{0,200}$")
+_RULE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 
 
-def failure_cause(code: str, detail: str, report: dict[str, Any] | None) -> dict[str, str]:
+def failure_cause(code: str, path: str | None, report: dict[str, Any] | None) -> dict[str, str]:
     """Who can fix a render failure: ``{"cause": "model" | "server", "path"?: json path}``.
 
-    A ``late_gate`` detail is ``"<rule> <match> <json path>"`` (kit/render_job.py); the path is
-    looked up in the assembled report through the schema's ``x-text-class`` and only a ``model``
-    class string is the reviewer's. Every other code, or a path that cannot be resolved, is the
-    server's.
+    ``path`` is the structured json path of a ``late_gate`` hit (kit BuildError.path, result.json
+    ``path``), resolved in the assembled report through the schema's ``x-text-class``. A late gate
+    fails closed: without a path, with a path that does not resolve, or without the report, the
+    failure is the reviewer's (``model``); only a resolved non-model class is the server's. Every
+    other code is the server's.
     """
-    if code != "late_gate" or not isinstance(report, dict):
+    if code != "late_gate":
         return {"cause": "server"}
-    m = _LATE_GATE_PATH_RE.search(detail or "")
-    path = m.group(1) if m else ""
+    path = path if isinstance(path, str) and _JSON_PATH_RE.match(path) else ""
     cls = None
-    if path:
+    if path and isinstance(report, dict):
         try:
             from .kit.build import iter_strings
 
             cls = next((c for p, c, _ in iter_strings(report) if p == path), None)
         except Exception:  # noqa: BLE001  # a schema walk fault must not hide the render failure
             cls = None
-    out = {"cause": "model" if cls == "model" else "server"}
+    out = {"cause": "server" if cls in ("server", "kit", "src") else "model"}
     if path:
         out["path"] = path[:120]
     return out
 
 
 def render_failure_client_caused(error_detail: Any) -> bool:
-    """True when the stored render failure is one the reviewer must fix (late gate on model text).
-    Failures stored before the cause was recorded count as the server's."""
+    """True when the stored render failure counts against the reviewer: a late gate not recorded as
+    the server's (fail closed: a late gate stored without a cause is the reviewer's)."""
     return (isinstance(error_detail, dict) and error_detail.get("detail") == "late_gate"
-            and error_detail.get("cause") == "model")
+            and error_detail.get("cause") != "server")
 
 
 def finalize_reopens(job: dict[str, Any]) -> bool:
     """Whether review_finalize on this render_failed job reopens it (review_status says the same)."""
+    if int(job.get("render_reopens") or 0) >= MAX_TOTAL_REOPENS:
+        return False
     if not render_failure_client_caused(job.get("error_detail")):
         return True
     return int(job.get("render_resets") or 0) < MAX_RENDER_RESETS
@@ -307,6 +313,11 @@ def read_result(out: Path) -> dict[str, Any]:
     fonts = result.get("fonts")
     if fonts is not None and not (isinstance(fonts, list) and all(isinstance(f, str) and len(f) <= 80 for f in fonts)):
         raise UntrustedOutput("result.json fonts invalid")
+    # Structured gate location (late_gate): a json path and a rule id, shape-checked; anything else is dropped.
+    path = result.get("path")
+    result["path"] = path if isinstance(path, str) and _JSON_PATH_RE.match(path) else ""
+    rule = result.get("rule")
+    result["rule"] = rule if isinstance(rule, str) and _RULE_ID_RE.match(rule) else ""
     return result
 
 
@@ -478,7 +489,8 @@ async def _run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, i
             render_no = await _render_no(conn, report["meta"]["report_id"])
     except (AssemblyError, BuildError) as err:
         logger.error("assembly failed for %s: %s", job_id[-8:], err)
-        return await _finish_failed(pool, step_id, job_id, err.code, err.detail, attempt, report=None)
+        return await _finish_failed(pool, step_id, job_id, err.code, err.detail, attempt, report=None,
+                                    path=getattr(err, "path", ""))
     report_bytes = json.dumps(report, ensure_ascii=False, indent=1).encode("utf-8")
     render_dir = fresh_render_dir(report_bytes)
     try:
@@ -537,13 +549,15 @@ async def _run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, i
                 (psycopg.types.json.Jsonb({"retry_of": step_id, "attempt": attempt, "first_claim": first_claim,
                                            "compact": compact or retry_compact}), job_id))
         return outcome
-    return await _finish_failed(pool, step_id, job_id, outcome.code, outcome.detail, attempt, report=report)
+    return await _finish_failed(pool, step_id, job_id, outcome.code, outcome.detail, attempt, report=report,
+                                path=(outcome.result or {}).get("path"))
 
 
 async def _finish_failed(pool: Any, step_id: int, job_id: str, code: str, detail: str, attempt: int, *,
-                         report: dict[str, Any] | None = None) -> RenderOutcome:
-    # `cause` decides whether review_finalize charges the reviewer's reset budget (finalize.py).
-    error_detail = {"detail": code, "note": detail[:300], **failure_cause(code, detail, report)}
+                         report: dict[str, Any] | None = None, path: str | None = None) -> RenderOutcome:
+    # `cause` decides whether review_finalize charges the reviewer's reset budget (finalize.py); it is
+    # classified on the structured path, before any truncation of the free-text detail.
+    error_detail = {"detail": code, "note": detail[:300], **failure_cause(code, path, report)}
     async with pool.connection() as conn, conn.transaction():
         repo = JobRepo(conn)
         await repo.complete_step(step_id, "failed", error_code="E_RENDER_FAILED",

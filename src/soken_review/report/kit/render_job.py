@@ -68,7 +68,8 @@ def run(job_dir: Path, compact: bool) -> dict:
     try:
         printed = build(report, out, mode="print", compact_evidence=compact)
     except BuildError as err:
-        return {**res, "code": err.code, "detail": f"{err.detail} {err.path}".strip()}
+        return {**res, "code": err.code, "detail": f"{err.detail} {err.path}".strip(),
+                "path": err.path or "", "rule": getattr(err, "rule", "") or ""}
     res["uses_mono"] = printed.uses_mono
     pdf = out / "report.pdf"
     proc = subprocess.run(["node", str(KIT / "render.mjs"), str(job_dir), str(printed.html_path), str(pdf)],

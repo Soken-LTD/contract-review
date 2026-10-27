@@ -1017,8 +1017,7 @@ _RENDER_STATES = frozenset({"finalized", "render_queued", "rendering", "rendered
 def _render_failed_fix(job: dict[str, Any]) -> str:
     """`error.fix` of a render_failed job: the same answer review_finalize gives (finalize.py)."""
     if not finalize_reopens(job):
-        return ("This job has used its retries for render failures on reviewer text and cannot "
-                "render again. Start a new review.")
+        return "This job has used its render retries and cannot render again. Start a new review."
     if render_failure_client_caused(job.get("error_detail")):
         return ("Call review_finalize: the job reopens, the flagged reviewer text (see detail) must "
                 "be revised, and the job finalizes and renders again in the same call.")

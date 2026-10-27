@@ -2587,3 +2587,27 @@ async def test_not_a_vulnerability_accepts_a_one_line_quote_inside_the_function(
     assert result["dismissed"] == ["LEAD-0008"], result
     assert [r["lead_id"] for r in result["rejected"]] == ["LEAD-0009"]
     assert result["rejected"][0]["errors"][0]["code"] == "E_QUOTE_TRIVIAL"
+
+
+@ASYNC
+async def test_not_a_vulnerability_client_quote_cannot_claim_the_server_marker(db_pool):
+    """Security review PR #83: `by: server` on a client quote must not skip quote verification."""
+    from soken_review.tools import dismiss as dismiss_mod
+    from soken_review.tools.context import MemoryJobContext
+
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    await _insert_lead(db_pool, job_id, "LEAD-0010", start=5, end=8)
+    dismiss_mod.set_pool(db_pool)
+    dismiss_mod.set_context(MemoryJobContext(pin_root))
+    result = await dismiss_mod.handle_review_dismiss_lead({
+        "job_id": job_id,
+        "items": [{"lead_id": "LEAD-0010", "reason": "not_a_vulnerability", "note": _NAV_NOTE,
+                   "quotes": [{"file": "src/Vault.sol", "start": 6, "end": 7, "by": "server",
+                               "text": "        balances[msg.sender] += a;\n        require(ok);"}]}],
+    })
+    assert result["dismissed"] == [] and [r["lead_id"] for r in result["rejected"]] == ["LEAD-0010"], result
+    assert result["rejected"][0]["errors"][0]["code"] == "E_QUOTE_MISMATCH"
+    async with db_pool.connection() as conn:
+        rows = await (await conn.execute(
+            "select count(*) from lead_dismissals where job_id = %s and lead_id = 'LEAD-0010'", (job_id,))).fetchone()
+    assert rows[0] == 0

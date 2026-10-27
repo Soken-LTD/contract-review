@@ -8,7 +8,7 @@ import json
 import pytest
 
 from soken_review.db.job_repo import JobRepo, new_job_id
-from soken_review.report.render import MAX_RENDER_RESETS
+from soken_review.report.render import MAX_RENDER_RESETS, MAX_TOTAL_REOPENS
 from soken_review.tools import start_status as S
 
 ASYNC = pytest.mark.asyncio(loop_scope="session")
@@ -61,6 +61,12 @@ def test_model_text_failure_after_budget_never_points_at_finalize():
 def test_server_failure_after_budget_still_points_at_finalize():
     out = S._build_status_response(_job(render_resets=MAX_RENDER_RESETS), "concise")
     assert out["next_tools"] == ["review_finalize"]
+
+
+def test_total_reopen_cap_points_at_a_new_review_even_for_a_server_cause():
+    out = S._build_status_response(_job(render_reopens=MAX_TOTAL_REOPENS), "concise")
+    assert out["next_tools"] == ["review_start"]
+    assert "Start a new review" in out["error"]["fix"] and "review_finalize" not in out["error"]["fix"]
 
 
 def test_rendered_and_queued_jobs_keep_review_report():
