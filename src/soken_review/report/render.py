@@ -71,6 +71,55 @@ def current_key_version() -> int:
 MAX_PDF_BYTES = 20 * 1024 * 1024
 MAX_RESULT_BYTES = 64 * 1024
 
+# Render-failure recovery budget (review_finalize on a render_failed job). Only failures the
+# reviewer can fix count against it: a late gate hit on model-class text. Everything else
+# (internal, schema, empty_page, layout_overflow, a late gate on server or kit text, ...) is a
+# server fault, reopens for free, and never makes the job terminal (blind run 2026-10-26/27:
+# three server-caused failures froze a finished review inside a job that could not render).
+MAX_RENDER_RESETS = 3
+
+_LATE_GATE_PATH_RE = re.compile(r"(\$[\w.\[\]]*)\s*$")
+
+
+def failure_cause(code: str, detail: str, report: dict[str, Any] | None) -> dict[str, str]:
+    """Who can fix a render failure: ``{"cause": "model" | "server", "path"?: json path}``.
+
+    A ``late_gate`` detail is ``"<rule> <match> <json path>"`` (kit/render_job.py); the path is
+    looked up in the assembled report through the schema's ``x-text-class`` and only a ``model``
+    class string is the reviewer's. Every other code, or a path that cannot be resolved, is the
+    server's.
+    """
+    if code != "late_gate" or not isinstance(report, dict):
+        return {"cause": "server"}
+    m = _LATE_GATE_PATH_RE.search(detail or "")
+    path = m.group(1) if m else ""
+    cls = None
+    if path:
+        try:
+            from .kit.build import iter_strings
+
+            cls = next((c for p, c, _ in iter_strings(report) if p == path), None)
+        except Exception:  # noqa: BLE001  # a schema walk fault must not hide the render failure
+            cls = None
+    out = {"cause": "model" if cls == "model" else "server"}
+    if path:
+        out["path"] = path[:120]
+    return out
+
+
+def render_failure_client_caused(error_detail: Any) -> bool:
+    """True when the stored render failure is one the reviewer must fix (late gate on model text).
+    Failures stored before the cause was recorded count as the server's."""
+    return (isinstance(error_detail, dict) and error_detail.get("detail") == "late_gate"
+            and error_detail.get("cause") == "model")
+
+
+def finalize_reopens(job: dict[str, Any]) -> bool:
+    """Whether review_finalize on this render_failed job reopens it (review_status says the same)."""
+    if not render_failure_client_caused(job.get("error_detail")):
+        return True
+    return int(job.get("render_resets") or 0) < MAX_RENDER_RESETS
+
 
 @dataclass
 class RenderOutcome:
@@ -409,7 +458,7 @@ async def run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, im
         async with pool.connection() as conn:
             state = await (await conn.execute("select state from jobs where job_id = %s", (step["job_id"],))).fetchone()
         if state and state[0] == "rendering":
-            return await _finish_failed(pool, step["id"], step["job_id"], "internal", str(exc)[:300], 0)
+            return await _finish_failed(pool, step["id"], step["job_id"], "internal", str(exc)[:300], 0, report=None)
         raise
 
 
@@ -429,7 +478,7 @@ async def _run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, i
             render_no = await _render_no(conn, report["meta"]["report_id"])
     except (AssemblyError, BuildError) as err:
         logger.error("assembly failed for %s: %s", job_id[-8:], err)
-        return await _finish_failed(pool, step_id, job_id, err.code, err.detail, attempt)
+        return await _finish_failed(pool, step_id, job_id, err.code, err.detail, attempt, report=None)
     report_bytes = json.dumps(report, ensure_ascii=False, indent=1).encode("utf-8")
     render_dir = fresh_render_dir(report_bytes)
     try:
@@ -488,16 +537,19 @@ async def _run_render_step(pool: Any, step: dict[str, Any], pin_root: Path, *, i
                 (psycopg.types.json.Jsonb({"retry_of": step_id, "attempt": attempt, "first_claim": first_claim,
                                            "compact": compact or retry_compact}), job_id))
         return outcome
-    return await _finish_failed(pool, step_id, job_id, outcome.code, outcome.detail, attempt)
+    return await _finish_failed(pool, step_id, job_id, outcome.code, outcome.detail, attempt, report=report)
 
 
-async def _finish_failed(pool: Any, step_id: int, job_id: str, code: str, detail: str, attempt: int) -> RenderOutcome:
+async def _finish_failed(pool: Any, step_id: int, job_id: str, code: str, detail: str, attempt: int, *,
+                         report: dict[str, Any] | None = None) -> RenderOutcome:
+    # `cause` decides whether review_finalize charges the reviewer's reset budget (finalize.py).
+    error_detail = {"detail": code, "note": detail[:300], **failure_cause(code, detail, report)}
     async with pool.connection() as conn, conn.transaction():
         repo = JobRepo(conn)
         await repo.complete_step(step_id, "failed", error_code="E_RENDER_FAILED",
-                                 provenance={"attempt": attempt, "detail": code})
+                                 provenance={"attempt": attempt, "detail": code, "cause": error_detail["cause"]})
         await repo.transition(job_id, "render_failed", error_code="E_RENDER_FAILED",
-                              error_detail={"detail": code, "note": detail[:300]})
+                              error_detail=error_detail)
         # Quota refund: a report that never rendered must not count (quota.py counts report_at).
         # Clearing report_at and report_id here means the finalize check at the next attempt
         # will re-issue them under the advisory lock, keeping the count correct.

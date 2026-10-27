@@ -43,7 +43,30 @@ def _raw_lead(
         "file": file_path,
         "start": line_start,
         "end": line_end,
+        "message": rule_message(rule_id),
     }
+
+
+_RULE_MESSAGES: dict[str, str] | None = None
+_PLAN_REF_RE = re.compile(r"\s*\((?:plan|06|F\d)[^()]*\)\.?$")
+
+
+def rule_message(rule_id: str) -> str:
+    """Detector text of a rule: the first line of its `check_*` docstring (`TON-X-NN: <what it
+    flags>`), without the plan reference. Printed by review_leads so a rule lead says what to
+    check at the location (blind run 2026-10-26: TON leads showed no detector text at all)."""
+    global _RULE_MESSAGES
+    if _RULE_MESSAGES is None:
+        table: dict[str, str] = {}
+        for name, fn in globals().items():
+            doc = getattr(fn, "__doc__", None) if name.startswith("check_") and callable(fn) else None
+            if not doc:
+                continue
+            rid, sep, rest = doc.strip().splitlines()[0].partition(":")
+            if sep and rid.strip():
+                table[rid.strip()] = _PLAN_REF_RE.sub("", rest.strip()).rstrip(".")[:600]
+        _RULE_MESSAGES = table
+    return _RULE_MESSAGES.get(rule_id, "")
 
 
 # ── TON-RPL: replay protection (plan 06 4.5) ─────────────────────────────

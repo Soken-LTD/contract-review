@@ -2324,12 +2324,13 @@ async def test_not_a_vulnerability_requires_a_note_of_forty_characters(db_pool):
 
 
 @ASYNC
-async def test_not_a_vulnerability_requires_a_quote(db_pool):
+async def test_not_a_vulnerability_without_quotes_closes_on_the_lead_location(db_pool):
+    """Quotes are optional since the blind run of 2026-10-26 (leads with no quotable detail): the
+    note stays mandatory and the server records the lead's own pinned lines as the evidence."""
     job_id, pin_root = await _create_ready_job_with_pin(db_pool)
     await _insert_lead(db_pool, job_id, "LEAD-0603")
     res = await _dismiss_nav(db_pool, job_id, pin_root, "LEAD-0603", None, _NAV_NOTE)
-    codes = [e["code"] for e in res["rejected"][0]["errors"]]
-    assert codes == ["E_DISMISS_UNCHECKABLE"], res
+    assert res["dismissed"] == ["LEAD-0603"] and res["rejected"] == [], res
 
 
 @ASYNC
@@ -2485,3 +2486,104 @@ async def test_resubmission_clears_the_previous_revisions_effective_matrix(db_po
             "select matrix_effective, current_revision from finding_drafts where job_id = %s and draft_key = %s",
             (job_id, "draft-resub-001"))).fetchone()
     assert after[1] == sub2["revision"] and after[0] is None, after
+
+
+# ── Blind run 2026-10-26: existing drafts are never "not found"; leads without quotable detail ──
+
+_INFO_SUBMISSION = {
+    "category": "evm.reentrancy",
+    "quotes": [{"file": "src/Vault.sol", "start": 1, "end": 3, "role": "location",
+                "text": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract Vault {"}],
+    "matrix": {"impact_class": "best_practice", "magnitude": "unbounded", "trigger": "anyone",
+               "precondition": "none", "reversibility": "irreversible"},
+    "lead_ids": [],
+    "title": "Missing reentrancy guard on the withdraw function",
+    "body": {
+        "description": [{"p": "The contract does not use a reentrancy guard."}],
+        "impact": [{"p": "An attacker could exploit this to drain funds."}],
+        "recommendation": [{"p": "Add a reentrancy guard to the withdraw function."}],
+    },
+}
+
+
+@ASYNC
+async def test_challenge_on_accepted_draft_returns_items_with_status_not_e_finding_not_found(db_pool):
+    """Solana arm: review_challenge on a draft review_status listed as accepted got
+    E_FINDING_NOT_FOUND. An existing draft returns its items read-only, with the status."""
+    from soken_review.tools import challenge as challenge_mod
+    from soken_review.tools import submit as submit_mod
+    from soken_review.tools.context import MemoryJobContext
+
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    submit_mod.set_pool(db_pool)
+    submit_mod.set_context(MemoryJobContext(pin_root))
+    res = await submit_mod.handle_review_submit_finding({**_INFO_SUBMISSION, "job_id": job_id, "draft_key": "draft-info"})
+    assert res["accepted"] is True and res["status"] == "accepted", res
+
+    challenge_mod.set_pool(db_pool)
+    challenge_mod.set_context(MemoryJobContext(pin_root))
+    out = await challenge_mod.handle_review_challenge({"job_id": job_id, "draft_key": "draft-info"})
+    assert out["accepted"] is True, out
+    assert out["status"] == "accepted" and out["items"] and out["revision"] == res["revision"]
+    assert "resubmit" in out["note"]
+
+    # Answering the accepted draft names the status, not a missing draft.
+    ans = await challenge_mod.handle_review_answer_challenge({
+        "job_id": job_id, "draft_key": "draft-info", "revision": out["revision"],
+        "answers": [{"item_id": out["items"][0]["id"], "value": "absent", "note": "checked", "refs": []}]})
+    assert ans["accepted"] is False and ans["errors"][0]["code"] == "E_DRAFT_STATUS", ans
+    assert "accepted" in ans["errors"][0]["what"]
+
+    # A draft that really does not exist keeps E_FINDING_NOT_FOUND.
+    missing = await challenge_mod.handle_review_challenge({"job_id": job_id, "draft_key": "no-such-draft"})
+    assert missing["accepted"] is False and missing["errors"][0]["code"] == "E_FINDING_NOT_FOUND"
+
+
+@ASYNC
+async def test_not_a_vulnerability_without_quotes_records_the_lead_location(db_pool):
+    """A lead with no quotable detail closes with the reason and a note; the server records the
+    lead's own pinned lines as the evidence."""
+    from soken_review.tools import dismiss as dismiss_mod
+    from soken_review.tools.context import MemoryJobContext
+
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    await _insert_lead(db_pool, job_id, "LEAD-0007", start=5, end=8)
+    dismiss_mod.set_pool(db_pool)
+    dismiss_mod.set_context(MemoryJobContext(pin_root))
+    result = await dismiss_mod.handle_review_dismiss_lead({
+        "job_id": job_id,
+        "items": [{"lead_id": "LEAD-0007", "reason": "not_a_vulnerability", "note": _NAV_NOTE}],
+    })
+    assert result["dismissed"] == ["LEAD-0007"], result
+    async with db_pool.connection() as conn:
+        row = await (await conn.execute(
+            "select quotes from lead_dismissals where job_id = %s and lead_id = 'LEAD-0007'", (job_id,))).fetchone()
+    quote = row[0][0]
+    assert quote["by"] == "server" and quote["file"] == "src/Vault.sol" and quote["start"] == 5 and quote["end"] == 8
+    assert "withdraw" in quote["text"]
+
+
+@ASYNC
+async def test_not_a_vulnerability_accepts_a_one_line_quote_inside_the_function(db_pool):
+    """`_accrue();` style quotes are too short for quote_match (E_QUOTE_TRIVIAL) but name the
+    place when they are the pinned line; a wrong short quote is still refused."""
+    from soken_review.tools import dismiss as dismiss_mod
+    from soken_review.tools.context import MemoryJobContext
+
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    await _insert_lead(db_pool, job_id, "LEAD-0008", start=5, end=8)
+    await _insert_lead(db_pool, job_id, "LEAD-0009", start=5, end=8)
+    dismiss_mod.set_pool(db_pool)
+    dismiss_mod.set_context(MemoryJobContext(pin_root))
+    result = await dismiss_mod.handle_review_dismiss_lead({
+        "job_id": job_id,
+        "items": [
+            {"lead_id": "LEAD-0008", "reason": "not_a_vulnerability", "note": _NAV_NOTE,
+             "quotes": [{"file": "src/Vault.sol", "start": 8, "end": 8, "text": "    }"}]},
+            {"lead_id": "LEAD-0009", "reason": "not_a_vulnerability", "note": _NAV_NOTE,
+             "quotes": [{"file": "src/Vault.sol", "start": 8, "end": 8, "text": "    x"}]},
+        ],
+    })
+    assert result["dismissed"] == ["LEAD-0008"], result
+    assert [r["lead_id"] for r in result["rejected"]] == ["LEAD-0009"]
+    assert result["rejected"][0]["errors"][0]["code"] == "E_QUOTE_TRIVIAL"
