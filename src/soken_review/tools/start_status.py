@@ -1046,12 +1046,21 @@ def _build_attempts(pin_root: Any, job_id: str) -> list[dict[str, Any]]:
     except (OSError, ValueError, AttributeError):
         return []
     out = []
-    for r in rows[:4]:
+    for r in rows[:6]:
         if not isinstance(r, dict) or r.get("status") not in ("ok", "failed"):
             continue
-        out.append({"version": (str(r["version"])[:40] if r.get("version") else None),
-                    "version_source": (str(r["version_source"])[:200] if r.get("version_source") else None),
-                    "status": r["status"], "reason": (str(r["reason"])[:200] if r.get("reason") else None)})
+        row = {"version": (str(r["version"])[:40] if r.get("version") else None),
+               "version_source": (str(r["version_source"])[:200] if r.get("version_source") else None),
+               "status": r["status"], "reason": (str(r["reason"])[:200] if r.get("reason") else None)}
+        # a narrowed repo build (adapters/evm/build_scope): which files it compiled, what it left out
+        if r.get("scope") in ("closure", "exclude"):
+            row["scope"] = r["scope"]
+            if isinstance(r.get("files"), int):
+                row["files"] = r["files"]
+            excluded = [str(p)[:300] for p in (r.get("excluded") or [])[:20] if isinstance(p, str)]
+            if excluded:
+                row["excluded"] = excluded
+        out.append(row)
     return out
 
 

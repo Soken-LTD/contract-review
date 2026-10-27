@@ -441,3 +441,19 @@ def test_build_attempts_reader_shape_checks(tmp_path):
         {"version": "x", "status": "weird"}]}))
     rows = start_status._build_attempts(tmp_path / "pins", job_id)
     assert [r["version"] for r in rows] == ["0.8.0", "0.8.24"] and rows[0]["reason"] == "ParserError"
+
+
+def test_build_attempts_carry_the_narrowed_scope(tmp_path):
+    job_id = "job_" + "3" * 26
+    work = tmp_path / "work" / job_id
+    work.mkdir(parents=True)
+    (work / "build_result.json").write_text(json.dumps({"status": "ok", "attempts": [
+        {"version": "0.8.28", "version_source": "partial", "status": "failed", "reason": "ParserError"},
+        {"version": "0.8.28", "status": "failed", "reason": "ParserError", "scope": "closure", "files": 13},
+        {"version": "0.8.28", "status": "ok", "reason": None, "scope": "exclude", "files": 12,
+         "excluded": ["src/libraries/1inchV6.sol"]}]}))
+    rows = start_status._build_attempts(tmp_path / "pins", job_id)
+    assert "scope" not in rows[0]
+    assert rows[1] == {"version": "0.8.28", "version_source": None, "status": "failed", "reason": "ParserError",
+                       "scope": "closure", "files": 13}
+    assert rows[2]["excluded"] == ["src/libraries/1inchV6.sol"]

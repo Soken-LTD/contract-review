@@ -29,7 +29,7 @@ Tier = Literal["A", "B", "C", "D"]
 _TIER_ORDER = "ABCD"
 
 # 05 13.3: these builds have no recorded settings; a differing result is never `mismatch`.
-_NO_RECORDED_SETTINGS = {"pragma", "pragma_guess", "cbor"}
+_NO_RECORDED_SETTINGS = {"pragma", "pragma_partial", "pragma_guess", "cbor"}
 
 # Build failure details (adapters/evm/build.py, tron/build.py, compiler caches) -> 13.3 reasons.
 _BUILD_REASON_MAP = {

@@ -40,7 +40,7 @@ _KIND_FILE = "solana_kind.json"
 # Repo tree around a subdir candidate (fetch.attach_build_workspace): host-only, never mounted, never
 # pinned; the build step writes the pinned scope over it so the reviewed bytes are the built bytes.
 _WORKSPACE_FILE = "build_workspace.json"
-_RUNTIME_ONLY = frozenset({"files", "src_tree_dir", "_full_tree"})
+_RUNTIME_ONLY = frozenset({"files", "src_tree_dir", "_full_tree", "build_paths"})
 _LOADERS = (onchain.BPF_LOADER_UPGRADEABLE, onchain.BPF_LOADER_V2, onchain.BPF_LOADER_V1)
 
 

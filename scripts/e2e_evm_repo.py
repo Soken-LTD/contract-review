@@ -65,6 +65,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 
@@ -162,6 +163,23 @@ TARGETS: list[dict] = [
         },
         "why": "Hardhat + package-lock.json: @openzeppelin/contracts 5.6.1 vendored with sha512 check",
     },
+    # (h) Foundry repo whose src/ carries a vendored, unused file that does not compile with the
+    #     rest (src/libraries/1inchV6.sol, `pragma solidity 0.8.23`; OpenZeppelin 5 at ^0.8.24).
+    #     Was ParserError on the stand 2026-10-27: no map, no analyzers, 0 leads, subject
+    #     "1inchV6". Expected: the closure build, then 1inchV6.sol left out (build_excluded),
+    #     ready with a full map and leads, subject from the repository name.
+    {
+        "name": "lambowin-vendored",
+        "expect": {"state": "ready", "map_status": "full", "min_leads": 1, "subject": "lambowin",
+                   "build_excluded": ["src/libraries/1inchV6.sol"]},
+        "expect_flags": {"untrusted_inputs": False},
+        "source": {
+            "kind": "repo",
+            "repo_url": "https://github.com/code-423n4/2024-12-lambowin",
+            "commit": "874fafc7b27042c59bdd765073f5e412a3b79192",
+        },
+        "why": "vendored unused 1inchV6.sol (=0.8.23) must not break the build of the Lambo contracts",
+    },
     # (f) non-existent commit → E_COMMIT_NOT_FOUND
     {
         "name": "bad-commit",
@@ -208,6 +226,8 @@ async def run(names: list[str]) -> int:
     from soken_review.worker.supervisor import Supervisor
 
     dsn = os.environ["SOKEN_DATABASE_URL"]
+    # the app refuses to start without a report signing key (tools.report.require_report_keys)
+    os.environ.setdefault("SOKEN_REPORT_KEY_V1", secrets.token_hex(32))
     pin_root = Path(os.environ.setdefault(
         "SOKEN_PIN_ROOT", str(ROOT / ".sbx" / "evm-repo-e2e" / "pins"),
     ))
@@ -274,7 +294,7 @@ async def run(names: list[str]) -> int:
                 # Pull DB fields
                 async with pool.connection() as conn, conn.cursor() as cur:
                     await cur.execute(
-                        "SELECT tier, error_code, error_detail, resolved_commit "
+                        "SELECT tier, error_code, error_detail, resolved_commit, map_status, source_args, address "
                         "FROM jobs WHERE job_id=%s",
                         (job_id,),
                     )
@@ -285,6 +305,7 @@ async def run(names: list[str]) -> int:
                         error_code=db_row[1],
                         error_detail=db_row[2],
                         resolved_commit=db_row[3],
+                        map_status=db_row[4],
                     )
 
                 # Read work artifacts (candidates.json tells us untrusted_inputs before build)
@@ -338,6 +359,35 @@ async def run(names: list[str]) -> int:
                     ok &= tier_ok
                     if not tier_ok:
                         print(f"    FAIL tier: got {row.get('tier')!r}, want {t['expect']['tier']!r}")
+                if "map_status" in t["expect"]:
+                    ms_ok = row.get("map_status") == t["expect"]["map_status"]
+                    ok &= ms_ok
+                    if not ms_ok:
+                        print(f"    FAIL map_status: got {row.get('map_status')!r}, want {t['expect']['map_status']!r}")
+                if "min_leads" in t["expect"]:
+                    leads_ok = (row.get("leads_count") or 0) >= t["expect"]["min_leads"]
+                    ok &= leads_ok
+                    if not leads_ok:
+                        print(f"    FAIL leads: got {row.get('leads_count')!r}, want >= {t['expect']['min_leads']}")
+                if "build_excluded" in t["expect"]:
+                    got_excl = sorted(r["path"] for r in ((row.get("candidates") or [{}])[0].get("scope_excluded") or [])
+                                      if r.get("reason") == "build_excluded")
+                    excl_ok = got_excl == sorted(t["expect"]["build_excluded"])
+                    ok &= excl_ok
+                    if not excl_ok:
+                        print(f"    FAIL build_excluded: got {got_excl!r}")
+                if "subject" in t["expect"] and db_row:
+                    from soken_review.pinning.store import PinnedSource
+                    from soken_review.report.assemble import pick_subject, subject_candidates
+
+                    subj_job = {"source_args": db_row[5], "resolved_commit": db_row[3], "address": db_row[6]}
+                    subject = pick_subject(subject_candidates(subj_job, row.get("candidates") or [],
+                                                              PinnedSource.load(pin_root, job_id)))
+                    row["subject"] = subject
+                    subj_ok = subject["value"] == t["expect"]["subject"]
+                    ok &= subj_ok
+                    if not subj_ok:
+                        print(f"    FAIL subject: got {subject!r}, want {t['expect']['subject']!r}")
                 if "error_code" in t["expect"]:
                     ec_ok = row.get("error_code") == t["expect"]["error_code"]
                     ok &= ec_ok
@@ -357,13 +407,14 @@ async def run(names: list[str]) -> int:
 
     summary = []
     for r in rows:
-        entry = {k: r.get(k) for k in ("name", "accepted", "state", "tier", "error_code", "resolved_commit", "leads_count")}
+        entry = {k: r.get(k) for k in ("name", "accepted", "state", "tier", "error_code", "resolved_commit",
+                                       "leads_count", "map_status", "subject")}
         deps = r.get("dependencies") or {}
         if deps.get("packages"):
             entry["npm_deps"] = [f"{p['name']}@{p['version']} ({p['pinned_by']})" for p in deps["packages"]]
         build = r.get("build_result") or {}
         if build:
-            entry["build"] = {k: build.get(k) for k in ("status", "nsloc", "reason")}
+            entry["build"] = {k: build.get(k) for k in ("status", "nsloc", "reason", "attempts")}
         # dep.match from provenance.json (weth9 13.1 comparison)
         prov = r.get("provenance") or {}
         dep = prov.get("dep") or {}
