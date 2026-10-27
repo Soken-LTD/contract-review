@@ -30,7 +30,8 @@ def _html(r, tmp_path, mode="print") -> str:
 
 def _section(html: str, title: str) -> str:
     """Body of the section whose h2 text is `title` (up to the next section)."""
-    m = re.search(rf'<section>(<h2><span class="snum grad">\d\d</span>{re.escape(title)}</h2>.*?)</section>', html, re.DOTALL)
+    m = re.search(rf'<section data-section="[a-z_]+">(<h2><span class="snum grad">\d\d</span>{re.escape(title)}</h2>.*?)</section>',
+                  html, re.DOTALL)
     assert m, f"section {title!r} missing"
     return m.group(1)
 
@@ -42,7 +43,7 @@ def test_context_section_sits_after_scope_with_both_tables(tmp_path):
     assert titles[:4] == ["Summary", "Scope", "Project context", "Architecture and privileged roles"]
     sec = _section(html, "Project context")
     t = kb.kit_texts()["context"]
-    assert sec.count("<table>") == 2
+    assert sec.count("<table ") == 2 and sec.count("<thead>") == 2
     assert t["documents_title"] in sec and t["comparison_title"] in sec and t["notes_title"] in sec
     # 4 document rows: three retrieved, one failed; kind labels from the kit; failed row has no digest
     assert sec.count(f'<td class="nw">{t["doc_status"]["ok"]}</td>') == 3
@@ -113,7 +114,7 @@ def test_context_documents_without_rows_prints_no_comparison_line(tmp_path):
     r["context"]["notes"] = []
     sec = _section(_html(r, tmp_path), "Project context")
     assert kb.kit_texts()["context"]["no_comparison_line"] in sec
-    assert sec.count("<table>") == 1 and kb.kit_texts()["context"]["notes_title"] not in sec
+    assert sec.count("<table ") == 1 and kb.kit_texts()["context"]["notes_title"] not in sec
 
 
 def test_documents_kpi_tile_and_wide_grid(tmp_path):

@@ -93,29 +93,77 @@ async function main() {
   await sleep(300);
 
   // DOM checks (08 3.2): (b) element right edge beyond its page content box; (c) near-empty non-last page.
+  // Both failures name the elements involved so the cause is visible from the log: for (b) the
+  // innermost overflowing element and the block it sits in, for (c) the last block on the near-empty
+  // page and the first block on the page after it. Structure only (tag, class, id, data-section,
+  // data-block): the detail reaches worker logs and error_detail, and report text is client content.
   const dom = await evaluate(`(() => {
     const pages = [...document.querySelectorAll('.pagedjs_page')];
     const out = { pages: pages.length, overflow: null, empty: null };
+    const cls = (el) => String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || '');
+    const skip = (el) => (el.closest('svg') && el.tagName.toLowerCase() !== 'svg') || (el.tagName === 'DIV' && !cls(el));
+    const ident = (s) => String(s || '').replace(/[^A-Za-z0-9_. -]/g, '').slice(0, 40);
+    const describe = (el) => {
+      if (!el) return null;
+      const d = { tag: el.tagName, cls: ident(cls(el)) };
+      if (el.id) d.id = ident(el.id);
+      const sec = el.closest && el.closest('[data-section]');
+      if (sec) d.sec = ident(sec.dataset.section);
+      const blk = el.closest && el.closest('[data-block]');
+      if (blk) d.blk = ident(blk.dataset.block);
+      return d;
+    };
+    // Visible elements of a page in document order, paged.js wrappers and SVG internals left out.
+    const content = (pg) => {
+      const area = pg.querySelector('.pagedjs_page_content');
+      if (!area) return [];
+      return [...area.querySelectorAll('*')].filter((el) => {
+        if (skip(el)) return false;
+        const r = el.getBoundingClientRect();
+        return r.width !== 0 || r.height !== 0;
+      });
+    };
+    // The outermost block an element belongs to (section, card, figure, table, list), else itself.
+    const block = (el) => (el && el.closest && el.closest('.finding, figure, table, ul, ol, .keep, .codegrp, section')) || el;
     pages.forEach((pg, i) => {
       const area = pg.querySelector('.pagedjs_page_content');
       if (!area) return;
       const box = area.getBoundingClientRect();
+      const els = content(pg);
       let bottom = box.top;
-      for (const el of area.querySelectorAll('*')) {
-        if (el.closest('svg') && el.tagName.toLowerCase() !== 'svg') continue;
-        if (el.tagName === 'DIV' && !el.className) continue;  // paged.js wrappers span the column box
+      const over = [];
+      for (const el of els) {
         const r = el.getBoundingClientRect();
-        if (r.width === 0 && r.height === 0) continue;
-        if (!out.overflow && r.right > box.right + 1) out.overflow = { page: i + 1, tag: el.tagName, cls: String(el.className).slice(0, 40), text: (el.textContent || '').slice(0, 60) };
+        if (r.right > box.right + 1) over.push(el);
         if (r.bottom > bottom) bottom = r.bottom;
       }
+      if (!out.overflow && over.length) {
+        const inner = over.find((a) => !over.some((b) => b !== a && a.contains(b))) || over[0];
+        const r = inner.getBoundingClientRect();
+        out.overflow = { page: i + 1, excess_px: Math.round(r.right - box.right), el: describe(inner), in: describe(block(inner)) };
+      }
       const used = (Math.min(bottom, box.bottom) - box.top) / box.height;
-      if (!out.empty && i < pages.length - 1 && used < 0.12) out.empty = { page: i + 1, used };
+      if (!out.empty && i < pages.length - 1 && used < 0.12) {
+        const next = content(pages[i + 1]);
+        out.empty = { page: i + 1, used: Math.round(used * 1000) / 1000,
+          last: describe(block(els[els.length - 1])), next: describe(block(next[0])) };
+      }
     });
     return out;
   })()`);
   if (blocked.length) fail(15, 'blocked requests: ' + JSON.stringify(blocked.slice(0, 5)));
   if (!dom.pages) fail(10, 'no pages');
+  if (dom.overflow || dom.empty) {
+    // Debug record with page text, for a developer reading the sandbox out/ dir by hand. The
+    // supervisor reads only result.json and report.pdf from out/ and never logs or stores this file.
+    try { fs.writeFileSync(path.join(path.dirname(outPdf), 'layout.json'), JSON.stringify(await evaluate(`(() =>
+      [...document.querySelectorAll('.pagedjs_page')].map((pg, i) => {
+        const area = pg.querySelector('.pagedjs_page_content');
+        const text = (el) => el ? el.tagName + '.' + String(el.className || '').slice(0, 30) + ' ' + String(el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80) : null;
+        const kids = area ? [...area.querySelectorAll('section > *, .pagedjs_page_content > div > *')] : [];
+        return { page: i + 1, first: text(kids[0]), last: text(kids[kids.length - 1]), blocks: kids.length };
+      }))()`), null, 1)); } catch {}
+  }
   if (dom.overflow) fail(11, 'layout_overflow ' + JSON.stringify(dom.overflow));
   if (dom.empty) fail(12, 'empty_page ' + JSON.stringify(dom.empty));
 

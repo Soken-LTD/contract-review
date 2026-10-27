@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 from soken_review.report.assemble import provenance
 from soken_review.report.kit.build import check_strings, kit_texts, validate
@@ -391,11 +392,13 @@ def test_verification_cells_keep_source_text_out_of_server_class():
     assert not [b for b in blocks if "p" in b]                      # free-text reason never a paragraph
 
 
-def test_coverage_section_starts_on_a_new_page(tmp_path):
-    """Found on the 2026-10-15 x86 render of 13 tier A reports: with the verification tables the
-    coverage section began near the bottom of a page and paged.js spilled its areas table into
-    overflow columns (layout_overflow, section 3.6 pages wide). A page break before it is the
-    deterministic fix (verified in a browser: no overflow, no near-empty page)."""
+def test_coverage_section_flows_without_a_forced_break(tmp_path):
+    """2026-10-15: with the verification tables the coverage section began near the bottom of a page
+    and paged.js spilled its areas table into overflow columns; a forced page break was the fix.
+    2026-10-27 (TON job, empty_page page 15): that forced break left a near-empty page whenever the
+    verification section ended with a short spill. The forced break is gone; the coverage section
+    flows like every other one and its tables break between rows under the kit table contract
+    (thead + tbody, header repeated), tested in tests/report/test_pagination.py."""
     from soken_review.report.kit.build import build
     from tests.report.fixtures import report as fixture_report
 
@@ -404,7 +407,10 @@ def test_coverage_section_starts_on_a_new_page(tmp_path):
     r["meta"]["provenance"].pop("upgradeable", None)
     html = build(r, tmp_path / "print", mode="print").html_path.read_text(encoding="utf-8")
     i = html.find("Review coverage")
-    assert i > 0 and html.rfind("<section", 0, i) == html.rfind('<section class="brk">', 0, i)
+    assert i > 0 and html.rfind("<section", 0, i) == html.rfind('<section data-section="coverage">', 0, i)
+    assert 'class="brk"' not in html
+    cov = html[i:html.find("</section>", i)]
+    assert re.search(r'<table( class="keep")? data-block="coverage_areas"><thead>', cov)
 
 
 class TestDeploymentSummaryRows:

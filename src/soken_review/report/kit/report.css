@@ -52,9 +52,19 @@ li{margin-bottom:4px;}
 table{width:100%;border-collapse:collapse;margin:8px 0;font-size:8.6pt;}
 th{background:#17273f;color:#fff;font-weight:700;text-align:left;padding:6px 8px;border:1px solid #2c3f5b;font-size:7.9pt;letter-spacing:.03em;text-transform:uppercase;}
 td{padding:5px 8px;border:1px solid #2c3f5b;vertical-align:top;color:#cdd9ea;}
+/* Pagination contract for tables: every kit table is thead + tbody. A long table breaks between
+   rows (tbody break-inside:auto) and the header row is repeated on each continuation page by the
+   RepeatTableHead paged.js handler in build(); a row never splits (every cell is capped by the
+   schema well under a page); the header row is never left alone at a page bottom. `table.keep`
+   (break-inside:avoid) is set by build() only on tables short enough to fit on one page. */
+thead{display:table-header-group;}
+thead tr{break-inside:avoid;break-after:avoid;}
+tbody{break-inside:auto;}
 tr{break-inside:avoid;}
-tr:first-child{break-after:avoid;}
-tr:nth-child(even) td{background:#101d31;}
+tbody tr:nth-child(odd) td{background:#101d31;}
+/* Scope table: fixed column widths, so a long path (wrapped at any character) can never widen its
+   column or shift the columns between the page fragments of one table. */
+table.scope{table-layout:fixed;}
 td.num,th.num{text-align:right;white-space:nowrap;}
 td.id{white-space:nowrap;}
 .sev{font-size:7.9pt;font-weight:700;letter-spacing:.09em;text-transform:uppercase;white-space:nowrap;}
@@ -75,7 +85,7 @@ td.id{white-space:nowrap;}
 .finding p:last-child{margin-bottom:0;}
 .finding table{margin:6px 0;}
 .finding td{background:#0f1b2e;}
-.finding tr:nth-child(even) td{background:#0f1b2e;}
+.finding tbody tr:nth-child(odd) td{background:#0f1b2e;}
 .fl{font-size:7.4pt;letter-spacing:.12em;text-transform:uppercase;color:#7ac4f4;font-weight:700;margin:9px 0 3px;break-after:avoid;}
 .fig{background:#0d1728;border:1px solid #26374f;border-radius:6px;padding:12px 12px 8px;margin:10px 0;break-inside:avoid;}
 .fig svg{width:100%;height:auto;display:block;}

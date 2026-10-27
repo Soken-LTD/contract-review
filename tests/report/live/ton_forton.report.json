@@ -1,0 +1,2090 @@
+{
+ "meta": {
+  "report_type": "automated",
+  "kind": "Smart contract security review",
+  "subject": "contract/contracts/ft_master.tact",
+  "subject_source": "verified_name",
+  "chain": "ton",
+  "network": "TON mainnet",
+  "chain_id": null,
+  "explorer": null,
+  "addr_url": null,
+  "deployed_noun": "contract",
+  "source_id_label": "Bytecode hash",
+  "provenance": {
+   "tier": "A",
+   "label": "Source matched to deployed code at seqno 101445617 (27 October 2026)",
+   "label_key": "tier_a",
+   "source_hash": "374152af134f4e9deb5651177df41c379c1e84d68372bdd02d708fcdf6a6b215",
+   "address": "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ",
+   "code_hash": "c845917da4a4ce1cb22aa00f65a82c3775e4c6a3c74453f9352e96d8d14fbfea",
+   "as_of": {
+    "block_or_slot": 101445617,
+    "date": "27 October 2026"
+   },
+   "upgrade_authority": "NotChecked"
+  },
+  "report_id": "reprotonaaaaaaaaaaaaaaaaaa",
+  "report_id_short": "reprotonaa",
+  "ownership_proven": false,
+  "profile": "public_review",
+  "requested_by": {
+   "role": "third_party_public_code",
+   "label": "Third party reviewing public code"
+  },
+  "date": "27 October 2026",
+  "expires": "2026-11-26",
+  "out_name": "Automated_Review_reprotonaa.pdf"
+ },
+ "facts": {
+  "analyzer.misti": {
+   "value": "0.9.0",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "analyzer.soken_ton_rules": {
+   "value": "0.1.0",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "compiler.version": {
+   "value": "1.6.5",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "deploy.address": {
+   "value": "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "source.files": {
+   "value": "9",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "source.nsloc": {
+   "value": "1182",
+   "unit": "lines",
+   "amount_at_risk": false
+  },
+  "source.pin": {
+   "value": "374152af134f4e9deb5651177df41c379c1e84d68372bdd02d708fcdf6a6b215",
+   "unit": null,
+   "amount_at_risk": false
+  }
+ },
+ "summary": {
+  "kpis": [
+   {
+    "key": "files",
+    "value": 9,
+    "label": "Files in scope"
+   },
+   {
+    "key": "nsloc",
+    "value": 1182,
+    "label": "Source lines in scope"
+   },
+   {
+    "key": "leads",
+    "value": 50,
+    "label": "Analyzer leads"
+   },
+   {
+    "key": "promoted",
+    "value": 2,
+    "label": "Leads promoted to findings"
+   },
+   {
+    "key": "areas_returned",
+    "value": "8 of 26",
+    "label": "Areas with code returned"
+   },
+   {
+    "key": "deployed_code",
+    "value": "Matched",
+    "label": "Deployed code"
+   }
+  ],
+  "dismissed_leads": {
+   "rows": [
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 23,
+      "end": 23
+     },
+     "reason": "not_a_vulnerability"
+    },
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 50,
+      "end": 50
+     },
+     "reason": "not_a_vulnerability"
+    },
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 51,
+      "end": 51
+     },
+     "reason": "not_a_vulnerability"
+    },
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 64,
+      "end": 64
+     },
+     "reason": "not_a_vulnerability"
+    },
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 71,
+      "end": 71
+     },
+     "reason": "not_a_vulnerability"
+    },
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 95,
+      "end": 95
+     },
+     "reason": "not_a_vulnerability"
+    },
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 102,
+      "end": 102
+     },
+     "reason": "not_a_vulnerability"
+    },
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 109,
+      "end": 109
+     },
+     "reason": "not_a_vulnerability"
+    },
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 123,
+      "end": 123
+     },
+     "reason": "not_a_vulnerability"
+    },
+    {
+     "detector": "ExitCodeUsage",
+     "severity_class": "High",
+     "location": {
+      "path": "contract/contracts/ft_base_program_user.tact",
+      "start": 20,
+      "end": 20
+     },
+     "reason": "not_a_vulnerability"
+    }
+   ],
+   "remainder": 27
+  }
+ },
+ "scope": {
+  "head": [
+   "Unit",
+   "File",
+   "nSLOC",
+   "Address"
+  ],
+  "files": [
+   {
+    "name": "ft_base_program_main",
+    "file": "contract/contracts/ft_base_program_main.tact",
+    "nsloc": 159
+   },
+   {
+    "name": "ft_base_program_user",
+    "file": "contract/contracts/ft_base_program_user.tact",
+    "nsloc": 354
+   },
+   {
+    "name": "ft_master",
+    "file": "contract/contracts/ft_master.tact",
+    "nsloc": 160,
+    "addr": "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ"
+   },
+   {
+    "name": "ft_squad",
+    "file": "contract/contracts/ft_squad.tact",
+    "nsloc": 38
+   },
+   {
+    "name": "ft_user_main",
+    "file": "contract/contracts/ft_user_main.tact",
+    "nsloc": 120
+   },
+   {
+    "name": "ft_user_storage",
+    "file": "contract/contracts/ft_user_storage.tact",
+    "nsloc": 68
+   },
+   {
+    "name": "info_extends",
+    "file": "contract/contracts/info_extends.tact",
+    "nsloc": 121
+   },
+   {
+    "name": "messages",
+    "file": "contract/contracts/messages.tact",
+    "nsloc": 138
+   },
+   {
+    "name": "structs",
+    "file": "contract/contracts/structs.tact",
+    "nsloc": 24
+   }
+  ],
+  "out_of_scope": []
+ },
+ "context": {
+  "documents": [],
+  "comparison": [],
+  "notes": []
+ },
+ "architecture": {
+  "title": "Units in scope and their external dependencies",
+  "cols": 4,
+  "rows": 4,
+  "row_height": 120,
+  "nodes": [
+   {
+    "id": "a_owner",
+    "label": "owner",
+    "kind": "actor",
+    "col": 0.0,
+    "row": 0
+   },
+   {
+    "id": "a_public",
+    "label": "Any caller",
+    "kind": "actor",
+    "col": 1.0,
+    "row": 0
+   },
+   {
+    "id": "a_master",
+    "label": "master",
+    "kind": "actor",
+    "col": 2.0,
+    "row": 0
+   },
+   {
+    "id": "a_more",
+    "label": "Other roles",
+    "kind": "actor",
+    "sub": "+6 more",
+    "col": 3.0,
+    "row": 0
+   },
+   {
+    "id": "u_ftbaseprogrammain",
+    "label": "FtBaseProgramMain",
+    "kind": "scope",
+    "sub": "9 entries",
+    "col": 0.0,
+    "row": 1
+   },
+   {
+    "id": "u_ftbaseprogramuser",
+    "label": "FtBaseProgramUser",
+    "kind": "scope",
+    "sub": "8 entries",
+    "col": 1.0,
+    "row": 1
+   },
+   {
+    "id": "u_ftmaster",
+    "label": "FtMaster",
+    "kind": "scope",
+    "sub": "8 entries",
+    "col": 2.0,
+    "row": 1
+   },
+   {
+    "id": "u_ftusermain",
+    "label": "FtUserMain",
+    "kind": "scope",
+    "sub": "6 entries",
+    "col": 3.0,
+    "row": 1
+   },
+   {
+    "id": "x_any_address",
+    "label": "Any address",
+    "kind": "ext",
+    "sub": "reply, send",
+    "col": 1.5,
+    "row": 2
+   },
+   {
+    "id": "u_ftuserstorage",
+    "label": "FtUserStorage",
+    "kind": "scope",
+    "sub": "2 entries",
+    "col": 1.0,
+    "row": 3
+   },
+   {
+    "id": "u_ftsquad",
+    "label": "FtSquad",
+    "kind": "scope",
+    "sub": "1 entries",
+    "col": 2.0,
+    "row": 3
+   }
+  ],
+  "edges": [
+   {
+    "a": "a_master",
+    "b": "u_ftbaseprogrammain",
+    "label": "receive"
+   },
+   {
+    "a": "a_master",
+    "b": "u_ftusermain",
+    "label": "receive"
+   },
+   {
+    "a": "a_owner",
+    "b": "u_ftbaseprogrammain",
+    "label": "5 functions"
+   },
+   {
+    "a": "a_owner",
+    "b": "u_ftbaseprogramuser",
+    "label": "receive"
+   },
+   {
+    "a": "a_owner",
+    "b": "u_ftmaster",
+    "label": "3 functions"
+   },
+   {
+    "a": "a_public",
+    "b": "u_ftbaseprogrammain"
+   },
+   {
+    "a": "a_public",
+    "b": "u_ftbaseprogramuser"
+   },
+   {
+    "a": "a_public",
+    "b": "u_ftmaster"
+   },
+   {
+    "a": "a_public",
+    "b": "u_ftusermain"
+   },
+   {
+    "a": "u_ftbaseprogrammain",
+    "b": "x_any_address",
+    "label": "2 calls"
+   },
+   {
+    "a": "u_ftbaseprogramuser",
+    "b": "x_any_address",
+    "label": "send"
+   },
+   {
+    "a": "u_ftmaster",
+    "b": "x_any_address",
+    "label": "2 calls"
+   },
+   {
+    "a": "u_ftsquad",
+    "b": "x_any_address",
+    "label": "send"
+   },
+   {
+    "a": "u_ftusermain",
+    "b": "x_any_address",
+    "label": "2 calls"
+   }
+  ]
+ },
+ "roles": {
+  "rows": [
+   {
+    "role": "master (FtBaseProgramMain)",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtBaseProgramMain.receive"
+    ],
+    "risk_note": "Can transfer or renounce the role; Can change addresses the contract calls or pays"
+   },
+   {
+    "role": "owner (FtBaseProgramMain)",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtBaseProgramMain.receive(UpdateGasMultiplier)",
+     "FtBaseProgramMain.receive(UpdateLevelFee)",
+     "FtBaseProgramMain.receive(UpdateLevelPrice)",
+     "FtBaseProgramMain.receive(UpdateRecipientAddress)",
+     "FtBaseProgramMain.receive(text_withdraw)"
+    ],
+    "risk_note": "Can move funds held by the contract; Can change fees or rates; Can change reward settings"
+   },
+   {
+    "role": "userMainAddress (FtBaseProgramMain)",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtBaseProgramMain.receive"
+    ],
+    "risk_note": "Can move funds held by the contract"
+   },
+   {
+    "role": "owner (FtBaseProgramUser)",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtBaseProgramUser.receive"
+    ],
+    "risk_note": "Can move funds held by the contract"
+   },
+   {
+    "role": "program",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtBaseProgramUser.receive"
+    ],
+    "risk_note": "Can transfer or renounce the role"
+   },
+   {
+    "role": "programUserAddress",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtBaseProgramUser.receive(OverflowDown)",
+     "FtBaseProgramUser.receive(OverflowUp)",
+     "FtBaseProgramUser.receive(UpdateMatrix)",
+     "FtBaseProgramUser.receive(UpdateUpperAddress)"
+    ],
+    "risk_note": "Gates the listed functions"
+   },
+   {
+    "role": "msg.sender check",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtMaster.receive"
+    ],
+    "risk_note": "Gates the listed functions"
+   },
+   {
+    "role": "owner (FtMaster)",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtMaster.receive(SetupJoinPrice)",
+     "FtMaster.receive(SetupSquadPrice)",
+     "FtMaster.receive(UpdateProgramAddress)"
+    ],
+    "risk_note": "Gates the listed functions"
+   },
+   {
+    "role": "programs",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtMaster.receive"
+    ],
+    "risk_note": "Gates the listed functions"
+   },
+   {
+    "role": "master (FtSquad)",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtSquad.receive"
+    ],
+    "risk_note": "Can move funds held by the contract"
+   },
+   {
+    "role": "master (FtUserMain)",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtUserMain.receive"
+    ],
+    "risk_note": "Can move funds held by the contract"
+   },
+   {
+    "role": "userMainAddress (FtUserMain)",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtUserMain.receive"
+    ],
+    "risk_note": "Can move funds held by the contract"
+   },
+   {
+    "role": "userStorageAddress",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtUserMain.receive"
+    ],
+    "risk_note": "Can transfer or renounce the role"
+   },
+   {
+    "role": "master (FtUserStorage)",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "FtUserStorage.receive(SetupUserStorage)",
+     "FtUserStorage.receive(VerifyExistence)"
+    ],
+    "risk_note": "Can move funds held by the contract"
+   }
+  ],
+  "notes": []
+ },
+ "method": [
+  {
+   "step": "Source pinning",
+   "detail": "9 files pinned by sha256; source pin 374152af134f4e9d"
+  },
+  {
+   "step": "Static analysis",
+   "detail": "misti 0.9.0 unknown: 30 leads, ton-rules 0.1.0 unknown: 20 leads."
+  },
+  {
+   "step": "Finding selection",
+   "detail": "7 findings accepted, 0 withdrawn"
+  },
+  {
+   "step": "Server checks",
+   "detail": "Every code quote matched to the pinned source; text and number rules on every finding; severity mapped from the classifications through the fixed matrix"
+  },
+  {
+   "step": "Deployment check",
+   "detail": "The pinned source was rebuilt and compared with the deployed runtime code at seqno 101,445,617: matched byte for byte"
+  }
+ ],
+ "severity_scale": [
+  {
+   "severity": "Critical",
+   "text": "Loss or permanent freeze of holder funds with no unusual precondition"
+  },
+  {
+   "severity": "High",
+   "text": "Loss or freeze under realistic preconditions"
+  },
+  {
+   "severity": "Medium",
+   "text": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol"
+  },
+  {
+   "severity": "Low",
+   "text": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification"
+  },
+  {
+   "severity": "Informational",
+   "text": "Documentation, hardening and integration notes"
+  }
+ ],
+ "findings": [
+  {
+   "id": "M-001",
+   "severity": "Medium",
+   "evidence_level": "analyzer_and_reasoning",
+   "title": "holdBalance is credited and debited with different level prices, so a price change can brick a matrix level",
+   "component": "ft_base_program_user",
+   "location": {
+    "path": "contract/contracts/ft_base_program_user.tact",
+    "start": 212,
+    "end": 215
+   },
+   "category": "Arithmetic",
+   "category_key": "ton.arithmetic",
+   "description": [
+    {
+     "p": "FtBaseProgramUser parks splitLevelPrice in holdBalance when the second-to-last matrix slot is filled (the hold branch) and releases splitLevelPrice when the last slot closes the cycle (the cycle-closing branch). Both amounts are computed from msg.levelPrice, which is the price that was current when each downline user bought the level, not a value stored with the hold. The OverflowUp handler follows the same pattern."
+    },
+    {
+     "p": "If the owner changes a level price with UpdateLevelPrice while any user has an open matrix with only one of the two hold slots filled, the credit and the debit no longer match. holdBalance is declared as coins, so a negative result cannot be serialized and the whole transaction aborts."
+    }
+   ],
+   "impact": [
+    {
+     "ul": [
+      "Price raised: the cycle-closing transaction for that user and level aborts on every attempt. The last slot is not written, the user's matrix on that level cannot cycle again, and each downline payment routed to it bounces back to the sender contract, which has no bounced handler.",
+      "Price lowered: the difference stays in holdBalance permanently. The withdraw handler always reserves holdBalance, so the user cannot withdraw that TON."
+     ]
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Store the held amount per level (for example in the Info struct) when the hold is created, and release exactly that stored amount when the cycle closes. Alternatively forbid price changes for a level while any matrix is open, or document that prices are immutable after launch."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_base_program_user.tact",
+        "start": 212,
+        "end": 215
+       },
+       "lines": [
+        [
+         212,
+         "        } else if (statusCode < 40) {"
+        ],
+        [
+         213,
+         "            if (statusCode > 30) {"
+        ],
+        [
+         214,
+         "                self.holdBalance += splitLevelPrice;"
+        ],
+        [
+         215,
+         "            }"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_base_program_user.tact",
+        "start": 226,
+        "end": 228
+       },
+       "lines": [
+        [
+         226,
+         "        } else {"
+        ],
+        [
+         227,
+         "            self.holdBalance -= splitLevelPrice;"
+        ],
+        [
+         228,
+         "            nativeReserve(balance - splitLevelPrice, 0);"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_base_program_user.tact",
+        "start": 198,
+        "end": 198
+       },
+       "lines": [
+        [
+         198,
+         "        let splitLevelPrice: Int = msg.levelPrice / 2;"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "permanent_freeze",
+       "unbounded",
+       "privileged_role",
+       "normal_operation",
+       "irreversible",
+       "I4xL1=Medium"
+      ]
+     ]
+    },
+    "challenge": {
+     "head": [
+      "Item",
+      "Condition",
+      "Answer"
+     ],
+     "rows": [
+      [
+       "I1",
+       "",
+       ""
+      ],
+      [
+       "MB0",
+       "",
+       ""
+      ],
+      [
+       "MB1",
+       "",
+       ""
+      ],
+      [
+       "MB2",
+       "",
+       ""
+      ],
+      [
+       "MB3",
+       "",
+       ""
+      ]
+     ]
+    },
+    "lead": {
+     "analyzer": "ton-rules 0.1.0",
+     "rule_id": "TON-INT-02"
+    },
+    "further": [
+     {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 93,
+      "end": 97
+     }
+    ]
+   },
+   "attack_steps": [
+    {
+     "text": "A downline purchase fills the second-to-last slot of a user's level matrix; the hold branch credits holdBalance with splitLevelPrice taken from the price carried in that message.",
+     "ref": {
+      "path": "contract/contracts/ft_base_program_user.tact",
+      "start": 212,
+      "end": 215
+     }
+    },
+    {
+     "text": "The owner changes the price of that level with UpdateLevelPrice; new BuyLevel messages carry the new price.",
+     "ref": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 93,
+      "end": 97
+     }
+    },
+    {
+     "text": "The next purchase fills the last slot; the cycle-closing branch debits holdBalance with splitLevelPrice of the new price, not the amount that was credited.",
+     "ref": {
+      "path": "contract/contracts/ft_base_program_user.tact",
+      "start": 226,
+      "end": 228
+     }
+    },
+    {
+     "text": "If the new price is higher, holdBalance goes negative, storing it as coins fails and the transaction aborts; the last slot stays empty, so each later purchase on that level takes the same path and fails again.",
+     "ref": {
+      "path": "contract/contracts/ft_base_program_user.tact",
+      "start": 13,
+      "end": 13
+     }
+    }
+   ]
+  },
+  {
+   "id": "M-002",
+   "severity": "Medium",
+   "evidence_level": "reasoning_challenged",
+   "title": "A level purchase that fails activation is kept by the program contract instead of being refunded to the buyer",
+   "component": "ft_base_program_main",
+   "location": {
+    "path": "contract/contracts/ft_base_program_main.tact",
+    "start": 73,
+    "end": 80
+   },
+   "category": "Bounce handling",
+   "category_key": "ton.bounce_handling",
+   "description": [
+    {
+     "p": "The rule that levels must be bought in order lives only in FtBaseProgramUser.checkPossibilityActivateLevel. FtBaseProgramMain accepts any level in range, reserves the fee, adds levelPrice to totalProfit and forwards the rest of the payment as a bounceable ActivateLevel. When the user contract rejects it, the bounce returns to FtBaseProgramMain, which declares no bounced handler, so the value is silently added to the contract balance."
+    },
+    {
+     "p": "The same happens when two purchases of the same next level race (a repeated submit, or a gift and an own purchase at the same time): the first one advances lastLevel and the second one is rejected. The buyer gets no refund message and totalProfit stays inflated by the rejected purchase."
+    }
+   ],
+   "impact": [
+    {
+     "p": "The buyer loses the full level price plus the gas buffer of the rejected purchase. The TON ends up in the operator's withdrawable balance and reaches the recipient address on the next withdraw. Only the owner can return it, manually."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Add a bounced(msg: bounced<ActivateLevel>) handler in FtBaseProgramMain that refunds the bounced value to the buyer and reverses the totalProfit increment, or",
+      "have FtBaseProgramUser refund to recipientExcesses instead of throwing when the level is not the next one."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_base_program_main.tact",
+        "start": 73,
+        "end": 80
+       },
+       "lines": [
+        [
+         73,
+         "        nativeReserve(balance + levelFee, 0);"
+        ],
+        [
+         74,
+         "        self.totalProfit += levelPrice;"
+        ],
+        [
+         75,
+         "        let init: StateInit = initOf FtBaseProgramUser(msg.userId, myAddress());"
+        ],
+        [
+         76,
+         ""
+        ],
+        [
+         77,
+         "        send(SendParameters{"
+        ],
+        [
+         78,
+         "            to: contractAddress(init),"
+        ],
+        [
+         79,
+         "            value: 0,"
+        ],
+        [
+         80,
+         "            mode: SendRemainingBalance,"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_base_program_user.tact",
+        "start": 380,
+        "end": 382
+       },
+       "lines": [
+        [
+         380,
+         "    fun checkPossibilityActivateLevel(levelNumber: Int){"
+        ],
+        [
+         381,
+         "        nativeThrowUnless(131, (levelNumber - self.lastLevel) == 1);"
+        ],
+        [
+         382,
+         "    }"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_base_program_main.tact",
+        "start": 37,
+        "end": 46
+       },
+       "lines": [
+        [
+         37,
+         "    receive(\"withdraw\"){"
+        ],
+        [
+         38,
+         "        self.requireOwner();"
+        ],
+        [
+         39,
+         "        nativeReserve(self.minTonsForStorage, 0);"
+        ],
+        [
+         40,
+         ""
+        ],
+        [
+         41,
+         "        send(SendParameters{"
+        ],
+        [
+         42,
+         "            to: self.recipient,"
+        ],
+        [
+         43,
+         "            value: 0,"
+        ],
+        [
+         44,
+         "            mode: SendRemainingBalance,"
+        ],
+        [
+         45,
+         "            body: \"Your withdraw\".asComment(),"
+        ],
+        [
+         46,
+         "        });"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "griefing_with_victim_loss",
+       "unbounded",
+       "anyone",
+       "timing_or_ordering",
+       "admin_reversible",
+       "I2xL2=Medium"
+      ]
+     ]
+    },
+    "challenge": {
+     "head": [
+      "Item",
+      "Condition",
+      "Answer"
+     ],
+     "rows": [
+      [
+       "B1",
+       "",
+       ""
+      ],
+      [
+       "B2",
+       "",
+       ""
+      ],
+      [
+       "MB1",
+       "",
+       ""
+      ]
+     ]
+    },
+    "lead": null,
+    "further": [
+     {
+      "path": "contract/contracts/ft_user_main.tact",
+      "start": 51,
+      "end": 55
+     }
+    ]
+   },
+   "attack_steps": [
+    {
+     "text": "A buyer (or anyone gifting for that user) sends Buy to the user's FtUserMain for a level that is not exactly the next one, or two Buy messages for the same next level are in flight at once.",
+     "ref": {
+      "path": "contract/contracts/ft_user_main.tact",
+      "start": 51,
+      "end": 55
+     }
+    },
+    {
+     "text": "FtBaseProgramMain only checks the level range and the attached value, books levelPrice into totalProfit and forwards the whole payment in a bounceable ActivateLevel.",
+     "ref": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 73,
+      "end": 80
+     }
+    },
+    {
+     "text": "FtBaseProgramUser rejects the level because it is not lastLevel plus one; the message bounces to FtBaseProgramMain.",
+     "ref": {
+      "path": "contract/contracts/ft_base_program_user.tact",
+      "start": 380,
+      "end": 382
+     }
+    },
+    {
+     "text": "FtBaseProgramMain has no bounced handler, so the returned value joins its balance and is later sent to the recipient by the owner's withdraw.",
+     "ref": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 37,
+      "end": 46
+     }
+    }
+   ]
+  },
+  {
+   "id": "M-003",
+   "severity": "Medium",
+   "evidence_level": "reasoning_challenged",
+   "title": "CreateSquad forwards the whole FtMaster balance to a squad owner chosen by any caller",
+   "component": "ft_master",
+   "location": {
+    "path": "contract/contracts/ft_master.tact",
+    "start": 78,
+    "end": 82
+   },
+   "category": "Send mode drain",
+   "category_key": "ton.send_mode_drain",
+   "description": [
+    {
+     "p": "createSquad reserves a fixed minTonsForStorage and sends the remaining balance of FtMaster (SendRemainingBalance), not the remaining value of the incoming message. Any TON that has accumulated in FtMaster on top of the storage reserve is therefore attached to the PayForSquadCreation message. FtSquad forwards only msg.price to the program and returns the rest of its balance to the squad owner, which the caller chooses freely through msg.owner."
+    },
+    {
+     "p": "Under normal operation FtMaster forwards incoming value onward, so its balance stays close to the reserve. Value can still collect there from bounced messages (FtMaster declares no bounced handler) or from fees left after earlier flows, and the contract has no owner withdraw to recover it."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Whatever TON sits in FtMaster above the storage reserve can be taken by the first caller who pays for a squad. The amount is limited to the stranded balance, which is small in normal operation."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "In createSquad use SendRemainingValue for the incoming message value instead of SendRemainingBalance, or reserve the pre-message balance as FtBaseProgramMain does in BuyLevel. Add an owner-only withdraw so stranded TON can be recovered by the operator."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_master.tact",
+        "start": 78,
+        "end": 82
+       },
+       "lines": [
+        [
+         78,
+         "    receive(msg: CreateSquad) {"
+        ],
+        [
+         79,
+         "        nativeThrowUnless(131, self.squadPrice + ton(\"0.5\") <= context().value);"
+        ],
+        [
+         80,
+         "        let owner: Address = msg.owner == null ? sender() : msg.owner!!;"
+        ],
+        [
+         81,
+         "        self.createSquad(owner);"
+        ],
+        [
+         82,
+         "    }"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_master.tact",
+        "start": 124,
+        "end": 131
+       },
+       "lines": [
+        [
+         124,
+         "    fun createSquad(owner: Address){"
+        ],
+        [
+         125,
+         "        let init: StateInit = initOf FtSquad(owner, myAddress());"
+        ],
+        [
+         126,
+         "        nativeReserve(self.minTonsForStorage, 0);"
+        ],
+        [
+         127,
+         ""
+        ],
+        [
+         128,
+         "        send(SendParameters{"
+        ],
+        [
+         129,
+         "            to: contractAddress(init),"
+        ],
+        [
+         130,
+         "            value: 0,"
+        ],
+        [
+         131,
+         "            mode: SendRemainingBalance,"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_squad.tact",
+        "start": 30,
+        "end": 35
+       },
+       "lines": [
+        [
+         30,
+         "        send(SendParameters{"
+        ],
+        [
+         31,
+         "            to: self.owner,"
+        ],
+        [
+         32,
+         "            value: 0,"
+        ],
+        [
+         33,
+         "            mode: SendRemainingBalance,"
+        ],
+        [
+         34,
+         "            body: \"Excesses\".asComment()"
+        ],
+        [
+         35,
+         "        });"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "theft_of_funds",
+       "unbounded",
+       "anyone",
+       "uncommon_protocol_state",
+       "irreversible",
+       "I4xL1=Medium"
+      ]
+     ]
+    },
+    "challenge": {
+     "head": [
+      "Item",
+      "Condition",
+      "Answer"
+     ],
+     "rows": [
+      [
+       "M1",
+       "",
+       ""
+      ],
+      [
+       "MB0",
+       "",
+       ""
+      ],
+      [
+       "MB1",
+       "",
+       ""
+      ],
+      [
+       "MB3",
+       "",
+       ""
+      ]
+     ]
+    },
+    "lead": null
+   },
+   "attack_steps": [
+    {
+     "text": "Some TON is left in FtMaster, for example a bounced SetupUserStorage or a bounced VerifyExistence value; FtMaster has no bounced handler and no withdraw.",
+     "ref": {
+      "path": "contract/contracts/ft_master.tact",
+      "start": 108,
+      "end": 121
+     }
+    },
+    {
+     "text": "Anyone sends CreateSquad with the squad price plus the margin and sets owner to an address they control.",
+     "ref": {
+      "path": "contract/contracts/ft_master.tact",
+      "start": 78,
+      "end": 82
+     }
+    },
+    {
+     "text": "createSquad reserves only minTonsForStorage and sends every other nanoton of the master balance to the new FtSquad.",
+     "ref": {
+      "path": "contract/contracts/ft_master.tact",
+      "start": 124,
+      "end": 131
+     }
+    },
+    {
+     "text": "FtSquad pays the squad price to the program and sends the remaining balance, including the swept master funds, to the attacker.",
+     "ref": {
+      "path": "contract/contracts/ft_squad.tact",
+      "start": 30,
+      "end": 35
+     }
+    }
+   ]
+  },
+  {
+   "id": "L-001",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "GiftJoin lets anyone register any address under an inviter of the caller's choice",
+   "component": "ft_master",
+   "location": {
+    "path": "contract/contracts/ft_master.tact",
+    "start": 54,
+    "end": 61
+   },
+   "category": "Business logic",
+   "category_key": "ton.business_logic",
+   "description": [
+    {
+     "p": "GiftJoin takes userAddress and invitedId from the message body and only checks that invitedId is an existing id and that joinPrice is attached. The invited user does not consent, and an address can be registered only once. Whoever registers an address first fixes its inviter, and with it the upline that receives the matrix payments from all of that user's later level purchases."
+    }
+   ],
+   "impact": [
+    {
+     "p": "A third party who pays joinPrice can capture another person's referral position before that person joins with their intended inviter. The victim keeps the first level the attacker paid for, so the direct loss is small, but the referral relationship is permanent and redirects the victim's future upline payments."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Either require the invited address to confirm the inviter (for example by having the user's wallet send Join itself, with GiftJoin limited to an operator role), or document that gifting fixes the referral tree and cannot be undone."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_master.tact",
+        "start": 54,
+        "end": 61
+       },
+       "lines": [
+        [
+         54,
+         "    receive(msg: GiftJoin) {"
+        ],
+        [
+         55,
+         "        let ctx: Context = context();"
+        ],
+        [
+         56,
+         "        let msgValue: Int = ctx.value;"
+        ],
+        [
+         57,
+         ""
+        ],
+        [
+         58,
+         "        nativeThrowUnless(131, (msg.invitedId >= 1 && msg.invitedId < self.nextUserIndex));"
+        ],
+        [
+         59,
+         "        nativeThrowUnless(131, self.joinPrice <= msgValue);"
+        ],
+        [
+         60,
+         "        self.registerUser(msg.userAddress, msg.invitedId);"
+        ],
+        [
+         61,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "unauthorized_state_change",
+       "dust",
+       "anyone",
+       "timing_or_ordering",
+       "irreversible",
+       "I1xL2=Low"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contract/contracts/ft_user_storage.tact",
+      "start": 40,
+      "end": 44
+     }
+    ]
+   },
+   "attack_steps": [
+    {
+     "text": "An attacker picks a wallet that has not joined yet (for example one promoted by a competing inviter) and sends GiftJoin with that address and the attacker's own user id as invitedId.",
+     "ref": {
+      "path": "contract/contracts/ft_master.tact",
+      "start": 54,
+      "end": 61
+     }
+    },
+    {
+     "text": "The victim's FtUserStorage gets an id and the victim is placed under the attacker; the victim's own later Join is answered with the already-joined message.",
+     "ref": {
+      "path": "contract/contracts/ft_user_storage.tact",
+      "start": 40,
+      "end": 44
+     }
+    }
+   ]
+  },
+  {
+   "id": "L-002",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "Concurrent joins for the same address create several user ids and FtUserMain contracts",
+   "component": "ft_user_storage",
+   "location": {
+    "path": "contract/contracts/ft_user_storage.tact",
+    "start": 36,
+    "end": 45
+   },
+   "category": "Async race",
+   "category_key": "ton.async_race",
+   "description": [
+    {
+     "p": "The duplicate check is a read of FtUserStorage.id, but id is only written later, by SetupUserStorage, after a full round trip through FtMaster. Between VerifyExistence and SetupUserStorage the storage contract keeps no pending flag, so a second registration for the same address passes the check too. This is the carry-value pattern being skipped on an asynchronous chain."
+    }
+   ],
+   "impact": [
+    {
+     "p": "The same wallet ends up with several ids and FtUserMain contracts, each charged joinPrice and each counted as a referral for the inviter. The storage contract only remembers the latest id, so the earlier FtUserMain becomes an orphan that the user cannot find through the storage getter. This affects users who submit twice or are gifted while joining, and inflates referral counts."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Set a pending marker in FtUserStorage when VerifyExistence passes and reject further VerifyExistence messages while it is set, or move the uniqueness check into FtMaster keyed by address."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_user_storage.tact",
+        "start": 36,
+        "end": 45
+       },
+       "lines": [
+        [
+         36,
+         "    receive(msg: VerifyExistence) {"
+        ],
+        [
+         37,
+         "        self.requireMaster();"
+        ],
+        [
+         38,
+         "        nativeReserve(self.minTonsForStorage, 0);"
+        ],
+        [
+         39,
+         ""
+        ],
+        [
+         40,
+         "        if (self.id != null) {"
+        ],
+        [
+         41,
+         "            self.sendAlreadyJoinedMessage();"
+        ],
+        [
+         42,
+         "        } else {"
+        ],
+        [
+         43,
+         "            self.registerUser(msg.invitedId);"
+        ],
+        [
+         44,
+         "        }"
+        ],
+        [
+         45,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "incorrect_accounting_no_fund_effect",
+       "bounded",
+       "anyone",
+       "timing_or_ordering",
+       "irreversible",
+       "I1xL2=Low"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contract/contracts/ft_master.tact",
+      "start": 108,
+      "end": 110
+     },
+     {
+      "path": "contract/contracts/ft_user_storage.tact",
+      "start": 20,
+      "end": 22
+     }
+    ]
+   },
+   "attack_steps": [
+    {
+     "text": "Two Join or GiftJoin messages for the same address reach FtMaster before the first registration finishes; each sends VerifyExistence.",
+     "ref": {
+      "path": "contract/contracts/ft_master.tact",
+      "start": 63,
+      "end": 76
+     }
+    },
+    {
+     "text": "FtUserStorage still has a null id for both, so it sends Join back to the master twice.",
+     "ref": {
+      "path": "contract/contracts/ft_user_storage.tact",
+      "start": 36,
+      "end": 45
+     }
+    },
+    {
+     "text": "FtMaster allocates a new id for each Join and deploys a separate FtUserMain for each id; the storage id is overwritten by the later SetupUserStorage.",
+     "ref": {
+      "path": "contract/contracts/ft_master.tact",
+      "start": 108,
+      "end": 110
+     }
+    }
+   ]
+  },
+  {
+   "id": "L-003",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "Owner can freely set prices, fees, gas multiplier, payout recipient and the program list",
+   "component": "ft_base_program_main",
+   "location": {
+    "path": "contract/contracts/ft_base_program_main.tact",
+    "start": 100,
+    "end": 117
+   },
+   "category": "Business logic",
+   "category_key": "ton.business_logic",
+   "description": [
+    {
+     "p": "A single owner key on FtBaseProgramMain can change every level price and level fee to any value, raise gasMultiplier without an upper limit, and redirect the withdraw recipient. The withdraw handler sends the whole contract balance above the storage reserve, which includes fees and any bounced user payments, to that recipient."
+    },
+    {
+     "p": "The FtMaster owner can add or replace any program address above the base index. FtUserMain copies the program list on UpdatePrograms and Buy sends the user's remaining balance to whatever address is listed, so a replaced program address receives users' purchase payments directly."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Users depend fully on the owner key: a compromised or malicious owner can make the fee equal to the whole payment, change the price under open matrices (see the holdBalance finding), or route new purchases to an arbitrary contract. Changes take effect on the next message, with no delay."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Cap levelFee relative to levelPrice and cap gasMultiplier in the setters.",
+      "Put the owner behind a multisig and a timelock, and emit an event on each change.",
+      "Make program addresses append-only, or require the program to prove its code hash before it is listed."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_base_program_main.tact",
+        "start": 100,
+        "end": 117
+       },
+       "lines": [
+        [
+         100,
+         "    receive(msg: UpdateLevelFee){"
+        ],
+        [
+         101,
+         "        self.requireOwner();"
+        ],
+        [
+         102,
+         "        nativeThrowUnless(5, (msg.levelNumber > 0 && msg.levelNumber <= 12));"
+        ],
+        [
+         103,
+         "        self.levelFees.set(msg.levelNumber, msg.levelFee);"
+        ],
+        [
+         104,
+         "        self.reply(\"Level fee successfully changed\".asComment());"
+        ],
+        [
+         105,
+         "    }"
+        ],
+        [
+         106,
+         ""
+        ],
+        [
+         107,
+         "    receive(msg: UpdateGasMultiplier){"
+        ],
+        [
+         108,
+         "        self.requireOwner();"
+        ],
+        [
+         109,
+         "        nativeThrowUnless(5, msg.newValue > ton(\"0.5\"));"
+        ],
+        [
+         110,
+         "        self.gasMultiplier = msg.newValue;"
+        ],
+        [
+         111,
+         "        self.reply(\"Gas multiplier successfully changed\".asComment());"
+        ],
+        [
+         112,
+         "    }"
+        ],
+        [
+         113,
+         ""
+        ],
+        [
+         114,
+         "    receive(msg: UpdateRecipientAddress){"
+        ],
+        [
+         115,
+         "        self.requireOwner();"
+        ],
+        [
+         116,
+         "        self.recipient = msg.newAddress;"
+        ],
+        [
+         117,
+         "        self.reply(\"Recipient address successfully changed\".asComment());"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "centralization_risk",
+       "unbounded",
+       "privileged_role",
+       "normal_operation",
+       "admin_reversible",
+       "I2xL1=Low"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contract/contracts/ft_master.tact",
+      "start": 48,
+      "end": 52
+     },
+     {
+      "path": "contract/contracts/ft_user_main.tact",
+      "start": 51,
+      "end": 55
+     }
+    ]
+   }
+  },
+  {
+   "id": "L-004",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "Root user skips the BuyLevel price check, letting third parties inflate totalProfit via its Buy handler",
+   "component": "ft_base_program_main",
+   "location": {
+    "path": "contract/contracts/ft_base_program_main.tact",
+    "start": 70,
+    "end": 74
+   },
+   "category": "Business logic",
+   "category_key": "ton.business_logic",
+   "description": [
+    {
+     "p": "BuyLevel waives the minimum payment when msg.userId is the root id, and the Buy handler of FtUserMain accepts messages from any sender. The root program user jumps to the top level on its first activation, so later activations for it are always rejected, but FtBaseProgramMain has already added levelPrice to totalProfit before forwarding."
+    }
+   ],
+   "impact": [
+    {
+     "p": "The totalProfit getter can be inflated by a caller who pays the level fee and gas, so it cannot be used as a revenue or turnover figure off-chain. The caller's own payment is retained by the program (see the failed activation finding); other users' funds are not affected."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Restrict Buy in FtUserMain to the owner wallet (or record gifting explicitly), drop the root-user exemption after setup, and add totalProfit only after the user contract confirms activation."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contract/contracts/ft_base_program_main.tact",
+        "start": 70,
+        "end": 74
+       },
+       "lines": [
+        [
+         70,
+         "        let requireMinValue: Int = levelPrice + increment + levelFee;"
+        ],
+        [
+         71,
+         "        nativeThrowUnless(131, (requireMinValue <= msgValue || msg.userId == 1));"
+        ],
+        [
+         72,
+         "        "
+        ],
+        [
+         73,
+         "        nativeReserve(balance + levelFee, 0);"
+        ],
+        [
+         74,
+         "        self.totalProfit += levelPrice;"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "incorrect_accounting_no_fund_effect",
+       "bounded",
+       "anyone",
+       "none",
+       "irreversible",
+       "I1xL3=Low"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contract/contracts/ft_user_main.tact",
+      "start": 51,
+      "end": 55
+     },
+     {
+      "path": "contract/contracts/ft_base_program_user.tact",
+      "start": 62,
+      "end": 64
+     }
+    ]
+   },
+   "attack_steps": [
+    {
+     "text": "A third party sends Buy for any level to the root user's FtUserMain, attaching only the level fee and gas.",
+     "ref": {
+      "path": "contract/contracts/ft_user_main.tact",
+      "start": 51,
+      "end": 55
+     }
+    },
+    {
+     "text": "BuyLevel skips the price check for the root user and adds the full levelPrice to totalProfit.",
+     "ref": {
+      "path": "contract/contracts/ft_base_program_main.tact",
+      "start": 70,
+      "end": 74
+     }
+    },
+    {
+     "text": "The root program user has lastLevel set to the top level after its first activation, so ActivateLevel is rejected and bounces; totalProfit keeps the increment.",
+     "ref": {
+      "path": "contract/contracts/ft_base_program_user.tact",
+      "start": 62,
+      "end": 64
+     }
+    }
+   ]
+  }
+ ],
+ "review_coverage": {
+  "areas": [
+   {
+    "area_id": "ton.sender_auth",
+    "area": "Sender auth",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.external_accept_early",
+    "area": "External accept early",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.bounce_handling",
+    "area": "Bounce handling",
+    "code_returned": "Yes",
+    "result": [
+     "M-002"
+    ]
+   },
+   {
+    "area_id": "ton.send_mode_drain",
+    "area": "Send mode drain",
+    "code_returned": "Yes",
+    "result": [
+     "M-003"
+    ]
+   },
+   {
+    "area_id": "ton.send_mode_reserve",
+    "area": "Send mode reserve",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.account_destroy",
+    "area": "Account destroy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.bounce_body",
+    "area": "Bounce body",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.unrecoverable_send",
+    "area": "Unrecoverable send",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.excess_return",
+    "area": "Excess return",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.send_order",
+    "area": "Send order",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.unbounded_loop",
+    "area": "Unbounded loop",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.signature_binding",
+    "area": "Signature binding",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.upgrade_migration",
+    "area": "Upgrade migration",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.signed_integer",
+    "area": "Signed integer",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.storage_persistence",
+    "area": "Storage persistence",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.replay",
+    "area": "Replay",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.async_race",
+    "area": "Async race",
+    "code_returned": "Yes",
+    "result": [
+     "L-002"
+    ]
+   },
+   {
+    "area_id": "ton.code_update",
+    "area": "Code update",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.arithmetic",
+    "area": "Arithmetic",
+    "code_returned": "Yes",
+    "result": [
+     "M-001"
+    ]
+   },
+   {
+    "area_id": "ton.gas_storage",
+    "area": "Gas storage",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "ton.randomness",
+    "area": "Randomness",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.address_parsing",
+    "area": "Address parsing",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "ton.jetton_standard",
+    "area": "Jetton standard",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.business_logic",
+    "area": "Business logic",
+    "code_returned": "Yes",
+    "result": [
+     "L-001",
+     "L-003",
+     "L-004"
+    ]
+   },
+   {
+    "area_id": "ton.economic",
+    "area": "Economic",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "ton.best_practice",
+    "area": "Best practice",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   }
+  ],
+  "leads": [
+   {
+    "analyzer": "misti 0.9.0",
+    "version": "unknown",
+    "leads": 30,
+    "promoted": 0,
+    "dismissed": 30
+   },
+   {
+    "analyzer": "ton-rules 0.1.0",
+    "version": "unknown",
+    "leads": 20,
+    "promoted": 2,
+    "dismissed": 7
+   }
+  ],
+  "withdrawn": [],
+  "injection_flags": []
+ },
+ "verification": [
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Address",
+      {
+       "addr": "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ"
+      }
+     ],
+     [
+      "Chain / network",
+      "TON mainnet"
+     ],
+     [
+      "Masterchain seqno",
+      101445617
+     ],
+     [
+      "On-chain code hash",
+      "c845917da4a4ce1cb22aa00f65a82c3775e4c6a3c74453f9352e96d8d14fbfea"
+     ],
+     [
+      "Entry contract",
+      {
+       "src": "contract_FtMaster"
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Outcome",
+      "exact"
+     ]
+    ]
+   }
+  },
+  {
+   "p": "match_rebuild"
+  }
+ ]
+}
