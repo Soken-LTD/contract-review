@@ -209,7 +209,7 @@ def test_empty_page_detail_names_blocks_by_structure_only(tmp_path):
     assert '"sec":"verification"' in detail and '"blk":"verification"' in detail and '"sec":"coverage"' in detail
     # the text record for a developer stays in out/, which the supervisor never reads
     layout = json.loads((tmp_path / "out" / "layout.json").read_text(encoding="utf-8"))
-    assert layout[0]["page"] == 1 and secret in json.dumps(layout)
+    assert layout["pages"][0]["page"] == 1 and secret in json.dumps(layout["pages"]) and "check" in layout
 
 
 @needs_chrome
