@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -234,8 +235,23 @@ async def _fetch_program(sup: Any, step: dict[str, Any], job: dict[str, Any], ou
     if cand._full_tree and (cand.settings or {}).get("subdir"):
         (out_dir / _WORKSPACE_FILE).write_text(json.dumps({"subdir": cand.settings["subdir"],
                                                            "files": cand._full_tree}), encoding="utf-8")
+    address = job.get("address")
+    if address and job.get("source_kind") == "repo":
+        # Pump Science blind run 2026-10-27: the deployment was the declare_id! / Anchor.toml
+        # [programs.localnet] id and the cover said "Solana mainnet". The clusters the repository
+        # config names this id for are recorded; the report never labels a localnet id mainnet.
+        from ..adapters.solana.detect import anchor_clusters_of
+
+        clusters = anchor_clusters_of({**(cand._full_tree or {}), **cand.files}, str(address))
+        if clusters:
+            cs["config_clusters"] = sorted(clusters)
+            cs_file.write_text(json.dumps(cs), encoding="utf-8")
+    fields: dict[str, Any] = {"source_pin": pin.source_pin}
+    commit = str(args.get("commit") or "").lower()
+    if job.get("source_kind") == "repo" and not job.get("resolved_commit") and re.fullmatch(r"[0-9a-f]{40}", commit):
+        fields["resolved_commit"] = commit      # the report names the commit (was null with a deployment)
     async with sup._pool.connection() as conn:
-        await JobRepo(conn).update_job_fields(job["job_id"], source_pin=pin.source_pin)
+        await JobRepo(conn).update_job_fields(job["job_id"], **fields)
     await sup._mark_step(step["id"], "done", provenance={"provider": cand.provider, "sha256": cand.sha256})
     await sup._after_fetch(step, job)
 

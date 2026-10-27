@@ -87,6 +87,26 @@ def detect_workspace_programs(root: Path) -> list[dict[str, str]]:
     return programs
 
 
+_ANCHOR_SECTION_RE = re.compile(r'^\[programs\.([A-Za-z0-9_-]{1,32})\]\s*$', re.MULTILINE)
+
+
+def anchor_clusters_of(files: dict[str, str], address: str) -> set[str]:
+    """Clusters whose Anchor.toml `[programs.<cluster>]` section names `address` (any Anchor.toml
+    in the tree; regex read, never executed). Empty when no Anchor.toml names it."""
+    out: set[str] = set()
+    kv_re = re.compile(r'^\s*[\w-]+\s*=\s*"([A-Za-z0-9]{32,44})"', re.MULTILINE)
+    for path, text in files.items():
+        if path.rsplit("/", 1)[-1] != "Anchor.toml" or not isinstance(text, str):
+            continue
+        heads = list(_ANCHOR_SECTION_RE.finditer(text))
+        for i, h in enumerate(heads):
+            end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+            body = text[h.end():end].split("\n[", 1)[0]
+            if any(m.group(1) == address for m in kv_re.finditer(body)):
+                out.add(h.group(1).lower())
+    return out
+
+
 def find_declare_id(source: str) -> str | None:
     """Extract program id from declare_id!(...) or address!(...) macro call (06 3.1 U-S16).
 

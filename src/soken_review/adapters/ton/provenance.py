@@ -7,6 +7,12 @@ container and returns the hashes the supervisor computed from the BoC files the 
 TON has no owner link (06 2.3: the verifier registry is pay-to-submit and there is no on-chain
 owner statement), so a unit with an address resolves to `exact` (tier A) or to a section 9
 outcome (tier D). Without an address the user source is reviewed as tier B.
+
+A unit with an address AND a source the requester named (repo or files) that cannot be tied to the
+deployed code (rebuild differs, untrusted build inputs, no compiler, no active code at the address)
+is SOURCE_UNLINKED, tier B: the named source is reviewed, the cover says the deployment could not be
+matched, and the job never stops in insufficient_source for it (Hipo blind run 2026-10-27: a third
+party could not review a public FunC repo at all). Tier D stays for verifier-only units.
 """
 
 from __future__ import annotations
@@ -25,12 +31,14 @@ NO_SOURCE_FOUND = "NO_SOURCE_FOUND"
 NO_CHECKABLE_SOURCE = "NO_CHECKABLE_SOURCE"
 SOURCE_NOT_OWNER_LINKED = "SOURCE_NOT_OWNER_LINKED"
 SOURCE_TOOLCHAIN_GAP = "SOURCE_TOOLCHAIN_GAP"
+SOURCE_UNLINKED = "SOURCE_UNLINKED"
 
 # 04 tier per reason (08 tier_labels keys in the comment)
 _TIER = {
     MATCH_REBUILD: "A",            # tier_a
     NO_DEPLOYMENT_GIVEN: "B",      # tier_b_commit / tier_b_files
     SOURCE_TOOLCHAIN_GAP: "B",     # tier_b_third_party (verifier-attested, rebuild skipped)
+    SOURCE_UNLINKED: "B",          # tier_b_not_checked (requester's source, deployment not matched)
     NO_DEPLOYED_CODE: "D",         # section 9
     NO_SOURCE_FOUND: "D",
     NO_CHECKABLE_SOURCE: "D",
@@ -109,17 +117,22 @@ def resolve_provenance(
     attempt: Callable[[int, Candidate], Attempt],
 ) -> Out:
     """06 2.4 for TON. Total: always returns an Out."""
+    named = next((i for i, c in enumerate(cands) if c.provider in ("user", "repo")), None)
     if dep is None:
-        for i, c in enumerate(cands):
-            if c.provider in ("user", "repo"):
-                return Out(i, None, NO_DEPLOYMENT_GIVEN, tried=[attempt(i, c)])
+        if named is not None:
+            return Out(named, None, NO_DEPLOYMENT_GIVEN, tried=[attempt(named, cands[named])])
         return Out(None, None, NO_SOURCE_FOUND)
     if dep.status != "active":
+        if named is not None:
+            return Out(named, None, SOURCE_UNLINKED, tried=[attempt(named, cands[named])], why=dep.status)
         return Out(None, None, NO_DEPLOYED_CODE, why=dep.status)
     if not cands:
         return Out(None, None, NO_SOURCE_FOUND, dep_hash=dep.hash)
     if dep.hash is None:
         # no owner-linked candidate exists on TON, so this is never DEPLOYMENT_NOT_HASHABLE
+        if named is not None:
+            return Out(named, None, SOURCE_UNLINKED, tried=[attempt(named, cands[named])],
+                       why=dep.why or "code_not_hashable")
         return Out(None, None, NO_CHECKABLE_SOURCE, why=dep.why)
 
     tried: list[Attempt] = []
@@ -166,6 +179,15 @@ def resolve_provenance(
                     return Out(i, None, SOURCE_TOOLCHAIN_GAP, tried=tried,
                                dep_hash=dep.hash, why=why)
 
+    if named is not None:
+        # The requester's own source: reviewed as tier B, never A, with the deployment unmatched.
+        a = tried[named]
+        if cands[named].untrusted_inputs or a.untrusted_inputs:
+            why = "untrusted_inputs"
+        else:
+            why = "rebuild_differs" if a.status == "ok" else a.status
+        return Out(named, None, SOURCE_UNLINKED, tried=tried, dep_hash=dep.hash,
+                   build_hash=next(iter(a.hashes.values()), None) or build_hash, why=why)
     return Out(None, None, SOURCE_NOT_OWNER_LINKED, tried=tried, dep_hash=dep.hash,
                build_hash=build_hash, why=_why(tried))
 
@@ -206,7 +228,7 @@ def deployment_doc(prov: dict[str, Any], candidate: dict[str, Any] | None, addre
         }
     comp = (candidate or {}).get("compiler")
     comp = comp if isinstance(comp, dict) else {}
-    return {
+    out_doc = {
         "tier": prov.get("tier"),
         "label_reason": None,
         "checks": list(prov.get("checks") or []),
@@ -224,6 +246,29 @@ def deployment_doc(prov: dict[str, Any], candidate: dict[str, Any] | None, addre
         "address": address or prov.get("address"),
         "code_hash": prov.get("dep_hash") or prov.get("build_hash"),
     }
+    if reason == SOURCE_UNLINKED and prov.get("address"):
+        # the report method row says why the deployment could not be matched (assemble.py)
+        out_doc["unlinked_reason"] = unlinked_reason(prov.get("why"))
+    return out_doc
+
+
+# Plain-language reason a named source could not be matched to the deployment (review_status
+# build.deployment label and the report method row): `why` of SOURCE_UNLINKED.
+UNLINKED_REASON = {
+    "rebuild_differs": "the rebuilt code differs from the deployed code",
+    "untrusted_inputs": "the repository build inputs cannot be trusted for a rebuild",
+    "compile_error": "the source did not compile",
+    "unsupported_toolchain": "the compiler version is not installed",
+    "uninit": "the address holds no deployed code",
+    "frozen": "the account at the address is frozen",
+    "nonexist": "the address holds no deployed code",
+    "library_not_found": "the deployed library code could not be read",
+    "code_not_hashable": "the deployed code could not be hashed",
+}
+
+
+def unlinked_reason(why: str | None) -> str:
+    return UNLINKED_REASON.get(str(why or ""), "the deployed code could not be compared with the source")
 
 
 def _why(tried: list[Attempt]) -> str:

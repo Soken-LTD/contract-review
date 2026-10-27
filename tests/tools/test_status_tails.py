@@ -282,9 +282,14 @@ def test_status_error_omits_detail_when_null():
     # E_SOURCE_NOT_FOUND with no detail text: `detail: null` would fail the schema (type string),
     # so the key must be omitted, not sent as null (a validating MCP client rejects the response).
     body = start_status._build_status_response(_errored_job("E_SOURCE_NOT_FOUND", None), "json", steps=[])
-    # `what` names {providers}, which no detail fills: left out; `fix` has no placeholder: sent.
-    assert body["error"] == {"code": "E_SOURCE_NOT_FOUND",
-                             "fix": load_errors()["E_SOURCE_NOT_FOUND"]["fix"]}
+    # A repo job gets the repo-mode texts (errors.yaml what_repo / fix_repo): never the deployed
+    # text that tells it to start again with repo and commit (Hipo blind run 2026-10-27).
+    from soken_review.families import enabled_chains
+
+    row = load_errors()["E_SOURCE_NOT_FOUND"]
+    assert body["error"] == {"code": "E_SOURCE_NOT_FOUND", "what": row["what_repo"],
+                             "fix": row["fix_repo"].format(enabled=", ".join(enabled_chains()))}
+    assert body["error"]["fix"] != row["fix"]
     assert "detail" not in body["error"]
     assert list(STATUS_SCHEMA.iter_errors(body)) == []
 

@@ -205,6 +205,8 @@ def _report_chain(job: dict[str, Any]) -> str:
 # Cover line for a job started without a deployment: a scope statement, not a finding about the
 # code (matrix run 2026-10-27, 1inch repo job: "Chain and network: Not deployed" read as a defect).
 NO_DEPLOYMENT_LABEL = "No deployment given; source review only"
+SOLANA_CONFIG_CLUSTER_LABEL = "Program id for {cluster} in Anchor.toml; not mainnet"
+SOLANA_NOT_ON_MAINNET_LABEL = "Program id not deployed on Solana mainnet"
 
 
 def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
@@ -219,6 +221,17 @@ def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
     if chain_id:
         return str(chain_id)[:60]
     chain = str((deployment or {}).get("chain") or job.get("chain") or "")
+    if job.get("address") and chain == "solana":
+        # Pump Science blind run 2026-10-27: a declare_id! / [programs.localnet] id printed as
+        # "Solana mainnet". Mainnet only when the repository config does not tie the id to another
+        # cluster and the mainnet read found a program at it.
+        cs = chain_state or {}
+        clusters = [str(c) for c in cs.get("config_clusters") or []]
+        if clusters and "mainnet" not in clusters:
+            return SOLANA_CONFIG_CLUSTER_LABEL.format(cluster=clusters[0])[:60]
+        if cs.get("kind", "program") == "program" and not cs.get("deployed_program_hash") \
+                and cs.get("why") == "no_code":
+            return SOLANA_NOT_ON_MAINNET_LABEL
     if job.get("address") and chain in _CHAIN_NETWORK:
         return _CHAIN_NETWORK[chain]
     return NO_DEPLOYMENT_LABEL
@@ -888,6 +901,10 @@ def _deployment_method_detail(job: dict[str, Any], deployment: dict[str, Any] | 
         n = cmp_.get("differing_bytes")
         diff = f" ({int(n):,} differing bytes)" if isinstance(n, int) else ""
         return f"The pinned source was rebuilt and compared with the deployed runtime code{where}: it does not match{diff}"
+    unlinked = (deployment or {}).get("unlinked_reason")
+    if tier == "B" and isinstance(unlinked, str) and unlinked:
+        # TON SOURCE_UNLINKED: the requester's source was reviewed; the deployment is not matched
+        return f"The reviewed source could not be matched to the deployed code{where}: {unlinked}"
     return "Not run: the deployed code was not compared with a rebuild of the source"
 
 

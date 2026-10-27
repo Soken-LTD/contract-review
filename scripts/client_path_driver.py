@@ -682,6 +682,8 @@ CRS = "TRegosVaS1o3DHG85nnW8xYzczPm3xL76K"
 APYEE_COMMIT = "ffc81631af65010c8afe66e1bee09f94d2d1ea79"
 LOCKER_COMMIT = "4f400beb3a7b912888fba214d8553f5368eab18c"
 LOCKER_PROGRAM = "Fvm8Z25vd1Yauj6GB4jsrW7jJyUdNYGeDCWYqcuTtDek"
+HIPO_COMMIT = "91291c5bfc5da61467d065c6ccd121f0308490e4"
+PUMP_COMMIT = "768ef58478724bf6b464c9f0952e3e5a3b2a2613"
 
 WETH9_FINDING = FindingSpec(
     file_hint="WETH9", locate="function withdraw(", category="evm.dos",
@@ -723,6 +725,25 @@ TARGETS: dict[str, TargetSpec] = {
         name="ton", start={"source": {"kind": "deployed", "chain": "ton", "address": FORTON}},
         probe_url="https://toncenter.com/api/v2/getAddressInformation?address=" + FORTON,
         chain="ton", network="TON mainnet", tiers=("A",), stale_walks=True, address_in_cover=FORTON, ready_timeout_s=900),
+    "ton-repo": TargetSpec(
+        # Hipo blind run 2026-10-27: a public TON FunC Blueprint repository, started by a third party
+        # with repo and commit only (no chain, no deployment), ended insufficient_source on every
+        # variant. The family is detected from the tree; the job must reach ready with a TON map and
+        # leads, and render.
+        name="ton-repo",
+        start={"source": {"kind": "repo", "repo_url": "https://github.com/HipoFinance/contract", "commit": HIPO_COMMIT}},
+        probe_url="https://api.github.com/repos/HipoFinance/contract/commits/" + HIPO_COMMIT,
+        chain="ton", network="No deployment given; source review only", tiers=("B",), ready_timeout_s=900),
+    "solana-repo": TargetSpec(
+        # Pump Science blind run 2026-10-27: an Anchor workspace (Anchor.toml at the root, the program
+        # in programs/pump-science), started with repo, commit and subdir only, ended
+        # E_SOURCE_NOT_FOUND / no_manifest twice; it worked only with the declare_id! id as a
+        # deployment, and the cover then said "Solana mainnet" for a localnet id. Repo only here.
+        name="solana-repo",
+        start={"source": {"kind": "repo", "repo_url": "https://github.com/code-423n4/2025-01-pump-science",
+                          "commit": PUMP_COMMIT, "subdir": "programs/pump-science"}},
+        probe_url="https://api.github.com/repos/code-423n4/2025-01-pump-science/commits/" + PUMP_COMMIT,
+        chain="solana", network="No deployment given; source review only", tiers=("B",), ready_timeout_s=1800),
     "tron": TargetSpec(
         # chain_id is omitted as the matrix session did: with it, review_start answers E_CHAIN_DISABLED
         # (TRON is `enabled: false` in chains.json and the RPC gate reads chain_id), without it the TRON
