@@ -486,7 +486,11 @@ def provenance(
     # Tier B (default): the label names the real source kind. Deployed address with explorer or
     # Sourcify source: third party; deployed address with other source: not checked; repository
     # at a resolved commit: commit; anything else (upload, inline files): supplied by the requester.
-    if address:
+    if address and (deployment or {}).get("unlinked_reason"):
+        # TON SOURCE_UNLINKED: the requester's source was reviewed, the deployment was not matched
+        # to it; the cover says so in words (security review 2026-10-27), not only the method row.
+        key = "tier_b_unmatched"
+    elif address:
         third = bool(cand.get("explorer_verified") or cand.get("sourcify_match"))
         key = "tier_b_third_party" if third else "tier_b_not_checked"
     elif repo and job.get("resolved_commit"):

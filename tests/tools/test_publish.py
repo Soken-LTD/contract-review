@@ -956,6 +956,13 @@ class TestAutoPublishEnqueue:
                      {"has_deployment": True, "chain": "evm", "chain_id": 8453}),
                     ("repo", "bbbbbbbbbbbbbbbbbbbbbbbbbb",
                      {"has_deployment": True, "chain": "evm", "chain_id": 8453}),
+                    # TON repo + mainnet address: matched (tier A) publishes, unlinked (tier B) never
+                    ("repo", "ffffffffffffffffffffffffff",
+                     {"has_deployment": True, "chain": "ton", "chain_id": None}),
+                    ("repo", "gggggggggggggggggggggggggg",
+                     {"has_deployment": True, "chain": "ton", "chain_id": None}),
+                    ("deployed", "hhhhhhhhhhhhhhhhhhhhhhhhhh",
+                     {"has_deployment": True, "chain": "evm", "chain_id": 8453}),   # tier B: private
                     ("repo", "eeeeeeeeeeeeeeeeeeeeeeeeee",
                      {"has_deployment": False, "chain": None, "chain_id": None}),  # no deployment
                     ("upload", "cccccccccccccccccccccccccc",
@@ -976,6 +983,11 @@ class TestAutoPublishEnqueue:
                            values (%s, %s, %s, 'public_review', %s, 'R.pdf', array[repeat('0',64)]::char(64)[],
                                    '[]'::jsonb, 1, now(), now() + interval '30 days')""",
                         (rid, rid[:10], jid, f"reports/{rid}/1/"))
+                    tier = {"aaaaaaaaaaaaaaaaaaaaaaaaaa": "A", "bbbbbbbbbbbbbbbbbbbbbbbbbb": "A",
+                            "ffffffffffffffffffffffffff": "A", "gggggggggggggggggggggggggg": "B",
+                            "hhhhhhhhhhhhhhhhhhhhhhhhhh": "B"}.get(rid)
+                    if tier:
+                        await conn.execute("update jobs set tier = %s where job_id = %s", (tier, jid))
                     rids[(kind, rid)] = (rid, jid)
                 for rid, jid in rids.values():
                     await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T00:00:00+00:00")
@@ -993,6 +1005,11 @@ class TestAutoPublishEnqueue:
         assert got["bbbbbbbbbbbbbbbbbbbbbbbbbb"] == ((1, 2), "repo")
         # repo without deployment → private
         assert got["eeeeeeeeeeeeeeeeeeeeeeeeee"] == ((0, 0), "repo")
+        # TON repo + mainnet address: matched → queued; unlinked (SOURCE_UNLINKED, tier B) → private
+        assert got["ffffffffffffffffffffffffff"] == ((1, 2), "repo")
+        assert got["gggggggggggggggggggggggggg"] == ((0, 0), "repo")
+        # deployed mainnet address whose source is not matched (tier B) → private
+        assert got["hhhhhhhhhhhhhhhhhhhhhhhhhh"] == ((0, 0), "deployed")
         # upload and files → private
         assert got["cccccccccccccccccccccccccc"] == ((0, 0), "upload")
         assert got["dddddddddddddddddddddddddd"] == ((0, 0), "files")

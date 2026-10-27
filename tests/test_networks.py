@@ -6,6 +6,8 @@ No DB required — all unit tests.
 
 from __future__ import annotations
 
+import pytest
+
 from soken_review.networks import (
     _EVM_MAINNET_CHAIN_IDS,
     _SOLANA_NON_MAINNET,
@@ -29,6 +31,7 @@ def _job(**kwargs):
         "source_args": {},
         "context_items": [],
         "ownership_proven": False,
+        "tier": "A",            # matched deployment: the only tier that publishes automatically
     }
     defaults.update(kwargs)
     return defaults
@@ -313,3 +316,24 @@ def test_solana_non_mainnet_set():
     assert "testnet" in _SOLANA_NON_MAINNET
     assert "localnet" in _SOLANA_NON_MAINNET
     assert "mainnet-beta" not in _SOLANA_NON_MAINNET
+
+
+class TestPublicationRequiresMatchedDeployment:
+    """CEO rule (security review 2026-10-27): automatic publication only when the reviewed code is
+    the deployed mainnet code. An unlinked TON repo review (SOURCE_UNLINKED, tier B) on a mainnet
+    address, or any unmatched Solana / EVM deployment, stays private."""
+
+    def test_unlinked_ton_repo_on_mainnet_is_private(self, monkeypatch):
+        monkeypatch.setenv("SOKEN_AUTOPUBLISH", "on")
+        out = publication_outcome(_job(source_kind="repo", chain="ton", chain_id=None, tier="B"))
+        assert out == {"outcome": "private", "reason": "the reviewed source is not matched to the deployed code"}
+
+    def test_matched_ton_repo_on_mainnet_publishes(self, monkeypatch):
+        monkeypatch.setenv("SOKEN_AUTOPUBLISH", "on")
+        assert publication_outcome(_job(source_kind="repo", chain="ton", chain_id=None))["outcome"] == "automatic"
+
+    @pytest.mark.parametrize("tier", ["B", "C", None])
+    def test_unmatched_evm_and_solana_are_private(self, monkeypatch, tier):
+        monkeypatch.setenv("SOKEN_AUTOPUBLISH", "on")
+        assert publication_outcome(_job(tier=tier))["outcome"] == "private"
+        assert publication_outcome(_job(chain="solana", chain_id=None, tier=tier))["outcome"] == "private"

@@ -388,6 +388,7 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
     - ``has_deployment`` is False — a repo review without a live deployment is not a
       public on-chain artifact.
     - ``is_mainnet(job)`` is False — testnet/devnet deployments stay private.
+    - The job tier is not A: the reviewed source is not matched to the deployed code.
     - The job has any inline context item (``url`` is None), meaning the requester supplied
       private content that may be quoted in the report context section.
     - The report profile is ``owner`` — the requester is the contract owner and has not
@@ -401,7 +402,7 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             "select source_kind, context_items, terms_accepted_at,"
-            " chain, chain_id, source_args, has_deployment"
+            " chain, chain_id, source_args, has_deployment, tier"
             " from jobs where job_id = %s",
             (job_id,),
         )
@@ -415,6 +416,11 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
         return
     # Skip if the deployment is on a testnet/devnet rather than a production mainnet.
     if not is_mainnet(row):
+        return
+    # Skip unless the reviewed source is matched to the deployed code (tier A): a repo reviewed
+    # beside a deployment it was not tied to (TON SOURCE_UNLINKED, Solana/EVM not matched) stays
+    # private (CEO rule, security review 2026-10-27; networks.publication_outcome mirrors this).
+    if row.get("tier") != "A":
         return
     # Skip if any context item was supplied inline (url is None = pasted content, not a URL fetch).
     context_items: list[dict[str, Any]] = row["context_items"] or []

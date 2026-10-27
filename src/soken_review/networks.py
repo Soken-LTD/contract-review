@@ -162,6 +162,16 @@ def publication_outcome(
     if not is_mainnet(job):
         return {"outcome": "private", "reason": "not deployed on a mainnet"}
 
+    # CEO rule (security review 2026-10-27): automatic publication only when the reviewed code IS
+    # the deployed mainnet code, i.e. a matched deployment (tier A). A repo reviewed beside a
+    # deployment it was not matched to (TON SOURCE_UNLINKED, Solana or EVM not_checkable or
+    # mismatch, tier B or C) stays a private PDF, or the address would carry a third party's
+    # review of other code.
+    if job.get("tier") != "A":
+        return {"outcome": "private",
+                "reason": "the reviewed source is not matched to the deployed code" if job.get("tier")
+                else "publishes automatically only once the reviewed source is matched to the deployed code"}
+
     # Inline context items: url==None means the requester pasted private content that
     # may be quoted verbatim in the report's context section.
     context_items: Any = job.get("context_items") or []
