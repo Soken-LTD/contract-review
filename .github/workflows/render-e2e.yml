@@ -4,7 +4,7 @@ name: render-e2e
 on:
   workflow_dispatch:
   push:
-    branches: [feat/report-render]
+    branches: [feat/report-render, fix/render-empty-page-pagination]
     paths: ["docker/soken-render/**", "src/soken_review/report/**", "tests/report/**", ".github/workflows/render-e2e.yml"]
 permissions:
   contents: read
@@ -36,13 +36,25 @@ jobs:
         run: |
           docker image inspect soken/soken-render:ci --format '{{.Id}} {{.Size}}'
           docker run --rm soken/soken-render:ci chrome --version || true
+      - name: Kit inside the image is the kit of this checkout
+        run: |
+          K=src/soken_review/report/kit
+          for f in build.py render.mjs report.css report.automated.css paged_handlers.js; do
+            want=$(sha256sum "$K/$f" | cut -c1-16)
+            have=$(docker run --rm soken/soken-render:ci sha256sum "/opt/app/$K/$f" | cut -c1-16)
+            echo "$f checkout=$want image=$have"
+            [ "$want" = "$have" ] || exit 1
+          done
       - name: Kit tests with the CI Chrome
         env:
           CHROME_BIN: /usr/bin/google-chrome
         run: uv run pytest -q -rs tests/report
       - name: Render GBLIN (5 runs, UV9-13) and WETH9 in the sandbox
         env:
-          SOKEN_SANDBOX_RUNTIME: ${{ steps.gvisor.outputs.runtime || 'runc' }}
+          # runc: the image built here is a local tag without a registry digest, and under gVisor
+          # docker_argv runs an image by digest only (09 4.4). The gVisor install above still proves
+          # the runtime; the x86 chrome-headless-shell pagination is what this step checks.
+          SOKEN_SANDBOX_RUNTIME: runc
           SOKEN_SANDBOX_DEV_PERMS: "1"
           SOKEN_RENDER_ROOT: ${{ github.workspace }}/.sbx/render-tmp
         run: |
@@ -51,6 +63,10 @@ jobs:
             --forbid HIGHSECRET --forbid "drift clock write" --keep out tests/report/live/gblin.report.json
           uv run python scripts/render_sandbox_check.py --image soken/soken-render:ci --keep out \
             tests/report/live/weth9.report.json
+          # Live pagination cases (2026-10-27): TON tier A with a verification section before the coverage
+          # section (empty_page, page 15) and a Solana repo with a 32-row Scope table (layout_overflow, page 2).
+          uv run python scripts/render_sandbox_check.py --image soken/soken-render:ci --keep out \
+            tests/report/live/ton_forton.report.json tests/report/live/solana_fvm8.report.json
           for f in out/*.pdf; do pdffonts "$f" | tail -n +3; done | sort -u
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()

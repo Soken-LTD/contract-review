@@ -1,0 +1,1492 @@
+{
+ "meta": {
+  "report_type": "automated",
+  "kind": "Smart contract security review",
+  "subject": "Fvm8Z25v...uTtDek",
+  "subject_source": "address_short",
+  "chain": "solana",
+  "network": "Solana mainnet",
+  "chain_id": null,
+  "explorer": null,
+  "addr_url": null,
+  "deployed_noun": "program",
+  "source_id_label": "Bytecode hash",
+  "provenance": {
+   "tier": "B",
+   "label": "Deployment given; match to the deployed code could not be checked",
+   "label_key": "tier_b_not_checked",
+   "source_hash": "297656144f36ae53a56d7e1e922a788ee04716239160c2dbd2d88ad5c4e046fd",
+   "address": "Fvm8Z25vd1Yauj6GB4jsrW7jJyUdNYGeDCWYqcuTtDek"
+  },
+  "report_id": "reprosolaaaaaaaaaaaaaaaaaa",
+  "report_id_short": "reprosolaa",
+  "ownership_proven": false,
+  "profile": "public_review",
+  "requested_by": {
+   "role": "third_party_public_code",
+   "label": "Third party reviewing public code"
+  },
+  "date": "27 October 2026",
+  "expires": "2026-11-26",
+  "out_name": "Automated_Review_reprosolaa.pdf"
+ },
+ "facts": {
+  "compiler.version": {
+   "value": "2.2.1",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "deploy.address": {
+   "value": "Fvm8Z25vd1Yauj6GB4jsrW7jJyUdNYGeDCWYqcuTtDek",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "source.files": {
+   "value": "32",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "source.nsloc": {
+   "value": "3418",
+   "unit": "lines",
+   "amount_at_risk": false
+  },
+  "source.pin": {
+   "value": "297656144f36ae53a56d7e1e922a788ee04716239160c2dbd2d88ad5c4e046fd",
+   "unit": null,
+   "amount_at_risk": false
+  }
+ },
+ "summary": {
+  "kpis": [
+   {
+    "key": "files",
+    "value": 32,
+    "label": "Files in scope"
+   },
+   {
+    "key": "nsloc",
+    "value": 3452,
+    "label": "Source lines in scope"
+   },
+   {
+    "key": "leads",
+    "value": 68,
+    "label": "Analyzer leads"
+   },
+   {
+    "key": "promoted",
+    "value": 2,
+    "label": "Leads promoted to findings"
+   },
+   {
+    "key": "areas_returned",
+    "value": "7 of 27",
+    "label": "Areas with code returned"
+   },
+   {
+    "key": "deployed_code",
+    "value": "Not checked",
+    "label": "Deployed code"
+   }
+  ]
+ },
+ "scope": {
+  "head": [
+   "Unit",
+   "File",
+   "nSLOC",
+   "Address"
+  ],
+  "files": [
+   {
+    "name": "Cargo",
+    "file": "Cargo.toml",
+    "nsloc": 32
+   },
+   {
+    "name": "Xargo",
+    "file": "Xargo.toml",
+    "nsloc": 2
+   },
+   {
+    "name": "errors",
+    "file": "src/errors.rs",
+    "nsloc": 144
+   },
+   {
+    "name": "events",
+    "file": "src/events.rs",
+    "nsloc": 126
+   },
+   {
+    "name": "cancel_vesting_escrow",
+    "file": "src/instructions/escrow_instructions/cancel_vesting_escrow.rs",
+    "nsloc": 134
+   },
+   {
+    "name": "claim",
+    "file": "src/instructions/escrow_instructions/claim.rs",
+    "nsloc": 51
+   },
+   {
+    "name": "claim2",
+    "file": "src/instructions/escrow_instructions/claim2.rs",
+    "nsloc": 78
+   },
+   {
+    "name": "close_vesting_escrow",
+    "file": "src/instructions/escrow_instructions/close_vesting_escrow.rs",
+    "nsloc": 172
+   },
+   {
+    "name": "create_vesting_escrow",
+    "file": "src/instructions/escrow_instructions/create_vesting_escrow.rs",
+    "nsloc": 146
+   },
+   {
+    "name": "create_vesting_escrow2",
+    "file": "src/instructions/escrow_instructions/create_vesting_escrow2.rs",
+    "nsloc": 110
+   },
+   {
+    "name": "create_vesting_escrow_metadata",
+    "file": "src/instructions/escrow_instructions/create_vesting_escrow_metadata.rs",
+    "nsloc": 41
+   },
+   {
+    "name": "loan",
+    "file": "src/instructions/escrow_instructions/loan.rs",
+    "nsloc": 828
+   },
+   {
+    "name": "mod",
+    "file": "src/instructions/escrow_instructions/mod.rs",
+    "nsloc": 18
+   },
+   {
+    "name": "update_vesting_escrow_recipient",
+    "file": "src/instructions/escrow_instructions/update_vesting_escrow_recipient.rs",
+    "nsloc": 67
+   },
+   {
+    "name": "mod",
+    "file": "src/instructions/mod.rs",
+    "nsloc": 4
+   },
+   {
+    "name": "create_root_escrow",
+    "file": "src/instructions/root_escrow_instructions/create_root_escrow.rs",
+    "nsloc": 79
+   },
+   {
+    "name": "create_vesting_escrow_from_root",
+    "file": "src/instructions/root_escrow_instructions/create_vesting_escrow_from_root.rs",
+    "nsloc": 160
+   },
+   {
+    "name": "fund_root_escrow",
+    "file": "src/instructions/root_escrow_instructions/fund_root_escrow.rs",
+    "nsloc": 63
+   },
+   {
+    "name": "mod",
+    "file": "src/instructions/root_escrow_instructions/mod.rs",
+    "nsloc": 6
+   },
+   {
+    "name": "lib",
+    "file": "src/lib.rs",
+    "nsloc": 116
+   },
+   {
+    "name": "macros",
+    "file": "src/macros.rs",
+    "nsloc": 20
+   },
+   {
+    "name": "safe_math",
+    "file": "src/safe_math.rs",
+    "nsloc": 61
+   },
+   {
+    "name": "mod",
+    "file": "src/state/mod.rs",
+    "nsloc": 6
+   },
+   {
+    "name": "root_escrow",
+    "file": "src/state/root_escrow.rs",
+    "nsloc": 59
+   },
+   {
+    "name": "vesting_escrow",
+    "file": "src/state/vesting_escrow.rs",
+    "nsloc": 372
+   },
+   {
+    "name": "vesting_escrow_metadata",
+    "file": "src/state/vesting_escrow_metadata.rs",
+    "nsloc": 23
+   },
+   {
+    "name": "common",
+    "file": "src/util/common.rs",
+    "nsloc": 15
+   },
+   {
+    "name": "constants",
+    "file": "src/util/constants.rs",
+    "nsloc": 3
+   },
+   {
+    "name": "mod",
+    "file": "src/util/mod.rs",
+    "nsloc": 9
+   },
+   {
+    "name": "remaining_accounts",
+    "file": "src/util/remaining_accounts.rs",
+    "nsloc": 52
+   },
+   {
+    "name": "token",
+    "file": "src/util/token.rs",
+    "nsloc": 46
+   },
+   {
+    "name": "token2022",
+    "file": "src/util/token2022.rs",
+    "nsloc": 409
+   }
+  ],
+  "out_of_scope": []
+ },
+ "context": {
+  "documents": [],
+  "comparison": [],
+  "notes": []
+ },
+ "architecture": {
+  "title": "Units in scope and their external dependencies",
+  "cols": 4,
+  "rows": 4,
+  "row_height": 120,
+  "nodes": [
+   {
+    "id": "a_public",
+    "label": "Any caller",
+    "kind": "actor",
+    "col": 0.0,
+    "row": 0
+   },
+   {
+    "id": "a_creator",
+    "label": "creator",
+    "kind": "actor",
+    "col": 1.0,
+    "row": 0
+   },
+   {
+    "id": "a_offer_authority",
+    "label": "offer_authority",
+    "kind": "actor",
+    "col": 2.0,
+    "row": 0
+   },
+   {
+    "id": "a_more",
+    "label": "Other roles",
+    "kind": "actor",
+    "sub": "+2 more",
+    "col": 3.0,
+    "row": 0
+   },
+   {
+    "id": "u_locker",
+    "label": "locker",
+    "kind": "scope",
+    "sub": "20 entries",
+    "col": 1.5,
+    "row": 1
+   },
+   {
+    "id": "u_cancel_vesting_escrow",
+    "label": "cancel_vesting_escrow",
+    "kind": "scope",
+    "sub": "library",
+    "col": 0.0,
+    "row": 2
+   },
+   {
+    "id": "u_cancelvestingescrowctx",
+    "label": "CancelVestingEscrowCtx",
+    "kind": "scope",
+    "sub": "library",
+    "col": 1.0,
+    "row": 2
+   },
+   {
+    "id": "u_tests",
+    "label": "tests",
+    "kind": "scope",
+    "sub": "library",
+    "col": 2.0,
+    "row": 2
+   },
+   {
+    "id": "u_more_s",
+    "label": "Other units",
+    "kind": "scope",
+    "sub": "+26 more",
+    "col": 3.0,
+    "row": 2
+   },
+   {
+    "id": "x_any_address",
+    "label": "Any address",
+    "kind": "ext",
+    "sub": "instruction::transfer...",
+    "col": 1.5,
+    "row": 3
+   }
+  ],
+  "edges": [
+   {
+    "a": "a_creator",
+    "b": "u_locker",
+    "label": "2 functions"
+   },
+   {
+    "a": "a_offer_authority",
+    "b": "u_locker",
+    "label": "2 functions"
+   },
+   {
+    "a": "a_public",
+    "b": "u_locker"
+   },
+   {
+    "a": "u_cancel_vesting_escrow",
+    "b": "u_cancelvestingescrowctx"
+   },
+   {
+    "a": "u_locker",
+    "b": "u_cancel_vesting_escrow",
+    "label": "handle_cancel_vesting_escrow"
+   }
+  ]
+ },
+ "roles": {
+  "rows": [
+   {
+    "role": "creator",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "locker.close_vesting_escrow",
+     "locker.create_vesting_escrow_metadata"
+    ],
+    "risk_note": "Gates the listed functions"
+   },
+   {
+    "role": "lender",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "locker.claim_default"
+    ],
+    "risk_note": "Gates the listed functions"
+   },
+   {
+    "role": "offer_authority",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "locker.publish_offer",
+     "locker.withdraw_offer"
+    ],
+    "risk_note": "Gates the listed functions"
+   },
+   {
+    "role": "recipient",
+    "holder": "Unknown",
+    "type": "Unknown",
+    "gated_functions": [
+     "locker.cancel_unfunded"
+    ],
+    "risk_note": "Gates the listed functions"
+   }
+  ],
+  "notes": []
+ },
+ "method": [
+  {
+   "step": "Source pinning",
+   "detail": "32 files pinned by sha256; source pin 297656144f36ae53"
+  },
+  {
+   "step": "Static analysis",
+   "detail": "clippy 1.86.0 unknown: 33 leads, lifecycle 1.0.0 unknown: 8 leads, solana-rules 0.2.0 unknown: 27 leads. One analyzer did not run."
+  },
+  {
+   "step": "Finding selection",
+   "detail": "3 findings accepted, 0 withdrawn"
+  },
+  {
+   "step": "Server checks",
+   "detail": "Every code quote matched to the pinned source; text and number rules on every finding; severity mapped from the classifications through the fixed matrix"
+  },
+  {
+   "step": "Deployment check",
+   "detail": "Not run: the deployed code was not compared with a rebuild of the source"
+  }
+ ],
+ "severity_scale": [
+  {
+   "severity": "Critical",
+   "text": "Loss or permanent freeze of holder funds with no unusual precondition"
+  },
+  {
+   "severity": "High",
+   "text": "Loss or freeze under realistic preconditions"
+  },
+  {
+   "severity": "Medium",
+   "text": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol"
+  },
+  {
+   "severity": "Low",
+   "text": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification"
+  },
+  {
+   "severity": "Informational",
+   "text": "Documentation, hardening and integration notes"
+  }
+ ],
+ "findings": [
+  {
+   "id": "H-001",
+   "severity": "High",
+   "evidence_level": "analyzer_and_reasoning",
+   "title": "Borrower blocks claim_default and collateral seizure by reassigning the owner of their USDC ATA",
+   "component": "loan",
+   "location": {
+    "path": "src/instructions/escrow_instructions/loan.rs",
+    "start": 773,
+    "end": 780
+   },
+   "category": "ATA owner reassign",
+   "category_key": "solana.ata_owner_reassign",
+   "description": [
+    {
+     "p": "ClaimDefaultCtx requires recipient_loan_token to be the recipient's associated token account for the loan mint, typed with init_if_needed and associated_token::authority = recipient. The loan mint is classic SPL USDC (loan_token_program is Program<Token>). Classic SPL Token lets an account owner change the owner of an associated token account with SetAuthority AccountOwner; the account then still sits at the ATA address but its owner no longer matches, and Anchor's init_if_needed owner check rejects it."
+    },
+    {
+     "p": "The recipient is the borrower, the party being liquidated. By reassigning their own USDC ATA they make every claim_default call fail. claim_default is the lender's seizure path, and the account is mandatory even when the surplus refund is zero. The same constraint exists in settle and sweep, but those only hurt the borrower."
+    }
+   ],
+   "impact": [
+    {
+     "p": "A defaulting borrower keeps the principal and prevents the lender from seizing the collateral, removing the lender's whole recourse on the loan. The collateral stays frozen in the vault because claims are blocked while the loan is Active, which gives the borrower leverage to negotiate with the lender. The lender cannot undo this; only the borrower can restore the ATA owner."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Do not make the lender's seizure depend on a borrower-controlled account. Route any surplus refund in claim_default to the escrow's own loan ATA (left for sweep) or make recipient_loan_token optional and skip the surplus transfer when it is absent or its owner differs. Alternatively pay surplus to an account derived and owned by the program, so its owner cannot be reassigned."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "src/instructions/escrow_instructions/loan.rs",
+        "start": 773,
+        "end": 780
+       },
+       "lines": [
+        [
+         773,
+         "    #[account("
+        ],
+        [
+         774,
+         "        init_if_needed,"
+        ],
+        [
+         775,
+         "        payer = lender,"
+        ],
+        [
+         776,
+         "        associated_token::mint = loan_mint,"
+        ],
+        [
+         777,
+         "        associated_token::authority = recipient,"
+        ],
+        [
+         778,
+         "        associated_token::token_program = loan_token_program"
+        ],
+        [
+         779,
+         "    )]"
+        ],
+        [
+         780,
+         "    pub recipient_loan_token: Box<InterfaceAccount<'info, TokenAccount>>,"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "src/instructions/escrow_instructions/loan.rs",
+        "start": 789,
+        "end": 797
+       },
+       "lines": [
+        [
+         789,
+         "pub fn handle_claim_default(ctx: Context<ClaimDefaultCtx>) -> Result<()> {"
+        ],
+        [
+         790,
+         "    let settled = settle_read(&ctx.accounts.escrow, &ctx.accounts.escrow_loan_token)?;"
+        ],
+        [
+         791,
+         ""
+        ],
+        [
+         792,
+         "    let mut escrow = ctx.accounts.escrow.load_mut()?;"
+        ],
+        [
+         793,
+         "    let now = Clock::get()?.unix_timestamp;"
+        ],
+        [
+         794,
+         "    // Maturity is the only delinquency trigger: the buffer rule (maturity <="
+        ],
+        [
+         795,
+         "    // final unlock, enforced at publish) keeps collateral locked until then."
+        ],
+        [
+         796,
+         "    let past_maturity = now >= escrow.maturity && escrow.repaid < escrow.repay_amount;"
+        ],
+        [
+         797,
+         "    require!(past_maturity, LockerError::NotDelinquent);"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "src/instructions/escrow_instructions/loan.rs",
+        "start": 782,
+        "end": 782
+       },
+       "lines": [
+        [
+         782,
+         "    pub loan_token_program: Program<'info, Token>,"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "permanent_freeze",
+       "unbounded",
+       "permissionless_role",
+       "normal_operation",
+       "irreversible",
+       "I4xL3=Critical"
+      ]
+     ]
+    },
+    "challenge": {
+     "head": [
+      "Item",
+      "Condition",
+      "Answer"
+     ],
+     "rows": [
+      [
+       "W0",
+       "",
+       ""
+      ],
+      [
+       "W0b",
+       "",
+       ""
+      ],
+      [
+       "W1",
+       "",
+       ""
+      ],
+      [
+       "W3",
+       "",
+       ""
+      ],
+      [
+       "W2",
+       "",
+       ""
+      ],
+      [
+       "MB0",
+       "",
+       ""
+      ],
+      [
+       "MB1",
+       "",
+       ""
+      ],
+      [
+       "MB2",
+       "",
+       ""
+      ],
+      [
+       "MB3",
+       "",
+       ""
+      ]
+     ]
+    },
+    "lead": {
+     "analyzer": "lifecycle 1.0.0",
+     "rule_id": "lifecycle:LC-SOL-AUTH"
+    },
+    "further": [
+     {
+      "path": "src/state/vesting_escrow.rs",
+      "start": 238,
+      "end": 241
+     }
+    ]
+   },
+   "attack_steps": [
+    {
+     "text": "Borrower (escrow recipient) takes a loan: fill pays principal into the recipient's USDC associated token account and the escrow moves to Active.",
+     "ref": {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 522,
+      "end": 550
+     }
+    },
+    {
+     "text": "Borrower calls classic SPL Token SetAuthority (AccountOwner) on that USDC ATA, moving its owner to another key. The ATA address stays the same but its owner field no longer equals the recipient.",
+     "ref": {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 773,
+      "end": 780
+     }
+    },
+    {
+     "text": "After maturity the lender calls claim_default. Anchor checks the existing account at the recipient ATA address against associated_token::authority = recipient, the check fails and the whole instruction reverts, so the lender cannot seize collateral.",
+     "ref": {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 789,
+      "end": 821
+     }
+    },
+    {
+     "text": "The escrow stays Active, so claims stay blocked and the collateral remains in the vault while the borrower keeps the principal.",
+     "ref": {
+      "path": "src/state/vesting_escrow.rs",
+      "start": 235,
+      "end": 247
+     }
+    }
+   ]
+  },
+  {
+   "id": "H-002",
+   "severity": "High",
+   "evidence_level": "analyzer_and_reasoning",
+   "title": "Lender freezes repaid collateral by reassigning the owner of their USDC ATA",
+   "component": "loan",
+   "location": {
+    "path": "src/instructions/escrow_instructions/loan.rs",
+    "start": 590,
+    "end": 597
+   },
+   "category": "ATA owner reassign",
+   "category_key": "solana.ata_owner_reassign",
+   "description": [
+    {
+     "p": "Repayment is credited only inside settle_read, which runs from settle or claim_default. Both paths require lender_loan_token to be the lender's canonical USDC ATA with associated_token::authority = lender. The lender controls that account and, under classic SPL Token, can move its owner with SetAuthority AccountOwner, after which the constraint rejects it on every call."
+    },
+    {
+     "p": "The borrower cannot move the escrow out of Active alone: claims require Idle or Defaulted, sweep rejects Active, and the payout destination is fixed by derivation."
+    }
+   ],
+   "impact": [
+    {
+     "p": "A lender can keep a fully repaid loan in Active and hold the borrower's whole collateral position locked for as long as they want, which can be used to extort the borrower. The lender gains no direct profit, since restoring the ATA and calling claim_default would credit the pending repayment first and revert, but the borrower's collateral is unavailable until the lender cooperates."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Credit repayments without depending on a lender-controlled account: let settle record repaid and move the escrow to Idle even when the lender payout account is invalid, keeping the lender's share in a program-owned account that the lender withdraws with a pull-based instruction to any token account it owns."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "src/instructions/escrow_instructions/loan.rs",
+        "start": 590,
+        "end": 597
+       },
+       "lines": [
+        [
+         590,
+         "    #[account("
+        ],
+        [
+         591,
+         "        init_if_needed,"
+        ],
+        [
+         592,
+         "        payer = payer,"
+        ],
+        [
+         593,
+         "        associated_token::mint = loan_mint,"
+        ],
+        [
+         594,
+         "        associated_token::authority = lender,"
+        ],
+        [
+         595,
+         "        associated_token::token_program = loan_token_program"
+        ],
+        [
+         596,
+         "    )]"
+        ],
+        [
+         597,
+         "    pub lender_loan_token: Box<InterfaceAccount<'info, TokenAccount>>,"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "src/instructions/escrow_instructions/loan.rs",
+        "start": 866,
+        "end": 881
+       },
+       "lines": [
+        [
+         866,
+         "    let spendable = escrow_loan_token.amount;"
+        ],
+        [
+         867,
+         ""
+        ],
+        [
+         868,
+         "    let mut escrow = escrow_loader.load_mut()?;"
+        ],
+        [
+         869,
+         "    require!(escrow.is_loan_enabled(), LockerError::LoanNotEnabled);"
+        ],
+        [
+         870,
+         "    escrow.require_loan_state(LoanState::Active)?;"
+        ],
+        [
+         871,
+         "    let owed = escrow.repay_amount.saturating_sub(escrow.repaid);"
+        ],
+        [
+         872,
+         "    let paid = spendable.min(owed);"
+        ],
+        [
+         873,
+         "    let surplus = spendable.saturating_sub(paid);"
+        ],
+        [
+         874,
+         "    let nonce = escrow.offer_nonce;"
+        ],
+        [
+         875,
+         "    escrow.repaid = escrow.repaid.safe_add(paid)?;"
+        ],
+        [
+         876,
+         "    let repaid = escrow.repaid;"
+        ],
+        [
+         877,
+         "    let fully_repaid = repaid == escrow.repay_amount;"
+        ],
+        [
+         878,
+         "    if fully_repaid {"
+        ],
+        [
+         879,
+         "        escrow.clear_loan_terms();"
+        ],
+        [
+         880,
+         "        escrow.loan_state = LoanState::Idle as u8;"
+        ],
+        [
+         881,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "permanent_freeze",
+       "unbounded",
+       "permissionless_role",
+       "normal_operation",
+       "admin_reversible",
+       "I3xL3=High"
+      ]
+     ]
+    },
+    "challenge": {
+     "head": [
+      "Item",
+      "Condition",
+      "Answer"
+     ],
+     "rows": [
+      [
+       "W0",
+       "",
+       ""
+      ],
+      [
+       "W0b",
+       "",
+       ""
+      ],
+      [
+       "W1",
+       "",
+       ""
+      ],
+      [
+       "W3",
+       "",
+       ""
+      ],
+      [
+       "W2",
+       "",
+       ""
+      ],
+      [
+       "MB0",
+       "",
+       ""
+      ],
+      [
+       "MB1",
+       "",
+       ""
+      ],
+      [
+       "MB2",
+       "",
+       ""
+      ]
+     ]
+    },
+    "lead": {
+     "analyzer": "lifecycle 1.0.0",
+     "rule_id": "lifecycle:LC-SOL-AUTH"
+    }
+   },
+   "attack_steps": [
+    {
+     "text": "Borrower repays by transferring USDC into the escrow's loan ATA, which the design treats as repayment; the escrow stays Active until settle credits it.",
+     "ref": {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 112,
+      "end": 122
+     }
+    },
+    {
+     "text": "Lender calls classic SPL Token SetAuthority (AccountOwner) on their own USDC ATA, so the account at the lender ATA address no longer has the lender as owner.",
+     "ref": {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 590,
+      "end": 597
+     }
+    },
+    {
+     "text": "Every settle call now fails the associated_token::authority = lender check and reverts, so the repayment is not credited and the loan stays Active.",
+     "ref": {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 613,
+      "end": 629
+     }
+    },
+    {
+     "text": "While the loan is Active, recipient claims and sweep are rejected, so the borrower's collateral stays locked although the debt is fully paid.",
+     "ref": {
+      "path": "src/state/vesting_escrow.rs",
+      "start": 235,
+      "end": 247
+     }
+    }
+   ]
+  },
+  {
+   "id": "M-001",
+   "severity": "Medium",
+   "evidence_level": "reasoning_challenged",
+   "title": "Expired offer keeps the escrow in Offered and blocks the recipient's vesting claims",
+   "component": "vesting_escrow",
+   "location": {
+    "path": "src/state/vesting_escrow.rs",
+    "start": 236,
+    "end": 242
+   },
+   "category": "Account relationship",
+   "category_key": "solana.account_relationship",
+   "description": [
+    {
+     "p": "enforce_claim allows claims on a loan lock only in Idle or Defaulted. publish_offer moves the escrow to Offered, and an offer that expires unfilled is not reset: fill rejects it, but the state remains Offered. The transition back to Idle exists only in withdraw_offer and in a new publish_offer, and both require the offer_authority signature."
+    },
+    {
+     "p": "When offer_authority is a separate key (for example a service key chosen at open_lock), the recipient depends on that key to unlock vested tokens after any unfilled offer, and the authority can keep republishing to hold the escrow in Offered."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Vested collateral can be held unclaimable by the offer authority, or stays stuck if that key is lost, even though no loan is outstanding. A recipient using the default authority is not affected because the recipient can withdraw the offer."
+    }
+   ],
+   "recommendation": [
+    {
+     "p": "Treat an expired Offered state as Idle in enforce_claim, or let anyone, or at least the recipient, call withdraw_offer once now is at or past offer_expiry."
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "src/state/vesting_escrow.rs",
+        "start": 236,
+        "end": 242
+       },
+       "lines": [
+        [
+         236,
+         "        if self.is_loan_enabled() {"
+        ],
+        [
+         237,
+         "            let state = self.loan_state()?;"
+        ],
+        [
+         238,
+         "            require!("
+        ],
+        [
+         239,
+         "                state == LoanState::Idle || state == LoanState::Defaulted,"
+        ],
+        [
+         240,
+         "                LockerError::WrongLoanState"
+        ],
+        [
+         241,
+         "            );"
+        ],
+        [
+         242,
+         "            require!(destination_owner == recipient, LockerError::InvalidDestination);"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "src/instructions/escrow_instructions/loan.rs",
+        "start": 463,
+        "end": 464
+       },
+       "lines": [
+        [
+         463,
+         "    #[account(mut, constraint = offer_authority.key() == escrow.load()?.offer_authority @ LockerError::NotPermitToDoThisAction)]"
+        ],
+        [
+         464,
+         "    pub offer_authority: Signer<'info>,"
+        ]
+       ]
+      }
+     },
+     {
+      "code": {
+       "ref": {
+        "path": "src/instructions/escrow_instructions/loan.rs",
+        "start": 527,
+        "end": 527
+       },
+       "lines": [
+        [
+         527,
+         "    require!(now < escrow.offer_expiry, LockerError::OfferExpired);"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule"
+     ],
+     "rows": [
+      [
+       "permanent_freeze",
+       "unbounded",
+       "privileged_role",
+       "normal_operation",
+       "admin_reversible",
+       "I3xL1=Medium"
+      ]
+     ]
+    },
+    "challenge": {
+     "head": [
+      "Item",
+      "Condition",
+      "Answer"
+     ],
+     "rows": [
+      [
+       "B1",
+       "",
+       ""
+      ],
+      [
+       "MB0",
+       "",
+       ""
+      ],
+      [
+       "MB1",
+       "",
+       ""
+      ],
+      [
+       "MB2",
+       "",
+       ""
+      ]
+     ]
+    },
+    "lead": null
+   },
+   "attack_steps": [
+    {
+     "text": "The offer authority (set at open_lock, a third party when offer_authority is not the default key) publishes an offer within the committed bounds; loan_state becomes Offered.",
+     "ref": {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 381,
+      "end": 441
+     }
+    },
+    {
+     "text": "The offer passes offer_expiry unfilled. fill now rejects it, but loan_state stays Offered.",
+     "ref": {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 522,
+      "end": 528
+     }
+    },
+    {
+     "text": "Both claim entry points funnel through enforce_claim, which rejects every state other than Idle or Defaulted, so vested collateral cannot be claimed.",
+     "ref": {
+      "path": "src/state/vesting_escrow.rs",
+      "start": 235,
+      "end": 247
+     }
+    },
+    {
+     "text": "Only the offer authority can call withdraw_offer to return to Idle, or publish again, which restarts the window.",
+     "ref": {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 467,
+      "end": 481
+     }
+    }
+   ]
+  }
+ ],
+ "review_coverage": {
+  "areas": [
+   {
+    "area_id": "solana.missing_signer",
+    "area": "Missing signer",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "solana.missing_owner_check",
+    "area": "Missing owner check",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.type_confusion",
+    "area": "Type confusion",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.pda_seeds",
+    "area": "PDA seeds",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.pda_sharing",
+    "area": "PDA sharing",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.signed_cpi_accounts",
+    "area": "Signed CPI accounts",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.ata_validation",
+    "area": "ATA validation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.seed_collision",
+    "area": "Seed collision",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.account_relationship",
+    "area": "Account relationship",
+    "code_returned": "Yes",
+    "result": [
+     "M-001"
+    ]
+   },
+   {
+    "area_id": "solana.sysvar_address",
+    "area": "Sysvar address",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.introspection",
+    "area": "Introspection",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.duplicate_mutable",
+    "area": "Duplicate mutable",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.remaining_accounts",
+    "area": "Remaining accounts",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "solana.arbitrary_cpi",
+    "area": "Arbitrary CPI",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "solana.stale_after_cpi",
+    "area": "Stale after CPI",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.cpi_recursion",
+    "area": "CPI recursion",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.reinitialization",
+    "area": "Reinitialization",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "solana.close_revival",
+    "area": "Close revival",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.upgrade_authority",
+    "area": "Upgrade authority",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.ata_owner_reassign",
+    "area": "ATA owner reassign",
+    "code_returned": "Yes",
+    "result": [
+     "H-001",
+     "H-002"
+    ]
+   },
+   {
+    "area_id": "solana.token2022_extensions",
+    "area": "Token2022 extensions",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.arithmetic",
+    "area": "Arithmetic",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "solana.precreation",
+    "area": "Precreation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.dependency_advisory",
+    "area": "Dependency advisory",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.business_logic",
+    "area": "Business logic",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.economic",
+    "area": "Economic",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "solana.best_practice",
+    "area": "Best practice",
+    "code_returned": "No",
+    "result": "Not covered"
+   }
+  ],
+  "leads": [
+   {
+    "analyzer": "clippy 1.86.0",
+    "version": "unknown",
+    "leads": 33,
+    "promoted": 0,
+    "dismissed": 0
+   },
+   {
+    "analyzer": "lifecycle 1.0.0",
+    "version": "unknown",
+    "leads": 8,
+    "promoted": 2,
+    "dismissed": 5
+   },
+   {
+    "analyzer": "solana-rules 0.2.0",
+    "version": "unknown",
+    "leads": 27,
+    "promoted": 0,
+    "dismissed": 27
+   }
+  ],
+  "withdrawn": [],
+  "injection_flags": [],
+  "invariant_walks": [
+   {
+    "walk_id": "IW-LE-1",
+    "title": "Every party can leave every state",
+    "verdict": "violated",
+    "lines": [
+     {
+      "path": "src/instructions/escrow_instructions/cancel_vesting_escrow.rs",
+      "start": 17,
+      "end": 169
+     },
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 206,
+      "end": 369
+     },
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 457,
+      "end": 643
+     },
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 719,
+      "end": 935
+     }
+    ],
+    "finding": "H-001"
+   },
+   {
+    "walk_id": "IW-LE-2",
+    "title": "Accounts the program does not control",
+    "verdict": "violated",
+    "lines": [
+     {
+      "path": "src/instructions/escrow_instructions/cancel_vesting_escrow.rs",
+      "start": 39,
+      "end": 55
+     },
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 206,
+      "end": 265
+     },
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 483,
+      "end": 643
+     },
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 719,
+      "end": 997
+     }
+    ],
+    "finding": "H-001"
+   },
+   {
+    "walk_id": "IW-LE-3",
+    "title": "Time boundaries",
+    "verdict": "violated",
+    "lines": [
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 381,
+      "end": 560
+     },
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 613,
+      "end": 643
+     },
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 789,
+      "end": 889
+     },
+     {
+      "path": "src/state/vesting_escrow.rs",
+      "start": 172,
+      "end": 247
+     }
+    ],
+    "finding": "M-001"
+   },
+   {
+    "walk_id": "IW-LE-4",
+    "title": "Zero, dust and partial amounts",
+    "verdict": "holds",
+    "lines": [
+     {
+      "path": "src/instructions/escrow_instructions/claim.rs",
+      "start": 41,
+      "end": 66
+     },
+     {
+      "path": "src/instructions/escrow_instructions/claim2.rs",
+      "start": 52,
+      "end": 98
+     },
+     {
+      "path": "src/instructions/escrow_instructions/close_vesting_escrow.rs",
+      "start": 68,
+      "end": 212
+     },
+     {
+      "path": "src/instructions/escrow_instructions/loan.rs",
+      "start": 789,
+      "end": 889
+     }
+    ]
+   }
+  ]
+ }
+}

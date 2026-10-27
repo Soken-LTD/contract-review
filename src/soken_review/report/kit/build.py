@@ -49,6 +49,14 @@ HIDDEN_RANGES = [(0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064), (0x2066, 
 HIDDEN_RE = re.compile("[" + "".join(f"{chr(a)}-{chr(z)}" for a, z in HIDDEN_RANGES) + "]")
 PLACEHOLDER_RE = re.compile(r"\{\{(fact|calc|finding):([^{}]*)\}\}")
 MAX_COMPONENT_ROWS, MAX_FILE_ROWS = 12, 15
+# Pagination (kit CSS contract): a table or a heading-plus-table block is kept on one page
+# (break-inside:avoid) only when it is short enough to always fit: at most MAX_KEEP_ROWS rows and
+# about MAX_KEEP_LINES text lines (a narrow cell wraps at about KEEP_CHARS_PER_LINE characters; an
+# A4 page of the kit holds about 70 lines). Anything longer breaks between rows with the header
+# row repeated. Live cases 2026-10-27: a 37-lead table and a 34-row scope table in keep blocks.
+MAX_KEEP_ROWS, MAX_KEEP_LINES, KEEP_CHARS_PER_LINE = 12, 36, 40
+_TAG_RE = re.compile(r"<[^>]+>")
+_ROW_RE = re.compile(r"<tr[ >].*?</tr>", re.DOTALL)
 
 
 class BuildError(Exception):
@@ -452,7 +460,47 @@ def cell(v: Any, cls: str, ctx: BuildContext, meta: dict[str, Any]) -> str:
     return inl(v, ctx) if cls == "model" else esc(v)
 
 
-def table(t: dict[str, Any], cls: str, ctx: BuildContext, meta: dict[str, Any], keep: bool | None = None) -> str:
+def row_lines(row_html: str) -> int:
+    """Estimated text lines of one `<tr>`: the tallest cell, counting `<br>` and wrapped text."""
+    lines = 1
+    for c in re.split(r"<td[^>]*>", row_html)[1:]:
+        text = _TAG_RE.sub("", c)
+        lines = max(lines, c.count("<br>") + 1, math.ceil(len(text) / KEEP_CHARS_PER_LINE))
+    return lines
+
+
+def short_table(rows_html: str) -> bool:
+    """True when a table body is short enough to be kept on one page (see MAX_KEEP_ROWS)."""
+    rows = _ROW_RE.findall(rows_html)
+    return len(rows) <= MAX_KEEP_ROWS and sum(row_lines(r) for r in rows) <= MAX_KEEP_LINES
+
+
+def tbl(head_cells: str, rows_html: str, *, name: str, keep: bool | None = None, cls: str = "") -> str:
+    """One kit table: `<thead>` (repeated on every continuation page by the paged.js handler in
+    `build()`), `<tbody>`, `data-block` naming the block in render failure details (structure only,
+    never report text), and `keep` (break-inside:avoid) when the table is short enough to fit a page."""
+    k = short_table(rows_html) if keep is None else keep
+    classes = " ".join(c for c in (cls, "keep" if k else "") if c)
+    attrs = (f' class="{classes}"' if classes else "") + f' data-block="{name}"'
+    return f"<table{attrs}><thead><tr>{head_cells}</tr></thead><tbody>{rows_html}</tbody></table>"
+
+
+def titled(heading_html: str, table_html: str) -> str:
+    """Heading plus table: one keep block when the table is short (the heading is never left alone at
+    a page bottom); a long table follows its heading (`h3{break-after:avoid}`, `h3 + *{break-before:
+    avoid}`) and breaks between its rows."""
+    if 'class="keep' in table_html.split(">", 1)[0]:
+        return f'<div class="keep">{heading_html}{table_html}</div>'
+    return f"{heading_html}{table_html}"
+
+
+def section(key: str, inner: str) -> str:
+    """`<section data-section=key>`: the key names the section in render failure details."""
+    return f'<section data-section="{key}">{inner}</section>'
+
+
+def table(t: dict[str, Any], cls: str, ctx: BuildContext, meta: dict[str, Any], keep: bool | None = None,
+          name: str = "table") -> str:
     nums = set(t.get("num", []))
     widths = t.get("widths", [])
     for w in widths:
@@ -464,8 +512,7 @@ def table(t: dict[str, Any], cls: str, ctx: BuildContext, meta: dict[str, Any], 
     body = "".join(
         "<tr>" + "".join(f'<td{" class=num" if i in nums else ""}>{cell(v, cls, ctx, meta)}</td>'
                          for i, v in enumerate(r)) + "</tr>" for r in t["rows"])
-    k = keep if keep is not None else len(t["rows"]) <= 12
-    return f'<table{" class=keep" if k else ""}><tr>{head}</tr>{body}</table>'
+    return tbl(head, body, name=name, keep=keep)
 
 
 def blocks(items: list[dict[str, Any]], ctx: BuildContext, meta: dict[str, Any]) -> str:
@@ -681,8 +728,9 @@ def figures_table(figs: list[dict[str, Any]], ctx: BuildContext, meta: dict[str,
             else esc(f'{op["source"]["fact"]}, {op["source"]["method"]} at {op["source"]["block_or_slot"]:,}')
             for op in g["operands"])
         rows.append(f"<tr><td>{esc(g['figure'])}</td><td>{esc(g.get('expression', ''))}</td><td>{srcs}</td></tr>")
-    return (f'<div class="fl">{esc(ctx.texts["figures_title"])}</div><table class="keep"><tr><th style="width:24%">'
-            f'Figure</th><th style="width:30%">Expression</th><th>Sources</th></tr>{"".join(rows)}</table>')
+    return (f'<div class="fl">{esc(ctx.texts["figures_title"])}</div>'
+            + tbl('<th style="width:24%">Figure</th><th style="width:30%">Expression</th><th>Sources</th>',
+                  "".join(rows), name="figures"))
 
 
 def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status: bool) -> str:
@@ -692,16 +740,16 @@ def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status:
         cols = [["Component", esc_src(f["component"], ctx)], ["Category", esc(f["category"])]]
         if has_status:
             cols.append(["Status", esc(f.get("status", ""))])
-        meta_row = ("<table class=keep><tr>" + "".join(f"<th>{c[0]}</th>" for c in cols) + "</tr><tr>"
-                    + "".join(f"<td>{c[1]}</td>" for c in cols) + "</tr></table>")
-        return (f'<div class="finding keep withheld"><div class="fh"><span class="fid">{esc(f["id"])} '
-                f'{esc(f["category"])}</span>{chips}</div>{meta_row}<p class="nofind">{esc(t["withheld_line"])}</p></div>')
+        meta_row = tbl("".join(f"<th>{c[0]}</th>" for c in cols), "<tr>" + "".join(f"<td>{c[1]}</td>" for c in cols) + "</tr>",
+                       name="finding_meta", keep=True)
+        return (f'<div class="finding keep withheld" id="{esc(f["id"])}" data-block="finding"><div class="fh"><span class="fid">'
+                f'{esc(f["id"])} {esc(f["category"])}</span>{chips}</div>{meta_row}<p class="nofind">{esc(t["withheld_line"])}</p></div>')
     cols = [["Component", esc_src(f["component"], ctx), "20%"], ["Location", esc_src(ref_text(f["location"]), ctx), ""],
             ["Category", esc(f["category"]), "22%"]]
     if has_status:
         cols.append(["Status", esc(f.get("status", "")), "14%"])
-    meta_row = ("<table class=keep><tr>" + "".join(f'<th{f" style=width:{c[2]}" if c[2] else ""}>{c[0]}</th>' for c in cols)
-                + "</tr><tr>" + "".join(f"<td>{c[1]}</td>" for c in cols) + "</tr></table>")
+    meta_row = tbl("".join(f'<th{f" style=width:{c[2]}" if c[2] else ""}>{c[0]}</th>' for c in cols),
+                   "<tr>" + "".join(f"<td>{c[1]}</td>" for c in cols) + "</tr>", name="finding_meta", keep=True)
     head = f'<div class="fh"><span class="fid">{esc(f["id"])} {inl(f["title"], ctx)}</span>{chips}</div>'
     body = ""
     fixed = f.get("status") == "Fixed"
@@ -724,9 +772,9 @@ def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status:
         body += (f'<p><b>{esc(t["evidence_further"])}</b>: '
                  + ", ".join(esc_src(ref_text(r), ctx) for r in ev["further"]) + "</p>")
     body += figures_table(ev.get("figures", []), ctx, meta)
-    body += f'<div class="fl">{esc(lab["severity_basis"])}</div>' + table(ev["basis"], "server", ctx, meta)
+    body += f'<div class="fl">{esc(lab["severity_basis"])}</div>' + table(ev["basis"], "server", ctx, meta, name="basis")
     if ev.get("challenge"):
-        body += f'<div class="fl">{esc(lab["challenge"])}</div>' + table(ev["challenge"], "server", ctx, meta)
+        body += f'<div class="fl">{esc(lab["challenge"])}</div>' + table(ev["challenge"], "server", ctx, meta, name="challenge")
     if f["evidence_level"] == "analyzer_and_reasoning" and ev.get("lead"):
         body += "<p>" + esc(lab["analyzer_lead"].format(analyzer=ev["lead"]["analyzer"], rule_id="")).rstrip() + " " \
             + esc_src(ev["lead"]["rule_id"], ctx) + "</p>"
@@ -739,21 +787,17 @@ def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status:
         body += f'<p class="nofind">{esc(t["no_map_card_line"])}</p>'
     if f.get("status") == "Not verified as fixed":
         body += f'<p class="nofind">{esc(t["carried_lines"]["not_verified"])}</p>'
-    return f'<div class="finding"><div class="keep">{head}{meta_row}</div>{body}</div>'
+    return f'<div class="finding" id="{esc(f["id"])}" data-block="finding"><div class="keep">{head}{meta_row}</div>{body}</div>'
 
 
 def _counts_line(c: dict[str, int]) -> str:
     return ", ".join(f"{c[s]} {s}" for s in SEVS)
 
 
-def _sub_table(title: str, head: str, rows: list[str]) -> str:
-    """h3 plus table; short tables share one keep block with their heading so the heading is never
-    orphaned at a page bottom (the kit's existing `.keep` wrapper pattern). Long tables rely on
-    `h3{break-after:avoid}` and `tr:first-child{break-after:avoid}` and may split across pages."""
-    tab = f"<table><tr>{head}</tr>{''.join(rows)}</table>"
-    if len(rows) <= MAX_CONTEXT_KEEP_ROWS:
-        return f'<div class="keep"><h3>{esc(title)}</h3>{tab}</div>'
-    return f"<h3>{esc(title)}</h3>{tab}"
+def _sub_table(title: str, head: str, rows: list[str], name: str) -> str:
+    """h3 plus table (see `titled`): short tables share one keep block with their heading; long
+    tables break between rows with the header row repeated."""
+    return titled(f"<h3>{esc(title)}</h3>", tbl(head, "".join(rows), name=name))
 
 
 def context_section(r: dict[str, Any], ctx: BuildContext, meta: dict[str, Any]) -> str:
@@ -765,7 +809,7 @@ def context_section(r: dict[str, Any], ctx: BuildContext, meta: dict[str, Any]) 
     docs, rows, notes = c["documents"], c["comparison"], c["notes"]
     if not docs:
         body = f'<div class="emptynote"><p class="nofind">{esc(t["empty_line"])}</p></div>'
-        return f'<section>{h2("context", ctx)}{body}{blocks(notes, ctx, meta)}</section>'
+        return section("context", f'{h2("context", ctx)}{body}{blocks(notes, ctx, meta)}')
     dh = t["documents_head"]
     head = (f'<th style="width:13%">{esc(dh["kind"])}</th><th>{esc(dh["title"])}</th><th style="width:22%">{esc(dh["host"])}</th>'
             f'<th style="width:13%">{esc(dh["retrieved"])}</th><th style="width:12%">{esc(dh["sha256"])}</th>'
@@ -776,7 +820,7 @@ def context_section(r: dict[str, Any], ctx: BuildContext, meta: dict[str, Any]) 
         sha = esc_src(d["sha256_short"], ctx) if d["sha256_short"] else ""
         drows.append(f'<tr><td class="nw">{esc(t["kind_labels"][d["kind"]])}</td><td>{esc_src(d["title"], ctx) if d["title"] else ""}</td>'
                      f'<td>{host}</td><td>{esc(d["retrieved"])}</td><td>{sha}</td><td class="nw">{esc(t["doc_status"][d["status"]])}</td></tr>')
-    body = _sub_table(t["documents_title"], head, drows)
+    body = _sub_table(t["documents_title"], head, drows, "context_documents")
     if rows:
         ch = t["comparison_head"]
         head = (f'<th style="width:18%">{esc(ch["claim"])}</th><th>{esc(ch["declared"])}</th><th style="width:15%">{esc(ch["declared_source"])}</th>'
@@ -788,12 +832,12 @@ def context_section(r: dict[str, Any], ctx: BuildContext, meta: dict[str, Any]) 
                          f'<td>{esc_src(x["observed"], ctx) if x["observed"] else ""}</td>'
                          f'<td>{esc_src(x["observed_source"], ctx) if x["observed_source"] else esc(t["no_source"])}</td>'
                          f'<td>{status_chip(x["status"], ctx)}</td></tr>')
-        body += _sub_table(t["comparison_title"], head, crows)
+        body += _sub_table(t["comparison_title"], head, crows, "context_comparison")
     else:
         body += f'<p class="nofind">{esc(t["no_comparison_line"])}</p>'
     if notes:
         body += f'<h3>{esc(t["notes_title"])}</h3>' + blocks(notes, ctx, meta)
-    return f'<section>{h2("context", ctx)}{body}</section>'
+    return section("context", f'{h2("context", ctx)}{body}')
 
 
 def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
@@ -868,8 +912,9 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
         rows += (f'<tr><td class="id">{esc(f["id"])}</td><td>{chip(f["severity"])}</td><td>{ev_chip(f["evidence_level"], ctx)}</td>'
                  f'<td>{esc_src(f["component"], ctx)}</td><td>{title}</td>'
                  + (f'<td>{esc(f.get("status", ""))}</td>' if has_status else "") + "</tr>")
-    ftable = (f'<table><tr><th style="width:8%">Id</th><th style="width:14%">Severity</th><th style="width:16%">Evidence</th>'
-              f'<th style="width:17%">Component</th><th>Title</th>{"<th style=width:11%>Status</th>" if has_status else ""}</tr>{rows}</table>'
+    ftable = (tbl(f'<th style="width:8%">Id</th><th style="width:14%">Severity</th><th style="width:16%">Evidence</th>'
+                  f'<th style="width:17%">Component</th><th>Title</th>{"<th style=width:11%>Status</th>" if has_status else ""}',
+                  rows, name="findings_summary")
               if F else f'<p class="nofind">{esc(t["empty_findings"])}</p>')
     dl = r["summary"].get("dismissed_leads")
     dl_html = ""
@@ -879,30 +924,32 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
                         f'<td>{esc_src(ref_text(x["location"]), ctx)}</td><td>{esc(labels[x["reason"]])}</td></tr>'
                         for x in dl["rows"])
         more = (f'<p class="nofind">and {dl["remainder"]:,} more, counted in Review coverage</p>' if dl["remainder"] else "")
-        dl_html = (f'<div class="keep"><h3>{esc(t["dismissed_leads_title"])}</h3><table><tr><th style="width:26%">Detector</th>'
-                   f'<th style="width:14%">Severity class</th><th style="width:32%">Location</th>'
-                   f'<th>{esc(t["dismissed_leads_reason_header"])}</th></tr>{drows}</table></div>{more}')
-    summary = (f'<section>{h2("summary", ctx)}{authbox}{tierc}{nohigh}<div class="{kpis_cls}">{kpis}</div>'
-               f'{figure("Findings by component", stacked(comp_rows), ctx)}{ftable}{dl_html}</section>')
+        dl_html = titled(f'<h3>{esc(t["dismissed_leads_title"])}</h3>',
+                         tbl(f'<th style="width:26%">Detector</th><th style="width:14%">Severity class</th>'
+                             f'<th style="width:32%">Location</th><th>{esc(t["dismissed_leads_reason_header"])}</th>',
+                             drows, name="dismissed_leads")) + more
+    summary = section("summary", f'{h2("summary", ctx)}{authbox}{tierc}{nohigh}<div class="{kpis_cls}">{kpis}</div>'
+                      f'{figure("Findings by component", stacked(comp_rows), ctx)}{ftable}{dl_html}')
 
     # Scope
     head = r["scope"]["head"]
     srows = "".join(f'<tr><td>{esc_src(f["name"], ctx)}</td><td>{esc_src(f["file"], ctx)}</td><td class="num">{f["nsloc"]:,}</td>'
                     f'<td>{addr_html(f["addr"], ctx, short=True, addr_url=m.get("addr_url")) if f.get("addr") else ""}</td></tr>'
                     for f in files)
-    scope_tab = (f'<table><tr><th style="width:19%">{esc(head[0])}</th><th>{esc(head[1])}</th><th class="num" style="width:9%">'
-                 f'{esc(head[2])}</th><th style="width:20%">{esc(head[3])}</th></tr>{srows}'
-                 f'<tr><td colspan="2"><b>Total</b></td><td class="num"><b>{nsloc:,}</b></td><td></td></tr></table>')
+    scope_tab = tbl(f'<th style="width:19%">{esc(head[0])}</th><th>{esc(head[1])}</th><th class="num" style="width:9%">'
+                    f'{esc(head[2])}</th><th style="width:20%">{esc(head[3])}</th>',
+                    f'{srows}<tr><td colspan="2"><b>Total</b></td><td class="num"><b>{nsloc:,}</b></td><td></td></tr>',
+                    name="scope", cls="scope")
     size_rows = sorted(((f["file"].rsplit("/", 1)[-1], f["nsloc"]) for f in files), key=lambda x: -x[1])
     oos = r["scope"]["out_of_scope"]
     oos_html = ""
     if oos:
         orows = "".join(f'<tr><td>{esc_src(o["path"], ctx)}</td><td>{inl(o["reason"], ctx) if o["by"] == "model" else esc(o["reason"])}</td></tr>'
                         for o in oos)
-        oos_html = f'<div class="keep"><h3>Out of scope</h3><table><tr><th style="width:45%">Item</th><th>Reason</th></tr>{orows}</table></div>'
-    scope = (f'<section>{h2("scope", ctx)}{scope_tab}'
-             f'{figure("Size of the code in scope, source lines without comments and blank lines", hbar(size_rows), ctx)}'
-             f"{oos_html}</section>")
+        oos_html = titled("<h3>Out of scope</h3>", tbl('<th style="width:45%">Item</th><th>Reason</th>', orows, name="out_of_scope"))
+    scope = section("scope", f'{h2("scope", ctx)}{scope_tab}'
+                    f'{figure("Size of the code in scope, source lines without comments and blank lines", hbar(size_rows), ctx)}'
+                    f"{oos_html}")
 
     # Project context (right after Scope; context ingestion spec 7)
     context = context_section(r, ctx, m)
@@ -922,8 +969,9 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
                 fns = ", ".join(esc_src(g, ctx) for g in x["gated_functions"][:12])
                 rrows += (f'<tr><td>{esc_src(x["role"], ctx)}</td><td>{holder}</td><td>{esc(x["type"])}</td><td>{fns}</td>'
                           f'<td>{inl(x.get("risk_note", ""), ctx)}</td></tr>')
-            arch_html += (f'<h3>Privileged roles</h3><table><tr><th style="width:15%">Role</th><th style="width:20%">Holder</th>'
-                          f'<th style="width:11%">Type</th><th>Gated functions</th><th style="width:26%">Risk note</th></tr>{rrows}</table>')
+            arch_html += titled("<h3>Privileged roles</h3>",
+                                tbl('<th style="width:15%">Role</th><th style="width:20%">Holder</th><th style="width:11%">Type</th>'
+                                    '<th>Gated functions</th><th style="width:26%">Risk note</th>', rrows, name="roles"))
         related = roles.get("related_contracts", [])
         if related:
             rrel = ""
@@ -931,12 +979,11 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
                 rrel += (f'<tr><td>{esc(x["label"])}</td><td>{esc(x["address"])}</td>'
                          f'<td>{esc(x["kind"])}</td><td>{esc(x["verified"])}</td>'
                          f'<td>{esc(x.get("note", ""))}</td></tr>')
-            arch_html += (f'<h3>Related contracts</h3><table>'
-                          f'<tr><th style="width:20%">Label</th><th style="width:16%">Address</th>'
-                          f'<th style="width:11%">Kind</th><th style="width:12%">Verified</th>'
-                          f'<th>Notes</th></tr>{rrel}</table>')
+            arch_html += titled("<h3>Related contracts</h3>",
+                                tbl('<th style="width:20%">Label</th><th style="width:16%">Address</th><th style="width:11%">Kind</th>'
+                                    '<th style="width:12%">Verified</th><th>Notes</th>', rrel, name="related_contracts"))
         arch_html += blocks(roles["notes"], ctx, m) + figures_table(roles.get("figures", []), ctx, m)
-    architecture = f'<section>{h2("architecture", ctx)}{arch_html}</section>'
+    architecture = section("architecture", f'{h2("architecture", ctx)}{arch_html}')
 
     # Method. The heading and its method table are wrapped together in one keep-together block: the
     # method table is a short fixed set of steps, so paged.js can always place the pair on a page, and
@@ -946,10 +993,10 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     # already a keep block of its own.
     mrows = "".join(f'<tr><td>{esc(x["step"])}</td><td>{esc(x["detail"])}</td></tr>' for x in r["method"])
     srows2 = "".join(f'<tr><td>{chip(x["severity"])}</td><td>{esc(x["text"])}</td></tr>' for x in r["severity_scale"])
-    method = (f'<section><div class="keep">{h2("method", ctx)}'
-              f'<table><tr><th style="width:24%">Step</th><th>Detail</th></tr>{mrows}</table></div>'
-              f'<div class="keep"><h3>Severity scale</h3><table><tr><th style="width:21%">Severity</th><th>Meaning</th></tr>'
-              f"{srows2}</table></div></section>")
+    method = section("method", f'<div class="keep">{h2("method", ctx)}'
+                     + tbl('<th style="width:24%">Step</th><th>Detail</th>', mrows, name="method", keep=True) + "</div>"
+                     + '<div class="keep"><h3>Severity scale</h3>'
+                     + tbl('<th style="width:21%">Severity</th><th>Meaning</th>', srows2, name="severity_scale", keep=True) + "</div>")
 
     # Findings
     cards = ""
@@ -957,11 +1004,11 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
         fs = [f for f in F if f["severity"] == s]
         if fs:
             cards += f"<h3>{s}</h3>" + "".join(card(f, ctx, m, has_status) for f in fs)
-    findings = f'<section>{h2("findings", ctx)}{cards or "<p class=nofind>" + esc(t["empty_findings"]) + "</p>"}</section>'
+    findings = section("findings", f'{h2("findings", ctx)}{cards or "<p class=nofind>" + esc(t["empty_findings"]) + "</p>"}')
 
     verification = ""
     if prov["tier"] in ("A", "C") and r.get("verification"):
-        verification = f'<section>{h2("verification", ctx)}{server_blocks(r["verification"], ctx, m)}</section>'
+        verification = section("verification", f'{h2("verification", ctx)}{server_blocks(r["verification"], ctx, m)}')
 
     # Review coverage
     cov = r["review_coverage"]
@@ -973,16 +1020,18 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
         arows += f'<tr><td>{esc(a["area"])}</td><td>{esc(ret)}</td><td>{esc(res)}{note}</td></tr>'
     lrows = "".join(f'<tr><td>{esc(x["analyzer"])}</td><td>{esc(x["version"])}</td><td class="num">{x["leads"]:,}</td>'
                     f'<td class="num">{x["promoted"]:,}</td><td class="num">{x["dismissed"]:,}</td></tr>' for x in cov["leads"])
-    cov_html = (f'<table><tr><th style="width:40%">Area</th><th style="width:22%">Code returned</th><th>Result</th></tr>{arows}</table>'
-                f'{nohigh}<div class="keep"><h3>Analyzer leads</h3><table><tr><th>Analyzer</th><th>Version</th><th class="num">Leads</th>'
-                f'<th class="num">Promoted</th><th class="num">Dismissed</th></tr>{lrows}</table></div>')
+    cov_html = (tbl('<th style="width:40%">Area</th><th style="width:22%">Code returned</th><th>Result</th>', arows, name="coverage_areas")
+                + nohigh + titled("<h3>Analyzer leads</h3>",
+                                  tbl('<th>Analyzer</th><th>Version</th><th class="num">Leads</th><th class="num">Promoted</th>'
+                                      '<th class="num">Dismissed</th>', lrows, name="analyzer_leads")))
     if cov["withdrawn"]:
         wrows = "".join(
             f'<tr><td>{esc(w["candidate"])}</td><td>{esc(w["category"])}</td>'
             f'<td>{esc(t["withdrawn_by"][w["withdrawn_by"]].format(item_id=w.get("item_id", "")))}</td>'
             f'<td>{esc_src(ref_text(w["lines"]), ctx)}</td></tr>' for w in cov["withdrawn"])
-        cov_html += (f'<div class="keep"><h3>Withdrawn candidates</h3><table><tr><th style="width:12%">Candidate</th><th>Category</th>'
-                     f'<th>Withdrawn by</th><th>Lines</th></tr>{wrows}</table></div>')
+        cov_html += titled("<h3>Withdrawn candidates</h3>",
+                           tbl('<th style="width:12%">Candidate</th><th>Category</th><th>Withdrawn by</th><th>Lines</th>', wrows,
+                               name="withdrawn"))
     if cov.get("invariant_walks"):
         iw = t["invariant_walks"]
         vrows = "".join(
@@ -990,23 +1039,25 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
             f'<td>{"<br>".join(esc_src(ref_text(ln), ctx) for ln in x["lines"])}</td>'
             f'<td>{esc(x.get("finding", ""))}</td></tr>' for x in cov["invariant_walks"])
         head = iw["head"]
-        cov_html += (f'<div class="keep"><h3>{esc(iw["heading"])}</h3><table><tr><th style="width:38%">{esc(head["walk"])}</th>'
-                     f'<th style="width:14%">{esc(head["verdict"])}</th><th>{esc(head["code"])}</th>'
-                     f'<th style="width:10%">{esc(head["finding"])}</th></tr>{vrows}</table></div>')
+        cov_html += titled(f'<h3>{esc(iw["heading"])}</h3>',
+                           tbl(f'<th style="width:38%">{esc(head["walk"])}</th><th style="width:14%">{esc(head["verdict"])}</th>'
+                               f'<th>{esc(head["code"])}</th><th style="width:10%">{esc(head["finding"])}</th>', vrows,
+                               name="invariant_walks"))
     if cov["injection_flags"]:
         irows = "".join(f'<tr><td>{esc_src(x["file"], ctx)}</td><td class="num">{x["line"]:,}</td></tr>' for x in cov["injection_flags"])
-        cov_html += (f'<div class="keep"><h3>Instruction-like comments</h3><table><tr><th>File</th><th class="num" style="width:12%">'
-                     f"Line</th></tr>{irows}</table></div>")
-    # The coverage section always starts on a fresh page: when it begins near the bottom of a page,
-    # paged.js fails to split its areas table at the page edge and lays the remainder out in
-    # overflow columns to the right (layout_overflow on tier A reports with verification tables).
-    coverage = f'<section class="brk">{h2("coverage", ctx)}{cov_html}</section>'
+        cov_html += titled("<h3>Instruction-like comments</h3>",
+                           tbl('<th>File</th><th class="num" style="width:12%">Line</th>', irows, name="injection_flags"))
+    # No forced page break before the coverage section: the 2026-10-15 break (a workaround for the
+    # areas table spilling into overflow columns) left a near-empty page whenever the section before
+    # it ended with a short spill (TON job 2026-10-27, empty_page page 15). Tables now break between
+    # rows with the header repeated (kit CSS contract), so the section flows like every other one.
+    coverage = section("coverage", f'{h2("coverage", ctx)}{cov_html}')
 
     # Bug 2 fix (2026-10-25): removed class="keep" from disclaimer.  A server-owned section must
     # never overflow a page; keep prevents paged.js from splitting across pages, causing
     # layout_overflow on long disclaimer text (job_8ZSAGKD2S7RA8T0YD9NZWHKBJ6 incident).
-    disclaimer = (f'<section>{h2("disclaimer", ctx)}<p class="disc">{esc(t["disclaimer"].format(date=m["date"]))}</p>'
-                  f'<p class="disc">{esc(t["responsible_disclosure"])}</p></section>')
+    disclaimer = section("disclaimer", f'{h2("disclaimer", ctx)}<p class="disc">{esc(t["disclaimer"].format(date=m["date"]))}</p>'
+                         f'<p class="disc">{esc(t["responsible_disclosure"])}</p>')
     return cover + summary + scope + context + architecture + method + findings + verification + coverage + disclaimer
 
 
@@ -1055,7 +1106,17 @@ def build(report: dict[str, Any], out_dir: Path | str, *, mode: str = "print",
                 f'<a href="{SITE}">soken.dev</a></div>')
         run = f'<div class="runlogo">{WORDMARK()}</div><div class="runtitle">{esc(run_title)}</div>{foot}'
     css = _css(ctx)
-    script = f"<script>{(KIT / 'pagedjs.js').read_text(encoding='utf-8')}</script>" if mode == "print" else ""
+    # paged.js measures the page while it lays it out, so every kit font must be loaded before it
+    # starts: a row measured in a fallback font and reflowed in JetBrains Mono after the fact changes
+    # height, and the last row of a page fragment lands in a paged.js overflow column (x86
+    # chrome-headless-shell, Solana Scope table 2026-10-27: no console warning, rows measured
+    # two lines, rendered three). PagedConfig.before is awaited by the polyfill before preview().
+    fonts_wait = ("<script>window.PagedConfig={before:()=>Promise.all(["
+                  "document.fonts.load(\"400 10pt 'Gilroy'\"),document.fonts.load(\"700 10pt 'Gilroy'\"),"
+                  "document.fonts.load(\"400 8pt 'JetBrains Mono'\")].map((p)=>p.catch(()=>null)))"
+                  ".then(()=>document.fonts.ready)};</script>")
+    script = (fonts_wait + f"<script>{(KIT / 'pagedjs.js').read_text(encoding='utf-8')}</script>"
+              f"<script>{(KIT / 'paged_handlers.js').read_text(encoding='utf-8')}</script>") if mode == "print" else ""
     doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
            f'<meta http-equiv="Content-Security-Policy" content="{CSP if mode == "print" else CSP_SCREEN}">'
            f'<meta name="viewport" content="width=device-width, initial-scale=1">'

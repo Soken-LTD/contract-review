@@ -23,6 +23,12 @@ td,th,p,li{overflow-wrap:anywhere;}
    any character inside their cell (td already has overflow-wrap:anywhere) and the mono host span
    must not force the column wider than its width. */
 td .src.mono{display:inline;overflow-wrap:anywhere;word-break:break-word;}
+/* Source text in table cells (scope paths and units, gated functions, code refs, finding locations,
+   context hosts) wraps at any character: white-space normal, break-all. A path or identifier
+   longer than its column never widens the cell or the table (x86 chrome-headless-shell, Solana
+   Scope table 2026-10-27). */
+td .src,td .mono,td a.lnk,td .codehead{white-space:normal;overflow-wrap:anywhere;word-break:break-all;}
+td.num,td.id,td.nw{white-space:nowrap;}  /* numbers, ids and kit words stay on one line (short by schema) */
 td.nw{white-space:nowrap;}  /* short kit words (document kind, retrieval status) never break mid-word */
 .finding ol{margin:0 0 8px 18px;}
 .cover h1{overflow-wrap:anywhere;}
