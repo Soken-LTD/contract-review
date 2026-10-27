@@ -38,6 +38,7 @@ from ..families import require_enabled
 from ..mapping.project_url import load_suggested_context
 from ..mapping.related import load_related_contracts
 from ..networks import publication_outcome
+from ..report.render import finalize_reopens, render_failure_client_caused
 from ..server import handler
 from . import map_view
 from .git_probe import GitLsRemoteProbe
@@ -476,7 +477,9 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             "No project documents were supplied. "
             "Project documents (website, whitepaper, documentation, terms of use, privacy policy) "
             "are needed to detect spec-vs-code mismatches. "
-            "Ask the user for the relevant URLs and add them via review_add_context."
+            "Ask the user for the relevant URLs and add them via review_add_context. "
+            "When the user has none, a context_notes section saying so (review_set_section) "
+            "records that and this hint stops."
         )
 
     # Optional settle-wait (2026-10-26): the first review_status calls of every blind run only waited for
@@ -622,13 +625,18 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
                 finalize_checks = await compute_finalize_checks(conn, job_id)
             except Exception:  # noqa: BLE001
                 finalize_checks = []  # never fail status due to finalize_checks
+        # A context_notes section (also "the user has no documents") ends the documents hint.
+        context_notes_recorded = (await (await conn.execute(
+            "select 1 from sections where job_id = %s and section = 'context_notes' limit 1",
+            (job_id,))).fetchone()) is not None
 
     # Publish info (CEO 2026-10-24): show the public URL (or "publishing") for rendered jobs.
     from .report import _publish_info
     pub_status, pub_url = await _publish_info(job.get("report_id"))
 
     return _build_status_response(job, args.get("response_format", "concise"), steps, drafts, medians,
-                                  finalize_checks=finalize_checks, pub_status=pub_status, pub_url=pub_url)
+                                  finalize_checks=finalize_checks, pub_status=pub_status, pub_url=pub_url,
+                                  context_notes_recorded=context_notes_recorded)
 
 
 # States where long-poll should return immediately (03 §4.2)
@@ -833,8 +841,13 @@ def _build_status_response(
     finalize_checks: list[dict[str, Any]] | None = None,
     pub_status: str | None = None,
     pub_url: str | None = None,
+    context_notes_recorded: bool = False,
 ) -> dict[str, Any]:
-    """Build the review_status output object from the job row (03 §4.2)."""
+    """Build the review_status output object from the job row (03 §4.2).
+
+    ``context_notes_recorded``: the job has a context_notes section, so the reviewer has already
+    dealt with project documents (including "the user has none") and the next_action hint stops.
+    """
     state: str = job["state"]
     _steps = steps or []
 
@@ -885,6 +898,10 @@ def _build_status_response(
         err.update(_error_texts(job["error_code"], job.get("error_detail")))
         if job.get("error_detail") is not None:
             err["detail"] = _error_detail_text(job["error_detail"])
+        if job["error_code"] == "E_RENDER_FAILED" and state == "render_failed":
+            # The fix must say what review_finalize will actually do on this job (finalize.py
+            # recovery path); the catalogue text cannot know the cause or the reset budget.
+            err["fix"] = _render_failed_fix(job)
         out["error"] = err
 
     # Vendored npm dependencies of a repo review (adapters/evm/npm_deps.py, fetch provenance):
@@ -897,7 +914,7 @@ def _build_status_response(
     ctx = _context_status(job)
     if ctx is not None:
         out["context"] = ctx
-    else:
+    elif not context_notes_recorded:
         # No context items: surface a next_action hint so the model asks the user
         # for project documents.  This is server text, not model output; it describes
         # what is available and why, without commanding the model to call anything
@@ -908,7 +925,9 @@ def _build_status_response(
                 "No project documents were supplied. "
                 "Project documents (website, whitepaper, documentation, terms of use, privacy policy) "
                 "are needed to detect spec-vs-code mismatches. "
-                "Ask the user for the relevant URLs and add them via review_add_context."
+                "Ask the user for the relevant URLs and add them via review_add_context. "
+                "When the user has none, a context_notes section saying so (review_set_section) "
+                "records that and this hint stops."
             )
 
     # Detailed response: related contracts and server-discovered project URLs
@@ -920,7 +939,8 @@ def _build_status_response(
 
     # Finalize checks (03 §4.2, F1-F6, F8): shared with review_finalize
     out["finalize_checks"] = finalize_checks or []
-    out["next_tools"] = _status_next_tools(state, out["drafts"], out["finalize_checks"])
+    out["next_tools"] = _status_next_tools(state, out["drafts"], out["finalize_checks"],
+                                           finalize_reopens=finalize_reopens(job))
 
     # Publish info (CEO 2026-10-24): present for rendered jobs; null for pre-render.
     out["publish_status"] = pub_status
@@ -994,12 +1014,27 @@ _PIPELINE_STATES = frozenset({"awaiting_upload", "queued", "fetching", "building
 _RENDER_STATES = frozenset({"finalized", "render_queued", "rendering", "rendered", "render_failed"})
 
 
-def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[dict[str, Any]]) -> list[str]:
+def _render_failed_fix(job: dict[str, Any]) -> str:
+    """`error.fix` of a render_failed job: the same answer review_finalize gives (finalize.py)."""
+    if not finalize_reopens(job):
+        return "This job has used its render retries and cannot render again. Start a new review."
+    if render_failure_client_caused(job.get("error_detail")):
+        return ("Call review_finalize: the job reopens, the flagged reviewer text (see detail) must "
+                "be revised, and the job finalizes and renders again in the same call.")
+    return ("Call review_finalize once: the failure was in server-built content, so the job reopens "
+            "and renders again in that one call. No text change is needed.")
+
+
+def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[dict[str, Any]], *,
+                       finalize_reopens: bool = True) -> list[str]:
     """Tool names (schema `next_tools`, at most 3) that move the job forward from this state; names
     only, no prose. Drafts first (a needs_text or needs_challenge draft blocks finalize), then the
-    tools named by open finalize checks, then finalize."""
+    tools named by open finalize checks, then finalize. A render_failed job names review_finalize
+    only when finalize will reopen it (``finalize_reopens``), else a new review."""
     if state in _PIPELINE_STATES:
         return ["review_status"]
+    if state == "render_failed":
+        return ["review_finalize"] if finalize_reopens else ["review_start"]
     if state in _RENDER_STATES:
         return ["review_report"]
     if state != "ready":

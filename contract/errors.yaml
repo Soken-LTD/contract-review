@@ -206,7 +206,7 @@ codes:
     class: "server"
     tools: "report, finalize"
     what: "Report could not be built; review data is kept. Cause: {detail}."
-    fix: "Call review_finalize again: the job is reset to ready so the model can revise the flagged text and re-finalize."
+    fix: "Call review_finalize: the job reopens and renders again in that call. Only a failure on reviewer text (see detail) needs that text revised first."
   - code: E_FINALIZE_OPEN
     owner: "04"
     channel: "rejection"
@@ -487,6 +487,13 @@ codes:
     tools: "dismiss, submit"
     what: "Unknown lead {lead}."
     fix: "List leads with review_leads."
+  - code: E_DRAFT_STATUS
+    owner: "03"
+    channel: "rejection"
+    class: "input"
+    tools: "challenge, answer"
+    what: "Draft {draft} is {status}, not needs_challenge."
+    fix: "A needs_text draft takes review_submit_finding first. An accepted or withdrawn draft opens a new revision and a new challenge when the finding is resubmitted with changed text."
   - code: E_FINDING_NOT_FOUND
     owner: "03"
     channel: "rejection"
@@ -549,7 +556,7 @@ codes:
     class: "input"
     tools: "answer"
     what: "Item {item}: not covered or not read: {ranges}."
-    fix: "For an absent answer, refs must cover every scope range of that item after reading them with review_read_code; for present, quote inside the ranges."
+    fix: "For an absent answer, refs must cover every scope range of that item after reading them with review_read_code; one wider ref per file that contains the ranges also counts. For present, quote inside the ranges."
   - code: E_CHALLENGE_CONTRADICTS_AUTO
     owner: "04"
     channel: "rejection"

@@ -489,9 +489,21 @@ def _lead_matches(
         return False
     if origin_filter != "all" and lead.get("origin", "analyzer") != origin_filter:
         return False
-    if detector and lead.get("rule_id", "") != detector:
+    if detector and not _detector_matches(lead, detector):
         return False
     return not (path_glob and not fnmatch.fnmatch(lead.get("file", ""), path_glob))
+
+
+def _detector_matches(lead: dict, detector: str) -> bool:
+    """`detector` names a rule id, a tool (with or without its version), the category or its last
+    segment; case does not matter. Two blind runs filtered by the category name and got nothing."""
+    want = detector.strip().lower()
+    names = {str(lead.get("rule_id", "")), str(lead.get("category", "")),
+             str(lead.get("category", "")).rsplit(".", 1)[-1]}
+    for tool in lead.get("tools") or []:
+        names.add(str(tool))
+        names.add(str(tool).split("@", 1)[0])
+    return want in {n.lower() for n in names if n}
 
 
 _SEV_RANK = {"Critical": 5, "High": 4, "Medium": 3, "Low": 2, "Info": 1}
@@ -516,12 +528,16 @@ def _format_lead(lead: dict, fmt: str) -> str:
         prev_id = lead.get("prev_finding_id", "")
         line += f" prev {prev_id}"
 
-    if fmt == "detailed" or str(lead.get("rule_id", "")).startswith("soken-lifecycle:"):
-        # lifecycle leads carry their reason in the message (rubric invariants.yaml); without it
-        # the concise line names a location and nothing to check there
-        msg = lead.get("message", "")[:400]
-        if msg:
-            line += f' {lead.get("rule_id", "")} "{msg}"' if fmt != "detailed" else f' "{msg}"'
+    # Every lead names its rule, the tool that raised it and the detector message in both formats
+    # (blind run 2026-10-26: TON and "other" leads showed category, severity and line only, so the
+    # reviewer could neither understand nor dismiss them). Concise keeps the message short.
+    rule_id = str(lead.get("rule_id") or "unknown")
+    tools = [str(t).split("@", 1)[0] for t in (lead.get("tools") or []) if t] or ["unknown"]
+    msg = str(lead.get("message") or "")
+    if not msg:
+        msg = f"{tools[0]} rule {rule_id}; the detector gave no message"
+    msg = msg[:400] if fmt == "detailed" else msg[:160]
+    line += f' {rule_id} [{"+".join(tools)}] "{msg}"'
 
     return line
 

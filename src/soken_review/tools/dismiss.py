@@ -39,7 +39,7 @@ from psycopg.rows import dict_row
 from ..db.pool import get_pool
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
-from ..pinning.quote_match import QuoteMatchError, normalize_lines, quote_match
+from ..pinning.quote_match import QuoteMatchError, normalize_line, normalize_lines, quote_match
 from ..pinning.store import PinnedSource
 from ..server import handler
 from .challenge import _load_map_with_status, _parse_range_ref, _resolve_scope, _run_auto
@@ -149,6 +149,44 @@ def _lead_function_ranges(map_doc: dict | None, lead: dict[str, Any], file_lines
 
 
 # ── Duplicate-of checks (04 §10 D1–D4) ───────────────────────────────────────
+
+def _lead_location_evidence(pin: PinnedSource, lead: dict[str, Any], lead_id: str, n_lines: int,
+                            ) -> tuple[dict[str, Any], None] | tuple[None, dict[str, Any]]:
+    """The lead's own location lines as a server-side quote for a not_a_vulnerability dismissal
+    without client quotes: (quote, None), or (None, error) when the location is not in the pin."""
+    path = lead["path"]
+    start = int(lead["start_line"])
+    end = min(int(lead["end_line"]), start + 39, n_lines)
+    if n_lines <= 0 or start < 1 or start > n_lines or end < start:
+        return None, ReviewError(
+            "E_DISMISS_UNCHECKABLE", lead=lead_id,
+            reason=f"the lead location {path}:{start}-{lead['end_line']} is not in the pinned source; "
+                   "supply a code quote inside the function that holds the lead",
+        ).envelope()
+    try:
+        lines = pin.read_lines(path, start, end)
+    except (KeyError, ValueError, OSError):
+        lines = []
+    if not any(normalize_line(line) for line in lines):
+        return None, ReviewError(
+            "E_DISMISS_UNCHECKABLE", lead=lead_id,
+            reason=f"the lead location {path}:{start}-{end} holds no code; "
+                   "supply a code quote inside the function that holds the lead",
+        ).envelope()
+    return {"file": path, "start": start, "end": end, "text": "\n".join(lines)[:2000], "by": "server"}, None
+
+
+def _pinned_lines_equal(pin: PinnedSource, path: str, start: int, end: int, text: str) -> bool:
+    """Normalised line-by-line equality of a quote with the pinned lines (no triviality floor)."""
+    try:
+        pinned = [normalize_line(line) for line in pin.read_lines(path, start, end)]
+    except (KeyError, ValueError, OSError):
+        return False
+    quoted = [normalize_line(line) for line in text.replace("\r\n", "\n").split("\n")]
+    pinned = [line for line in pinned if line]
+    quoted = [line for line in quoted if line]
+    return bool(pinned) and pinned == quoted
+
 
 async def _check_duplicate_target(
     lead: dict[str, Any],
@@ -309,7 +347,12 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
             for item in items:
                 lead_id: str = item["lead_id"]
                 reason: str = item["reason"]
-                quotes: list[dict[str, Any]] = item.get("quotes") or []
+                # Client quotes carry no trust marker: `by` is the server's own key on the evidence
+                # it derives below (security review PR #83), so it is dropped from input here.
+                quotes: list[dict[str, Any]] = [
+                    {k: v for k, v in q.items() if k != "by"}
+                    for q in (item.get("quotes") or []) if isinstance(q, dict)]
+                server_quote: dict[str, Any] | None = None
                 duplicate_of: str | None = item.get("duplicate_of")
                 fix_item_id: str | None = item.get("item_id")
                 note: str = item.get("note", "")
@@ -512,17 +555,22 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                                  "stating why the detector pattern is not a weakness at this location",
                             value80=note[:80],
                         ).envelope())
-                    elif not quotes:
-                        item_errors.append(ReviewError(
-                            "E_DISMISS_UNCHECKABLE", lead=lead_id,
-                            reason="not_a_vulnerability requires a code quote inside the lead's function",
-                        ).envelope())
                     else:
                         try:
                             n_lines = pin.line_count(lead["path"])
                         except (KeyError, ValueError):
                             n_lines = 0
                         allowed = _lead_function_ranges(map_doc, lead, n_lines)
+                        if not quotes:
+                            # A lead with no quotable detail (no detector message, a one-line
+                            # location) is still the reviewer's to close: the pinned lines at the
+                            # lead's own location are the recorded evidence (blind run 2026-10-26,
+                            # E_QUOTE_TRIVIAL on `_accrue();`).
+                            server_quote, err = _lead_location_evidence(pin, lead, lead_id, n_lines)
+                            if err is not None:
+                                item_errors.append(err)
+                            else:
+                                quotes = [server_quote]
                         for q in quotes[:3]:
                             qt = q.get("text")
                             q_file, q_start, q_end = q.get("file"), q.get("start"), q.get("end")
@@ -532,14 +580,20 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                                     rule="file, start, end, text are required", value80="",
                                 ).envelope())
                                 break
+                            if q is server_quote:
+                                continue  # the lead location itself, read from the pin above (identity, not a field)
                             if _is_comment_only_text(qt):
                                 item_errors.append(ReviewError("E_DISMISS_COMMENT_ONLY").envelope())
                                 break
                             try:
                                 quote_match(pin, q_file, q_start, q_end, qt)
                             except QuoteMatchError as e:
-                                item_errors.append(ReviewError(e.code, **e.detail).envelope())
-                                continue
+                                # A quote too short to match on its own still names the place when
+                                # its lines are the pinned lines inside the lead's function.
+                                if not (e.code == "E_QUOTE_TRIVIAL"
+                                        and _pinned_lines_equal(pin, q_file, q_start, q_end, qt)):
+                                    item_errors.append(ReviewError(e.code, **e.detail).envelope())
+                                    continue
                             if not any(q_file == p and not (q_end < s or q_start > e) for p, s, e in allowed):
                                 item_errors.append(ReviewError(
                                     "E_DISMISS_UNCHECKABLE", lead=lead_id,

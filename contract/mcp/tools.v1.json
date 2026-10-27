@@ -1508,7 +1508,7 @@
          },
          "maxItems": 4,
          "minItems": 1,
-         "description": "fp_guarded: the guard line inside the entry function; not_a_vulnerability: a code line inside the function that holds the lead location; fixed: the changed lines. Exact pinned lines; comments alone do not count."
+         "description": "fp_guarded: the guard line inside the entry function; not_a_vulnerability: a code line inside the function that holds the lead location; fixed: the changed lines. Exact pinned lines; comments alone do not count. not_a_vulnerability may omit quotes: the lead's own location lines are then the recorded evidence (for a lead with no quotable detail), and a one-line quote inside that function is accepted even when it is too short to match on its own."
         },
         "duplicate_of": {
          "type": "string",
@@ -1922,6 +1922,18 @@
       },
       "maxItems": 16,
       "minItems": 1
+     },
+     "status": {
+      "enum": [
+       "needs_challenge",
+       "accepted",
+       "withdrawn"
+      ],
+      "description": "Status of the draft whose items are listed. Only needs_challenge takes an answer; the items of an accepted or withdrawn draft are read-only (see note)."
+     },
+     "note": {
+      "type": "string",
+      "maxLength": 400
      }
     }
    }
@@ -1982,8 +1994,9 @@
          "items": {
           "$ref": "#/$defs/range_ref"
          },
-         "maxItems": 12,
-         "minItems": 1
+         "maxItems": 16,
+         "minItems": 1,
+         "description": "Up to 16 refs; a challenge item lists at most 12 scope ranges, so one ref per range always fits, and one wider ref per file also covers them."
         },
         "reason": {
          "type": "string",
@@ -2304,7 +2317,7 @@
             "$ref": "#/$defs/range_ref"
            },
            "minItems": 1,
-           "maxItems": 8
+           "maxItems": 16
           },
           "note": {
            "type": "string",
@@ -2624,6 +2637,31 @@
      },
      "poll_after_s": {
       "type": "integer"
+     },
+     "recovered_from": {
+      "type": "object",
+      "description": "Present when this call reopened a render_failed job. cause server: the failure was in server-built content and did not count against the reviewer's three render retries. cause model: a late text gate hit on reviewer text (rule names it) and one retry was spent.",
+      "properties": {
+       "code": {
+        "type": "string",
+        "maxLength": 40
+       },
+       "cause": {
+        "enum": [
+         "server",
+         "model"
+        ]
+       },
+       "rule": {
+        "type": "string",
+        "maxLength": 120
+       }
+      },
+      "required": [
+       "code",
+       "cause"
+      ],
+      "additionalProperties": false
      }
     }
    }
