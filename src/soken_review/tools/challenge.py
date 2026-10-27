@@ -777,6 +777,46 @@ def _resolve_call_site_scope(location_quotes: list[dict[str, Any]]) -> tuple[lis
 
 # ── Build challenge items output ──────────────────────────────────────────────
 
+# Most scope ranges one challenge item lists. review_answer_challenge refs and invariant_walks refs
+# take ANSWER_REFS_MAX each (tools.v1.json, walks.py), so an `absent` answer can always carry one
+# ref per range: the blind run of 2026-10-26 listed 16 ranges against a 12-ref answer cap.
+SCOPE_RANGES_MAX = 12
+ANSWER_REFS_MAX = 16
+_ADJACENT_GAP = 1  # ranges this close (in lines) print as one; a covering ref satisfies both anyway
+
+
+def _merge_scope_ranges(ranges: list[str], cap: int = SCOPE_RANGES_MAX) -> list[str]:
+    """Group overlapping or adjacent same-file ranges, then, while more than ``cap`` remain, merge
+    the two same-file ranges with the smallest gap. A merged range is a superset, so any ref that
+    covered it covers the parts; the answer never needs more refs than ``cap``."""
+    parsed = [(p, s, e) for r in ranges if (t := _parse_range_ref(r)) for p, s, e in [t]]
+    if len(parsed) != len(ranges):
+        return ranges  # a malformed ref: leave the list as the resolver built it
+    by_file: dict[str, list[list[int]]] = {}
+    for path, s, e in sorted(parsed):
+        rows = by_file.setdefault(path, [])
+        if rows and s <= rows[-1][1] + _ADJACENT_GAP + 1:
+            rows[-1][1] = max(rows[-1][1], e)
+        else:
+            rows.append([s, e])
+    total = sum(len(v) for v in by_file.values())
+    while total > cap:
+        best: tuple[int, str, int] | None = None  # (gap, path, index of the first of the pair)
+        for path, rows in by_file.items():
+            for i in range(len(rows) - 1):
+                gap = rows[i + 1][0] - rows[i][1]
+                if best is None or gap < best[0]:
+                    best = (gap, path, i)
+        if best is None:
+            break  # every file holds one range: nothing left to merge
+        _, path, i = best
+        rows = by_file[path]
+        rows[i][1] = max(rows[i][1], rows[i + 1][1])
+        del rows[i + 1]
+        total -= 1
+    return [f"{path}:{s}-{e}" for path in sorted(by_file) for s, e in by_file[path]]
+
+
 def _item_to_output(
     item: dict[str, Any],
     family: str,
@@ -786,6 +826,7 @@ def _item_to_output(
     """Convert an internal item dict to the output shape (03 §4.12 output schema)."""
     scope_name = item.get("scope", "entry_function")
     ranges, not_covered, source = _resolve_scope(scope_name, family, map_doc, location_quotes)
+    ranges = _merge_scope_ranges(ranges)
 
     scope_obj: dict[str, Any] = {"name": scope_name, "ranges": ranges, "source": source}
     if not_covered:
@@ -927,9 +968,14 @@ async def handle_review_challenge(args: dict[str, Any]) -> dict[str, Any]:
                 ReviewError("E_FINDING_NOT_FOUND", draft=draft_key).envelope()
             ]}
 
-        if draft["status"] != "needs_challenge":
+        # An existing draft is never "not found" (blind run 2026-10-26, Solana: a re-challenge of
+        # an accepted draft got E_FINDING_NOT_FOUND). A needs_text draft has no revision to
+        # challenge; any other status returns the items of the current revision, read-only, with
+        # the status so the client knows whether an answer is still due.
+        draft_status = draft["status"]
+        if draft_status == "needs_text":
             return {"accepted": False, "errors": [
-                ReviewError("E_FINDING_NOT_FOUND", draft=draft_key).envelope()
+                ReviewError("E_DRAFT_STATUS", draft=draft_key, status=draft_status).envelope()
             ]}
 
         revision = draft["current_revision"]
@@ -986,13 +1032,25 @@ async def handle_review_challenge(args: dict[str, Any]) -> dict[str, Any]:
         family, category, matrix, map_doc, location_quotes, is_generic
     )
 
-    return {
+    out: dict[str, Any] = {
         "accepted": True,
         "draft_key": draft_key,
         "revision": revision,
         "checklist_sha256": sha256,
         "items": items,
+        "status": draft_status,
     }
+    if draft_status != "needs_challenge":
+        out["note"] = _CHALLENGE_STATUS_NOTE.get(draft_status, "")
+    return out
+
+
+_CHALLENGE_STATUS_NOTE = {
+    "accepted": ("This draft is accepted: its challenge for this revision is already answered. "
+                 "Different answers for the same revision are refused (E_REVISION_CONFLICT); a resubmit "
+                 "with changed text opens a new revision and a new challenge."),
+    "withdrawn": "This draft is withdrawn; resubmit it to open a new revision and a new challenge.",
+}
 
 
 # ── review_answer_challenge handler ──────────────────────────────────────────
@@ -1168,7 +1226,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
 
         if draft["status"] != "needs_challenge":
             return {"accepted": False, "errors": [
-                ReviewError("E_FINDING_NOT_FOUND", draft=draft_key).envelope()
+                ReviewError("E_DRAFT_STATUS", draft=draft_key, status=draft["status"]).envelope()
             ]}
 
         # Revision check
@@ -1395,9 +1453,11 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                     # Names the item: a basis item with one ref fails while the kill items pass,
                     # and without the id the reviewer re-filed the wrong answers five times
                     # (c2 re-run, 2026-10-23).
+                    # Every missing range at once (TON run 2026-10-26: a partial list cost a
+                    # second rejection for the one range it left out).
                     violations.append(ReviewError(
                         "E_CHALLENGE_SCOPE", item=item_id,
-                        ranges=", ".join(missing[:5]),
+                        ranges=", ".join(missing[:SCOPE_RANGES_MAX]),
                     ).envelope())
             # If scope is NOT_COVERED: check passes trivially, K10 will apply
 

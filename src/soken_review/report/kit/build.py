@@ -62,9 +62,9 @@ _ROW_RE = re.compile(r"<tr[ >].*?</tr>", re.DOTALL)
 class BuildError(Exception):
     """08 render detail code (contract/errors.yaml `E_RENDER_FAILED` detail), detail, json path."""
 
-    def __init__(self, code: str, detail: str = "", path: str = "") -> None:
+    def __init__(self, code: str, detail: str = "", path: str = "", rule: str = "") -> None:
         super().__init__(f"{code}: {detail} {path}".strip())
-        self.code, self.detail, self.path = code, detail, path
+        self.code, self.detail, self.path, self.rule = code, detail, path, rule
 
 
 @dataclass
@@ -248,7 +248,9 @@ def check_strings(report: dict[str, Any]) -> None:
         else:  # kit
             hits = [type("V", (), {"rule_id": r, "match": m}) for r, m in gate_kit_text(path.rsplit(".", 1)[-1], text)]
         if hits:
-            raise BuildError("late_gate", f"{hits[0].rule_id} {hits[0].match!r}", path)
+            # path and rule travel as structured fields (result.json) so the supervisor classifies the
+            # failure on them, never on the truncated free-text detail.
+            raise BuildError("late_gate", f"{hits[0].rule_id} {hits[0].match!r}", path, rule=str(hits[0].rule_id))
 
 
 def validate(report: dict[str, Any]) -> None:

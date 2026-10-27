@@ -733,3 +733,52 @@ async def test_resubmit_draft_keeps_own_lead_accepted(db_pool):
     # Re-submit (revision 2) with same lead: still accepted (lead promoted by THIS draft)
     r2 = await submit_mod.handle_review_submit_finding(args)
     assert r2["accepted"] is True, f"Re-submit with own lead failed: {r2}"
+
+
+@ASYNC
+async def test_finalize_after_server_render_failure_queues_the_render_in_one_call(db_pool):
+    """After a redeploy that fixes a renderer bug, one review_finalize must reopen the job and queue
+    the render again (the blind runs needed two calls: one that only replayed the stale failure)."""
+    from soken_review.tools import finalize as fin_mod
+    from soken_review.tools import submit as submit_mod
+    from soken_review.tools.context import MemoryJobContext
+
+    submit_mod.set_pool(db_pool)
+    fin_mod.set_pool(db_pool)
+    fin_mod.set_context(MemoryJobContext(Path(tempfile.mkdtemp()) / "pins"))
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    submit_mod.set_context(MemoryJobContext(pin_root))
+    submit_result = await submit_mod.handle_review_submit_finding({
+        "job_id": job_id, "draft_key": "draft-info", "category": "evm.reentrancy",
+        "quotes": [{"file": "src/Vault.sol", "start": 1, "end": 3, "role": "location",
+                    "text": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract Vault {"}],
+        "matrix": {"impact_class": "best_practice", "magnitude": "unbounded", "trigger": "anyone",
+                   "precondition": "none", "reversibility": "irreversible"},
+        "lead_ids": [], "title": "Missing reentrancy guard on the withdraw function",
+        "body": {"description": [{"p": "The contract does not use a reentrancy guard."}],
+                 "impact": [{"p": "An attacker could exploit this to drain funds."}],
+                 "recommendation": [{"p": "Add a reentrancy guard to the withdraw function."}]},
+    })
+    assert submit_result["accepted"] is True and submit_result["status"] == "accepted", submit_result
+    try:
+        first = await fin_mod.handle_review_finalize({"job_id": job_id})
+        assert first["accepted"] is True and first["state"] == "render_queued", first
+        # The render worker fails on server-built content (what render._finish_failed records).
+        async with db_pool.connection() as conn:
+            await conn.execute(
+                """update jobs set state = 'render_failed', error_code = 'E_RENDER_FAILED', report_id = null,
+                   report_at = null, error_detail = %s where job_id = %s""",
+                ('{"detail": "internal", "note": "list object has no attribute get", "cause": "server"}', job_id))
+        second = await fin_mod.handle_review_finalize({"job_id": job_id})
+        assert second["accepted"] is True, second
+        assert second["state"] == "render_queued"
+        assert second["recovered_from"] == {"code": "internal", "cause": "server"}
+        assert second["final_ids"] == first["final_ids"]
+        async with db_pool.connection() as conn:
+            row = await (await conn.execute(
+                "select state, render_resets, (select count(*) from job_steps s where s.job_id = jobs.job_id"
+                " and s.step = 'render') from jobs where job_id = %s", (job_id,))).fetchone()
+        assert row[0] == "render_queued" and row[1] == 0 and row[2] == 2
+    finally:
+        fin_mod.set_pool(None)  # type: ignore[arg-type]
+        submit_mod.set_pool(None)  # type: ignore[arg-type]
