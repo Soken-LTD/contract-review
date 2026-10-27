@@ -127,6 +127,9 @@ class TestReportChain:
         assert _report_chain({"chain": "solana", "chain_id": None}) == "solana"
         assert _report_chain({"chain": "ethereum", "chain_id": 10}) == "evm"
         assert _report_chain({"chain": "tron", "chain_id": 728126428}) == "tron"
+        # started by chain name, no chain_id on the job (the adapter path): still the TRON family
+        assert _report_chain({"chain": "tron", "chain_id": None}) == "tron"
+        assert _report_chain({"chain": "hyperevm", "chain_id": None}) == "hyperevm"
 
     def test_network_label(self):
         assert _network_label(_ton_job(), None, None) == "TON mainnet"
