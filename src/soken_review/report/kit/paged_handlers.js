@@ -52,6 +52,9 @@ class RowFitGuard extends Paged.Handler {
       if (src !== breakToken.node && !(src.compareDocumentPosition(breakToken.node) & Node.DOCUMENT_POSITION_FOLLOWING)) return note('token_before_row', {});
       breakToken.node = src;
       breakToken.offset = 0;
+      // paged.js extracts the page overflow with this Range, not with the token: start it at the row
+      // too, so the row leaves this page and is not printed twice.
+      try { overflow.setStartBefore(tr); } catch (e) { return note('range_not_moved', { ref: tr.dataset.ref, err: String(e).slice(0, 80) }); }
       return note('moved', { ref: tr.dataset.ref });
     }
     // Last rows of the page, for the record even when none is in the band.
