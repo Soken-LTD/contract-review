@@ -34,18 +34,19 @@ from .. import quota
 from ..db.job_repo import JobRepo
 from ..db.pool import get_pool
 from ..engine.injection import check_echo
-from ..engine.numbers import lex_numbers
+from ..engine.numbers import NumberContext, lex_numbers
 from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
 from ..mapping.lifecycle import load_lifecycle
 from ..mapping.semantic_evm import detect_token_review, units_holding
-from ..mapping.step import load_flags
+from ..mapping.step import job_number_context, load_flags
 from ..report.render import MAX_RENDER_RESETS, MAX_TOTAL_REOPENS, queue_render, render_failure_client_caused
 from ..server import handler
 from .context import JobContext
 from .coverage import EnumsLoadError, category_allowed_na_reasons, compute_coverage_rows
+from .number_errors import number_error
 from .set_section import _check_na_predicate_for_section
 from .submit import _category_info, _family_from_chain, _iter_text_fields
 from .walks import latest_rows, load_drafts, open_walks, walk_index
@@ -424,7 +425,7 @@ async def _assign_final_ids(
 
         # Read challenge_answers for this draft to get real downgrade counts (04 §8.1).
         # At finalize F3 guarantees no needs_challenge findings exist, so open_downgrade_item
-        # is always False.  scope_not_covered is derived from stored items (K10).
+        # is always False.  scope_not_covered is derived from stored items (recorded, no cap).
         async with conn.cursor(row_factory=dict_row) as cur2:
             await cur2.execute(
                 """select items, answers from challenge_answers
@@ -605,6 +606,10 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
     except (OSError, ValueError) as exc:
         raise ReviewError("E_INTERNAL", incident=f"flags.json unreadable at finalize: {exc!s:.80}") from exc
     j1_flags = [f for f in _raw_flags if f.get("rule") == "J1"]
+    try:
+        nctx = job_number_context(_get_ctx().get_pin_root(), job_id)
+    except Exception:  # noqa: BLE001 - the word set is a convenience; the check still runs without it
+        nctx = NumberContext()
 
     # ── Finding text ──────────────────────────────────────────────────────────
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -636,16 +641,9 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
 
         # ── V6: number check on all prose fields via shared walker ───────────
         for field_name, field_text in _iter_text_fields(content):
-            for v in lex_numbers(field_text):
-                errors.append(ReviewError(
-                    v.code, rule=v.rule_id,
-                    match=v.match[:80] if v.match else "",
-                    token=v.match[:40] if v.match else "",
-                    field=field_name,
-                    cp=(v.match[:5] if v.match else ""),
-                    pos=v.span[0],
-                    hint=f"{finding_ref}.{field_name}: number rule {v.rule_id}",
-                ).envelope())
+            for v in lex_numbers(field_text, nctx):
+                errors.append(number_error(v, field_name, nctx,
+                                           hint=f"{finding_ref}.{field_name}: number rule {v.rule_id}"))
 
         # ── V5: text gate (check_model_field) on every prose block ───────────
         # title
@@ -786,15 +784,8 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
                             pos=v.span[0], token=v.match[:40],
                             hint=f"{sec_name}[ul]: rule {v.rule_id} on {v.match!r:.40}",
                         ).envelope())
-                    for v in lex_numbers(str(item)):
-                        errors.append(ReviewError(
-                            v.code, rule=v.rule_id,
-                            match=v.match[:80] if v.match else "",
-                            token=v.match[:40] if v.match else "",
-                            field=f"{sec_name}[ul]",
-                            cp=(v.match[:5] if v.match else ""),
-                            pos=v.span[0],
-                        ).envelope())
+                    for v in lex_numbers(str(item), nctx):
+                        errors.append(number_error(v, f"{sec_name}[ul]", nctx))
                 continue
             if "table" in block:
                 tbl = block["table"]
@@ -806,15 +797,8 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
                                 pos=v.span[0], token=v.match[:40],
                                 hint=f"{sec_name}[table.head]: rule {v.rule_id} on {v.match!r:.40}",
                             ).envelope())
-                        for v in lex_numbers(str(cell)):
-                            errors.append(ReviewError(
-                                v.code, rule=v.rule_id,
-                                match=v.match[:80] if v.match else "",
-                                token=v.match[:40] if v.match else "",
-                                field=f"{sec_name}[table.head]",
-                                cp=(v.match[:5] if v.match else ""),
-                                pos=v.span[0],
-                            ).envelope())
+                        for v in lex_numbers(str(cell), nctx):
+                            errors.append(number_error(v, f"{sec_name}[table.head]", nctx))
                     for row in tbl.get("rows") or []:
                         for cell in row:
                             if not cell:
@@ -825,15 +809,8 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
                                     pos=v.span[0], token=v.match[:40],
                                     hint=f"{sec_name}[table.row]: rule {v.rule_id} on {v.match!r:.40}",
                                 ).envelope())
-                            for v in lex_numbers(str(cell)):
-                                errors.append(ReviewError(
-                                    v.code, rule=v.rule_id,
-                                    match=v.match[:80] if v.match else "",
-                                    token=v.match[:40] if v.match else "",
-                                    field=f"{sec_name}[table.row]",
-                                    cp=(v.match[:5] if v.match else ""),
-                                    pos=v.span[0],
-                                ).envelope())
+                            for v in lex_numbers(str(cell), nctx):
+                                errors.append(number_error(v, f"{sec_name}[table.row]", nctx))
                 continue
             text = block.get("p") or block.get("reason") or ""
             if text:
@@ -843,15 +820,8 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
                         pos=v.span[0], token=v.match[:40],
                         hint=f"{sec_name}: rule {v.rule_id} on {v.match!r:.40}",
                     ).envelope())
-                for v in lex_numbers(text):
-                    errors.append(ReviewError(
-                        v.code, rule=v.rule_id,
-                        match=v.match[:80] if v.match else "",
-                        token=v.match[:40] if v.match else "",
-                        field=sec_name,
-                        cp=(v.match[:5] if v.match else ""),
-                        pos=v.span[0],
-                    ).envelope())
+                for v in lex_numbers(text, nctx):
+                    errors.append(number_error(v, sec_name, nctx))
 
     return errors
 

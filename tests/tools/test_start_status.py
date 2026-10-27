@@ -207,6 +207,8 @@ class TestReviewStartWithDB:
         assert re.match(r"^job_[0-9A-HJKMNP-TV-Z]{26}$", body["job_id"])
         assert body["state"] == "queued"
         assert body["resume_phrase"].startswith("Resume Soken review job_")
+        from soken_review.contract import schema_version
+        assert body["schema_version"] == schema_version()
 
     async def test_upload_creates_job_awaiting_upload(self, client_with_db):
         result = await client_with_db.call_tool(
@@ -305,3 +307,35 @@ class TestReviewStartWithDB:
         body = json.loads(r2.content[0].text)
         errors = list(validator.iter_errors(body))
         assert errors == [], errors
+
+
+def test_status_response_names_the_served_schema_version():
+    """Every review_status carries the hash of the served tool list, so a client whose cached list
+    predates a deploy (D1, blind run 2026-10-26) can tell and reload it."""
+    from soken_review.contract import schema_version
+    from soken_review.tools.start_status import _build_status_response
+
+    job = {"job_id": "job_SCHEMA00000000000000000000", "state": "ready", "requester_role": "third_party_public_code",
+           "ownership_proven": False, "context_items": [], "error_code": None, "error_detail": None,
+           "map_status": "partial", "analyzer_degraded": False, "tier": None, "upload_id": None}
+    out = _build_status_response(job, "concise")
+    assert out["schema_version"] == schema_version()
+    out = _build_status_response({**job, "state": "awaiting_upload", "upload_id": "u" * 26}, "detailed")
+    assert out["schema_version"] == schema_version()
+
+
+# ── scope_excluded in review_status (security review of PR #84) ───────────────
+
+def test_scope_excluded_status_from_fetch_provenance():
+    from soken_review.tools.start_status import _scope_excluded_status
+
+    steps = [{"step": "fetch", "status": "done", "provenance": {"provider": "repo", "scope_excluded": {
+        "count": 3, "files": [{"path": "contracts/mocks/MockUSDC.sol", "reason": "test_or_mock_dir"},
+                              {"path": "contracts/Vault.t.sol", "reason": "mock_name"},
+                              {"path": "contracts/Odd.sol", "reason": "unknown_code"}]}}}]
+    brief = _scope_excluded_status(steps, detailed=False)
+    assert brief["count"] == 3 and "files" not in brief and brief["note"]
+    detailed = _scope_excluded_status(steps, detailed=True)
+    assert [f["reason"] for f in detailed["files"]] == ["test_or_mock_dir", "mock_name", "other"]
+    assert _scope_excluded_status([{"step": "fetch", "status": "done", "provenance": {"provider": "repo"}}],
+                                  detailed=True) is None

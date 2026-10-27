@@ -190,6 +190,31 @@ _L9A_RE = re.compile(
     r")\b"
 )
 
+# L9a qualitative uses of `half` and `double` (matrix run 2026-10-26, TON and BNB arms): a
+# hyphenated compound ("double-count", "half-open"), `double` as the name of an accounting
+# fault ("double counting", "counted double") and `half` as a structural position ("the second
+# half of the function") state no amount. "double the fee" and "half the supply" stay amounts.
+_FACTOR_WORD_RE = re.compile(r"(?i)\b(?:half|double)\b")
+_DOUBLE_ACTION_RE = re.compile(
+    r"(?i)[\s-]*(?:count(?:s|ed|ing)?|spen(?:d|ds|t|ding)|charg(?:e|es|ed|ing)|entr(?:y|ies)|dip(?:s|ped|ping)?"
+    r"|book(?:s|ed|ing)?|accru(?:al|ed|ing)|accounting|credit(?:s|ed|ing)?|mint(?:s|ed|ing)?|claim(?:s|ed|ing)?"
+    r"|withdraw(?:s|n|al|als|ing)?|redeem(?:s|ed|ing)?|collect(?:s|ed|ion|ing)?)\b")
+_DOUBLE_BEFORE_RE = re.compile(r"(?i)\b(?:counted|charged|credited|paid|booked|spent|minted|claimed|collected)\s+$")
+_HALF_BEFORE_RE = re.compile(r"(?i)\b(?:first|second|latter|upper|lower|top|bottom|other|left|right|former|each)\s+$")
+_COMPOUND_TAIL_RE = re.compile(r"-[A-Za-z]")
+
+
+def _factor_word_is_qualitative(text: str, start: int, end: int, blocked: frozenset[str]) -> bool:
+    """True when `half`/`double` at text[start:end] names no amount (see the note above)."""
+    if _amount_follows(text, end, blocked):
+        return False   # "double the ... tokens", "half-percent": still an amount
+    word = text[start:end].lower()
+    if _COMPOUND_TAIL_RE.match(text, end):
+        return True    # double-count, double-spend, half-open, half-life
+    if word == "double":
+        return bool(_DOUBLE_ACTION_RE.match(text, end) or _DOUBLE_BEFORE_RE.search(text, 0, start))
+    return bool(_HALF_BEFORE_RE.search(text, 0, start))
+
 # ── Plain-language number words (L9c, number_lexer.yaml plain_number_words) ─
 # A small count of code things in words ("two pools", "the third call", "pays twice") is structure,
 # not a quantity, and needs no source; followed by a unit, percent or token/currency word it is an
@@ -498,6 +523,10 @@ def lex_numbers(text: str, context: NumberContext | None = None) -> list[Violati
             continue
 
         # ── L9a: magnitude/multiplier words ──────────────────────────────
+        m = _FACTOR_WORD_RE.match(nfkc, pos)
+        if m and _factor_word_is_qualitative(nfkc, m.start(), m.end(), blocked):
+            pos = m.end()
+            continue
         m = _L9A_RE.match(nfkc, pos)
         if m:
             violations.append(Violation("E_NUMBER_FORMAT", "L9a", (m.start(), m.end()), m.group()))

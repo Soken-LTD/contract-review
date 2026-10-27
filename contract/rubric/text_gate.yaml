@@ -24,7 +24,7 @@ rules:
   T10: ['890\+', '255\+']  # the two vanity-count patterns of the kit GATE (report-kit/build_report.py)
   T11: '\b(TODO|TBD|DRAFT)\b (case-sensitive)'
   T12: '\?'
-  T13: [critical, high, medium, low, informational, severe, catastrophic, devastating, serious, major, minor]
+  T13: [critical, high, medium, low, informational, severe, catastrophic, devastating, serious, major, minor]  # not when the word opens a hyphenated term ("high-water mark", "low-level"); "high-risk", "low-severity" still match
   T14: [guaranteed, fully secure, no vulnerability, no vulnerabilities, bug-free, proven exploit, confirmed exploit, 100% safe]
   T15: '\baudit(s|ed|or|ors)?\b'
   T16: '\b(Slither|Aderyn|Wake|Semgrep|Radar|Misti|Mythril|Echidna|Medusa|Trident|Opus|Sonnet|Haiku)\b'
@@ -44,7 +44,8 @@ rules:
                 '\b(unprotected|unguarded|unchecked|unrestricted|unvalidated)\b', '\b(does|do) not (check|verify|validate|enforce|restrict)\b',
                 '\b(is|are) not (checked|verified|validated|enforced|restricted|guarded)\b', '\bfails? to (check|verify|validate|enforce|restrict|guard|limit|bound)\b']
       caller:  ['\b(anyone|anybody|everyone|nobody) can\b', '\bany \w+( \w+){0,5} can\b', '\bnothing (prevents|stops|blocks)\b', '\b(every|all) (function|caller|path|entry point)s?\b']
-      read:    ['\b(never|nowhere)\b', '\bnot\b.{0,40}\banywhere\b', '\b(is|are) not used\b']
+      read:    ['\bnever(\s+\w+ly)?\s+(read|written|updated|set|reset|cleared|changed|modified|decremented|incremented|deleted|called|invoked|used|reached|executed|triggered|checked|validated|verified|enforced|guarded|restricted|compared|bounded|capped|limited)\b',  # never + behaviour ("can never cycle again") binds to no kind and is not matched
+                '\bnowhere\b', '\bnot\b.{0,40}\banywhere\b', '\b(is|are) not used\b']
     kinds: {guard: [no_guard, all_paths_unguarded], caller: [all_paths_unguarded], read: [no_reads, no_writes, no_calls]}
   T25: '\bsoken\b'
   T26: '\b[a-z0-9-]+\s*(\.|\bdot\b)\s*(<tlds.txt>)\b'

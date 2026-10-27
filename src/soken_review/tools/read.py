@@ -27,7 +27,7 @@ from typing import Any
 import re2 as _re2  # type: ignore[import-untyped]
 
 from ..context.store import ContextStore, is_context_path
-from ..db.leads_repo import lead_states
+from ..db.leads_repo import clamp_lead_severity, lead_states
 from ..db.pool import get_pool
 from ..engine.injection import escape_invisible
 from ..errors import ReviewError
@@ -577,9 +577,9 @@ def _load_leads(job_id: str) -> list[dict]:
         raise ReviewError("E_INTERNAL", incident=f"leads-missing-{job_id[-8:]}")
     raw = json.loads(leads_path.read_text())
     # Accept both a bare list and an object with a "leads" key
-    if isinstance(raw, list):
-        return raw
-    return raw.get("leads", [])
+    leads = raw if isinstance(raw, list) else raw.get("leads", [])
+    # The label the reviewer reads never exceeds the category cap (same bound as the leads table).
+    return [clamp_lead_severity(lead) if isinstance(lead, dict) else lead for lead in leads]
 
 
 # ── review_contract_map (03 4.6) ──────────────────────────────────────────────

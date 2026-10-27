@@ -177,7 +177,7 @@ RULE_TEXT: dict[str, str] = {
     "K6": "precondition victim_unusual_action caps at Low",
     "K7": "impact centralization_risk caps at Low",
     "K8": "Critical needs challenged evidence and attack steps, else High",
-    "K10": "a checklist scope not covered or no contract map caps at High",
+    "K10": "no contract map caps at High",
     "K11": "generic category without a linked lead of the same category caps at High",
     "IRR1": "irreversible unbounded loss: uncommon_protocol_state counts as L2, not L1",
     "TR1": "retail token, owner is the threat: an irreversible owner path to a direct loss is reachable, K1 waived",
@@ -239,8 +239,12 @@ class SeverityContext:
     downgrade_items_present: int = 0             # count of 'present' challenge downgrade items (K5)
     open_downgrade_item: bool = False            # for K8: "no open downgrade item" check
     evidence_level: str | None = None           # E1/E2/E3, for K4 (finalize only)
-    scope_not_covered: bool = False              # for K10: any item not_covered
-    map_unavailable: bool = False               # for K10
+    # Any challenge item whose scope the map could not supply. Recorded, never a cap: until
+    # 2026-10-27 it fed K10, and a rubric item with an empty scope capped the finding at High for
+    # ever (Solana ata_owner_reassign, blind run 2026-10-26). A present answer on such an item is
+    # rejected by the answer checker instead, because nothing can verify it.
+    scope_not_covered: bool = False
+    map_unavailable: bool = False               # for K10: no contract map for the job
     token_review: bool = False                   # retail-token/scam profile: owner IS the threat
     has_location_quote: bool = False             # finding quotes reviewed source (its own evidence)
     # Reviewer-first (RV1): the reviewer's proposal and its recorded reason (claimed_severity,
@@ -388,8 +392,8 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
         if requires_k8:
             cap("K8", "High")
 
-    # --- K10: post_challenge/finalize: any item not_covered or lexical fallback -> cap High ---
-    if phase in ("post_challenge", "finalize") and (ctx.scope_not_covered or ctx.map_unavailable):
+    # --- K10: post_challenge/finalize: no contract map (lexical fallback only) -> cap High ---
+    if phase in ("post_challenge", "finalize") and ctx.map_unavailable:
         cap("K10", "High")
 
     # --- K4: finalize: evidence reasoning_only -> cap Low ---

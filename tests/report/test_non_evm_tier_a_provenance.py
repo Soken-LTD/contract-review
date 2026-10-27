@@ -19,6 +19,7 @@ from soken_review.report.assemble import (
     _report_chain,
     provenance,
 )
+from soken_review.report.kit.build import kit_texts
 
 TON_HASH = "c845917da4a4ce1cb22aa00f65a82c3775e4c6a3c74453f9352e96d8d14fbfea"
 TON_ADDRESS = "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ"
@@ -104,8 +105,9 @@ class TestTonTierAProvenance:
         assert ["Masterchain seqno", SEQNO] in rows
         assert ["On-chain code hash", TON_HASH] in rows
         assert ["Chain / network", "TON mainnet"] in rows
-        # the dep reason is an enum token and prints as the closing paragraph
-        assert {"p": "match_rebuild"} in blocks
+        # the dep reason code prints as the kit text for that code, never as the bare enum
+        assert {"p": kit_texts()["dep_match_reasons"]["match_rebuild"]} in blocks
+        assert not any(b.get("p") == "match_rebuild" for b in blocks)
         detail = _deployment_method_detail(_ton_job(), dep)
         assert f"at seqno {SEQNO:,}" in detail and "byte for byte" in detail
 

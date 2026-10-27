@@ -13,7 +13,15 @@ from pathlib import Path
 import pytest
 
 from soken_review.db.job_repo import JobRepo, new_job_id
-from soken_review.db.leads_repo import lead_row, lead_states, load_leads_json, persist_leads, persist_leads_from_pin
+from soken_review.db.leads_repo import (
+    category_severity_caps,
+    clamp_lead_severity,
+    lead_row,
+    lead_states,
+    load_leads_json,
+    persist_leads,
+    persist_leads_from_pin,
+)
 
 ASYNC = pytest.mark.asyncio(loop_scope="session")   # same runner as test_submit_finalize (session pool)
 
@@ -100,3 +108,29 @@ async def test_persist_from_pin_reads_the_job_file(db_pool, tmp_path: Path):
     async with db_pool.connection() as conn, conn.transaction():
         assert await persist_leads_from_pin(conn, tmp_path, jid) == 3
         assert await persist_leads_from_pin(conn, tmp_path, "job_" + "Z" * 26) == 0
+
+
+BEST_PRACTICE_HIGH = {"id": "LEAD-0009", "rule_id": "TON-THROW-01", "tools": ["soken-ton-rules@1"],
+                      "category": "ton.best_practice", "analyzer_severity_raw": "error", "severity_norm": "High",
+                      "file": "contracts/master.tact", "start": 40, "end": 41, "state": "open"}
+
+
+def test_lead_severity_is_bounded_by_the_category_cap():
+    """29 `nativeThrowUnless` hits printed "best_practice high" on the TON run (D18): no finding of a
+    category capped at Informational prints above it, so neither does its lead, and F2 (open High
+    or Medium leads block finalize) stops demanding a quoted dismissal for each."""
+    caps = category_severity_caps()
+    assert caps["ton.best_practice"] == "Info" and caps["evm.best_practice"] == "Info"
+    assert "evm.reentrancy" not in caps
+    lead = clamp_lead_severity(dict(BEST_PRACTICE_HIGH))
+    assert lead["severity_norm"] == "Info" and lead["analyzer_severity_raw"] == "error"
+    assert clamp_lead_severity(dict(LEADS[0]))["severity_norm"] == "High"     # uncapped category
+    row = lead_row("job_X", BEST_PRACTICE_HIGH)
+    assert row is not None and row[9] == "Info" and row[8] == "error"
+
+
+def test_load_leads_json_applies_the_cap(tmp_path: Path):
+    (tmp_path / "j3").mkdir()
+    (tmp_path / "j3" / "leads.json").write_text(json.dumps([BEST_PRACTICE_HIGH, LEADS[0]]))
+    loaded = {lead["id"]: lead["severity_norm"] for lead in load_leads_json(tmp_path, "j3")}
+    assert loaded == {"LEAD-0009": "Info", "LEAD-0001": "High"}

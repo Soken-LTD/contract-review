@@ -46,6 +46,9 @@ class Candidate:
     fetched_at: str | None = None       # ISO 8601 UTC
     untrusted_inputs: bool = False      # 06 3.3.4: never tier A; set by the family trust scan
     refused_paths: list[str] = field(default_factory=list)   # paths refused by safe reader; empty = none
+    # Files the scope rules kept out of the reviewed candidate with the rule's reason code
+    # (repo_candidate.split_test_and_mock_files): {"path", "reason"}; the report lists them as out of scope.
+    scope_excluded: list[dict[str, str]] = field(default_factory=list)
     # Runtime-only: path to the materialized source tree for B4 forge build; never serialised.
     src_tree_dir: str | None = None
     # Runtime-only: full O_NOFOLLOW tree read (all files, not just scope) for B4 source

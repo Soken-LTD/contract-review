@@ -285,6 +285,11 @@ _T13_PHRASES = [
     "severe", "catastrophic", "devastating", "serious", "major", "minor",
 ]
 _T13_RE = _phrase_re(_T13_PHRASES)
+# A severity word that opens a hyphenated compound ("high-water mark", "low-level call",
+# "medium-term") is a term, not a severity claim; "high-risk" and "low-severity" still are.
+_T13_COMPOUND_RE = re.compile(r"-([A-Za-z]+)")
+_T13_SEVERITY_TAILS = frozenset({"risk", "risks", "severity", "impact", "priority", "value", "vulnerability",
+                                 "vulnerabilities", "issue", "issues", "finding", "findings", "bug", "bugs"})
 
 _T14_PHRASES = [
     "guaranteed", "fully secure", "no vulnerability", "no vulnerabilities",
@@ -333,8 +338,15 @@ _T24_CALLER = [
     r"\bnothing (?:prevents|stops|blocks)\b",
     r"\b(?:every|all) (?:function|caller|path|entry point)s?\b",
 ]
+# `never` is an absence claim when it denies a read, write, call or check (the kinds no_reads,
+# no_writes, no_calls, no_guard); "can never cycle again" or "never undone" state behaviour and
+# bind to no kind (matrix run 2026-10-26, TON and Solana arms).
+_T24_NEVER_VERBS = (r"read|written|updated|set|reset|cleared|changed|modified|decremented|incremented|deleted"
+                    r"|called|invoked|used|reached|executed|triggered|checked|validated|verified|enforced"
+                    r"|guarded|restricted|compared|bounded|capped|limited")
 _T24_READ = [
-    r"\b(?:never|nowhere)\b",
+    rf"\bnever(?:\s+\w+ly)?\s+(?:{_T24_NEVER_VERBS})\b",
+    r"\bnowhere\b",
     r"\bnot\b.{0,40}\banywhere\b",
     r"\b(?:is|are) not used\b",
 ]
@@ -499,6 +511,9 @@ def check_text(text: str, scope: str, context: CheckContext | None = None) -> li
     # ── T13: severity words (never exempt) ───────────────────────────────
     if "T13" in active:
         for m in _T13_RE.finditer(nfkc):
+            tail = _T13_COMPOUND_RE.match(nfkc, m.end())
+            if tail and tail.group(1).lower() not in _T13_SEVERITY_TAILS:
+                continue   # hyphenated term such as "high-water mark"
             violations.append(Violation("E_TEXT_GATE", "T13", (m.start(), m.end()), m.group()))
 
     # ── T14: completeness / proof claims (never exempt) ──────────────────

@@ -9,14 +9,16 @@ pin. `load_artifacts` reads them back for the tools and the pure validators.
 from __future__ import annotations
 
 import json
-from functools import cache
+import re
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from ..engine.artifacts import Artifacts
+from ..engine.artifacts import Artifacts, word_set
 from ..engine.injection import scan_file
+from ..engine.numbers import NumberContext
 from ..pinning.store import PinnedSource
 from .build import build_map, load_map, load_tokens, write_map
 from .facts import load_facts, static_facts, write_facts
@@ -41,6 +43,30 @@ def family_categories(family: str, chain: str | None = None) -> tuple[str, ...]:
     return tuple(out)
 
 
+_LOCKFILE_PINS = frozenset({"lockfile", "lockfile_version"})
+_NPM_NAME_RE = re.compile(r"^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$")   # npm names, never a path
+
+
+def dependency_trust(dependencies: dict[str, Any] | None, candidate: dict[str, Any] | None) -> dict[str, Any]:
+    """Which unpinned files may credit a guard on a reviewed function (semantic_evm `_credit`).
+
+    `trusted_prefixes`: `node_modules/<name>/` of every npm package whose tarball was verified
+    against the lockfile sha512 in this run (adapters/evm/npm_deps.py summary: `integrity` set,
+    pinned by the lockfile). A registry-range resolution is not integrity-pinned by the repo and
+    stays untrusted. `untrusted_paths`: the files the scope rules removed from the candidate
+    (test and mock contracts), never credited whatever their location."""
+    prefixes: list[str] = []
+    for pkg in ((dependencies or {}).get("packages") or []):
+        if not isinstance(pkg, dict):
+            continue
+        name = str(pkg.get("name") or "")
+        if _NPM_NAME_RE.fullmatch(name) and pkg.get("integrity") and str(pkg.get("pinned_by")) in _LOCKFILE_PINS:
+            prefixes.append(f"node_modules/{name}/")
+    untrusted = {str(row.get("path")) for row in ((candidate or {}).get("scope_excluded") or [])
+                 if isinstance(row, dict) and row.get("path")}
+    return {"trusted_prefixes": tuple(sorted(set(prefixes))), "untrusted_paths": frozenset(untrusted)}
+
+
 def run_map_step(
     pin_root: Path,
     job_id: str,
@@ -57,13 +83,17 @@ def run_map_step(
     analyzers: dict[str, str] | None = None,
     build_detail: str | None = None,
     build_status: str | None = None,
+    dependencies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build and store map, flags and static facts. Returns a summary for the step provenance.
 
     `std_input_path`: the Standard JSON input the compiler received (supervisor shape
     `{"std_json_input": {...}}` or the plain std-json of the host build copy). Its `content`
     strings are the bytes the AST offsets refer to (CRLF kept for an exact rebuild), so the
-    semantic layer resolves lines against them, not against the LF pin."""
+    semantic layer resolves lines against them, not against the LF pin.
+
+    `dependencies`: the npm integrity record of the run (out_dir/dependencies.json), which with
+    the candidate's `scope_excluded` decides which unpinned files may credit a guard."""
     pin = PinnedSource.load(pin_root, job_id)
     files = {p: "\n".join(pin.read_all(p)) + ("\n" if pin.line_count(p) else "") for p in pin.entries}
     # Bug 7 fix (2026-10-25): for non-EVM families (TON, TRON, Solana) the build toolchain may
@@ -76,8 +106,10 @@ def run_map_step(
     if build_ok and solc_output_path is not None and solc_output_path.exists():
         output = json.loads(solc_output_path.read_text(encoding="utf-8"))
         compiled_texts = compiled_texts_from_std_input(std_input_path)
+    trust = dependency_trust(dependencies, candidate)
     art = build_map(files, output, list(family_categories(family, chain)), build_ok=build_ok,
-                    compiled_texts=compiled_texts, parsed_family="solana" if family == "solana" else None)
+                    compiled_texts=compiled_texts, parsed_family="solana" if family == "solana" else None,
+                    trusted_prefixes=trust["trusted_prefixes"], untrusted_paths=trust["untrusted_paths"])
     write_map(pin_root, job_id, art, build_detail=build_detail, build_status=build_status)
 
     # Lifecycle and invariant pass (feat/lifecycle-invariant-pass): lifecycle leads merged into
@@ -171,6 +203,23 @@ def write_flags(root: Path, job_id: str, flags: list[dict[str, Any]]) -> None:
 def load_flags(root: Path, job_id: str) -> list[dict[str, Any]] | None:
     p = root / job_id / "flags.json"
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+
+
+@lru_cache(maxsize=32)
+def _job_word_set(root: str, job_id: str, stamp: float) -> frozenset[str]:
+    return word_set(load_artifacts(Path(root), job_id))
+
+
+def job_number_context(root: Path, job_id: str) -> NumberContext:
+    """NumberContext carrying the job's word set (04 5.1: identifier and type-name tokens of the
+    pinned files plus map names) for the L7 rule, so an identifier with a digit (`ERC20Burnable`,
+    `claim_v2`, a struct field `u5`) is not an unsourced number (matrix run 2026-10-26). Empty
+    context when the map is not written yet; never raises."""
+    try:
+        stamp = (root / job_id / "map" / "tokens.json").stat().st_mtime
+        return NumberContext(word_set=_job_word_set(str(root), job_id, stamp))
+    except (OSError, ValueError, KeyError):
+        return NumberContext()
 
 
 def load_artifacts(root: Path, job_id: str, token_paths: list[str] | None = None) -> Artifacts:

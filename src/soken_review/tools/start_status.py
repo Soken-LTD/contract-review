@@ -31,6 +31,7 @@ import psycopg_pool
 from .. import quota
 from ..context.items import check_cap, status_counts, validate_items
 from ..context.store import ContextStore
+from ..contract import schema_version
 from ..db.job_repo import JobRepo, new_job_id
 from ..db.pool import get_pool
 from ..errors import ReviewError
@@ -447,6 +448,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
         },
         "poll_after_s": 2,
         "guide_version": _GUIDE_VERSION,
+        "schema_version": schema_version(),
         "resume_phrase": f"Resume Soken review {job_id}",
         "limits": limits,
     }
@@ -857,6 +859,7 @@ def _build_status_response(
         "state": state,
         "step": _STATE_STEP.get(state, "stopped"),
         "percent": _compute_percent(state, _steps, medians or {}),
+        "schema_version": schema_version(),
     }
 
     # Upload fields only in awaiting_upload (03 §4.2)
@@ -909,6 +912,11 @@ def _build_status_response(
     deps = _dependencies_status(_steps, detailed=response_format == "detailed")
     if deps is not None:
         out["dependencies"] = deps
+    # Files the scope rules kept out of the review (test and mock contracts): count always,
+    # the rows in the detailed format; the report prints them as out of scope.
+    excluded = _scope_excluded_status(_steps, detailed=response_format == "detailed")
+    if excluded is not None:
+        out["scope_excluded"] = excluded
 
     # Project context (context ingestion spec 3): present once documents were requested
     ctx = _context_status(job)
@@ -960,6 +968,24 @@ _PIN_NOTES = {
     "registry_range": ("The repository has no lockfile: dependency versions were chosen from the package.json "
                        "ranges at fetch time and may differ from the versions the project built and deployed."),
 }
+
+
+_SCOPE_REASONS = frozenset({"test_or_mock_dir", "mock_name", "test_harness"})
+
+
+def _scope_excluded_status(steps: list[dict[str, Any]], *, detailed: bool) -> dict[str, Any] | None:
+    fetched = [s for s in steps if s.get("step") == "fetch" and s.get("status") == "done"]
+    rec = ((fetched[-1].get("provenance") or {}).get("scope_excluded")) if fetched else None
+    if not isinstance(rec, dict) or not rec.get("count"):
+        return None
+    out: dict[str, Any] = {"count": int(rec["count"]),
+                           "note": "Test and mock contracts left out of the review by the scope rules; "
+                                   "the report lists them as out of scope."}
+    if detailed:
+        out["files"] = [{"path": str(f.get("path"))[:300],
+                         "reason": f["reason"] if f.get("reason") in _SCOPE_REASONS else "other"}
+                        for f in (rec.get("files") or [])[:60] if isinstance(f, dict) and f.get("path")]
+    return out
 
 
 def _dependencies_status(steps: list[dict[str, Any]], *, detailed: bool) -> dict[str, Any] | None:
