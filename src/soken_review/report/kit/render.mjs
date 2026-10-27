@@ -49,7 +49,7 @@ async function main() {
   await within(5000, new Promise((r, j) => { ws.addEventListener('open', r, { once: true }); ws.addEventListener('error', j, { once: true }); }), 'ws').catch(() => fail(14, 'devtools connect'));
 
   let id = 0; const pend = new Map(); let sessionId = null; let loaded = false;
-  const blocked = [];
+  const blocked = [], consoleLog = [];  // page console (paged.js warnings), for the debug record only
   const call = (method, params = {}, sess = sessionId) => new Promise((res, rej) => {
     const myid = ++id; pend.set(myid, { res, rej });
     const m = { id: myid, method, params }; if (sess) m.sessionId = sess;
@@ -60,6 +60,9 @@ async function main() {
     const m = JSON.parse(ev.data);
     if (m.id && pend.has(m.id)) { const p = pend.get(m.id); pend.delete(m.id); m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result); return; }
     if (m.method === 'Page.loadEventFired') loaded = true;
+    if (m.method === 'Runtime.consoleAPICalled' && consoleLog.length < 60) {
+      consoleLog.push(m.params.type + ': ' + m.params.args.map((a) => String(a.value ?? a.description ?? '')).join(' ').slice(0, 240));
+    }
     if (m.method === 'Fetch.requestPaused') {
       const url = m.params.request.url;
       // Network layer 1: only file:// inside the job dir and data: continue; all else fails, recorded.
@@ -156,13 +159,18 @@ async function main() {
   if (dom.overflow || dom.empty) {
     // Debug record with page text, for a developer reading the sandbox out/ dir by hand. The
     // supervisor reads only result.json and report.pdf from out/ and never logs or stores this file.
-    try { fs.writeFileSync(path.join(path.dirname(outPdf), 'layout.json'), JSON.stringify(await evaluate(`(() =>
+    const bad = (dom.overflow || dom.empty).page;
+    try { fs.writeFileSync(path.join(path.dirname(outPdf), 'layout.json'), JSON.stringify({ check: dom, console: consoleLog, pages: await evaluate(`(() =>
       [...document.querySelectorAll('.pagedjs_page')].map((pg, i) => {
         const area = pg.querySelector('.pagedjs_page_content');
+        const box = area ? area.getBoundingClientRect() : { top: 0, left: 0 };
         const text = (el) => el ? el.tagName + '.' + String(el.className || '').slice(0, 30) + ' ' + String(el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80) : null;
+        const rect = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.left - box.left), Math.round(r.top - box.top), Math.round(r.right - box.left), Math.round(r.bottom - box.top)]; };
         const kids = area ? [...area.querySelectorAll('section > *, .pagedjs_page_content > div > *')] : [];
-        return { page: i + 1, first: text(kids[0]), last: text(kids[kids.length - 1]), blocks: kids.length };
-      }))()`), null, 1)); } catch {}
+        const out = { page: i + 1, first: text(kids[0]), last: text(kids[kids.length - 1]), blocks: kids.length };
+        if (i + 1 === ${bad}) out.detail = kids.map((el) => [text(el), rect(el), el.tagName === 'TABLE' ? [...el.querySelectorAll('tr')].map((tr) => [rect(tr), String(tr.textContent || '').trim().slice(0, 40)]) : undefined]);
+        return out;
+      }))()`) }, null, 1)); } catch {}
   }
   if (dom.overflow) fail(11, 'layout_overflow ' + JSON.stringify(dom.overflow));
   if (dom.empty) fail(12, 'empty_page ' + JSON.stringify(dom.empty));

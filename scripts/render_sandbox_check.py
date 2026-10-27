@@ -53,6 +53,11 @@ def main() -> int:
                     shutil.copyfile(pdf, a.keep / pdf.name)
             else:
                 failed += 1
+                if a.keep and (d / "out" / "layout.json").exists():
+                    # Developer record written by render.mjs on a layout failure (page map, paged.js
+                    # console); the supervisor never reads it, this check script keeps it beside the PDFs.
+                    a.keep.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(d / "out" / "layout.json", a.keep / f"{rep.stem}-{run}.layout.json")
             print(line, flush=True)
     return 1 if failed else 0
 
