@@ -1147,6 +1147,42 @@
         }
        }
       }
+     },
+     "scope_excluded": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Test and mock contracts the scope rules kept out of the review (repo reviews): the count, and the files in the detailed format.",
+      "properties": {
+       "count": {
+        "type": "integer",
+        "minimum": 1
+       },
+       "note": {
+        "type": "string"
+       },
+       "files": {
+        "type": "array",
+        "maxItems": 60,
+        "items": {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "path": {
+           "type": "string"
+          },
+          "reason": {
+           "type": "string",
+           "enum": [
+            "test_or_mock_dir",
+            "mock_name",
+            "test_harness",
+            "other"
+           ]
+          }
+         }
+        }
+       }
+      }
      }
     }
    }
