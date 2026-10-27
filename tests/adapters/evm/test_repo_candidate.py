@@ -31,6 +31,9 @@ _REPO_URL = "https://github.com/example/repo@" + "a" * 40
 def _rcfm(src: Path, manifest: dict, **kw: object) -> tuple:
     """Thin wrapper: always pass source_url so tests exercise the production path."""
     kw.setdefault("source_url", _REPO_URL)
+    # no release list by default: the pragma path stays the floor (pragma_guess) and the test
+    # never reads the compiler cache; test_solc_select passes explicit builds
+    kw.setdefault("builds", [])
     return repo_candidate_from_manifest(src, manifest, **kw)  # type: ignore[arg-type]
 
 # ---------------------------------------------------------------------------

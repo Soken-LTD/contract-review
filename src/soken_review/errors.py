@@ -19,6 +19,13 @@ class ReviewError(Exception):
         self.code = code
         self.fields = fields
         self.row = _CATALOG[code]
+        if code == "E_TEXT_GATE" and fields.get("rule") and "rule_text" not in fields:
+            # Every text-gate rejection prints the rule text and the allowed rewording
+            # (text_gate.yaml rule_help), whichever tool raised it.
+            from .engine.text_gate import rule_help
+
+            text, reword = rule_help(str(fields["rule"]))
+            self.fields = {**fields, "rule_text": text, "reword": reword}
         super().__init__(code)
 
     @property

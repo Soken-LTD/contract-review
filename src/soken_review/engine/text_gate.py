@@ -282,9 +282,18 @@ _T12_RE = re.compile(r"\?")
 
 _T13_PHRASES = [
     "critical", "high", "medium", "low", "informational",
-    "severe", "catastrophic", "devastating", "serious", "major", "minor",
+    "severe", "catastrophic", "devastating", "serious",
 ]
 _T13_RE = _phrase_re(_T13_PHRASES)
+# text_gate.yaml T13_qualified: "major" and "minor" are severity claims only before a severity noun
+# ("minor issue", "major flaw"); "minor release", "major version line" are version words (held-out
+# run 2026-10-27). The noun list is T13_qualified_tail.
+_T13_QUALIFIED_TAIL = (
+    "issue|issues|bug|bugs|flaw|flaws|problem|problems|risk|risks|concern|concerns|vulnerability"
+    "|vulnerabilities|finding|findings|weakness|weaknesses|impact|impacts|severity|threat|threats"
+    "|exploit|exploits|defect|defects"
+)
+_T13_QUALIFIED_RE = re.compile(rf"(?i)\b(?:major|minor)(?=\s+(?:{_T13_QUALIFIED_TAIL})\b)")
 # A severity word that opens a hyphenated compound ("high-water mark", "low-level call",
 # "medium-term") is a term, not a severity claim; "high-risk" and "low-severity" still are.
 _T13_COMPOUND_RE = re.compile(r"-([A-Za-z]+)")
@@ -327,7 +336,10 @@ _T24_GUARD = [
     r"\b(?:is|are) missing\b",
     r"\bmissing (?:a |an |any )?(?:check|guard|lock|validation|modifier|access control|protection|restriction)s?\b",
     r"\bwithout (?:a |an |any )?(?:check|guard|lock|validation|modifier|access control|protection|restriction|limit|bound|cap)s?\b",
-    r"\b(?:unprotected|unguarded|unchecked|unrestricted|unvalidated)\b",
+    r"\b(?:unprotected|unguarded|unrestricted|unvalidated)\b",
+    # text_gate.yaml T24 unchecked_terms: "unchecked block/arithmetic/cast" names a language construct
+    (r"\bunchecked\b(?!\s+(?:block|blocks|arithmetic|math|cast|casts|casting|conversion|conversions|narrowing"
+     r"|increment|increments|decrement|decrements|loop|loops|section|sections|scope|region|keyword)\b)"),
     r"\b(?:does|do) not (?:check|verify|validate|enforce|restrict)\b",
     r"\b(?:is|are) not (?:checked|verified|validated|enforced|restricted|guarded)\b",
     r"\bfails? to (?:check|verify|validate|enforce|restrict|guard|limit|bound)\b",
@@ -514,6 +526,8 @@ def check_text(text: str, scope: str, context: CheckContext | None = None) -> li
             tail = _T13_COMPOUND_RE.match(nfkc, m.end())
             if tail and tail.group(1).lower() not in _T13_SEVERITY_TAILS:
                 continue   # hyphenated term such as "high-water mark"
+            violations.append(Violation("E_TEXT_GATE", "T13", (m.start(), m.end()), m.group()))
+        for m in _T13_QUALIFIED_RE.finditer(nfkc):
             violations.append(Violation("E_TEXT_GATE", "T13", (m.start(), m.end()), m.group()))
 
     # ── T14: completeness / proof claims (never exempt) ──────────────────
@@ -858,3 +872,19 @@ def check_model_field(
         absence_claims=absence_claims if absence_claims is not None else [],
     )
     return list(check_text(text, "model", ctx))
+
+
+@cache
+def rule_help(rule_id: str) -> tuple[str, str]:
+    """(rule text, allowed rewording) of a text rule from text_gate.yaml `rule_help`; every
+    E_TEXT_GATE result prints both (errors.yaml {rule_text}, {reword})."""
+    table = _load_gate_yaml().get("rule_help") or {}
+    row = table.get(rule_id) or table.get(rule_id.split("_", 1)[0]) or {}
+    return str(row.get("text") or "text rule"), str(row.get("reword") or "Reword the matched words.")
+
+
+def rule_word_lists() -> list[str]:
+    """One line per text rule for review_get_guide (challenge_rules): id, rule text, rewording."""
+    table = _load_gate_yaml().get("rule_help") or {}
+    return [f"{rid}: {row.get('text')}. Allowed: {row.get('reword')}" for rid, row in table.items()
+            if isinstance(row, dict)]

@@ -1,11 +1,13 @@
 """Candidate for `source.kind = files` Solidity input (03 4.1 inline files; 05 6.1 compiler choice).
 
-The requester's files carry no compiler metadata, so the compiler is the newest solc release
-that satisfies every `pragma solidity` in the files (version_pinned_by = "pragma"). A
-`remappings.txt` among the files becomes solc `settings.remappings` (sanitized again by the
-build step), a `foundry.toml` gives optimizer, viaIR, evmVersion and a `solc_version` that is
-used when it satisfies every pragma (version_pinned_by = "user"); only `.sol` files become
-solc sources.
+The compiler is, in order: `compiler_version` given with the files when it satisfies every
+`pragma solidity` (version_pinned_by = "user"); an exact pin in a pasted foundry.toml,
+hardhat.config.* or truffle-config.js that satisfies every pragma (version_pinned_by = "config");
+else the newest solc release that satisfies every pragma (version_pinned_by = "pragma"), never
+the floor of a `^x.y.z` range. `review_start.source.remappings` and a pasted `remappings.txt`
+become solc `settings.remappings` (sanitized again by the build step); a `foundry.toml` gives
+optimizer, viaIR and evmVersion. Only `.sol` files become solc sources; npm-style paths
+(`@scope/pkg/...`, `node_modules/@scope/pkg/...`) are ordinary source keys.
 """
 
 from __future__ import annotations
@@ -118,7 +120,8 @@ def entry_contract(sources: dict[str, str]) -> str | None:
     return None
 
 
-def files_candidate(files: list[dict[str, Any]], builds: list[dict[str, Any]] | None = None) -> Candidate | None:
+def files_candidate(files: list[dict[str, Any]], builds: list[dict[str, Any]] | None = None, *,
+                    remappings: list[str] | None = None, compiler_version: str | None = None) -> Candidate | None:
     sources = {f["path"]: f["content"] for f in files if str(f.get("path", "")).endswith(".sol")}
     if not sources:
         return None
@@ -126,17 +129,40 @@ def files_candidate(files: list[dict[str, Any]], builds: list[dict[str, Any]] | 
     def named(name: str) -> str:
         return next((f["content"] for f in files if str(f.get("path", "")).rsplit("/", 1)[-1] == name), "")
 
-    remappings = [ln.strip() for ln in named("remappings.txt").splitlines() if ln.strip() and not ln.startswith("#")]
+    remaps = [ln.strip() for ln in named("remappings.txt").splitlines() if ln.strip() and not ln.startswith("#")]
+    for r in remappings or []:  # review_start.source.remappings (were ignored before 2026-10-27)
+        if isinstance(r, str) and r.strip() and r.strip() not in remaps:
+            remaps.append(r.strip())
     settings, pinned = foundry_settings(named("foundry.toml"))
-    if remappings:
-        settings["remappings"] = remappings
+    if remaps:
+        settings["remappings"] = remaps
     if builds is None:
         builds = get_cache()._load_list().get("builds", [])
-    version, pinned_by = None, "pragma"
-    if pinned and all(satisfies(m.group(1), tuple(int(x) for x in pinned.split("."))) for t in sources.values()
-                      for m in PRAGMA.finditer(t)):
-        version = next((b.get("longVersion") for b in builds if b.get("version") == pinned and not b.get("prerelease")), None)
-        pinned_by = "user"
+    exprs = [m.group(1) for t in sources.values() for m in PRAGMA.finditer(t)]
+
+    def release(short: str) -> str | None:
+        return next((b.get("longVersion") or b.get("version") for b in builds
+                     if b.get("version") == short and not b.get("prerelease")), None)
+
+    def fits(short: str) -> bool:
+        parts = short.split("+", 1)[0].split(".")
+        return len(parts) == 3 and all(p.isdigit() for p in parts) and \
+            all(satisfies(e, (int(parts[0]), int(parts[1]), int(parts[2]))) for e in exprs)
+
+    version: str | None = None
+    pinned_by = "pragma"
+    user = (compiler_version or "").strip().lstrip("v")
+    if user and fits(user) and release(user.split("+", 1)[0]):
+        version, pinned_by = release(user.split("+", 1)[0]), "user"
+    if version is None:
+        from soken_review.adapters.evm import solc_select as _sel
+
+        config = [(pinned, "foundry.toml")] if pinned else []
+        config += _sel.config_versions({str(f.get("path", "")).rsplit("/", 1)[-1]: f["content"] for f in files
+                                        if str(f.get("path", "")).rsplit("/", 1)[-1] != "foundry.toml"})
+        picked = _sel.pick_config_version(config, exprs)
+        if picked and fits(picked[0]) and release(picked[0]):
+            version, pinned_by = release(picked[0]), "config"
     if version is None:
         version, pinned_by = pick_solc(sources, builds), "pragma"
     return make_candidate(

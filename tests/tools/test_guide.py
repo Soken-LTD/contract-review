@@ -82,3 +82,13 @@ async def test_context_topic_describes_the_documents_surface(client):
         assert value in text, value
     rules = await _guide(client, topic="challenge_rules")
     assert "role context" in rules
+
+
+def test_challenge_rules_topic_lists_the_text_rule_words():
+    """E_TEXT_GATE points here; the word lists of T13 and T15 must be readable (2026-10-27)."""
+    from soken_review.tools.guide import _topic_challenge_rules
+
+    text = "\n".join(_topic_challenge_rules())
+    assert "T15: audit wording: audit, audits, audited, auditor, auditors" in text
+    assert "T13:" in text and "minor" in text and "major" in text
+    assert "T23:" in text and "90 words" in text

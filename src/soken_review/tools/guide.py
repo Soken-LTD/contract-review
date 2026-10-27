@@ -169,6 +169,10 @@ def _topic_challenge_rules() -> list[str]:
     out.append("Text rules on every model string: no second person, no questions, no severity words or"
                " completeness claims in prose, no analyzer or model names, no URLs, no raw LEAD or finding ids,"
                " paragraphs at most 90 words, titles 10 to 110 characters in one sentence.")
+    from ..engine.text_gate import rule_word_lists
+
+    out.append("Text rule word lists (E_TEXT_GATE names the rule id, the matched words and this rewording):")
+    out.extend(rule_word_lists())
     return out
 
 

@@ -95,12 +95,15 @@ def run_map_step(
     `dependencies`: the npm integrity record of the run (out_dir/dependencies.json), which with
     the candidate's `scope_excluded` decides which unpinned files may credit a guard."""
     pin = PinnedSource.load(pin_root, job_id)
-    files = {p: "\n".join(pin.read_all(p)) + ("\n" if pin.line_count(p) else "") for p in pin.entries}
+    # in-scope entries only: pinned dependency files (role dependency, out of scope) are readable
+    # but are not mapped, counted or reported as reviewed
+    scope_paths = [p for p, e in pin.entries.items() if e.in_scope]
+    files = {p: "\n".join(pin.read_all(p)) + ("\n" if pin.line_count(p) else "") for p in scope_paths}
     # Bug 7 fix (2026-10-25): for non-EVM families (TON, TRON, Solana) the build toolchain may
     # not report nsloc, or may return 0.  Fall back to counting lines from the pin so that
     # source.nsloc is never 0 for jobs with pinned files.
-    if not nsloc and pin.entries:
-        nsloc = sum(pin.line_count(p) for p in pin.entries) or None
+    if not nsloc and scope_paths:
+        nsloc = sum(pin.line_count(p) for p in scope_paths) or None
     output = None
     compiled_texts: dict[str, str] | None = None
     if build_ok and solc_output_path is not None and solc_output_path.exists():

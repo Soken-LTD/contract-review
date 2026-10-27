@@ -234,3 +234,38 @@ def test_mismatch_last_segment_not_consumed(simple_pin: PinnedSource) -> None:
     with pytest.raises(QuoteMatchError) as exc:
         quote_match(simple_pin, "src/Vault.sol", 8, 10, text)
     assert exc.value.code == "E_QUOTE_MISMATCH"
+
+
+# ── held-out friction 2026-10-27: pragma lines quote; trivial quotes name a line to quote ──────
+
+def _pragma_pin() -> PinnedSource:
+    text = ("// SPDX-License-Identifier: MIT\n"
+            "pragma solidity ^0.8.20;\n"
+            "\n"
+            'import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";\n'
+            "\n"
+            "contract Tok is ERC20 {\n"
+            "    constructor() ERC20(\"T\", \"T\") { _mint(msg.sender, 1e27); }\n"
+            "}\n")
+    return PinnedSource.from_files({"src/Tok.sol": text.encode()})
+
+
+def test_pragma_solidity_line_is_a_valid_quote() -> None:
+    quote_match(_pragma_pin(), "src/Tok.sol", 2, 2, "pragma solidity ^0.8.20;")
+
+
+def test_import_only_quote_is_trivial_and_names_a_code_line() -> None:
+    with pytest.raises(QuoteMatchError) as exc:
+        quote_match(_pragma_pin(), "src/Tok.sol", 4, 4, 'import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";')
+    assert exc.value.code == "E_QUOTE_TRIVIAL"
+    assert exc.value.detail["path"] == "src/Tok.sol" and exc.value.detail["range"] == "4-4"
+    assert exc.value.detail["suggest"].startswith("line 6: contract Tok is ERC20")
+    from soken_review.errors import ReviewError
+
+    env = ReviewError("E_QUOTE_TRIVIAL", **exc.value.detail).envelope()
+    assert "src/Tok.sol:4-4" in env["what"] and "line 6: contract Tok" in env["fix"]
+
+
+def test_npm_scoped_path_is_a_valid_pin_path() -> None:
+    pin = PinnedSource.from_files({"@openzeppelin/contracts/utils/Context.sol": b"pragma solidity ^0.8.20;\nabstract contract Context {}\n"})
+    quote_match(pin, "@openzeppelin/contracts/utils/Context.sol", 2, 2, "abstract contract Context {}")
