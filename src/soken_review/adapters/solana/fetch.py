@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from datetime import UTC
@@ -560,9 +561,20 @@ def fetch_source(job: Any, cs: dict[str, Any]) -> list[Any]:
 
     # Clone repo
     _SBX_ROOT.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=_SBX_ROOT) as tmp:
-        work_dir = Path(tmp)
+    # The sandboxed clone is written by the sandbox user (uid 10001). A root worker (the stand) removes it;
+    # a non-root worker (CI, a developer host) cannot, and the cleanup PermissionError used to fail the whole
+    # fetch step after the clone had succeeded (client-path e2e 2026-10-27, E_INTERNAL unexpected_exception).
+    # The leftover directory is reported and left to the retention sweep. TemporaryDirectory is not used:
+    # even with ignore_cleanup_errors its onexc handler chmods the parent and raises again
+    # (`Operation not permitted: .../hooks`, run 40507334257).
+    work_dir = Path(tempfile.mkdtemp(dir=_SBX_ROOT))
+    try:
         files = _clone_repo(repo_url, commit, work_dir, subdir=subdir)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        if work_dir.exists():
+            logger.warning("fetch_source: clone dir %s left behind (written by the sandbox user, worker is not root)",
+                           work_dir)
     workspace = getattr(files, "workspace", None)
 
     if not files:
