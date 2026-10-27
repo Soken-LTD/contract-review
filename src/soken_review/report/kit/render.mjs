@@ -160,7 +160,7 @@ async function main() {
     // Debug record with page text, for a developer reading the sandbox out/ dir by hand. The
     // supervisor reads only result.json and report.pdf from out/ and never logs or stores this file.
     const bad = (dom.overflow || dom.empty).page;
-    try { fs.writeFileSync(path.join(path.dirname(outPdf), 'layout.json'), JSON.stringify({ check: dom, console: consoleLog, pages: await evaluate(`(() =>
+    try { fs.writeFileSync(path.join(path.dirname(outPdf), 'layout.json'), JSON.stringify({ check: dom, console: consoleLog, handlers: await evaluate('window.__kitLog || []'), pages: await evaluate(`(() =>
       [...document.querySelectorAll('.pagedjs_page')].map((pg, i) => {
         const area = pg.querySelector('.pagedjs_page_content');
         const box = area ? area.getBoundingClientRect() : { top: 0, left: 0 };

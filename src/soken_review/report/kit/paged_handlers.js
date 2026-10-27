@@ -33,22 +33,30 @@ Paged.registerHandlers(RepeatTableHead);
 const BAND = 2;
 class RowFitGuard extends Paged.Handler {
   onBreakToken(breakToken, overflow, rendered, layout) {
-    if (!overflow || !breakToken || !breakToken.node || !rendered || !rendered.querySelectorAll) return;
+    // Decision log for the developer record (render.mjs copies window.__kitLog into out/layout.json).
+    const log = (window.__kitLog = window.__kitLog || []);
+    const note = (what, extra) => { if (log.length < 80) log.push({ hook: 'onBreakToken', what, ...extra }); };
+    if (!overflow || !breakToken || !breakToken.node || !rendered || !rendered.querySelectorAll) return note('skip', { overflow: !!overflow, token: !!(breakToken && breakToken.node) });
     const bounds = layout && layout.bounds;
     const source = this.chunker && this.chunker.source;
-    if (!bounds || !source) return;
+    if (!bounds || !source) return note('no_bounds_or_source', { bounds: !!bounds, source: !!source, chunker: !!this.chunker });
+    const tokenRef = breakToken.node.dataset ? breakToken.node.dataset.ref : null;
     for (const tr of rendered.querySelectorAll('tbody > tr')) {
       const r = tr.getBoundingClientRect();
       if (!r.height || r.top >= bounds.bottom || r.bottom <= bounds.bottom - BAND) continue;
+      note('row_in_band', { ref: tr.dataset.ref, top: r.top - bounds.top, bottom: r.bottom - bounds.top, page_h: bounds.height, token: tokenRef });
       if (r.top <= bounds.top) return;  // the row starts the page: nothing earlier to break at
       const src = tr.dataset.ref && source.querySelector(`[data-ref="${tr.dataset.ref}"]`);
-      if (!src) return;
+      if (!src) return note('no_source_row', { ref: tr.dataset.ref });
       // Only move the token back: when it already sits at or before this row, keep it.
-      if (src !== breakToken.node && !(src.compareDocumentPosition(breakToken.node) & Node.DOCUMENT_POSITION_FOLLOWING)) return;
+      if (src !== breakToken.node && !(src.compareDocumentPosition(breakToken.node) & Node.DOCUMENT_POSITION_FOLLOWING)) return note('token_before_row', {});
       breakToken.node = src;
       breakToken.offset = 0;
-      return;
+      return note('moved', { ref: tr.dataset.ref });
     }
+    // Last rows of the page, for the record even when none is in the band.
+    const rows = [...rendered.querySelectorAll('tbody > tr')].filter((tr) => tr.getBoundingClientRect().height);
+    note('no_row_in_band', { token: tokenRef, page_h: bounds.height, last_rows: rows.slice(-3).map((tr) => { const r = tr.getBoundingClientRect(); return [tr.dataset.ref, Math.round((r.top - bounds.top) * 100) / 100, Math.round((r.bottom - bounds.top) * 100) / 100]; }) });
   }
 }
 Paged.registerHandlers(RowFitGuard);
