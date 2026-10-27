@@ -21,3 +21,34 @@ class RepeatTableHead extends Paged.Handler {
   }
 }
 Paged.registerHandlers(RepeatTableHead);
+
+// RowFitGuard: paged.js detects overflow by elements and text lines that START below the page
+// bottom, so a table row (break-inside:avoid) whose last line ENDS within a fraction of a pixel of
+// the bottom counts as fitting while it is measured; once the rows after it are extracted, its
+// collapsed bottom border becomes the table edge, it grows by that fraction and Chrome's
+// fragmentation moves the whole row into an overflow column (x86 render of the Solana Scope table,
+// 2026-10-27: row measured 907 to 952 on a 952 px page, rendered in the overflow column; the
+// Mac and arm64 engines round the other way). Any row ending inside the last BAND px of the page
+// starts the next page instead: the break token moves back to it, never forward.
+const BAND = 2;
+class RowFitGuard extends Paged.Handler {
+  onBreakToken(breakToken, overflow, rendered, layout) {
+    if (!overflow || !breakToken || !breakToken.node || !rendered || !rendered.querySelectorAll) return;
+    const bounds = layout && layout.bounds;
+    const source = this.chunker && this.chunker.source;
+    if (!bounds || !source) return;
+    for (const tr of rendered.querySelectorAll('tbody > tr')) {
+      const r = tr.getBoundingClientRect();
+      if (!r.height || r.top >= bounds.bottom || r.bottom <= bounds.bottom - BAND) continue;
+      if (r.top <= bounds.top) return;  // the row starts the page: nothing earlier to break at
+      const src = tr.dataset.ref && source.querySelector(`[data-ref="${tr.dataset.ref}"]`);
+      if (!src) return;
+      // Only move the token back: when it already sits at or before this row, keep it.
+      if (src !== breakToken.node && !(src.compareDocumentPosition(breakToken.node) & Node.DOCUMENT_POSITION_FOLLOWING)) return;
+      breakToken.node = src;
+      breakToken.offset = 0;
+      return;
+    }
+  }
+}
+Paged.registerHandlers(RowFitGuard);

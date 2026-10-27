@@ -36,6 +36,15 @@ jobs:
         run: |
           docker image inspect soken/soken-render:ci --format '{{.Id}} {{.Size}}'
           docker run --rm soken/soken-render:ci chrome --version || true
+      - name: Kit inside the image is the kit of this checkout
+        run: |
+          K=src/soken_review/report/kit
+          for f in build.py render.mjs report.css report.automated.css paged_handlers.js; do
+            want=$(sha256sum "$K/$f" | cut -c1-16)
+            have=$(docker run --rm soken/soken-render:ci sha256sum "/opt/app/$K/$f" | cut -c1-16)
+            echo "$f checkout=$want image=$have"
+            [ "$want" = "$have" ] || exit 1
+          done
       - name: Kit tests with the CI Chrome
         env:
           CHROME_BIN: /usr/bin/google-chrome
