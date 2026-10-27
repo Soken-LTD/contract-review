@@ -40,6 +40,7 @@ import psycopg_pool
 from ..adapters.base import BuildResult, Candidate, Compiler
 from ..adapters.evm import analyze as _analyze_mod
 from ..adapters.evm import build as _build_mod
+from ..adapters.evm import build_scope as _build_scope
 from ..adapters.evm import fetch as _fetch_mod
 from ..adapters.evm import files as _files_mod
 from ..adapters.evm import solc_select as _solc_select
@@ -1298,6 +1299,22 @@ class Supervisor:
                 candidates_raw[0]["compiler_retry"] = {"from": attempts[0]["version"], "reason": "parse_error"}
                 candidates_path.write_text(json.dumps(candidates_raw, indent=2), encoding="utf-8")
 
+        # Build scope retry (Lambo.win 2026-10-27): a repo build that still fails is tried with the
+        # compilation closure of the deployable entry contracts, then without the files the
+        # compiler fails on when nothing reviewed imports them. Every attempt is recorded; a file
+        # left out is out of scope in the pin and the report (reason build_excluded).
+        if build_result.status == "failed" and not is_tron and candidate.provider == "repo" \
+                and _scope_retry_applies(build_result):
+            narrowed = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: _scope_retries(candidate, builder, out_dir, build_result))
+            attempts.extend(narrowed.attempts)
+            if narrowed.result is not None:
+                build_result, candidate = narrowed.result, narrowed.candidate
+                await self._apply_build_scope(job_id, out_dir, candidates_raw, candidates_path,
+                                              candidate, narrowed.excluded, attempts[0]["version"])
+                build_result = dataclasses.replace(
+                    build_result, nsloc=_build_mod._count_nsloc(_reviewed_files(self._pin_root, job_id)))
+
         result = {
             "status": build_result.status,
             "nsloc": build_result.nsloc,
@@ -1383,6 +1400,34 @@ class Supervisor:
             prov = {**prov, "compiler_kind": result["compiler_kind"], "compiler_used": result.get("compiler_used")}
         await self._mark_step(step_id, "done", provenance=prov)
         await self._after_build(step, result)
+
+    async def _apply_build_scope(self, job_id: str, out_dir: Path, candidates_raw: list[dict[str, Any]],
+                                 candidates_path: Path, candidate: Candidate, excluded: list[str],
+                                 first_version: str | None) -> None:
+        """Record a narrowed build that compiled: candidates.json follows its compiler and lists the
+        excluded files (scope_excluded, reason build_excluded); the pin marks them out of scope
+        (readable with review_read_code, never mapped, counted, located or the report subject)
+        and the job's source_pin follows the new manifest. Runs before build_result.json is
+        written, so a restart never sees a half-applied scope."""
+        comp = candidate.compiler
+        if comp is not None:
+            candidates_raw[0]["compiler"] = {"version": comp.version, "version_pinned_by": comp.version_pinned_by}
+            if (comp.version or "").split("+", 1)[0] != (first_version or ""):
+                candidates_raw[0]["compiler_retry"] = {"from": first_version, "reason": "build_scope"}
+        candidates_raw[0]["build_scope"] = {"files": len(candidate.files), "excluded": len(excluded)}
+        if excluded:
+            rows = list(candidates_raw[0].get("scope_excluded") or [])
+            known = {r.get("path") for r in rows if isinstance(r, dict)}
+            rows.extend({"path": p, "reason": _build_scope.BUILD_EXCLUDED} for p in excluded if p not in known)
+            candidates_raw[0]["scope_excluded"] = rows
+            pin = PinnedSource.load(self._pin_root, job_id)
+            pin = pin.with_out_of_scope(set(excluded))
+            pin.persist(self._pin_root, job_id)
+            async with self._pool.connection() as conn:
+                await JobRepo(conn).update_job_fields(job_id, source_pin=pin.source_pin)
+        candidates_path.write_text(json.dumps(candidates_raw, indent=2), encoding="utf-8")
+        logger.info("job %s: build scope narrowed to %d file(s), %d excluded", job_id[-8:],
+                    len(candidate.files), len(excluded))
 
     # ------------------------------------------------------------------
     # Provenance: 05 13.1 comparison and the 04 section 3 tier, computed here (05 3.1)
@@ -1912,6 +1957,91 @@ def _build_attempt_row(candidate: Candidate, result: BuildResult) -> dict[str, A
         "status": "ok" if result.status == "ok" else "failed",
         "reason": None if result.status == "ok" else build_error_summary(result.stderr_head or result.reason),
     }
+
+
+# Build failures a narrower build may fix: compiler errors (parse, type, version) and imports
+# that do not resolve; never a missing compiler binary, a sandbox fault or a sanitiser refusal.
+_SCOPE_RETRY_REASONS = ("failed", "missing_import:", "missing_dependency_path:")
+_SCOPE_EXCLUDE_ROUNDS = 3
+
+
+@dataclasses.dataclass
+class _Narrowed:
+    attempts: list[dict[str, Any]]
+    result: BuildResult | None = None        # the attempt that compiled, None when none did
+    candidate: Candidate | None = None
+    excluded: list[str] = dataclasses.field(default_factory=list)
+
+
+def _scope_retry_applies(result: BuildResult) -> bool:
+    reason = result.reason or ""
+    return reason == "failed" or reason.startswith(_SCOPE_RETRY_REASONS[1:])
+
+
+def _reviewed_files(pin_root: Path, job_id: str) -> dict[str, str]:
+    pin = PinnedSource.load(pin_root, job_id)
+    return {p: "\n".join(pin.read_all(p)) for p, e in pin.entries.items() if e.in_scope}
+
+
+def _subset_compiler(candidate: Candidate, files: dict[str, str]) -> Compiler | None:
+    """Compiler for a narrowed build: a project or explorer pin is kept; a pragma choice is made
+    again over the narrowed files and what they import (the left-out files' pragmas no longer
+    count)."""
+    comp = candidate.compiler
+    if comp is None or comp.version_pinned_by not in ("pragma", "pragma_partial", "pragma_guess"):
+        return comp
+    tree = getattr(candidate, "_full_tree", None)
+    remaps = list((candidate.settings or {}).get("remappings") or [])
+    exprs = _solc_select.pragma_exprs(_solc_select.closure_sources(files, tree, remaps))
+    picked = _solc_select.choose_pragma_version(exprs, _solc_select.load_builds()) if exprs else None
+    if picked is None:
+        return comp
+    return Compiler(version=picked[0], version_pinned_by=picked[1])
+
+
+def _scope_retries(candidate: Candidate, builder: Any, out_dir: Path, first: BuildResult) -> _Narrowed:
+    """Closure build, then up to three exclusion rounds (build_scope). Synchronous (executor)."""
+    tree = getattr(candidate, "_full_tree", None)
+    remaps = list((candidate.settings or {}).get("remappings") or [])
+    out = _Narrowed(attempts=[])
+
+    def attempt(files: dict[str, str], kind: str, work: str, dropped: list[str]) -> tuple[Candidate, BuildResult]:
+        cand = dataclasses.replace(candidate, files=files, compiler=_subset_compiler(candidate, files),
+                                   std_json_input=None, build_paths=sorted(files))
+        work_dir = out_dir / work
+        work_dir.mkdir(exist_ok=True)
+        res = builder(cand, work_dir=work_dir)
+        row = _build_attempt_row(cand, res)
+        row["scope"] = kind
+        row["files"] = len(files)
+        if dropped:
+            row["excluded"] = dropped[:50]
+        out.attempts.append(row)
+        return cand, res
+
+    current, result = candidate, first
+    closure = _build_scope.closure_files(candidate.files, tree, remaps)
+    if closure and set(closure) != set(candidate.files):
+        current, result = attempt(closure, "closure", "work_closure", [])
+        if result.status == "ok":
+            out.result, out.candidate = result, current
+            return out
+    excluded: list[str] = []
+    for n in range(1, _SCOPE_EXCLUDE_ROUNDS + 1):
+        version = current.compiler.version if current.compiler else None
+        failing = _build_scope.failing_files(result.build_notes, current.files, version)
+        plan = _build_scope.plan_exclusion(current.files, failing, tree, remaps)
+        if plan is None:
+            break
+        kept, dropped = plan
+        excluded.extend(dropped)
+        current, result = attempt(kept, "exclude", f"work_exclude_{n}", dropped)
+        if result.status == "ok":
+            out.result, out.candidate, out.excluded = result, current, excluded
+            return out
+        if not _scope_retry_applies(result):
+            break
+    return out
 
 
 def _parse_error_retry_version(candidate: Candidate) -> str | None:

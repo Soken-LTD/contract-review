@@ -141,6 +141,18 @@ class PinnedSource:
         obj._source_pin = raw_manifest["source_pin"]
         return obj
 
+    def with_out_of_scope(self, paths: set[str]) -> PinnedSource:
+        """A copy with `paths` out of scope (same blobs, a new manifest and source_pin). The build
+        step uses it for a file the build left out (adapters/evm/build_scope): it stays readable
+        but is no longer reviewed."""
+        from dataclasses import replace
+
+        obj = type(self).__new__(type(self))
+        obj._entries = {p: (replace(e, in_scope=False) if p in paths else e) for p, e in self._entries.items()}
+        obj._blobs = dict(self._blobs)
+        obj._source_pin = _compute_source_pin(obj._entries)
+        return obj
+
     # ── factory ─────────────────────────────────────────────────────────────
 
     @classmethod

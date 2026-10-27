@@ -122,7 +122,7 @@ def _user_inputs(job: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-_CANDIDATE_RUNTIME_ONLY_FIELDS = frozenset({"src_tree_dir", "_full_tree"})
+_CANDIDATE_RUNTIME_ONLY_FIELDS = frozenset({"src_tree_dir", "_full_tree", "build_paths"})
 
 
 def _cand_to_json(c: Candidate) -> dict[str, Any]:

@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from ..adapters.evm.build_scope import subject_unit
 from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
 from ..engine.severity import explain_rules
@@ -88,15 +89,14 @@ def _limits() -> dict[str, Any]:
 # ------------------------------------------------------------------ subject chain (08 2.6)
 def subject_candidates(job: dict[str, Any], cands: list[dict[str, Any]], pin: PinnedSource) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
-    args = job.get("source_args") or {}
-    repo = args.get("repo") if isinstance(args, dict) else None
+    repo = _repo_url(job)
     commit = job.get("resolved_commit")
     address = job.get("address")
     proven_by_repo = bool(job.get("ownership_proven") and repo and not address)
     if address and cands and cands[0].get("entry_contract") and not proven_by_repo:
         out.append({"source": "verified_name", "value": cands[0]["entry_contract"].rsplit(":", 1)[-1]})
     if repo:
-        name = repo.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+        name = _project_name(repo.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git"))
         owner_repo = "/".join(repo.rstrip("/").split("/")[-2:]).removesuffix(".git")
         if not proven_by_repo:
             out.append({"source": "repo_name", "value": name})
@@ -106,10 +106,23 @@ def subject_candidates(job: dict[str, Any], cands: list[dict[str, Any]], pin: Pi
         out.append({"source": "address_short", "value": f"{address[:8]}...{address[-6:]}"})
     scoped = [e for e in pin.entries.values() if e.in_scope] or list(pin.entries.values())
     if not address and scoped:
-        largest = max(scoped, key=lambda e: e.lines)
-        out.append({"source": "largest_unit", "value": Path(largest.path).stem})
+        # the main deployable contract of the scope, never a vendored library or interface file
+        # (Lambo.win 2026-10-27: the largest file, 1inchV6.sol, became the subject); the largest
+        # file only when no file defines a deployable contract
+        unit = subject_unit({e.path: pin.read_text(e.path) for e in scoped if e.role == "source"})
+        largest = unit or max(scoped, key=lambda e: e.lines).path
+        out.append({"source": "largest_unit", "value": Path(largest).stem})
     out.append({"source": "kit_fallback", "value": kit_texts()["subject_fallback"]})
     return out
+
+
+_CONTEST_DATE_PREFIX = re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?=[A-Za-z])")
+
+
+def _project_name(repo_name: str) -> str:
+    """Project name of a repository name: an audit-contest date prefix (`2024-12-lambowin`, the
+    code-423n4 and Sherlock naming) is dropped; anything else is the name as written."""
+    return _CONTEST_DATE_PREFIX.sub("", repo_name) or repo_name
 
 
 def pick_subject(candidates: list[dict[str, str]]) -> dict[str, str]:
@@ -1047,6 +1060,9 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     scope_files, oos = [], []
     dep_groups: dict[str, int] = {}
     entry_file = (cands[0].get("entry_contract") or "").rsplit(":", 1)[0] if cands else ""
+    # files the scope rules or the build left out are listed once, with their reason (below)
+    excluded_paths = {str(r.get("path")) for r in ((cands[0].get("scope_excluded") if cands else None) or [])
+                      if isinstance(r, dict)}
     for path, e in sorted(pin.entries.items()):
         if e.in_scope and e.role == "source":
             row: dict[str, Any] = {"name": _unit_of(path), "file": path, "nsloc": count_nsloc("\n".join(pin.read_all(path)))}
@@ -1055,7 +1071,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
             scope_files.append(row)
         elif not e.in_scope and e.role == "dependency":
             dep_groups[_dependency_package(path)] = dep_groups.get(_dependency_package(path), 0) + 1
-        elif not e.in_scope:
+        elif not e.in_scope and path not in excluded_paths:
             oos.append({"path": path, "reason": "Excluded by the scope rules", "by": "server"})
     for pkg, n in sorted(dep_groups.items()):
         oos.append({"path": f"{pkg} ({n} file{'s' if n != 1 else ''})",
