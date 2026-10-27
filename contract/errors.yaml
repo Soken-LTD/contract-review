@@ -109,6 +109,8 @@ codes:
     tools: "status"
     what: "The repository source was fetched, but these imported dependencies could not be resolved: {packages}."
     fix: "Commit the lockfile (package-lock.json, yarn.lock or pnpm-lock.yaml) that pins these packages from the public npm registry, or vendor them in the repository (lib/ with git submodules or committed files), then start a new review on that commit."
+    what_files: "The pasted files import {packages}, and no pasted file or remapping resolves those imports."
+    fix_files: "Paste the imported files too, at the path the import names (for example @openzeppelin/contracts/token/ERC20/ERC20.sol or node_modules/@openzeppelin/contracts/token/ERC20/ERC20.sol), or paste them under another folder and add a remapping in review_start.source.remappings (for example @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/); then start a new review with all files in one call."
   - code: E_INSUFFICIENT_SOURCE
     owner: "03"
     channel: "status"
@@ -261,8 +263,8 @@ codes:
     channel: "rejection"
     class: "input"
     tools: "submit, dismiss, answer, withdraw"
-    what: "Quote has no code tokens."
-    fix: "Quote code lines."
+    what: "Quote at {path}:{range} has no code tokens: only braces, imports, comments or blank lines."
+    fix: "Quote a line that holds code, for example {suggest}. A pragma solidity line counts as code; an import-only or brace-only quote does not."
   - code: E_INJECTION_ECHO
     owner: "04"
     channel: "rejection"
@@ -289,8 +291,8 @@ codes:
     channel: "rejection"
     class: "input"
     tools: "write tools with text"
-    what: "Rule {rule}, matched {match}, with 40 characters of context."
-    fix: "Remove or reword the matched words ({match}) and send the call again; review_get_guide topic challenge_rules lists the text rules."
+    what: "Rule {rule} ({rule_text}) matched {match}."
+    fix: "Remove or reword the matched words ({match}): {reword} Send the call again; review_get_guide topic challenge_rules lists every text rule with its word list."
   - code: E_CODESPAN_NOT_IN_SOURCE
     owner: "04"
     channel: "rejection"
@@ -549,7 +551,7 @@ codes:
     class: "input"
     tools: "submit"
     what: "The matrix computes {computed} by {rule}; {why}. This round trip does not count against the retry budget."
-    fix: "Resend with claimed_severity {computed} to confirm it, or keep a value within one step of {computed} and add severity_reason (20 to 200 characters), or reclassify the matrix: reversibility admin_reversible or self_recovering, magnitude residual or bounded with a bound_ref quote, impact griefing_with_victim_loss when the actor harms only itself, precondition victim_unusual_action."
+    fix: "Resend with claimed_severity {computed} to confirm it, or keep a value within one step of {computed} and add the argument severity_reason (a string of 20 to 200 characters, for example severity_reason: \"The balance is zero and the constructor already ran, so no value is at risk\"; it is a top-level argument of review_submit_finding next to claimed_severity), or reclassify the matrix: reversibility admin_reversible or self_recovering, magnitude residual or bounded with a bound_ref quote, impact griefing_with_victim_loss when the actor harms only itself, precondition victim_unusual_action."
   - code: E_CHALLENGE_SCOPE
     owner: "04"
     channel: "rejection"

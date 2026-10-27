@@ -78,7 +78,8 @@ async def _run_build_with(tmp_path: Path, job_id: str, onchain: bytes, *, untrus
 @pytest.mark.asyncio
 async def test_masked_match_sets_tier_a(tmp_path: Path) -> None:
     prov, repo, out_dir = await _run_build_with(tmp_path, "job_PROV0001", onchain_runtime(hash_byte=0xBB))
-    assert prov == {"tier": "A", "dep_match": "metadata_only", "dep_reason": None}
+    # label_reason and block were added 2026-10-27 so review_status can show the match before the report
+    assert prov == {"tier": "A", "dep_match": "metadata_only", "dep_reason": None, "label_reason": None, "block": 123}
     repo.update_job_fields.assert_any_await("job_PROV0001", tier="A")
     dep = json.loads((out_dir / "deployment.json").read_text())
     assert dep["dep"]["comparison"]["immutable_ranges"] == [[10, 42]]

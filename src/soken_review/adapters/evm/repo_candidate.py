@@ -310,6 +310,7 @@ def repo_candidate_from_manifest(
     explorer_candidate: Candidate | None = None,
     source_url: str | None = None,
     extra_remappings: list[str] | None = None,
+    builds: list[dict[str, Any]] | None = None,
 ) -> tuple[Candidate | None, str | None]:
     """Build a `repo` Candidate from a materialized git tree.
 
@@ -329,6 +330,9 @@ def repo_candidate_from_manifest(
     extra_remappings:
         Remappings for npm packages the supervisor vendored into node_modules/ (hardhat-style
         imports such as `@openzeppelin/contracts/...`), appended after the repo's own.
+    builds:
+        The solc release list (compiler cache `list.json` builds) for the newest-satisfying
+        pragma choice; None loads it from the cache, an empty list forces the pragma floor.
 
     Returns
     -------
@@ -408,15 +412,18 @@ def repo_candidate_from_manifest(
             return None, f"insufficient_source:refused_sol_paths:{len(refused_sol_paths)}"
         return None, "no_solidity_sources"
 
-    # 8. Compiler: priority = (a) foundry.toml solc pin, (b) explorer candidate R1,
-    #    (c) pragma guess.  `version_pinned_by` is set by each source; we never override it.
-    #    "pragma_guess" → no tier A (plan 05 §6.1: only config or explorer give tier A).
+    # 8. Compiler (solc_select): (a) a project config pin: foundry.toml solc, hardhat.config
+    #    solidity version(s), truffle compilers.solc.version; (b) the explorer candidate (R1);
+    #    (c) the newest release satisfying every pragma of the scope and of the files it imports;
+    #    (d) the pragma floor only when the release list is unavailable (pragma_guess: no tier A).
+    #    1inch farming 2026-10-27: `^0.8.0` built at the floor 0.8.0 and failed to parse custom
+    #    errors while hardhat.config.js pinned 0.8.12. `version_pinned_by` names the source.
     compiler = (_compiler_from_foundry_toml(foundry_cfg)
+                or _compiler_from_project_config(safe_files, sol_files, settings)
                 or _compiler_from_explorer(explorer_candidate)
-                or _compiler_from_pragma(sol_files))
+                or _compiler_from_pragmas(sol_files, safe_files, settings, builds))
     if compiler is None:
         return None, "compiler_version_unknown"
-    # Do NOT change version_pinned_by — each helper already sets the correct source label.
 
     # 9. Build the Candidate. make_candidate re-validates all paths.
     cand = make_candidate(
@@ -730,3 +737,35 @@ def _compiler_from_pragma(files: dict[str, str]) -> Compiler | None:
 
     best = max(versions, key=_key)
     return Compiler(version=best, version_pinned_by="pragma_guess")
+
+
+def _compiler_from_project_config(all_files: dict[str, str], scope: dict[str, str],
+                                  settings: dict[str, Any]) -> Compiler | None:
+    """hardhat.config.* / truffle-config.js exact pin (solc_select.config_versions): the newest
+    pinned version that satisfies every pragma of the scope and its imports, else the newest."""
+    from soken_review.adapters.evm import solc_select as _sel
+
+    config = _sel.config_versions(all_files)
+    if not config:
+        return None
+    exprs = _sel.pragma_exprs(_sel.closure_sources(scope, all_files, list(settings.get("remappings") or [])))
+    picked = _sel.pick_config_version(config, exprs)
+    if picked is None:
+        return None
+    logger.info("repo_candidate: compiler %s pinned by %s", picked[0], picked[1])
+    return Compiler(version=picked[0], version_pinned_by="config")
+
+
+def _compiler_from_pragmas(scope: dict[str, str], all_files: dict[str, str], settings: dict[str, Any],
+                           builds: list[dict[str, Any]] | None) -> Compiler | None:
+    """Newest release satisfying every pragma of the scope and the files it imports (pinned_by
+    `pragma`); the floor of the pragmas only without a release list (`pragma_guess`)."""
+    from soken_review.adapters.evm import solc_select as _sel
+
+    exprs = _sel.pragma_exprs(_sel.closure_sources(scope, all_files, list(settings.get("remappings") or [])))
+    if not exprs:
+        return _compiler_from_pragma(scope)
+    picked = _sel.choose_pragma_version(exprs, _sel.load_builds() if builds is None else builds)
+    if picked is None:
+        return _compiler_from_pragma(scope)
+    return Compiler(version=picked[0], version_pinned_by=picked[1])

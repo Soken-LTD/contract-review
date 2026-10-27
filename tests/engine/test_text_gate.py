@@ -907,3 +907,42 @@ class TestT24NeverBindsToAKind:
         claims = [{"says": "anyone can trigger the reset", "kind": "all_paths_unguarded",
                    "target": "caller_check", "scope": "entry_function", "entry": "Vault.reset()"}]
         assert "T24" not in rules("Anyone can trigger the reset.", "model", field="title", absence_claims=claims)
+
+
+# ── held-out friction 2026-10-27: T13 qualified words, T24 Solidity terms, rule help ─────────
+
+class TestT13QualifiedWords:
+    def test_minor_and_major_as_version_words_pass(self):
+        assert "T13" not in rules("The token is in the same minor series as the major version line.", "model")
+
+    def test_minor_and_major_before_a_severity_noun_still_fire(self):
+        assert "T13" in rules("This is a minor issue.", "model")
+        assert "T13" in rules("A major flaw in the accounting.", "model")
+
+    def test_rule_help_prints_text_and_rewording(self):
+        from soken_review.engine.text_gate import rule_help, rule_word_lists
+
+        text, reword = rule_help("T15")
+        assert "audited" in text and "review" in reword
+        lines = rule_word_lists()
+        assert any(l.startswith("T13:") and "minor" in l for l in lines)
+        assert any(l.startswith("T15:") and "auditor" in l for l in lines)
+
+    def test_text_gate_error_envelope_carries_rule_text_and_rewording(self):
+        from soken_review.errors import ReviewError
+
+        env = ReviewError("E_TEXT_GATE", rule="T15", match="audited").envelope()
+        assert "audited" in env["what"] and "T15" in env["what"]
+        assert "review" in env["fix"] and "—" not in env["fix"]
+
+
+class TestT24UncheckedTerm:
+    def test_unchecked_cast_in_a_title_is_a_language_term(self):
+        vs = check_text("Unchecked narrowing casts truncate the accumulator", "model", CheckContext(field="title"))
+        assert not [v for v in vs if v.code == "E_ABSENCE_UNRESOLVED"]
+        vs = check_text("The unchecked block skips the overflow test.", "model", CheckContext(field="description"))
+        assert not [v for v in vs if v.code == "E_ABSENCE_UNRESOLVED"]
+
+    def test_unchecked_return_value_stays_an_absence_claim(self):
+        vs = check_text("The unchecked return value of the call is ignored.", "model", CheckContext(field="description"))
+        assert [v for v in vs if v.code == "E_ABSENCE_UNRESOLVED" and v.match.lower() == "unchecked"]

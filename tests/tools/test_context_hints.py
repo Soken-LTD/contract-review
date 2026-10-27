@@ -192,3 +192,19 @@ async def test_guide_context_topic_has_step_1():
     assert "review_add_context" in text, "Step 1 must mention review_add_context"
     # Must explain WHY (spec-vs-code)
     assert any(w in text.lower() for w in ("spec", "whitepaper", "documentation", "document"))
+
+
+def test_documents_hint_says_exactly_how_to_silence_it():
+    """Held-out run 2026-10-27: the hint repeated on every status until the arm guessed the
+    section shape; it now names the tool, the section and the notes shape."""
+    from soken_review.tools.start_status import NO_DOCUMENTS_HINT, _build_status_response
+
+    assert "review_set_section" in NO_DOCUMENTS_HINT and '"context_notes"' in NO_DOCUMENTS_HINT
+    assert '{"notes": [{"p":' in NO_DOCUMENTS_HINT and "review_add_context" in NO_DOCUMENTS_HINT
+    assert not re.match(r"^(Call|Invoke|Use|Run|Execute)\s+review_", NO_DOCUMENTS_HINT, re.IGNORECASE)
+    assert "—" not in NO_DOCUMENTS_HINT
+    job = {"job_id": "job_HINT000000000000000000009", "state": "ready", "requester_role": "third_party_public_code",
+           "ownership_proven": False, "context_items": [], "error_code": None, "error_detail": None,
+           "map_status": "partial", "analyzer_degraded": False, "tier": None, "upload_id": None}
+    assert _build_status_response(job, "concise")["next_action"] == NO_DOCUMENTS_HINT
+    assert "next_action" not in _build_status_response(job, "concise", context_notes_recorded=True)

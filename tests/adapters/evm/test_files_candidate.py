@@ -57,7 +57,8 @@ def test_foundry_toml_settings_and_pinned_solc():
         builds=BUILDS,
     )
     assert cand.settings == {"optimizer": {"enabled": True, "runs": 1000}, "viaIR": True}
-    assert cand.compiler.version == "0.8.19+commit.00000002" and cand.compiler.version_pinned_by == "user"
+    # a pasted foundry.toml pin is a project config pin ("config"); "user" is compiler_version
+    assert cand.compiler.version == "0.8.19+commit.00000002" and cand.compiler.version_pinned_by == "config"
 
 
 def test_foundry_solc_outside_pragma_ignored():

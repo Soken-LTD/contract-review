@@ -19,10 +19,15 @@ from .store import PinnedSource
 
 ELISION = "..."
 
-# A quote is trivial when it has fewer than 12 non-whitespace chars,
-# or when it consists only of braces, brackets, semicolons, pragmas or imports.
+# A quote is trivial when it has fewer than 12 non-whitespace chars, or when it consists only of
+# braces, brackets, semicolons, comments or imports. A `pragma solidity <range>;` line is code: it
+# is the location of a floating-pragma finding and carries a version expression (held-out run
+# 2026-10-27: three arms had to widen a pragma quote to the contract line). Other pragmas
+# (abicoder, experimental) stay trivial on their own.
 _ONLY_BRACES_RE = re.compile(r"^[\s{}\[\]();,]*$")
-_IMPORT_PRAGMA_RE = re.compile(r"^\s*(import\b|pragma\b)", re.IGNORECASE)
+_IMPORT_PRAGMA_RE = re.compile(r"^\s*(import\b|pragma\b(?!\s+solidity\b))", re.IGNORECASE)
+_COMMENT_RE = re.compile(r"^\s*(//|/\*|\*|\*/)")
+_SUGGEST_LOOKAHEAD = 40
 
 
 class QuoteMatchError(Exception):
@@ -60,8 +65,24 @@ def _is_trivial(lines: list[str]) -> bool:
     non_ws = re.sub(r"\s", "", joined)
     if len(non_ws) < 12:
         return True
-    # Every line is braces-only OR an import/pragma
-    return all(_ONLY_BRACES_RE.match(l) or _IMPORT_PRAGMA_RE.match(l) for l in lines)
+    # Every line is braces-only OR an import/non-solidity pragma OR a comment
+    return all(_ONLY_BRACES_RE.match(l) or _IMPORT_PRAGMA_RE.match(l) or _COMMENT_RE.match(l) for l in lines)
+
+
+def _suggest_line(source: Any, path: str, start: int, end: int, total: int) -> str:
+    """`line N: <text>` of the nearest line after (then before) the quoted range that a quote
+    could anchor to; empty when the file has none. Printed in the E_QUOTE_TRIVIAL fix."""
+    order = list(range(end + 1, min(total, end + _SUGGEST_LOOKAHEAD) + 1)) + \
+        list(range(start - 1, max(0, start - _SUGGEST_LOOKAHEAD), -1))
+    for n in order:
+        try:
+            raw = source.read_lines(path, n, n)
+        except Exception:  # noqa: BLE001  # a store that cannot read one line gives no suggestion
+            return ""
+        text = normalize_line(raw[0]) if raw else ""
+        if text and not _is_trivial([text]):
+            return f"line {n}: {text[:80]}"
+    return ""
 
 
 # ── segment finder ──────────────────────────────────────────────────────────
@@ -140,7 +161,8 @@ def quote_match(
 
     Q_flat = [l for seg in segments for l in seg]
     if _is_trivial(Q_flat):
-        raise QuoteMatchError("E_QUOTE_TRIVIAL")
+        raise QuoteMatchError("E_QUOTE_TRIVIAL", path=path, range=f"{start}-{end}",
+                              suggest=_suggest_line(source, path, start, end, entry.lines) or "a line inside the function")
 
     if not segments:
         # Quote is all empty/elision; P must also be empty

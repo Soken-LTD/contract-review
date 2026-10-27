@@ -475,14 +475,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
         # No documents were supplied: surface a plain-language hint so the model
         # knows to ask the user.  Describe what is possible; never command the model
         # to call a tool (directory prompt-injection rule).
-        result["next_action"] = (
-            "No project documents were supplied. "
-            "Project documents (website, whitepaper, documentation, terms of use, privacy policy) "
-            "are needed to detect spec-vs-code mismatches. "
-            "Ask the user for the relevant URLs and add them via review_add_context. "
-            "When the user has none, a context_notes section saying so (review_set_section) "
-            "records that and this hint stops."
-        )
+        result["next_action"] = NO_DOCUMENTS_HINT
 
     # Optional settle-wait (2026-10-26): the first review_status calls of every blind run only waited for
     # a pipeline of 10 to 70 s; with wait_seconds the status at the end of the wait comes back here.
@@ -495,6 +488,21 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             pass  # the job exists and the id is returned; review_status reports the state on the next call
 
     return result
+
+
+# The documents hint (review_start and review_status next_action). It names the exact call that
+# records "the user has none" because the 2026-10-27 arms saw it on every status until they
+# guessed the section shape. It stops once a context item exists or a context_notes section is
+# recorded (any content; the sections table is checked on every status).
+NO_DOCUMENTS_HINT = (
+    "No project documents were supplied (none in review_start.context, none via review_add_context). "
+    "Project documents (website, whitepaper, documentation, terms of use, privacy policy) are needed "
+    "to detect spec-vs-code mismatches, so ask the user for their URLs and pass them to "
+    "review_add_context as {kind, url}. This hint repeats on every status until documents are added "
+    "or the absence is recorded; to record it, review_set_section with section \"context_notes\" and "
+    "context_notes {\"notes\": [{\"p\": \"No project documents were supplied by the requester.\"}]} "
+    "(the stored text is report prose: no second person, no questions)."
+)
 
 
 def _context_status(job: dict[str, Any]) -> dict[str, int] | None:
@@ -825,9 +833,12 @@ def _error_texts(code: str, detail: Any) -> dict[str, str]:
                 value = ", ".join(str(v) for v in value[:10] if isinstance(v, (str, int)))
             if isinstance(value, (str, int)) and str(value):
                 fields[str(key)] = str(value)[:300]
+    # A start mode with its own text (pasted files have no repository or lockfile): errors.yaml
+    # `what_files` / `fix_files` when the stored detail says `mode: files`.
+    mode = fields.get("mode")
     out: dict[str, str] = {}
     for key in ("what", "fix"):
-        template = row.get(key) or ""
+        template = (row.get(f"{key}_{mode}") if mode else None) or row.get(key) or ""
         names = {n for _, n, _, _ in string.Formatter().parse(template) if n}
         if template and names <= fields.keys():
             out[key] = template.format(**{n: fields[n] for n in names})
@@ -929,18 +940,18 @@ def _build_status_response(
         # (directory prompt-injection rule).
         open_states = {"awaiting_upload", "queued", "fetching", "building", "analyzing", "ready", "finalized"}
         if state in open_states:
-            out["next_action"] = (
-                "No project documents were supplied. "
-                "Project documents (website, whitepaper, documentation, terms of use, privacy policy) "
-                "are needed to detect spec-vs-code mismatches. "
-                "Ask the user for the relevant URLs and add them via review_add_context. "
-                "When the user has none, a context_notes section saying so (review_set_section) "
-                "records that and this hint stops."
-            )
+            out["next_action"] = NO_DOCUMENTS_HINT
 
     # Detailed response: related contracts and server-discovered project URLs
     if response_format == "detailed":
         out.update(_detailed_extras(job))
+        # Bytecode match (tier and reason) the build step recorded: visible here, not only in the
+        # report (held-out run 2026-10-27: provenance.label stayed null until review_report).
+        dep = _deployment_status(_steps)
+        if dep is not None:
+            out.setdefault("build", {})["deployment"] = dep
+            if out.get("provenance") and dep.get("label") and not out["provenance"].get("label"):
+                out["provenance"]["label"] = dep["label"]
 
     # Drafts: every draft (03 §4.2); server drafts carry flag and location while needs_text
     out["drafts"] = [_draft_row(d) for d in (drafts or [])][:60]
@@ -1017,6 +1028,51 @@ def _dependencies_status(steps: list[dict[str, Any]], *, detailed: bool) -> dict
 
 
 _BUILD_STATUS = {"ok": "ok", "failed": "failed", "refused": "refused", "not_needed": "not_needed"}
+
+
+def _build_attempts(pin_root: Any, job_id: str) -> list[dict[str, Any]]:
+    """`build.attempts` from the supervisor's build_result.json: every compile attempt in order
+    (version, where it came from, ok or failed, failure class), shape-checked."""
+    try:
+        path = Path(pin_root).parent / "work" / job_id / "build_result.json"
+        if not (path.is_file() and not path.is_symlink() and path.stat().st_size < 4 * 1024 * 1024):
+            return []
+        rows = json.loads(path.read_text(encoding="utf-8")).get("attempts") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    out = []
+    for r in rows[:4]:
+        if not isinstance(r, dict) or r.get("status") not in ("ok", "failed"):
+            continue
+        out.append({"version": (str(r["version"])[:40] if r.get("version") else None),
+                    "version_source": (str(r["version_source"])[:200] if r.get("version_source") else None),
+                    "status": r["status"], "reason": (str(r["reason"])[:200] if r.get("reason") else None)})
+    return out
+
+
+def _deployment_status(steps: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """`build.deployment` from the build step provenance (supervisor _resolve_provenance): the
+    bytecode comparison and tier as soon as the build step recorded them, before the report."""
+    built = [s for s in steps if s.get("step") == "build" and s.get("status") == "done"]
+    prov = (built[-1].get("provenance") or {}) if built else {}
+    if not isinstance(prov, dict) or "dep_match" not in prov:
+        return None
+    match, reason, tier = prov.get("dep_match"), prov.get("dep_reason"), prov.get("tier")
+    if match not in ("exact", "metadata_only", "mismatch", "not_checkable", None):
+        return None
+    block = prov.get("block")
+    if match in ("exact", "metadata_only"):
+        label = "Source matched to deployed code" + (f" at block {block}" if block is not None else "")
+        if tier != "A" and prov.get("label_reason"):
+            label += f"; tier {tier}: {prov['label_reason']}"
+    elif match == "mismatch":
+        label = "Source does not match deployed code"
+    elif match == "not_checkable":
+        label = "Match to the deployed code could not be checked" + (f" ({reason})" if reason else "")
+    else:
+        label = None
+    return {"match": match, "reason": reason if isinstance(reason, str) else None,
+            "tier": tier if tier in ("A", "B", "C", "D") else None, "label": label}
 
 
 def _build_status_value(pin_root: Any, job_id: str, map_status: str | None) -> str | None:
@@ -1120,8 +1176,14 @@ def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
             build_info["map_status"] = job.get("map_status") or map_status_doc.get("map_status")
         if compiler_version:
             build_info["version"] = compiler_version
+            src = next((f.get("source") for f in facts if f["key"] == "compiler.version"), None)
+            if src:
+                build_info["version_source"] = str(src)[:200]
         if build_detail:
             build_info["error"] = map_view.build_error_summary(build_detail)
+        attempts = _build_attempts(pin_root, job_id)
+        if attempts:
+            build_info["attempts"] = attempts
         extras["build"] = build_info
     except Exception as exc:  # noqa: BLE001
         logger.debug("_detailed_extras: %s", type(exc).__name__)

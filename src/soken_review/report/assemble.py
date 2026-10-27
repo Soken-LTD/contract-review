@@ -103,8 +103,9 @@ def subject_candidates(job: dict[str, Any], cands: list[dict[str, Any]], pin: Pi
             out.append({"source": "repo_at_commit", "value": f"{owner_repo}@{commit[:7]}"})
     if address:
         out.append({"source": "address_short", "value": f"{address[:8]}...{address[-6:]}"})
-    if not address and pin.entries:
-        largest = max(pin.entries.values(), key=lambda e: e.lines)
+    scoped = [e for e in pin.entries.values() if e.in_scope] or list(pin.entries.values())
+    if not address and scoped:
+        largest = max(scoped, key=lambda e: e.lines)
         out.append({"source": "largest_unit", "value": Path(largest.path).stem})
     out.append({"source": "kit_fallback", "value": kit_texts()["subject_fallback"]})
     return out
@@ -788,6 +789,16 @@ def roles_section(rows_in: list[dict[str, Any]], notes_rows: list[dict[str, Any]
     return rows, _model_blocks(notes)[:8]
 
 
+def _dependency_package(path: str) -> str:
+    """`node_modules/@scope/pkg` or `lib/name` of a pinned dependency path (report scope table)."""
+    parts = path.split("/")
+    if parts[0] == "node_modules" and len(parts) > 2:
+        return "/".join(parts[:3] if parts[1].startswith("@") else parts[:2])
+    if parts[0] == "lib" and len(parts) > 1:
+        return "/".join(parts[:2])
+    return parts[0] if len(parts) > 1 else path
+
+
 def context_notes(section: Any) -> list[dict[str, Any]]:
     """The stored `context_notes` section (a list of blocks, or `{notes: [...]}`) as model blocks, max 8."""
     blocks = section.get("notes", []) if isinstance(section, dict) else (section or [])
@@ -1016,6 +1027,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
 
     # Scope (08 2.2): in-scope source files, nSLOC counted from the pinned lines
     scope_files, oos = [], []
+    dep_groups: dict[str, int] = {}
     entry_file = (cands[0].get("entry_contract") or "").rsplit(":", 1)[0] if cands else ""
     for path, e in sorted(pin.entries.items()):
         if e.in_scope and e.role == "source":
@@ -1023,8 +1035,13 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
             if job.get("address") and path == entry_file:
                 row["addr"] = job["address"]
             scope_files.append(row)
+        elif not e.in_scope and e.role == "dependency":
+            dep_groups[_dependency_package(path)] = dep_groups.get(_dependency_package(path), 0) + 1
         elif not e.in_scope:
             oos.append({"path": path, "reason": "Excluded by the scope rules", "by": "server"})
+    for pkg, n in sorted(dep_groups.items()):
+        oos.append({"path": f"{pkg} ({n} file{'s' if n != 1 else ''})",
+                    "reason": "Dependency imported by the reviewed sources; readable, not reviewed", "by": "server"})
     if not scope_files:
         raise AssemblyError("schema", "no in-scope file")
     sections = {r["section"]: r["content"] for r in await _rows(conn, """
