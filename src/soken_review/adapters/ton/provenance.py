@@ -170,6 +170,62 @@ def resolve_provenance(
                build_hash=build_hash, why=_why(tried))
 
 
+# TON reason codes -> dep.match vocabulary (contract/rubric/dep_match.yaml). Tier D reasons never
+# reach the report (the job ends insufficient_source), so they have no row here.
+_DEP_MATCH = {
+    MATCH_REBUILD: "exact",
+    SOURCE_TOOLCHAIN_GAP: "third_party_verified_only",
+}
+
+
+def deployment_doc(prov: dict[str, Any], candidate: dict[str, Any] | None, address: str | None) -> dict[str, Any]:
+    """The `deployment.json` document the report assembly reads for a TON unit.
+
+    `prov` is `Out.to_json()` plus the `mc_seqno` and raw `address` the pipeline adds
+    (provenance.json); `candidate` is the candidates.json summary row of `prov["src"]`. The shape is
+    the one the EVM supervisor writes (engine/provenance.py `resolve_provenance`: tier, dep,
+    candidate, block) plus what the cover needs on a chain without EVM bytecode: `code_hash` (the
+    account code cell hash this supervisor computed), `unit` ("seqno": the pin is a masterchain
+    seqno, not a block) and `chain`.
+
+    Until 2026-10-26 the TON pipeline wrote only provenance.json, and the first tier A TON job
+    (Forton after PR #68) failed at render with "tier A provenance requires deployment.json data".
+    The assembly also builds this document from provenance.json for jobs built before the fix.
+    """
+    reason = str(prov.get("reason") or "")
+    dep: dict[str, Any] | None = None
+    match = _DEP_MATCH.get(reason)
+    if match is not None and prov.get("address"):
+        dep = {
+            "match": match,
+            "reason": reason.lower(),
+            "contract": prov.get("matched_target"),
+            "comparison": {"outcome": match, "local_hash": prov.get("build_hash"),
+                           "onchain_hash": prov.get("dep_hash")},
+            "notes": [prov["why"]] if prov.get("why") else [],
+        }
+    comp = (candidate or {}).get("compiler")
+    comp = comp if isinstance(comp, dict) else {}
+    return {
+        "tier": prov.get("tier"),
+        "label_reason": None,
+        "checks": list(prov.get("checks") or []),
+        "dep": dep,
+        "candidate": {
+            "provider": candidate.get("provider"),
+            "sha256": candidate.get("sha256"),
+            "compiler": comp.get("version"),
+            "version_pinned_by": comp.get("version_pinned_by"),
+            "untrusted_inputs": bool(candidate.get("untrusted_inputs", False)),
+        } if candidate else None,
+        "block": prov.get("mc_seqno"),
+        "unit": "seqno",
+        "chain": "ton",
+        "address": address or prov.get("address"),
+        "code_hash": prov.get("dep_hash") or prov.get("build_hash"),
+    }
+
+
 def _why(tried: list[Attempt]) -> str:
     if any(a.status == "ok" and not a.untrusted_inputs for a in tried):
         return "rebuild_differs"

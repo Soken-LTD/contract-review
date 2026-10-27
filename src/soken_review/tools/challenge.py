@@ -286,6 +286,40 @@ def _basis_items(matrix: dict[str, Any]) -> list[dict[str, Any]]:
     return items
 
 
+def basis_fallback(raw_item: dict[str, Any], value: str, *, scope_not_covered: bool,
+                   quote_verified: bool) -> dict[str, Any] | None:
+    """The matrix_effective fallback a basis answer triggers, or None (04 8.2, 8.3).
+
+    A basis item carries `expect`; an answer that differs from it moves `fallback_field` to
+    `fallback_value`. Before 2026-10-26 a `present` answer on a NOT_COVERED scope was also forced
+    into the fallback, whatever evidence it carried: on the Solana blind run (ata_owner_reassign,
+    location in an Accounts struct that no function span covers) MB0 and MB1 were answered present
+    with quotes matched to the pinned source, the forced fallbacks turned permanent_freeze unbounded
+    into incorrect_accounting bounded, and a computed Critical printed as Low with no cap named.
+
+    The scope cap for an unresolved scope is K10 (High), applied by compute_severity; a present
+    answer whose quote matched the pinned source is evidence and keeps the reviewer's matrix. Only
+    a present answer without a verified quote still falls back (it is also rejected as incomplete).
+    """
+    if raw_item.get("kind") != "basis" or value not in ("present", "absent"):
+        return None
+    expect = raw_item.get("expect", "")
+    unverified_present = scope_not_covered and value == "present" and not quote_verified
+    if not unverified_present and value == expect:
+        return None
+    return {
+        "item": raw_item.get("id", ""),
+        "field": raw_item["fallback_field"],
+        "value": raw_item["fallback_value"],
+        "why": "present_without_verified_quote" if unverified_present else "answer_differs_from_expected",
+    }
+
+
+def fallback_labels(fallbacks: list[dict[str, Any]]) -> list[str]:
+    """`MB1:magnitude=bounded` style names: the cause of every matrix change a verdict reports."""
+    return [f"{fb['item']}:{fb['field']}={fb['value']}" for fb in fallbacks]
+
+
 # ── Auto check registry (04 §8.5) ─────────────────────────────────────────────
 
 # Maps auto_id -> (applies_when function, disproof_result)
@@ -1125,6 +1159,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                     "evidence_level": draft.get("evidence_level", "reasoning_only"),
                     "kill_item": draft.get("kill_item"),
                     "leads_reopened": [],
+                    "caps_applied": list(draft.get("caps_applied") or []),
                 }
             # Different answers for same revision = reject (revision already answered)
             return {"accepted": False, "errors": [
@@ -1270,6 +1305,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         if scope_not_covered_item:
             scope_not_covered = True
 
+        quote_verified = False               # one quote of this answer matched the pinned source
         if value == "present":
             item_kind = output_item.get("kind", "")
 
@@ -1324,6 +1360,8 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 except QuoteMatchError as e:
                     violations.append(ReviewError(e.code, **e.detail).envelope())
                     continue
+                if not is_context_path(q_file):
+                    quote_verified = True
                 # Scope containment: quote must lie within the item's scope ranges (04 §8.3).
                 # Evidence must be bound to the claim's scope; an unrelated line anywhere in
                 # the codebase does not prove the item condition holds in the stated scope.
@@ -1380,18 +1418,15 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 rule="must be present, absent, or not_applicable", value80=str(value)[:80],
             ).envelope())
 
-        # For basis items: track fallbacks based on answer vs expect.
-        # When scope is not_covered, a 'present' claim cannot be verified against scope —
-        # apply the fallback conservatively so K10 is not circumvented (04 §8.3).
+        # For basis items: track fallbacks based on answer vs expect. On a NOT_COVERED scope the
+        # severity cap is K10 (compute_severity); a present answer with a verified quote keeps the
+        # matrix, a present answer without one falls back (basis_fallback).
         raw_item = raw_items_by_id.get(item_id)
-        if raw_item and raw_item.get("kind") == "basis":
-            expect = raw_item.get("expect", "")
-            force_fallback = scope_not_covered_item and value == "present"
-            if force_fallback or (value != expect and value in ("present", "absent")):
-                basis_fallbacks.append({
-                    "field": raw_item["fallback_field"],
-                    "value": raw_item["fallback_value"],
-                })
+        if raw_item:
+            fb = basis_fallback(raw_item, value, scope_not_covered=scope_not_covered_item,
+                                quote_verified=quote_verified)
+            if fb is not None:
+                basis_fallbacks.append(fb)
 
     if violations:
         return {
@@ -1497,6 +1532,8 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
 
             new_status = "withdrawn"
             new_evidence = draft_locked.get("evidence_level", "reasoning_only")
+            severity_rule = f"kill={kill_present}"
+            caps_named = [f"kill:{kill_present}"]
 
         else:
             # Apply basis fallbacks to matrix_effective
@@ -1536,15 +1573,27 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             verdict = "downgraded" if severity_after != severity_before else "passed"
             new_status = "accepted"
             new_evidence = sev_result.evidence_level
+            # Every cause of the verdict, by name: the K caps compute_severity applied and the
+            # basis fallbacks that changed the matrix. A downgrade without a named cause is a
+            # server defect and never a verdict (Solana blind run 2026-10-26: Critical -> Low,
+            # caps_applied [], severity_rule empty).
+            caps_named = list(sev_result.caps_applied) + fallback_labels(basis_fallbacks)
+            severity_rule = sev_result.severity_rule
+            if basis_fallbacks:
+                severity_rule += f" basis=[{','.join(fallback_labels(basis_fallbacks))}]"
+            if verdict == "downgraded" and not caps_named:
+                raise ReviewError("E_INTERNAL",
+                                  incident=f"downgrade_without_cause:{draft_key[:24]}:{severity_before}->{severity_after}")
 
             # Update finding_drafts with new severity/evidence
             await conn.execute(
                 """update finding_drafts set status = 'accepted', severity = %s, evidence_level = %s,
-                       matrix_effective = %s
+                       matrix_effective = %s, caps_applied = %s
                    where job_id = %s and draft_key = %s""",
                 (severity_after,
                  new_evidence,
                  psycopg.types.json.Jsonb(matrix_effective),
+                 caps_named,
                  job_id, draft_key),
             )
 
@@ -1573,6 +1622,8 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         "evidence_level": new_evidence,
         "kill_item": kill_present,
         "leads_reopened": leads_reopened,
+        "severity_rule": severity_rule,
+        "caps_applied": caps_named,
     }
 
 

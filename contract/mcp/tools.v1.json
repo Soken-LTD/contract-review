@@ -2051,6 +2051,19 @@
       "items": {
        "$ref": "#/$defs/lead_id"
       }
+     },
+     "severity_rule": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "How the severity after the verdict was reached: base IxL, the K caps applied, the basis fallbacks (MBn:field=value) or the kill item"
+     },
+     "caps_applied": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "maxLength": 80
+      },
+      "description": "Every named cause of the verdict: K caps, basis fallbacks and the kill item; empty only for passed"
      }
     }
    }

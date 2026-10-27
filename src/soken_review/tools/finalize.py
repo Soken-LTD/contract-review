@@ -123,10 +123,12 @@ async def compute_finalize_checks(
     # F1 has no closing tool (tier is set externally); include a reason so the model knows what
     # to do.  Bug 4 fix (2026-10-25): the previous "Close each item with the named tool" message
     # was misleading because F1 has no tool field and no tool can directly change the tier.
-    checks.append({"id": "F1", "open": int(f1_open), **(
-        {"reason": "tier is D or not yet set; supply a verified source match or a repo URL so the build can assign a higher tier"}
-        if f1_open else {}
-    )})
+    if tier is None:
+        f1_reason = ("the build step has not recorded a tier for this job yet; call review_status and "
+                     "finalize again once the job is ready, or start again with a repo URL and the deployment")
+    else:
+        f1_reason = "tier is D; supply a verified source match or a repo URL so the build can assign a higher tier"
+    checks.append({"id": "F1", "open": int(f1_open), **({"reason": f1_reason} if f1_open else {})})
 
     # F2: open High/Medium analyzer leads + broken duplicate chains
     async with conn.cursor() as cur:

@@ -539,6 +539,21 @@ def fetch_source(job: Any, cs: dict[str, Any]) -> list[Any]:
                     commit = str(cmt)
                 break
 
+    # security.txt embedded in the deployed program (06 3.2.1): source_code names the repository,
+    # source_revision the commit. Read by the supervisor at chain_state (onchain.security_txt_fields);
+    # the URL goes through the same allowlist as a user repo URL.
+    if repo_url is None and cs:
+        sec = cs.get("security_txt")
+        sec = sec.value if hasattr(sec, "value") else sec
+        if isinstance(sec, dict):
+            source_code = str(sec.get("source_code") or "").strip().removesuffix("/")
+            if source_code and _safe_repo_url(source_code):
+                repo_url = source_code
+                rev = str(sec.get("source_revision") or "").strip()
+                if _COMMIT_RE.match(rev):
+                    commit = rev
+                logger.info("fetch_source: repo from security.txt for %s", program_id)
+
     if repo_url is None:
         logger.info("fetch_source: no repo_url available for %s", program_id)
         return []

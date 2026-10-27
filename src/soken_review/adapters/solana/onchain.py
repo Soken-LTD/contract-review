@@ -53,6 +53,45 @@ class DeployedProgram:
     hash: str | None = None                 # F5 over the executable bytes; None when not hashable
     upgrade_authority: str | None = None    # None: immutable or not loader v3
     why: str | None = None                  # loader_unsupported / no_code / read_failed
+    security_txt: dict[str, str] | None = None   # fields of the security.txt embedded in the ELF, if any
+
+    def as_chain_state(self) -> dict[str, Any]:
+        """The chain_state.json fields of a program read (06 2.2): what the fetch (owner link,
+        security.txt source) and the build provenance (deployed hash) read later without the RPC."""
+        out: dict[str, Any] = {"kind": "program", "address": self.program_id, "slot": self.slot,
+                               "loader": self.loader, "deployed_program_hash": self.hash,
+                               "upgrade_authority": self.upgrade_authority}
+        if self.why:
+            out["why"] = self.why
+        if self.security_txt:
+            out["security_txt"] = self.security_txt
+        return out
+
+
+_SECURITY_TXT_BEGIN = b"=======BEGIN SECURITY.TXT V1======="
+_SECURITY_TXT_END = b"=======END SECURITY.TXT V1======="
+_SECURITY_TXT_MAX = 8192
+
+
+def security_txt_fields(elf: bytes) -> dict[str, str] | None:
+    """Fields of a solana-security-txt block embedded in the program ELF (name, project_url,
+    source_code, source_revision, ...). The block is NUL-separated key/value pairs between the two
+    markers. None when the program carries none; values are untrusted input (capped, no control
+    characters) and only ever feed allowlisted readers (fetch._safe_repo_url, the commit regex)."""
+    start = elf.find(_SECURITY_TXT_BEGIN)
+    if start < 0:
+        return None
+    body_start = start + len(_SECURITY_TXT_BEGIN)
+    end = elf.find(_SECURITY_TXT_END, body_start, body_start + _SECURITY_TXT_MAX)
+    if end < 0:
+        return None
+    parts = [p.decode("utf-8", errors="replace") for p in elf[body_start:end].split(b"\x00") if p]
+    fields: dict[str, str] = {}
+    for key, value in zip(parts[0::2], parts[1::2]):
+        k = key.strip().lower()
+        if k and k.isidentifier() and len(k) <= 40:
+            fields[k] = "".join(ch for ch in value.strip() if ch.isprintable())[:400]
+    return fields or None
 
 
 @dataclass
@@ -101,7 +140,7 @@ def deployed_program(program_id: str) -> DeployedProgram:
     loader = acc.get("owner")
     raw = base64.b64decode(acc["data"][0])
     if loader in (BPF_LOADER_V1, BPF_LOADER_V2):
-        return DeployedProgram(program_id, loader, slot, hash=program_hash(raw))
+        return DeployedProgram(program_id, loader, slot, hash=program_hash(raw), security_txt=security_txt_fields(raw))
     if loader != BPF_LOADER_UPGRADEABLE:
         return DeployedProgram(program_id, loader, slot, why="loader_unsupported")
     if len(raw) < 36 or struct.unpack_from("<I", raw, 0)[0] != 2:
@@ -115,7 +154,8 @@ def deployed_program(program_id: str) -> DeployedProgram:
     if parsed is None:
         return DeployedProgram(program_id, loader, pd_slot, why="no_code")
     authority, elf = parsed
-    return DeployedProgram(program_id, loader, pd_slot, hash=program_hash(elf), upgrade_authority=authority)
+    return DeployedProgram(program_id, loader, pd_slot, hash=program_hash(elf), upgrade_authority=authority,
+                           security_txt=security_txt_fields(elf))
 
 
 def parse_verify_pda(address: str, data: bytes) -> VerifyPda | None:
