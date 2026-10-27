@@ -9,14 +9,15 @@ pin. `load_artifacts` reads them back for the tools and the pure validators.
 from __future__ import annotations
 
 import json
-from functools import cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from ..engine.artifacts import Artifacts
+from ..engine.artifacts import Artifacts, word_set
 from ..engine.injection import scan_file
+from ..engine.numbers import NumberContext
 from ..pinning.store import PinnedSource
 from .build import build_map, load_map, load_tokens, write_map
 from .facts import load_facts, static_facts, write_facts
@@ -171,6 +172,23 @@ def write_flags(root: Path, job_id: str, flags: list[dict[str, Any]]) -> None:
 def load_flags(root: Path, job_id: str) -> list[dict[str, Any]] | None:
     p = root / job_id / "flags.json"
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+
+
+@lru_cache(maxsize=32)
+def _job_word_set(root: str, job_id: str, stamp: float) -> frozenset[str]:
+    return word_set(load_artifacts(Path(root), job_id))
+
+
+def job_number_context(root: Path, job_id: str) -> NumberContext:
+    """NumberContext carrying the job's word set (04 5.1: identifier and type-name tokens of the
+    pinned files plus map names) for the L7 rule, so an identifier with a digit (`ERC20Burnable`,
+    `claim_v2`, a struct field `u5`) is not an unsourced number (matrix run 2026-10-26). Empty
+    context when the map is not written yet; never raises."""
+    try:
+        stamp = (root / job_id / "map" / "tokens.json").stat().st_mtime
+        return NumberContext(word_set=_job_word_set(str(root), job_id, stamp))
+    except (OSError, ValueError, KeyError):
+        return NumberContext()
 
 
 def load_artifacts(root: Path, job_id: str, token_paths: list[str] | None = None) -> Artifacts:

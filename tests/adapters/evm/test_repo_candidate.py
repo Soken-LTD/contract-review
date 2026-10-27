@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from soken_review.adapters.evm.repo_candidate import (
     _has_ffi_or_hooks,
     _recheck_path,
@@ -654,3 +656,69 @@ class TestForgeCompilerTrustIssues:
         assert cand.untrusted_inputs is False, (
             "Exact semver '0.8.24' must NOT set untrusted (allow-list)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test and mock contracts leave the reviewed scope (Apyee blind run 2026-10-26)
+# ---------------------------------------------------------------------------
+
+from soken_review.adapters.evm.repo_candidate import scope_exclusion_reason, split_test_and_mock_files
+
+_FORGE_TEST = 'import "forge-std/Test.sol";\ncontract CounterTest is Test {}\n'
+_CONSOLE = 'import "hardhat/console.sol";\ncontract Debug {}\n'
+
+
+class TestTestAndMockScope:
+    @pytest.mark.parametrize(("path", "content", "reason"), [
+        ("contracts/mocks/MockUSDC.sol", "", "test_or_mock_dir"),
+        ("contracts/test/Helper.sol", "", "test_or_mock_dir"),
+        ("contracts/Testing/Fixture.sol", "", "test_or_mock_dir"),
+        ("src/MockERC20.sol", "", "mock_name"),
+        ("src/ERC20Mock.sol", "", "mock_name"),
+        ("src/mock_token.sol", "", "mock_name"),
+        ("src/Vault.t.sol", "", "mock_name"),
+        ("src/Deploy.s.sol", "", "mock_name"),
+        ("src/TestVault.sol", "", "mock_name"),
+        ("src/VaultTest.sol", "", "mock_name"),
+        ("src/Vault.sol", _FORGE_TEST, "test_harness"),
+        ("src/Debug.sol", _CONSOLE, "test_harness"),
+        ("src/Harness.sol", "contract H is Vault, DSTest {}", "test_harness"),
+    ])
+    def test_test_and_mock_files_are_recognised(self, path, content, reason):
+        assert scope_exclusion_reason(path, content) == reason
+
+    @pytest.mark.parametrize("path", ["src/Attestation.sol", "src/Contest.sol", "src/Mockingbird.sol",
+                                      "src/Vault.sol", "contracts/Protest.sol", "src/Testament.sol"])
+    def test_real_contracts_are_not(self, path):
+        assert scope_exclusion_reason(path, _SIMPLE_CONTRACT) is None
+
+    def test_split_keeps_real_files_and_records_the_reason(self):
+        scope = {"contracts/Vault.sol": _SIMPLE_CONTRACT, "contracts/mocks/MockUSDC.sol": "contract M {}",
+                 "contracts/VaultHarness.sol": _FORGE_TEST}
+        kept, excluded = split_test_and_mock_files(scope)
+        assert list(kept) == ["contracts/Vault.sol"]
+        assert excluded == [{"path": "contracts/mocks/MockUSDC.sol", "reason": "test_or_mock_dir"},
+                            {"path": "contracts/VaultHarness.sol", "reason": "test_harness"}]
+
+    def test_only_sources_stay_in_scope(self):
+        scope = {"contracts/mocks/A.sol": "contract A {}", "contracts/mocks/B.sol": "contract B {}"}
+        assert split_test_and_mock_files(scope) == (scope, [])
+
+    def test_candidate_from_manifest_excludes_mocks_and_records_them(self, tmp_path):
+        src, manifest = _make_src(tmp_path, {
+            "contracts/Vault.sol": _SIMPLE_CONTRACT,
+            "contracts/mocks/MockUSDC.sol": _SIMPLE_CONTRACT.replace("Counter", "MockUSDC"),
+            "contracts/MockOracle.sol": _SIMPLE_CONTRACT.replace("Counter", "MockOracle"),
+        })
+        cand, reason = _rcfm(src, manifest)
+        assert reason is None and cand is not None
+        assert set(cand.files) == {"contracts/Vault.sol"}
+        assert cand.scope_excluded == [
+            {"path": "contracts/MockOracle.sol", "reason": "mock_name"},
+            {"path": "contracts/mocks/MockUSDC.sol", "reason": "test_or_mock_dir"},
+        ]
+
+    def test_candidate_of_only_mocks_is_still_reviewed(self, tmp_path):
+        src, manifest = _make_src(tmp_path, {"contracts/mocks/MockUSDC.sol": _SIMPLE_CONTRACT})
+        cand, reason = _rcfm(src, manifest)
+        assert reason is None and set(cand.files) == {"contracts/mocks/MockUSDC.sol"} and cand.scope_excluded == []

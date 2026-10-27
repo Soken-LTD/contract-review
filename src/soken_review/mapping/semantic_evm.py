@@ -8,6 +8,14 @@ Rules (04 2.1): a guard reached through a modifier, an inherited base or an inte
 listed on the function with the line where it executes; unit ids are `<path>:<UnitName>`; names
 are validated against the Solidity identifier grammar, so free text from code never enters the map.
 Used by EVM, HyperEVM and TRON (same compiler output format).
+
+Dependencies (2026-10-27, Apyee blind run): every source the compiler saw is indexed for name
+resolution, so a modifier, base contract or internal callee that lives in `node_modules/` or
+`lib/` (OpenZeppelin `onlyOwner`, `whenNotPaused`, `nonReentrant`) is followed like one in the
+reviewed tree. Units, functions and spans are still emitted for the pinned files only. A guard
+that executes in an unpinned file is listed on the nearest reviewed line that applies it (the
+modifier invocation on the function header, or the internal call site) with `via` naming the
+dependency line, because fp_guarded quotes pinned lines only.
 """
 
 from __future__ import annotations
@@ -69,13 +77,14 @@ class _Fn:
     path: str
     span_id: str
     kind: str                     # function | modifier
-    guards: list[tuple[str, str]] = field(default_factory=list)  # (class, path:line)
+    pinned: bool = True           # declared in a pinned (reviewed) file
+    guards: list[tuple[str, str, str]] = field(default_factory=list)  # (class, path:line, via path:line or "")
     calls: list[dict] = field(default_factory=list)
     writes: list[dict] = field(default_factory=list)
     reads: list[dict] = field(default_factory=list)
     features: set[str] = field(default_factory=set)
     internal_callees: list[int] = field(default_factory=list)
-    hints: list[tuple[str, str]] = field(default_factory=list)  # name_only guard hints (class, line)
+    hints: list[tuple[str, str, str]] = field(default_factory=list)  # name_only guard hints (class, line, via)
     role_names: set[str] = field(default_factory=set)
 
 
@@ -101,28 +110,41 @@ def _line_starts(text: str) -> list[int]:
 
 
 class _Ctx:
-    def __init__(self, output: dict, texts: dict[str, str], compiled_texts: dict[str, str] | None = None) -> None:
+    def __init__(self, output: dict, texts: dict[str, str], compiled_texts: dict[str, str] | None = None,
+                 index_all: bool = False) -> None:
         """`texts` are the pinned (LF) files; `compiled_texts` the bytes the compiler actually saw
         for the same paths (the fetched Standard JSON keeps CRLF so the rebuild can be exact).
         solc `src` offsets are byte offsets into the compiled text, so lines must be resolved
         against it: resolving them against the LF text shifts every function after a CR down by
         the number of CRs before it (MasterChef 2026-10-22). Paths without a compiled text fall
-        back to the pinned text."""
+        back to the pinned text.
+
+        `index_all`: index every source with an AST, pinned or not, so references into
+        dependencies (`node_modules/`, `lib/`) resolve. `asts` then holds the pinned files only
+        (the emitted layer), `dep_asts` the rest; a dependency without any text keeps its nodes
+        but resolves no lines (`loc` is None there)."""
         self.paths: dict[int, str] = {}
         self.line_starts: dict[str, list[int]] = {}
         self.nodes: dict[int, dict] = {}
         self.parent_contract: dict[int, dict] = {}
         self.node_path: dict[int, str] = {}
         self.asts: dict[str, dict] = {}
+        self.dep_asts: dict[str, dict] = {}
+        self.pinned: frozenset[str] = frozenset(texts)
         compiled_texts = compiled_texts or {}
         for path, src in (output.get("sources") or {}).items():
             ast = src.get("ast")
-            if not isinstance(ast, dict) or path not in texts:
+            if not isinstance(ast, dict):
+                continue
+            is_pinned = path in texts
+            if not is_pinned and not index_all:
                 continue
             self.paths[int(src.get("id", ast.get("src", "0:0:0").split(":")[2]))] = path
-            self.asts[path] = ast
-            self.line_starts[path] = _line_starts(compiled_texts.get(path) or texts[path])
-        for path, ast in self.asts.items():
+            (self.asts if is_pinned else self.dep_asts)[path] = ast
+            text = compiled_texts.get(path) if not is_pinned else (compiled_texts.get(path) or texts[path])
+            if text is not None:
+                self.line_starts[path] = _line_starts(text)
+        for path, ast in (*self.asts.items(), *self.dep_asts.items()):
             self._index(ast, path, None)
 
     def _index(self, node: Any, path: str, contract: dict | None) -> None:
@@ -149,7 +171,7 @@ class _Ctx:
         except ValueError:
             return None
         path = self.paths.get(idx)
-        if path is None or start < 0:
+        if path is None or start < 0 or path not in self.line_starts:
             return None
         return path, bisect.bisect_right(self.line_starts[path], start)
 
@@ -159,12 +181,25 @@ class _Ctx:
         except ValueError:
             return None
         path = self.paths.get(idx)
-        if path is None:
+        if path is None or path not in self.line_starts:
             return None
         return bisect.bisect_right(self.line_starts[path], max(start, start + length - 1))
 
     def ref(self, line: tuple[str, int] | None) -> str | None:
         return f"{line[0]}:{line[1]}" if line else None
+
+    def path_of(self, node: dict) -> str | None:
+        """Source path of a node, with or without a resolvable line."""
+        try:
+            idx = int(str(node.get("src", "")).split(":")[2])
+        except (ValueError, IndexError):
+            return None
+        return self.paths.get(idx)
+
+    def in_pin(self, ref: str) -> bool:
+        """True when a `path:line` reference (or a bare path) names a pinned file."""
+        path, sep, line = ref.rpartition(":")
+        return (path if sep and line.isdigit() else ref) in self.pinned
 
 
 def _walk(node: Any):
@@ -266,7 +301,7 @@ def _is_revert_body(node: Any) -> bool:
 class SemanticBuilder:
     def __init__(self, output: dict, texts: dict[str, str], categories: list[str],
                  compiled_texts: dict[str, str] | None = None) -> None:
-        self.ctx = _Ctx(output, texts, compiled_texts)
+        self.ctx = _Ctx(output, texts, compiled_texts, index_all=True)
         self.categories = categories
         self.fns: dict[int, _Fn] = {}
         self.span_ids: dict[tuple[str, int], str] = {}
@@ -281,22 +316,25 @@ class SemanticBuilder:
         state_vars: list[dict] = []
         for c in sorted(contracts, key=lambda c: (ctx.node_path[c["id"]], c.get("src", ""))):
             path = ctx.node_path[c["id"]]
+            pinned = path in ctx.pinned
             loc = ctx.loc(c)
             end = ctx.end_line(c)
-            if loc is None or end is None:
+            if pinned and (loc is None or end is None):
                 continue
-            if c.get("contractKind") in ("contract", "library") and not c.get("abstract"):
+            if pinned and c.get("contractKind") in ("contract", "library") and not c.get("abstract"):
                 units.append({"id": f"{path}:{c['name']}", "name": c["name"], "kind": "contract",
                               "file": path, "start": loc[1], "end": end})
             for sub in c.get("nodes") or []:
                 if sub.get("nodeType") == "VariableDeclaration" and sub.get("stateVariable") \
                         and _IDENT_RE.match(sub.get("name") or ""):
-                    sloc = ctx.loc(sub)
+                    sloc = ctx.loc(sub) if pinned else None
                     if sloc:
                         state_vars.append({"id": f"{path}:{c['name']}.{sub['name']}", "unit": f"{path}:{c['name']}",
                                            "name": sub["name"], "decl_ref": ctx.ref(sloc)})
                 elif sub.get("nodeType") in ("FunctionDefinition", "ModifierDefinition"):
-                    self._register(sub, c, path)
+                    # dependency functions are registered for callee resolution and feature
+                    # propagation only; they never become units, functions or spans
+                    self._register(sub, c, path, pinned=pinned)
         for fn in self.fns.values():
             self._analyze_body(fn)
         for fn in self.fns.values():
@@ -304,20 +342,23 @@ class SemanticBuilder:
         functions = []
         span_out: dict[tuple[str, int], tuple[str, str]] = {}
         for fid, fn in sorted(self.fns.items(), key=lambda kv: kv[1].span_id):
+            if not fn.pinned:
+                continue
             loc = ctx.loc(fn.node)
             if loc is None:
                 continue
             span_out[loc] = (fn.span_id, f"{fn.path}:{fn.contract['name']}")
             if fn.kind != "function":
                 continue
+            guard_keys = {(c, line) for c, line, _ in fn.guards}
             functions.append({
                 "span": fn.span_id,
                 "visibility": fn.node.get("visibility") or "public",
                 "is_entry": self._is_entry(fn),
                 "modifiers": [m for m in self._modifier_names(fn.node) if _IDENT_RE.match(m)],
-                "guards": [{"class": c, "line": line} for c, line in _dedup(fn.guards)]
-                + [{"class": "name_only", "hint": c, "line": line} for c, line in _dedup(fn.hints)
-                   if (c, line) not in set(fn.guards)],
+                "guards": [_guard_row(c, line, via) for c, line, via in _dedup(fn.guards)]
+                + [_guard_row("name_only", line, via, hint=c) for c, line, via in _dedup(fn.hints)
+                   if (c, line) not in guard_keys],
                 "calls": fn.calls,
                 "writes": fn.writes,
                 "reads": fn.reads,
@@ -335,14 +376,14 @@ class SemanticBuilder:
 
     # ── registration and per-body analysis ──────────────────────────────────
 
-    def _register(self, node: dict, contract: dict, path: str) -> None:
+    def _register(self, node: dict, contract: dict, path: str, pinned: bool = True) -> None:
         kind = "modifier" if node.get("nodeType") == "ModifierDefinition" else "function"
         name = self._fn_name(node, contract)
         if not _IDENT_RE.match(name):
             return
         params = [self._param_type(p) for p in (node.get("parameters") or {}).get("parameters") or []]
         span_id = f"{contract['name']}.{name}({','.join(params)})"
-        self.fns[node["id"]] = _Fn(node=node, contract=contract, path=path, span_id=span_id, kind=kind)
+        self.fns[node["id"]] = _Fn(node=node, contract=contract, path=path, span_id=span_id, kind=kind, pinned=pinned)
 
     @staticmethod
     def _fn_name(node: dict, contract: dict) -> str:
@@ -589,7 +630,7 @@ class SemanticBuilder:
         initializer_guard: the same read and write-before on one state key. Anything else that a
         name suggests is a `name_only` hint, never usable by fp_guarded or a `fixed` dismissal.
         """
-        if fn.kind != "function":
+        if fn.kind != "function" or not fn.pinned:
             return
         seen: set[int] = set()
         for m in fn.node.get("modifiers") or []:
@@ -601,32 +642,37 @@ class SemanticBuilder:
             before, after = self._split_placeholder(mod)
             senders = self._bind_senders(mod, m.get("arguments") or [], frozenset())
             found = self._guards_in(before, depth=1, seen=seen, senders=senders)
-            classes = {c for c, _ in found}
-            hint_line = self._first_stmt_line(mod)
+            classes = {c for c, _, _ in found}
+            hint_line = self._first_stmt_line(mod) or self.ctx.path_of(mod)
+            hints: list[tuple[str, str, str]] = []
             if _REENTRANCY_MOD_RE.search(mname):
                 line = self._read_check_write(before, after)
                 if line:
-                    found.append(("reentrancy_lock", line))
+                    found.append(("reentrancy_lock", line, ""))
                 elif hint_line:
-                    fn.hints.append(("reentrancy_lock", hint_line))
+                    hints.append(("reentrancy_lock", hint_line, ""))
             if _INIT_MOD_RE.search(mname):
                 line = self._read_check_write(before, None)
                 if line:
-                    found.append(("initializer_guard", line))
+                    found.append(("initializer_guard", line, ""))
                 elif hint_line:
-                    fn.hints.append(("initializer_guard", hint_line))
+                    hints.append(("initializer_guard", hint_line, ""))
             if _PAUSE_RE.search(mname) and "pause_check" not in classes and hint_line:
-                fn.hints.append(("pause_check", hint_line))
+                hints.append(("pause_check", hint_line, ""))
             if "caller_check" in classes:
                 role = self._role_from_modifier(m, mname)
                 if role:
                     fn.role_names.add(role)
             elif _CHECK_FN_RE.search(mname) and hint_line:
-                fn.hints.append(("caller_check", hint_line))
-            fn.guards.extend(found)
+                hints.append(("caller_check", hint_line, ""))
+            # a modifier declared in an unpinned dependency executes outside the reviewed tree:
+            # the guard is listed on the invocation line of the reviewed function header
+            site = self.ctx.ref(self.ctx.loc(m)) or self.ctx.ref(self.ctx.loc(fn.node))
+            fn.guards.extend(self._rehome(found, site))
+            fn.hints.extend(self._rehome(hints, site))
         fn.guards.extend(self._guards_in(fn.node.get("body"), depth=0, seen=seen, role_sink=fn.role_names,
                                          hints=fn.hints))
-        if any(c == "caller_check" for c, _ in fn.guards):
+        if any(c == "caller_check" for c, _, _ in fn.guards):
             fn.features.add("caller_guard")
         # transitive features through internal callees (depth 2) for candidate selection
         stack = [(cid, 1) for cid in fn.internal_callees]
@@ -641,6 +687,17 @@ class SemanticBuilder:
                 continue
             fn.features |= callee.features - {"has_params", "upgrade", "initializer"}
             stack.extend((x, d + 1) for x in callee.internal_callees)
+
+    def _rehome(self, found: list[tuple[str, str, str]], site: str | None) -> list[tuple[str, str, str]]:
+        """Guards whose line is outside the pinned files are listed at `site` (a pinned line that
+        applies them) with the executing dependency line kept as `via`; pinned lines stay."""
+        out: list[tuple[str, str, str]] = []
+        for c, line, via in found:
+            if self.ctx.in_pin(line) or site is None:
+                out.append((c, line, via))
+            else:
+                out.append((c, site, via or line))
+        return out
 
     @staticmethod
     def _split_placeholder(mod: dict) -> tuple[dict, dict]:
@@ -837,8 +894,8 @@ class SemanticBuilder:
 
     def _guards_in(self, body: Any, depth: int, seen: set[int], role_sink: set[str] | None = None,
                    senders: frozenset[int] = frozenset(),
-                   hints: list[tuple[str, str]] | None = None) -> list[tuple[str, str]]:
-        out: list[tuple[str, str]] = []
+                   hints: list[tuple[str, str, str]] | None = None) -> list[tuple[str, str, str]]:
+        out: list[tuple[str, str, str]] = []
         if not isinstance(body, dict):
             return out
         ctx = self.ctx
@@ -857,15 +914,17 @@ class SemanticBuilder:
                             y.get("condition") or {}):
                         line = self._yul_line(n, y)
                         if line:
-                            out.append(("caller_check", line))
+                            out.append(("caller_check", line, ""))
                 continue
             if cond is not None:
-                line = ctx.ref(ctx.loc(n))
+                # a condition in a dependency without text has no line: keep the path so the
+                # caller can list the guard at its own call site with `via` = that path
+                line = ctx.ref(ctx.loc(n)) or ctx.path_of(n)
                 if line:
                     if self._caller_ok(cond, pos, senders, depth):
-                        out.append(("caller_check", line))
+                        out.append(("caller_check", line, ""))
                     if self._pause_operand(cond):
-                        out.append(("pause_check", line))
+                        out.append(("pause_check", line, ""))
                 continue
             if t == "FunctionCall" and depth < _MAX_DEPTH:
                 ex = n.get("expression") or {}
@@ -882,15 +941,17 @@ class SemanticBuilder:
                 inner = self._guards_in(target.get("body"), depth + 1, seen,
                                         senders=self._bind_senders(target, args, senders))
                 seen.discard(target["id"])
-                verified = any(c == "caller_check" for c, _ in inner)
+                verified = any(c == "caller_check" for c, _, _ in inner)
                 if verified and role_sink is not None and _IDENT_RE.match(name):
                     role_sink.add(name)
                 if not verified and hints is not None and _CHECK_FN_RE.search(name) \
                         and any(_contains_sender(a, senders) for a in args):
                     line = ctx.ref(ctx.loc(n))
                     if line:
-                        hints.append(("caller_check", line))
-                out.extend(inner)
+                        hints.append(("caller_check", line, ""))
+                # a callee declared in an unpinned dependency: its guards are listed at this call
+                # site (the nearest reviewed line) with the executing line kept as `via`
+                out.extend(self._rehome(inner, ctx.ref(ctx.loc(n)) or ctx.path_of(n)))
         return out
 
     def _yul_line(self, asm: dict, yul: dict) -> str | None:
@@ -920,7 +981,7 @@ class SemanticBuilder:
     # ── derived tables ──────────────────────────────────────────────────────
 
     def _entries(self) -> list[_Fn]:
-        return [f for f in self.fns.values() if f.kind == "function" and self._is_entry(f)]
+        return [f for f in self.fns.values() if f.kind == "function" and f.pinned and self._is_entry(f)]
 
     def _categories(self) -> dict[str, list[str]]:
         upgradeable = {id(f.contract) for f in self.fns.values() if "upgrade" in f.features or "delegatecall" in f.features}
@@ -944,7 +1005,7 @@ class SemanticBuilder:
     def _roles(self) -> list[dict]:
         gated: dict[str, set[str]] = {}
         for f in self._entries():
-            if not any(c == "caller_check" for c, _ in f.guards):
+            if not any(c == "caller_check" for c, _, _ in f.guards):
                 continue
             names = f.role_names or {"inline_sender_check"}
             for r in names:
@@ -989,8 +1050,17 @@ class SemanticBuilder:
         return {"units": out}
 
 
-def _dedup(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    seen: set[tuple[str, str]] = set()
+def _guard_row(cls: str, line: str, via: str, hint: str | None = None) -> dict[str, str]:
+    row = {"class": cls, "line": line}
+    if hint is not None:
+        row["hint"] = hint
+    if via:
+        row["via"] = via
+    return row
+
+
+def _dedup(pairs: list) -> list:
+    seen: set = set()
     out = []
     for p in pairs:
         if p not in seen:

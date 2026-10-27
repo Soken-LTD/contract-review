@@ -128,6 +128,7 @@ def render_unit(doc: dict[str, Any], unit: dict[str, Any], facts: list[dict[str,
         for f in entries:
             sp = spans.get(f["span"])
             guards = ", ".join(f"{g['class']}{'(' + g['hint'] + ')' if g.get('hint') else ''} {g['line']}"
+                               + (f" via {g['via']}" if g.get("via") else "")
                                for g in f.get("guards") or []) or "none"
             calls = ", ".join(f"{c['kind']} {c['target']} {c['line']}" for c in f.get("calls") or []) or "none"
             writes = ", ".join(f"{w['var']} {w['line']}" for w in f.get("writes") or []) or "none"

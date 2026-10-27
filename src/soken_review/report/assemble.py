@@ -171,23 +171,39 @@ _DEPLOYED_NOUN = {"solana": "program", "sui": "package", "aptos": "package"}
 _CHAIN_FAMILY = {"solana": "solana", "ton": "ton", "sui": "move", "aptos": "move", "starknet": "cairo"}
 
 
+# Families with one mainnet: a deployed job started as `chain: tron` carries no chain id (the
+# address alone names the network), so the registry record is found through the family.
+_FAMILY_MAINNET_CHAIN_ID = {"tron": 728126428}
+_EVM_FAMILY_CHAINS = frozenset({"hyperevm", "tron"})
+
+
+def _job_chain_id(job: dict[str, Any], chain_state: dict[str, Any] | None = None) -> int | str | None:
+    """Chain id of the reviewed deployment: chain_state, then the job row, then the family mainnet
+    for a deployed job of a one-mainnet family (TRON, matrix run 2026-10-26: `chain: evm`,
+    `network: Not deployed` printed for a TRON mainnet address)."""
+    chain_id = (chain_state or {}).get("chain_id") or job.get("chain_id")
+    if chain_id is None and job.get("address"):
+        chain_id = _FAMILY_MAINNET_CHAIN_ID.get(str(job.get("chain") or ""))
+    return chain_id
+
+
 def _report_chain(job: dict[str, Any]) -> str:
     """meta.chain: the registry family for EVM chain ids (evm, hyperevm, tron), else the job chain
-    when it is a report chain (solana, ton, ...), else evm."""
-    chain_id = job.get("chain_id")
+    when it is a report chain (solana, ton, tron, ...), else evm."""
+    chain_id = _job_chain_id(job)
     rec = get_chain(int(chain_id)) if chain_id is not None else None
     if rec is not None:
         fam = getattr(rec, "family", "evm")
-        return fam if fam in ("hyperevm", "tron") else "evm"
+        return fam if fam in _EVM_FAMILY_CHAINS else "evm"
     chain = str(job.get("chain") or "")
-    return chain if chain in _NON_EVM_CHAINS else "evm"
+    return chain if chain in _NON_EVM_CHAINS or chain in _EVM_FAMILY_CHAINS else "evm"
 
 
 def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
                    deployment: dict[str, Any] | None) -> str:
     """Server text for meta.network and the verification table: registry name and id for EVM
     chains; the chain's mainnet for a deployed non-EVM unit; 'Not deployed' without an address."""
-    chain_id = (chain_state or {}).get("chain_id") or job.get("chain_id")
+    chain_id = _job_chain_id(job, chain_state)
     rec = get_chain(int(chain_id)) if chain_id is not None else None
     if rec is not None:
         return f"{rec.name} ({chain_id})"[:60]
@@ -197,6 +213,59 @@ def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
     if job.get("address") and chain in _CHAIN_NETWORK:
         return _CHAIN_NETWORK[chain]
     return "Not deployed"
+
+
+_ADDR_URL_RE = re.compile(r"^https://[^\s\"'<>]*\{a\}[^\s\"'<>]*$")   # report schema meta.addr_url
+
+
+def _addr_url(rec: Any) -> str | None:
+    """Explorer address template of a registry record in the report's `{a}` form; None when the
+    record has none or its template does not fit the schema (addresses then print as plain
+    monospace). chains.json writes the TRON template with `{address}`."""
+    template = getattr(rec, "addr_url", None) if rec else None
+    if not template:
+        return None
+    template = str(template).replace("{address}", "{a}")
+    return template if _ADDR_URL_RE.fullmatch(template) else None
+
+
+def _repo_url(job: dict[str, Any]) -> str | None:
+    """Repository URL of a repo job from `source_args` (`repo_url`, the key review_start stores;
+    `repo` accepted for older rows). Apyee blind run 2026-10-26: the cover printed the
+    requester-supplied label for a public GitHub commit because only `repo` was read."""
+    args = job.get("source_args") or {}
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = {}
+    if not isinstance(args, dict):
+        return None
+    url = args.get("repo_url") or args.get("repo")
+    return str(url)[:200] if url else None
+
+
+def _dep_reason_text(code: Any) -> str | None:
+    """Kit text for a dep.match reason code (dep_match.yaml, 06 2.5 codes in either case); an
+    unknown code prints as plain words, never as the bare enum."""
+    key = str(code or "").strip().lower()
+    if not key or not _ENUM_TOKEN.fullmatch(key):
+        return None
+    labels = kit_texts()["dep_match_reasons"]
+    return labels.get(key) or labels["other"].format(code=key.replace("_", " "))
+
+
+def scope_excluded_rows(cands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Out-of-scope rows for the files the scope rules excluded from the reviewed candidate
+    (`scope_excluded` in candidates.json: test and mock contracts), reason from the kit."""
+    labels = kit_texts()["scope_reasons"]
+    rows: list[dict[str, Any]] = []
+    for item in ((cands[0].get("scope_excluded") if cands else None) or []):
+        if not isinstance(item, dict) or not item.get("path"):
+            continue
+        rows.append({"path": str(item["path"])[:300], "reason": labels.get(str(item.get("reason") or ""))
+                     or labels["other"], "by": "server"})
+    return rows
 
 
 def _pin_date_text(chain_state: dict[str, Any] | None, today: date) -> str:
@@ -286,11 +355,12 @@ def _build_verification_blocks(
         lib_rows = [[{"src": str(name)[:300]}, {"addr": addr}] for name, addr in sorted(libraries.items())][:20]
         blocks.append({"table": {"head": ["Library", "Address"], "rows": lib_rows}})
 
-    # Paragraph: the dep.match reason code (an enum from rubric/dep_match.yaml). The free-text
-    # comparison detail is build-influenced and never enters a server paragraph.
-    reason = dep.get("reason") or ""
-    if reason and _ENUM_TOKEN.fullmatch(str(reason)):
-        blocks.append({"p": str(reason)})
+    # Paragraph: the dep.match reason code (an enum from rubric/dep_match.yaml) printed as the
+    # kit text for that code (matrix run 2026-10-26: the TON cover showed `match_rebuild`). The
+    # free-text comparison detail is build-influenced and never enters a server paragraph.
+    reason_text = _dep_reason_text(dep.get("reason"))
+    if reason_text:
+        blocks.append({"p": reason_text})
 
     return blocks[:6]
 
@@ -313,7 +383,7 @@ def provenance(
     t = kit_texts()["tier_labels"]
     tier = job.get("tier")
     address = job.get("address")
-    args = job.get("source_args") or {}
+    repo = _repo_url(job)
     cand = cands[0] if cands else {}
     _today = today or datetime.now(UTC).date()
 
@@ -343,8 +413,8 @@ def provenance(
             # prints the kit "not checked" text rather than a claim the review did not make.
             "upgrade_authority": "NotChecked",
         }
-        if isinstance(args, dict) and args.get("repo"):
-            prov["repo"] = str(args["repo"])[:200]
+        if repo:
+            prov["repo"] = repo
             if job.get("resolved_commit"):
                 prov["commit"] = job["resolved_commit"]
         return prov
@@ -363,17 +433,19 @@ def provenance(
             prov["address"] = address
         if code_hash:
             prov["code_hash"] = code_hash
-        if isinstance(args, dict) and args.get("repo"):
-            prov["repo"] = str(args["repo"])[:200]
+        if repo:
+            prov["repo"] = repo
             if job.get("resolved_commit"):
                 prov["commit"] = job["resolved_commit"]
         return prov
 
-    # Tier B (default)
+    # Tier B (default): the label names the real source kind. Deployed address with explorer or
+    # Sourcify source: third party; deployed address with other source: not checked; repository
+    # at a resolved commit: commit; anything else (upload, inline files): supplied by the requester.
     if address:
         third = bool(cand.get("explorer_verified") or cand.get("sourcify_match"))
         key = "tier_b_third_party" if third else "tier_b_not_checked"
-    elif isinstance(args, dict) and args.get("repo"):
+    elif repo and job.get("resolved_commit"):
         key = "tier_b_commit"
     else:
         key = "tier_b_files"
@@ -381,8 +453,8 @@ def provenance(
     prov = {"tier": "B", "label": label, "label_key": key, "source_hash": job["source_pin"]}
     if address:
         prov["address"] = address
-    if isinstance(args, dict) and args.get("repo"):
-        prov["repo"] = str(args["repo"])[:200]
+    if repo:
+        prov["repo"] = repo
         if job.get("resolved_commit"):
             prov["commit"] = job["resolved_commit"]
     return prov
@@ -814,7 +886,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         st = lead_state.get(lead["id"])
         leads.append({**lead, "state": st["state"] if st else lead.get("state", "open"),
                       "reason": st["reason"] if st else None})
-    chain_id = job.get("chain_id")
+    chain_id = _job_chain_id(job, chain_state)
     rec = get_chain(int(chain_id)) if chain_id is not None else None
     network = _network_label(job, chain_state, deployment)
     # meta.chain and the coverage family: the EVM registry family for chain ids, else the job's own
@@ -936,6 +1008,9 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
             oos.append({"path": path, "reason": "Excluded by the scope rules", "by": "server"})
     if not scope_files:
         raise AssemblyError("schema", "no in-scope file")
+    # Files the scope rules kept out of the reviewed candidate (test and mock contracts): listed
+    # with the rule's reason, so the reader sees what was left out and why.
+    oos.extend(scope_excluded_rows(cands))
     sections = {r["section"]: r["content"] for r in await _rows(conn, """
         select distinct on (section) section, content from sections where job_id = %s
         order by section, revision desc""", (job_id,))}
@@ -1039,7 +1114,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     meta: dict[str, Any] = {
         "report_type": "automated", "kind": texts["sub_line"], "subject": subj["value"], "subject_source": subj["source"],
         "chain": chain, "network": network[:60], "chain_id": chain_id, "explorer": None,
-        "addr_url": getattr(rec, "addr_url", None) if rec else None,
+        "addr_url": _addr_url(rec),
         "deployed_noun": _DEPLOYED_NOUN.get(chain, "contract"),
         "source_id_label": "Bytecode hash" if job.get("address") else
         ("Commit" if job.get("resolved_commit") else "Files sha256"),

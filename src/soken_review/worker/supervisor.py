@@ -797,6 +797,8 @@ class Supervisor:
                 "sourcify_match": c.sourcify_match,
                 "untrusted_inputs": c.untrusted_inputs,
                 "fetched_at": c.fetched_at,
+                # test and mock files the scope rules left out (report: out of scope, by server)
+                "scope_excluded": list(c.scope_excluded or []),
             }
             for c in candidates
         ]
