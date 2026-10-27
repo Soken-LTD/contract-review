@@ -19,7 +19,9 @@ import soken_review.tools  # noqa: F401 – register @handler decorators
 from soken_review.server import SokenServer
 from soken_review.tools.start_status import set_pool
 
-pytestmark = pytest.mark.anyio
+from ._client import task_scoped_client
+
+ASYNC = pytest.mark.asyncio(loop_scope="session")   # the db_pool loop (tests/conftest.py)
 
 
 async def _call(tool: str, **args):
@@ -31,12 +33,12 @@ async def _call(tool: str, **args):
 # DB-wired client fixture (same pattern as test_status_tails.py)
 # ---------------------------------------------------------------------------
 
-@pytest_asyncio.fixture()
+@pytest_asyncio.fixture(loop_scope="session")
 async def wired_client(db_pool):
     """MCP client with a live DB pool injected via set_pool."""
     set_pool(db_pool)
     try:
-        async with Client(SokenServer()) as c:
+        async with task_scoped_client() as c:
             yield c
     finally:
         set_pool(None)  # type: ignore[arg-type]
@@ -46,6 +48,7 @@ async def wired_client(db_pool):
 # review_start: next_action present / absent
 # ---------------------------------------------------------------------------
 
+@ASYNC
 async def test_review_start_carries_next_action_when_no_context(wired_client):
     source = {
         "kind": "files",
@@ -70,6 +73,7 @@ async def test_review_start_carries_next_action_when_no_context(wired_client):
     )
 
 
+@ASYNC
 async def test_review_start_no_next_action_when_context_provided(wired_client):
     source = {
         "kind": "files",
@@ -179,6 +183,7 @@ def test_build_status_response_next_action_present_in_queued_state():
 # Guide: context topic starts with step 1 instruction
 # ---------------------------------------------------------------------------
 
+@ASYNC
 async def test_guide_context_topic_has_step_1():
     res = await _call("review_get_guide", topic="context", chain="evm")
     assert not res.is_error, res.content[0].text

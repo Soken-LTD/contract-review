@@ -9,7 +9,7 @@ import pytest
 
 from soken_review.db.job_repo import JobRepo, JobStateError, assert_transition, new_job_id
 
-pytestmark = pytest.mark.anyio
+ASYNC = pytest.mark.asyncio(loop_scope="session")   # the db_pool loop (tests/conftest.py)
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +77,7 @@ def _default_create_kwargs(job_id: str, **overrides) -> dict:
 class TestJobRepoWithDB:
     """All tests in this class need a live Postgres 16 connection."""
 
+    @ASYNC
     async def test_create_and_get(self, db_conn):
         repo = JobRepo(db_conn)
         jid = new_job_id()
@@ -88,10 +89,12 @@ class TestJobRepoWithDB:
         assert fetched is not None
         assert fetched["state"] == "queued"
 
+    @ASYNC
     async def test_get_nonexistent(self, db_conn):
         repo = JobRepo(db_conn)
         assert await repo.get("job_" + "0" * 26) is None
 
+    @ASYNC
     async def test_transition_legal(self, db_conn):
         repo = JobRepo(db_conn)
         jid = new_job_id()
@@ -103,6 +106,7 @@ class TestJobRepoWithDB:
         fetched = await repo.get(jid)
         assert fetched["state"] == "fetching"
 
+    @ASYNC
     async def test_transition_illegal_raises(self, db_conn):
         repo = JobRepo(db_conn)
         jid = new_job_id()
@@ -111,6 +115,7 @@ class TestJobRepoWithDB:
         with pytest.raises(JobStateError):
             await repo.transition(jid, "ready")  # queued -> ready is illegal
 
+    @ASYNC
     async def test_get_and_lock_returns_row(self, db_conn):
         repo = JobRepo(db_conn)
         jid = new_job_id()
@@ -119,6 +124,7 @@ class TestJobRepoWithDB:
         assert locked is not None
         assert locked["job_id"] == jid
 
+    @ASYNC
     async def test_awaiting_upload_flow(self, db_conn):
         repo = JobRepo(db_conn)
         jid = new_job_id()
@@ -134,6 +140,7 @@ class TestJobRepoWithDB:
         updated = await repo.transition(jid, "queued")
         assert updated["state"] == "queued"
 
+    @ASYNC
     async def test_terminal_states_not_deleted(self, db_conn):
         repo = JobRepo(db_conn)
         for terminal in ("failed", "insufficient_source"):
@@ -148,6 +155,7 @@ class TestJobRepoWithDB:
             with pytest.raises(JobStateError):
                 assert_transition(jid, terminal, "queued")
 
+    @ASYNC
     async def test_full_pipeline_happy_path(self, db_conn):
         repo = JobRepo(db_conn)
         jid = new_job_id()
