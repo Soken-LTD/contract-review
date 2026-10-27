@@ -710,7 +710,7 @@ TARGETS: dict[str, TargetSpec] = {
         start={"source": {"kind": "repo", "repo_url": "https://github.com/apyee-finance/apyee-protocol",
                           "commit": APYEE_COMMIT}},
         probe_url="https://api.github.com/repos/apyee-finance/apyee-protocol/commits/" + APYEE_COMMIT,
-        chain="evm", network="Not deployed", tiers=("B", "C"), expect_dependencies=True, expect_lead_tool="slither",
+        chain="evm", network="No deployment given; source review only", tiers=("B", "C"), expect_dependencies=True, expect_lead_tool="slither",
         expect_out_of_scope=("contracts/mocks/",), expect_guarded_entry=("Vault", "setFeeRate"), ready_timeout_s=1200),
     "solana": TargetSpec(
         name="solana",
