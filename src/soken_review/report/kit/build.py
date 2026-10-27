@@ -1106,7 +1106,16 @@ def build(report: dict[str, Any], out_dir: Path | str, *, mode: str = "print",
                 f'<a href="{SITE}">soken.dev</a></div>')
         run = f'<div class="runlogo">{WORDMARK()}</div><div class="runtitle">{esc(run_title)}</div>{foot}'
     css = _css(ctx)
-    script = (f"<script>{(KIT / 'pagedjs.js').read_text(encoding='utf-8')}</script>"
+    # paged.js measures the page while it lays it out, so every kit font must be loaded before it
+    # starts: a row measured in a fallback font and reflowed in JetBrains Mono after the fact changes
+    # height, and the last row of a page fragment lands in a paged.js overflow column (x86
+    # chrome-headless-shell, Solana Scope table 2026-10-27: no console warning, rows measured
+    # two lines, rendered three). PagedConfig.before is awaited by the polyfill before preview().
+    fonts_wait = ("<script>window.PagedConfig={before:()=>Promise.all(["
+                  "document.fonts.load(\"400 10pt 'Gilroy'\"),document.fonts.load(\"700 10pt 'Gilroy'\"),"
+                  "document.fonts.load(\"400 8pt 'JetBrains Mono'\")].map((p)=>p.catch(()=>null)))"
+                  ".then(()=>document.fonts.ready)};</script>")
+    script = (fonts_wait + f"<script>{(KIT / 'pagedjs.js').read_text(encoding='utf-8')}</script>"
               f"<script>{(KIT / 'paged_handlers.js').read_text(encoding='utf-8')}</script>") if mode == "print" else ""
     doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
            f'<meta http-equiv="Content-Security-Policy" content="{CSP if mode == "print" else CSP_SCREEN}">'

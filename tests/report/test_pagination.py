@@ -129,6 +129,9 @@ def test_keep_estimate_counts_rows_and_wrapped_lines():
 def test_print_html_registers_the_table_head_handler(tmp_path):
     html = build(report(1), tmp_path, mode="print").html_path.read_text(encoding="utf-8")
     assert "Paged.registerHandlers(RepeatTableHead)" in html
+    # fonts are awaited before paged.js lays out (PagedConfig.before), and the config precedes the polyfill
+    i, j = html.find("window.PagedConfig={before:"), html.find("Paged.js v0.4")
+    assert 0 < i < j and "document.fonts.ready" in html[i:j] and "'JetBrains Mono'" in html[i:j]
     screen = build(report(1), tmp_path / "s", mode="screen").html_path.read_text(encoding="utf-8")
     assert "<script" not in screen
 
