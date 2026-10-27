@@ -135,7 +135,7 @@
     "soken-render": {
       "repository": "ghcr.io/soken-ltd/soken-render",
       "tag": "0.1.0-dev",
-      "digest": "sha256:d67c1d47f175080b1d133063d093973245ffa6ebbc7409ef3911cb79c2275244",
+      "digest": "sha256:02a1a7bbce42fc8c9264c54079c26dd8b86cd7b0036561f948d954b359fbea18",
       "tools": {
         "python": "3.12",
         "node": "22",
@@ -150,8 +150,8 @@
       ],
       "note": "08 3.2 render sandbox (docker/soken-render/Dockerfile, root context). Digest placeholder until the CI push; render_image() fails closed while unpinned (SOKEN_IMAGE_SOKEN_RENDER for local images). chrome-headless-shell zip sha256 39dcb8c4... pinned in the Dockerfile.",
       "built": {
-        "commit": "92c6be19c9acc32c40fde500d73fb6bea76e4bc1",
-        "run_id": "40527224431",
+        "commit": "e021bc2bd772f4b0db05cc81bdde35f65aef6011",
+        "run_id": "40530215275",
         "trivy_critical": 3
       }
     },
