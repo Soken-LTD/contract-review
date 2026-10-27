@@ -1022,7 +1022,7 @@ def _build_status_response(
 
     # Publication outcome: what automatic-publish will do for this job (CEO 2026-10-24).
     _profile = (out.get("provenance") or {}).get("profile") or ("owner" if job.get("ownership_proven") else None)
-    out["publication"] = publication_outcome(job, _profile)
+    out["publication"] = publication_outcome(job, _profile, _steps)
 
     return out
 

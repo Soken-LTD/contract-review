@@ -318,22 +318,65 @@ def test_solana_non_mainnet_set():
     assert "mainnet-beta" not in _SOLANA_NON_MAINNET
 
 
-class TestPublicationRequiresMatchedDeployment:
-    """CEO rule (security review 2026-10-27): automatic publication only when the reviewed code is
-    the deployed mainnet code. An unlinked TON repo review (SOURCE_UNLINKED, tier B) on a mainnet
-    address, or any unmatched Solana / EVM deployment, stays private."""
+def _steps(provider=None, **build):
+    rows = []
+    if provider:
+        rows.append({"step": "fetch", "status": "done", "provenance": {"provider": provider}})
+    if build:
+        rows.append({"step": "build", "status": "done", "provenance": build})
+    return rows
 
-    def test_unlinked_ton_repo_on_mainnet_is_private(self, monkeypatch):
+
+class TestPublicationRequiresTheDeployedCode:
+    """CEO rule: automatic publication only when the reviewed code is the code deployed on a
+    mainnet. Decided by reason (networks.PUBLISH_DEP_MATCHES / PUBLISH_VERIFIED_PROVIDERS /
+    NO_PUBLISH_REASONS), not by tier letter."""
+
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
         monkeypatch.setenv("SOKEN_AUTOPUBLISH", "on")
-        out = publication_outcome(_job(source_kind="repo", chain="ton", chain_id=None, tier="B"))
+
+    def test_tier_a_publishes(self):
+        assert publication_outcome(_job(tier="A"), steps=_steps("repo", dep_match="exact"))["outcome"] == "automatic"
+
+    @pytest.mark.parametrize("provider", ["etherscan", "sourcify", "tronscan", "eth_bytecode_db"])
+    def test_verified_explorer_tier_b_on_mainnet_publishes(self, provider):
+        job = _job(tier="B", chain="tron" if provider == "tronscan" else "evm",
+                   chain_id=728126428 if provider == "tronscan" else 8453)
+        out = publication_outcome(job, steps=_steps(provider, dep_match="not_checkable", dep_reason="settings_unknown"))
+        assert out["outcome"] == "automatic", out
+
+    def test_third_party_verified_match_publishes(self):
+        job = _job(tier="B", chain="solana", chain_id=None, source_kind="repo")
+        assert publication_outcome(job, steps=_steps("repo", dep_match="third_party_verified_only"))["outcome"] == "automatic"
+
+    def test_ton_verifier_toolchain_gap_publishes(self):
+        job = _job(tier="B", chain="ton", chain_id=None)
+        steps = _steps("ton_verifier", reason="SOURCE_TOOLCHAIN_GAP", dep_match="third_party_verified_only")
+        assert publication_outcome(job, steps=steps)["outcome"] == "automatic"
+
+    def test_source_unlinked_never_publishes(self):
+        job = _job(tier="B", chain="ton", chain_id=None, source_kind="repo")
+        out = publication_outcome(job, steps=_steps("repo", reason="SOURCE_UNLINKED", dep_match="not_checkable"))
         assert out == {"outcome": "private", "reason": "the reviewed source is not matched to the deployed code"}
 
-    def test_matched_ton_repo_on_mainnet_publishes(self, monkeypatch):
-        monkeypatch.setenv("SOKEN_AUTOPUBLISH", "on")
-        assert publication_outcome(_job(source_kind="repo", chain="ton", chain_id=None))["outcome"] == "automatic"
+    def test_repo_with_unmatched_deployment_is_private(self):
+        job = _job(tier="B", source_kind="repo")
+        assert publication_outcome(job, steps=_steps("repo", dep_match="not_checkable"))["outcome"] == "private"
 
-    @pytest.mark.parametrize("tier", ["B", "C", None])
-    def test_unmatched_evm_and_solana_are_private(self, monkeypatch, tier):
-        monkeypatch.setenv("SOKEN_AUTOPUBLISH", "on")
-        assert publication_outcome(_job(tier=tier))["outcome"] == "private"
-        assert publication_outcome(_job(chain="solana", chain_id=None, tier=tier))["outcome"] == "private"
+    def test_verified_source_that_the_rebuild_contradicts_is_private(self):
+        job = _job(tier="C")
+        assert publication_outcome(job, steps=_steps("etherscan", dep_match="mismatch"))["outcome"] == "private"
+
+    def test_testnet_never_publishes(self):
+        out = publication_outcome(_job(tier="A", chain_id=11155111), steps=_steps("sourcify", dep_match="exact"))
+        assert out["outcome"] == "private" and "mainnet" in out["reason"]
+
+    def test_no_build_record_yet_is_private(self):
+        assert publication_outcome(_job(tier=None), steps=[])["outcome"] == "private"
+
+    def test_rule_data_is_the_documented_vocabulary(self):
+        from soken_review.networks import NO_PUBLISH_REASONS, PUBLISH_DEP_MATCHES
+
+        assert PUBLISH_DEP_MATCHES == {"exact", "metadata_only", "third_party_verified_only"}
+        assert "SOURCE_UNLINKED" in NO_PUBLISH_REASONS

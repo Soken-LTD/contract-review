@@ -31,7 +31,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from ..db.job_repo import JobRepo
-from ..networks import auto_publish_enabled, is_mainnet
+from ..networks import auto_publish_enabled, deployed_code_reviewed, is_mainnet
 from ..sandbox.profile import StepLimits, docker_argv, locked_image, sandbox_writable_dir
 from .assemble import AssemblyError, assemble_report
 from .kit.build import BuildError, build
@@ -388,7 +388,7 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
     - ``has_deployment`` is False — a repo review without a live deployment is not a
       public on-chain artifact.
     - ``is_mainnet(job)`` is False — testnet/devnet deployments stay private.
-    - The job tier is not A: the reviewed source is not matched to the deployed code.
+    - The reviewed code is not the deployed code (``deployed_code_reviewed``: no exact or verified match).
     - The job has any inline context item (``url`` is None), meaning the requester supplied
       private content that may be quoted in the report context section.
     - The report profile is ``owner`` — the requester is the contract owner and has not
@@ -402,7 +402,7 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             "select source_kind, context_items, terms_accepted_at,"
-            " chain, chain_id, source_args, has_deployment, tier"
+            " chain, chain_id, source_args, has_deployment, tier, job_id"
             " from jobs where job_id = %s",
             (job_id,),
         )
@@ -417,10 +417,14 @@ async def _auto_enqueue_publish(conn: psycopg.AsyncConnection, report_id: str, j
     # Skip if the deployment is on a testnet/devnet rather than a production mainnet.
     if not is_mainnet(row):
         return
-    # Skip unless the reviewed source is matched to the deployed code (tier A): a repo reviewed
-    # beside a deployment it was not tied to (TON SOURCE_UNLINKED, Solana/EVM not matched) stays
-    # private (CEO rule, security review 2026-10-27; networks.publication_outcome mirrors this).
-    if row.get("tier") != "A":
+    # Skip unless the reviewed code is the deployed code (networks.deployed_code_reviewed: a matched
+    # or verified deployment); a repo reviewed beside a deployment it was not tied to (TON
+    # SOURCE_UNLINKED, Solana/EVM not matched) stays private (CEO rule, security review 2026-10-27).
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute("select step, status, provenance from job_steps where job_id = %s"
+                          " and step in ('fetch', 'build') order by id", (job_id,))
+        steps = await cur.fetchall()
+    if not deployed_code_reviewed(row, steps)[0]:
         return
     # Skip if any context item was supplied inline (url is None = pasted content, not a URL fetch).
     context_items: list[dict[str, Any]] = row["context_items"] or []

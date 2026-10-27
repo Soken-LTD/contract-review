@@ -42,6 +42,7 @@ from ..adapters.ton import build as _build_mod
 from ..adapters.ton.detect import parse_ton_address
 from ..adapters.ton.fetch import TonReadError, fetch_ton_sources, read_ton_chain_state
 from ..adapters.ton.provenance import (
+    SOURCE_TOOLCHAIN_GAP,
     SOURCE_UNLINKED,
     Attempt,
     Dep,
@@ -387,6 +388,8 @@ async def _build(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
         # soon as it is known, in the dep_match vocabulary.
         if out.match == "exact":
             build_prov.update(dep_match="exact", dep_reason="match_rebuild")
+        elif out.reason == SOURCE_TOOLCHAIN_GAP:
+            build_prov.update(dep_match="third_party_verified_only", dep_reason="verifier_hash_attested")
         elif out.reason == SOURCE_UNLINKED:
             build_prov.update(dep_match="not_checkable", dep_reason=unlinked_reason(out.why))
     await sup._mark_step(step["id"], "done", provenance=build_prov)

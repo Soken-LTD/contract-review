@@ -962,7 +962,7 @@ class TestAutoPublishEnqueue:
                     ("repo", "gggggggggggggggggggggggggg",
                      {"has_deployment": True, "chain": "ton", "chain_id": None}),
                     ("deployed", "hhhhhhhhhhhhhhhhhhhhhhhhhh",
-                     {"has_deployment": True, "chain": "evm", "chain_id": 8453}),   # tier B: private
+                     {"has_deployment": True, "chain": "evm", "chain_id": 8453}),   # tier B, verified
                     ("repo", "eeeeeeeeeeeeeeeeeeeeeeeeee",
                      {"has_deployment": False, "chain": None, "chain_id": None}),  # no deployment
                     ("upload", "cccccccccccccccccccccccccc",
@@ -988,6 +988,14 @@ class TestAutoPublishEnqueue:
                             "hhhhhhhhhhhhhhhhhhhhhhhhhh": "B"}.get(rid)
                     if tier:
                         await conn.execute("update jobs set tier = %s where job_id = %s", (tier, jid))
+                    # fetch/build provenance the publication rule reads (networks.deployed_code_reviewed)
+                    prov = {"gggggggggggggggggggggggggg": ("repo", {"reason": "SOURCE_UNLINKED", "dep_match": "not_checkable"}),
+                            "hhhhhhhhhhhhhhhhhhhhhhhhhh": ("etherscan", {"dep_match": "not_checkable"}),
+                            "ffffffffffffffffffffffffff": ("repo", {"reason": "MATCH_REBUILD", "dep_match": "exact"})}.get(rid)
+                    if prov:
+                        for name, body in (("fetch", {"provider": prov[0]}), ("build", prov[1])):
+                            row = await JobRepo(conn).insert_step(job_id=jid, step=name, container=False, units=0, ram_mb=0)
+                            await JobRepo(conn).complete_step(row["id"], "done", provenance=body)
                     rids[(kind, rid)] = (rid, jid)
                 for rid, jid in rids.values():
                     await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T00:00:00+00:00")
@@ -1008,8 +1016,9 @@ class TestAutoPublishEnqueue:
         # TON repo + mainnet address: matched → queued; unlinked (SOURCE_UNLINKED, tier B) → private
         assert got["ffffffffffffffffffffffffff"] == ((1, 2), "repo")
         assert got["gggggggggggggggggggggggggg"] == ((0, 0), "repo")
-        # deployed mainnet address whose source is not matched (tier B) → private
-        assert got["hhhhhhhhhhhhhhhhhhhhhhhhhh"] == ((0, 0), "deployed")
+        # deployed mainnet address, Etherscan-verified source, own rebuild inconclusive (tier B):
+        # the reviewed code is the deployed code → queued
+        assert got["hhhhhhhhhhhhhhhhhhhhhhhhhh"] == ((1, 2), "deployed")
         # upload and files → private
         assert got["cccccccccccccccccccccccccc"] == ((0, 0), "upload")
         assert got["dddddddddddddddddddddddddd"] == ((0, 0), "files")
