@@ -13,16 +13,52 @@ from __future__ import annotations
 
 import json
 import logging
+from functools import cache
 from pathlib import Path
 from typing import Any
 
 import psycopg
+import yaml
 
 logger = logging.getLogger(__name__)
 
 _SEVERITIES = {"Critical", "High", "Medium", "Low", "Info"}
 _LOCATED = {"verbatim", "function", "moved"}
 _MAX_LEADS = 5000
+_RUBRIC_DIR = Path(__file__).resolve().parents[3] / "contract" / "rubric"
+_SEV_RANK = {"Critical": 5, "High": 4, "Medium": 3, "Low": 2, "Info": 1}
+_FINDING_TO_LEAD_SEV = {"Informational": "Info"}
+
+
+@cache
+def category_severity_caps() -> dict[str, str]:
+    """category id -> `max_severity` of rubric/enums.yaml in the lead scale (Informational = Info)."""
+    try:
+        rows = yaml.safe_load((_RUBRIC_DIR / "enums.yaml").read_text(encoding="utf-8")).get("categories") or []
+    except (OSError, ValueError, AttributeError):
+        return {}
+    out: dict[str, str] = {}
+    for row in rows:
+        cap = row.get("max_severity") if isinstance(row, dict) else None
+        if cap:
+            out[str(row["id"])] = _FINDING_TO_LEAD_SEV.get(str(cap), str(cap))
+    return out
+
+
+def clamp_lead_severity(lead: dict[str, Any]) -> dict[str, Any]:
+    """Bound `severity_norm` by the category's `max_severity` (enums.yaml), in place.
+
+    The analyzer scale is normalised per tool (analyzer_severity.yaml), the category cap per
+    rubric: a `nativeThrowUnless` style hit mapped to `ton.best_practice` arrived as High while no
+    finding of that category can print above Informational, so the list showed "best_practice
+    high" 29 times and F2 demanded a quoted dismissal for each (BNB and TON blind runs 2026-10-26).
+    The raw analyzer value stays in `analyzer_severity_raw`."""
+    cap = category_severity_caps().get(str(lead.get("category") or ""))
+    sev = str(lead.get("severity_norm") or "")
+    if cap and sev in _SEV_RANK and _SEV_RANK[sev] > _SEV_RANK.get(cap, 5):
+        lead.setdefault("analyzer_severity_raw", sev)
+        lead["severity_norm"] = cap
+    return lead
 
 
 def load_leads_json(pin_root: Path, job_id: str) -> list[dict[str, Any]]:
@@ -35,7 +71,7 @@ def load_leads_json(pin_root: Path, job_id: str) -> list[dict[str, Any]]:
     except (OSError, ValueError):
         return []
     leads = raw.get("leads", []) if isinstance(raw, dict) else raw
-    return [lead for lead in leads if isinstance(lead, dict)] if isinstance(leads, list) else []
+    return [clamp_lead_severity(lead) for lead in leads if isinstance(lead, dict)] if isinstance(leads, list) else []
 
 
 def lead_row(job_id: str, lead: dict[str, Any]) -> tuple[Any, ...] | None:
@@ -49,7 +85,7 @@ def lead_row(job_id: str, lead: dict[str, Any]) -> tuple[Any, ...] | None:
     origin = lead.get("origin") or "analyzer"
     if origin not in ("analyzer", "previous_report"):
         return None
-    sev = str(lead.get("severity_norm") or "Info")
+    sev = str(clamp_lead_severity(dict(lead)).get("severity_norm") or "Info")
     if sev == "Informational":
         sev = "Info"
     if sev not in _SEVERITIES:

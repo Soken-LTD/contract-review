@@ -9,6 +9,7 @@ enforces those branches with the full schema).
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from dataclasses import dataclass
 from functools import cache
@@ -52,6 +53,16 @@ def load_release(path: Path = RELEASE_FILE) -> Release:
 @cache
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
+
+
+@cache
+def schema_version() -> str:
+    """Twelve hex digits of the sha256 of `contract/mcp/tools.v1.json` as shipped.
+
+    review_start and review_status return it, so a client can tell that the tool list it loaded
+    predates a deploy (claude.ai caches the list per connector; blind run 2026-10-26: a client
+    that had no `invariant_walks` in its schema could never close finalize check F9)."""
+    return hashlib.sha256(TOOLS_FILE.read_bytes()).hexdigest()[:12]
 
 
 def _resolve_pointer(doc: dict[str, Any], pointer: str) -> Any:

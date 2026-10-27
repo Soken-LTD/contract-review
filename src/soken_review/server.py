@@ -20,7 +20,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from mcp.types import Tool as MCPTool
 
-from .contract import Release, bundle_tools, load_release
+from .contract import Release, bundle_tools, load_release, schema_version
 from .errors import ReviewError
 from .http import ProtocolRules
 
@@ -65,11 +65,13 @@ class SokenServer(MCPServer):
         tool = self.contract.get(name)
         if tool is None:
             return _error_result(ReviewError("E_INVALID_ARGUMENT", field="name", rule="known tool", value80=name[:80]))
-        arguments = _parse_json_strings(tool["inputSchema"], arguments)
+        parsed = _parse_json_strings(tool["inputSchema"], arguments)
+        stale_client = parsed is not arguments   # an object or array reached us as a JSON string
+        arguments = parsed
         violation = next(iter(sorted(self.validators[name].iter_errors(arguments), key=lambda e: e.path)), None)
         if violation is not None:
             field, example = _violation_hint(violation)
-            return _error_result(
+            res = _error_result(
                 ReviewError(
                     "E_INVALID_ARGUMENT",
                     field=field,
@@ -78,19 +80,52 @@ class SokenServer(MCPServer):
                     example=example,
                 )
             )
+            return _with_schema_hint(res) if stale_client else res
         fn = HANDLERS.get(name)
         if fn is None:
             raise NotImplementedError(f"{name} handler lands in W1 to W4 (part 03)")
         try:
             result = await fn(arguments)
         except ReviewError as err:
-            return _error_result(err, structured="outputSchema" in tool)
+            res = _error_result(err, structured="outputSchema" in tool)
+            return _with_schema_hint(res) if stale_client else res
         if "outputSchema" in tool:
             if not isinstance(result, dict):
                 raise TypeError(f"{name} is a control tool and must return an object")
             text = json.dumps(result, separators=(",", ":"), ensure_ascii=False)
-            return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=result)
-        return CallToolResult(content=[TextContent(type="text", text=str(result))])
+            res = CallToolResult(content=[TextContent(type="text", text=text)], structured_content=result)
+        else:
+            res = CallToolResult(content=[TextContent(type="text", text=str(result))])
+        return _with_schema_hint(res) if stale_client else res
+
+
+def _stale_schema_hint() -> str:
+    """One line for a client whose tool list predates the served schema. The JSON-string shape is
+    the one signal the server can see (03 section 13: the list is a snapshot the client caches)."""
+    return (f"Your tool list predates the current schema (schema_version {schema_version()}). Reload the"
+            " tool list to see the current fields, sections and guide topics.")
+
+
+def _with_schema_hint(res: CallToolResult) -> CallToolResult:
+    """Add `schema_hint` to a result (structured object, or a last line of a text result). Additive:
+    no output schema closes its root object, so the key passes every client-side check."""
+    hint = _stale_schema_hint()
+    content = list(res.content)
+    body: Any = res.structured_content
+    if body is None and content and isinstance(content[-1], TextContent) and content[-1].text[:1] == "{":
+        try:
+            body = json.loads(content[-1].text)   # an error envelope (channel `error`): JSON text, no structured
+        except ValueError:
+            body = None
+    if isinstance(body, dict):
+        body = {**body, "schema_hint": hint}
+        text = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
+        structured = body if res.structured_content is not None else None
+        return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=structured,
+                              is_error=res.is_error)
+    if content and isinstance(content[-1], TextContent):
+        content[-1] = TextContent(type="text", text=content[-1].text + "\nschema_hint " + hint)
+    return CallToolResult(content=content, structured_content=res.structured_content, is_error=res.is_error)
 
 
 def _parse_json_strings(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
