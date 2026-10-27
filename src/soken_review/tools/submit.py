@@ -41,7 +41,7 @@ from ..context.store import ContextStore, is_context_path
 from ..db.pool import get_pool
 from ..engine.injection import check_echo
 from ..engine.numbers import lex_numbers
-from ..engine.severity import SeverityContext, compute_severity
+from ..engine.severity import SeverityContext, compute_severity, k_caps_only
 from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
@@ -113,6 +113,8 @@ def _iter_text_fields(args: dict[str, Any]) -> list[tuple[str, str]]:
             result.append(("attack_steps", str(text)))
     if notes := args.get("notes"):
         result.append(("notes", str(notes)))
+    if reason := args.get("severity_reason"):
+        result.append(("severity_reason", str(reason)))
     return result
 
 
@@ -600,8 +602,11 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                         "revision": current_revision,
                         "status": draft["status"],
                         "computed_severity": draft.get("severity"),
-                        "severity_rule": "",
-                        "caps_applied": [],
+                        "severity_rule": draft.get("severity_rule") or "",
+                        "caps_applied": k_caps_only(list(draft.get("caps_applied") or [])),
+                        "rules_applied": list(draft.get("caps_applied") or []),
+                        "severity_set_by": draft.get("severity_set_by") or "matrix",
+                        "severity_reason": draft.get("severity_reason") or "",
                         "evidence_level": draft.get("evidence_level", "reasoning_only"),
                         "leads_reopened": [],
                         "next_tools": _next_tools(draft["status"]),
@@ -760,6 +765,8 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                         map_doc.get("semantic") if map_doc else None,
                         units_holding(map_doc.get("semantic") if map_doc else None, location_quotes)),
                     has_location_quote=bool(location_quotes),
+                    claimed_severity=args.get("claimed_severity"),
+                    claimed_reason=args.get("severity_reason"),
                 )
                 try:
                     sev_result = compute_severity(matrix, "submit", sev_ctx)
@@ -856,6 +863,25 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                                     value80=dk[:80],
                                 ).envelope()
                             )
+
+        # ── Reviewer-first (RV1): a claimed_severity the matrix cannot carry silently ─────
+        # The reviewer confirms the computed value, keeps theirs with a reason (one step), or
+        # reclassifies. A confirmation is a round trip, not a gate failure: nothing is stored and
+        # rejected_count does not move (blind run 2026-10-26, judgement section 9 item 1).
+        if not violations and not is_server_draft and sev_result is not None and sev_result.confirm_needed:
+            return {
+                "accepted": False,
+                "errors": [ReviewError(
+                    "E_SEVERITY_CONFIRM", computed=sev_result.computed,
+                    rule=sev_result.severity_rule, why=sev_result.confirm_why,
+                ).envelope()],
+                "computed_severity": sev_result.computed,
+                "matrix_cell": sev_result.base,
+                "severity_rule": sev_result.severity_rule,
+                "caps_applied": k_caps_only(sev_result.caps_applied),
+                "rules_applied": sev_result.caps_applied,
+                "retries_left": max(0, max_rejections - rejected_count),
+            }
 
         # ── On validation errors: increment rejected_count, return ────
         if violations:
@@ -961,10 +987,11 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             await conn.execute(
                 """insert into finding_drafts
                    (job_id, draft_key, finding_no, origin, status, current_revision,
-                    severity, evidence_level)
-                   values (%s, %s, %s, 'model', %s, %s, %s, %s)""",
+                    severity, evidence_level, severity_rule, severity_set_by, severity_reason)
+                   values (%s, %s, %s, 'model', %s, %s, %s, %s, %s, %s, %s)""",
                 (job_id, draft_key, finding_no, new_status, new_revision,
-                 computed_severity, evidence_level),
+                 computed_severity, evidence_level,
+                 sev_result.severity_rule, sev_result.set_by, sev_result.reason[:200]),
             )
             await conn.execute(
                 "update jobs set next_finding_no = %s where job_id = %s",
@@ -977,9 +1004,11 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                 # revision must not survive it (finalize and the report prefer matrix_effective).
                 """update finding_drafts
                    set status = %s, current_revision = %s, severity = %s, evidence_level = %s,
-                       matrix_effective = null
+                       matrix_effective = null, caps_applied = '{}',
+                       severity_rule = %s, severity_set_by = %s, severity_reason = %s
                    where job_id = %s and draft_key = %s""",
-                (new_status, new_revision, computed_severity, evidence_level, job_id, draft_key),
+                (new_status, new_revision, computed_severity, evidence_level,
+                 sev_result.severity_rule, sev_result.set_by, sev_result.reason[:200], job_id, draft_key),
             )
 
         # Insert revision
@@ -1028,8 +1057,12 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             "revision": new_revision,
             "status": new_status,
             "computed_severity": computed_severity,
+            "matrix_cell": sev_result.base,
             "severity_rule": sev_result.severity_rule,
-            "caps_applied": sev_result.caps_applied,
+            "caps_applied": k_caps_only(sev_result.caps_applied),
+            "rules_applied": sev_result.caps_applied,
+            "severity_set_by": sev_result.set_by,
+            "severity_reason": sev_result.reason[:200],
             "evidence_level": evidence_level,
             "leads_reopened": leads_reopened,
             "next_tools": _next_tools(new_status),

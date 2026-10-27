@@ -17,8 +17,8 @@
       "type": "object", "additionalProperties": false,
       "required": ["impact_class", "magnitude", "trigger", "precondition", "reversibility"],
       "properties": {
-        "impact_class": {"enum": ["theft_of_funds", "permanent_freeze", "temporary_freeze", "insolvency_or_bad_debt", "control_takeover", "yield_or_fee_loss", "unauthorized_state_change", "griefing_with_victim_loss", "dos_core_function", "dos_noncore_function", "incorrect_accounting_no_fund_effect", "spec_deviation_bounded", "centralization_risk", "best_practice"]},
-        "magnitude": {"enum": ["unbounded", "bounded", "dust"]},
+        "impact_class": {"enum": ["theft_of_funds", "permanent_freeze", "temporary_freeze", "insolvency_or_bad_debt", "control_takeover", "yield_or_fee_loss", "unauthorized_state_change", "griefing_with_victim_loss", "dos_core_function", "dos_noncore_function", "incorrect_accounting_no_fund_effect", "spec_deviation_bounded", "centralization_risk", "best_practice", "supply_inflation"]},
+        "magnitude": {"enum": ["unbounded", "bounded", "residual", "dust"]},
         "trigger": {"enum": ["anyone", "permissionless_role", "privileged_role", "privileged_role_unprotected", "upgrade_authority"]},
         "precondition": {"enum": ["none", "normal_operation", "market_condition", "timing_or_ordering", "uncommon_protocol_state", "external_failure", "victim_unusual_action"]},
         "reversibility": {"enum": ["irreversible", "admin_reversible", "self_recovering"]}
@@ -41,7 +41,8 @@
     "absence_claims": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/absence_claim"}},
     "distinct_from": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/draft_key"}},
     "documented_intent_ref": {"$ref": "#/$defs/quote"},
-    "claimed_severity": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]}
+    "claimed_severity": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]},
+    "severity_reason": {"type": "string", "minLength": 20, "maxLength": 200, "description": "Why claimed_severity differs from the matrix outcome (one step at most). Printed in the severity table."}
   },
   "allOf": [
     {"if": {"properties": {"draft_key": {"pattern": "^srv-"}}},

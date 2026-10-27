@@ -1642,7 +1642,33 @@
       "items": {
        "type": "string",
        "pattern": "^K[0-9]{1,2}$"
-      }
+      },
+      "description": "The K caps that bound the severity (subset of rules_applied, kept for older clients)"
+     },
+     "rules_applied": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "maxLength": 80
+      },
+      "description": "Every named rule that moved the severity away from the IxL cell: K caps, max_severity, IRR1, TR1, RV1 (reviewer within one step), DG1; empty when the cell printed as is"
+     },
+     "severity_set_by": {
+      "type": "string",
+      "enum": [
+       "reviewer",
+       "matrix",
+       "cap"
+      ],
+      "description": "Who set computed_severity: the reviewer (claimed_severity stands), the matrix cell, or a named cap"
+     },
+     "severity_reason": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "The reviewer's reason when set by the reviewer, else the one-line text of the binding rules"
+     },
+     "matrix_cell": {
+      "$ref": "#/$defs/severity"
      },
      "evidence_level": {
       "$ref": "#/$defs/evidence_level"
@@ -2063,7 +2089,33 @@
        "type": "string",
        "maxLength": 80
       },
-      "description": "Every named cause of the verdict: K caps, basis fallbacks and the kill item; empty only for passed"
+      "description": "Every named cause of the verdict: K caps, basis fallbacks, RV1, DG1 and the kill item; empty only for passed"
+     },
+     "rules_applied": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "maxLength": 80
+      },
+      "description": "Same list as caps_applied, under the name review_submit_finding uses"
+     },
+     "severity_set_by": {
+      "type": "string",
+      "enum": [
+       "reviewer",
+       "matrix",
+       "cap"
+      ]
+     },
+     "severity_reason": {
+      "type": "string",
+      "maxLength": 200
+     },
+     "matrix_cell": {
+      "type": [
+       "string",
+       "null"
+      ]
      }
     }
    }
