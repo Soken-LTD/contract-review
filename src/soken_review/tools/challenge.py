@@ -130,12 +130,12 @@ def _checklist_items_for_category(family: str, category: str, is_generic: bool) 
 
 _MB_FUND_IMPACT = frozenset({
     "theft_of_funds", "permanent_freeze", "insolvency_or_bad_debt",
-    "yield_or_fee_loss", "control_takeover",
+    "yield_or_fee_loss", "control_takeover", "supply_inflation",
 })
 _MB_REVERSIBILITY_IMPACT = frozenset({
     "permanent_freeze", "temporary_freeze", "dos_core_function",
     "control_takeover", "theft_of_funds", "insolvency_or_bad_debt",
-    "yield_or_fee_loss",
+    "yield_or_fee_loss", "supply_inflation",
 })
 
 
@@ -1217,7 +1217,11 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                     "evidence_level": draft.get("evidence_level", "reasoning_only"),
                     "kill_item": draft.get("kill_item"),
                     "leads_reopened": [],
+                    "severity_rule": draft.get("severity_rule") or "",
                     "caps_applied": list(draft.get("caps_applied") or []),
+                    "severity_set_by": draft.get("severity_set_by") or "matrix",
+                    "severity_reason": draft.get("severity_reason") or "",
+                    "matrix_cell": None,
                 }
             # Different answers for same revision = reject (revision already answered)
             return {"accepted": False, "errors": [
@@ -1594,6 +1598,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             new_evidence = draft_locked.get("evidence_level", "reasoning_only")
             severity_rule = f"kill={kill_present}"
             caps_named = [f"kill:{kill_present}"]
+            severity_set_by, severity_reason, matrix_cell = "cap", f"kill item {kill_present} answered present", None
 
         else:
             # Apply basis fallbacks to matrix_effective
@@ -1622,6 +1627,9 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                     map_doc.get("semantic") if map_doc else None,
                     units_holding(map_doc.get("semantic") if map_doc else None, location_quotes)),
                 has_location_quote=bool(location_quotes),
+                claimed_severity=content.get("claimed_severity"),
+                claimed_reason=content.get("severity_reason"),
+                severity_before=severity_before,
             )
 
             try:
@@ -1648,14 +1656,17 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             # Update finding_drafts with new severity/evidence
             await conn.execute(
                 """update finding_drafts set status = 'accepted', severity = %s, evidence_level = %s,
-                       matrix_effective = %s, caps_applied = %s
+                       matrix_effective = %s, caps_applied = %s,
+                       severity_rule = %s, severity_set_by = %s, severity_reason = %s
                    where job_id = %s and draft_key = %s""",
                 (severity_after,
                  new_evidence,
                  psycopg.types.json.Jsonb(matrix_effective),
                  caps_named,
+                 severity_rule, sev_result.set_by, sev_result.reason[:200],
                  job_id, draft_key),
             )
+            severity_set_by, severity_reason, matrix_cell = sev_result.set_by, sev_result.reason[:200], sev_result.base
 
         # Store challenge_answers
         await conn.execute(
@@ -1684,6 +1695,10 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         "leads_reopened": leads_reopened,
         "severity_rule": severity_rule,
         "caps_applied": caps_named,
+        "rules_applied": caps_named,
+        "severity_set_by": severity_set_by,
+        "severity_reason": severity_reason,
+        "matrix_cell": matrix_cell,
     }
 
 

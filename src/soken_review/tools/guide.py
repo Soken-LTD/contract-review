@@ -34,18 +34,16 @@ _FAMILY = {
     "solana": "solana", "ton": "ton", "sui": "move", "aptos": "move", "starknet": "cairo",
 }
 
-# 04 §7.4: the caps the severity engine applies, in the words the engine uses (engine/severity.py).
-_CAPS = [
-    ("K1", "all", "trigger privileged_role or upgrade_authority", "Medium"),
-    ("K3", "all", "magnitude dust", "Low"),
-    ("K4", "finalize", "evidence reasoning_only (a draft that never took a challenge)", "Low"),
-    ("K5", "post_challenge, finalize", "each downgrade item answered present", "minus one level, at most two"),
-    ("K6", "all", "precondition victim_unusual_action", "Low"),
-    ("K7", "all", "impact centralization_risk", "Low"),
-    ("K8", "post_challenge, finalize", "Critical without evidence E2 or E3, or without attack_steps", "High"),
-    ("K10", "post_challenge, finalize", "a checklist item scope not covered, or no contract map", "High"),
-    ("K11", "all", "generic category without a linked lead of the same category", "High"),
-]
+# 04 §7.4: the rules the severity engine applies on top of the IxL cell, read from the registry the
+# client can dispute by id (rubric/severity_rules.yaml; engine/severity.py RULE_TEXT mirrors it).
+@lru_cache(maxsize=1)
+def _severity_rules() -> list[tuple[str, str, str, str]]:
+    doc = yaml.safe_load((_RUBRIC / "severity_rules.yaml").read_text(encoding="utf-8"))
+    out = []
+    for r in doc.get("rules", []):
+        effect = r.get("effect") or (f"caps at {r['ceiling']}" if r.get("ceiling") else "")
+        out.append((str(r["id"]), str(r.get("phase", "all")), str(r.get("condition", "")), effect))
+    return out
 
 _EVIDENCE = [
     ("E3 analyzer_and_reasoning", "lead_ids names an analyzer lead of the same category that overlaps a location quote"),
@@ -94,13 +92,18 @@ def _topic_categories(family: str) -> list[str]:
 def _topic_severity_inputs() -> list[str]:
     enums = _enums()
     out = [("review_submit_finding.matrix: five fields, exact values below. Severity = impact x likelihood,"
-            " then the caps; claimed_severity is advisory, the matrix decides.")]
+            " then the named rules. claimed_severity is the reviewer's severity and it prints unless a named"
+            " rule applies: within one step of the matrix outcome it stands with a severity_reason (20 to 200"
+            " characters, printed in the severity table); further away, or one step without a reason, the"
+            " server answers E_SEVERITY_CONFIRM with the computed value (no retry spent) and the reviewer"
+            " confirms, keeps theirs with a reason, or reclassifies. Every verdict returns severity_rule,"
+            " caps_applied (the rule ids), severity_set_by (reviewer, matrix or cap) and severity_reason.")]
     for field, values in enums.get("matrix", {}).items():
         out.append(f"{field}: {', '.join(values)}")
     out.append("")
-    out.append("Caps (id, phase, condition, ceiling):")
-    for kid, phase, cond, cap in _CAPS:
-        out.append(f"{kid}  {phase}  {cond}  -> {cap}")
+    out.append("Rules (id, phase, condition, effect):")
+    for kid, phase, cond, effect in _severity_rules():
+        out.append(f"{kid}  {phase}  {cond}  -> {effect}")
     out.append("")
     out.append("Evidence levels (set by the server, never claimed):")
     for level, how in _EVIDENCE:
@@ -108,14 +111,23 @@ def _topic_severity_inputs() -> list[str]:
     out.append("")
     out.append("To print a High: link an analyzer lead of the same category (review_leads, lead_ids), or"
                " answer the challenge (review_challenge, review_answer_challenge). trigger privileged_role"
-               " caps at Medium unless the deployment is a retail token where the owner is the threat.")
+               " caps at Medium (K1) unless the deployment is a retail token where the owner is the threat AND"
+               " the owner path has no undo (reversibility irreversible, TR1); an owner pause, exclusion list or"
+               " fee switch the owner can revert is admin_reversible and prints Medium at most.")
     out.append("magnitude: unbounded when the amount lost or frozen is the unit's full balance or a user's whole"
-               " position (a stake, a vote allocation), bounded only with a bound_ref quote of the cap, dust for"
-               " rounding. A freeze that lasts until an admin acts is permanent_freeze with reversibility"
-               " admin_reversible, not temporary_freeze; temporary_freeze is a freeze that clears by itself."
+               " position (a stake, a vote allocation), bounded only with a bound_ref quote of the cap, residual"
+               " when the amount is whatever is left over in the unit under normal operation (stranded excess,"
+               " bounced value, remainders: near zero in practice, uncapped in code), dust for rounding."
+               " impact supply_inflation: an unbacked mint, a burn that is not a burn, a double-counted fee,"
+               " balances above totalSupply (holders diluted, nobody takes a balance). A freeze that lasts"
+               " until an admin acts is permanent_freeze with reversibility admin_reversible, not"
+               " temporary_freeze; temporary_freeze is a freeze that clears by itself."
                " precondition: normal_operation when the path runs in a state the protocol expects (a removed"
                " gauge, a slashed round, an admin-added token); uncommon_protocol_state only for a state it does"
-               " not expect. A bounded loss under an uncommon state prints Low by the matrix (I2 x L1).")
+               " not expect. A bounded loss under an uncommon state prints Low by the matrix (I2 x L1); an"
+               " irreversible unbounded loss under an uncommon state prints High (IRR1: the state counts as L2)."
+               " A self-inflicted loss (the actor forfeits its own value to block another party) is"
+               " griefing_with_victim_loss, not a freeze.")
     out.append("Quotes: role location quotes must copy the pinned lines exactly (review_read_code). Numbers in"
                " text need a source ({fact:<key>} or {calc:...}); a count in words up to ten, once, twice and"
                " third pass on their own (two pools, the third call, paid twice) but not before a unit, percent"
@@ -129,7 +141,9 @@ def _topic_challenge_rules() -> list[str]:
     out = [("review_challenge returns checklist items for the current revision; review_answer_challenge"
             " records one answer per item.")]
     out.append("Item kinds: " + ", ".join(enums.get("checklist_kind", [])) + ". kill: present disproves the finding"
-               " (it is withdrawn); downgrade: present lowers severity one level (K5); context and basis: recorded.")
+               " (it is withdrawn); downgrade: present lowers severity one level (K5); context and basis: recorded."
+               " A challenge lowers at most one step below the accepted severity (DG1); a second step needs a"
+               " kill item.")
     out.append("Answer values: " + ", ".join(enums.get("challenge_value", [])) + ". present and absent need 1 to 3"
                " quotes (exact pinned lines) and refs path:start-end; not_applicable needs a reason.")
     out.append("not_applicable reasons: " + ", ".join(enums.get("na_reasons", [])))

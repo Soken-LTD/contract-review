@@ -265,11 +265,11 @@ class TestComputeSeverity:
                               has_attack_steps=True, downgrade_items_present=2)
         result = compute_severity(matrix, "finalize", ctx)
         # Severity ranks: 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical
-        # Critical(4) - 2 = Medium(2); K5 fires
-        assert result.severity == "Medium"
+        # K5 is one step since 2026-10-27 (was two): Critical(4) - 1 = High(3)
+        assert result.severity == "High"
         assert "K5" in result.caps_applied
 
-    def test_k5_max_2_levels(self):
+    def test_k5_one_level_whatever_the_count(self):
         matrix = {
             "impact_class": "theft_of_funds",
             "magnitude": "unbounded",
@@ -279,10 +279,10 @@ class TestComputeSeverity:
         }
         # has_attack_steps=True prevents K8 so we can test K5 in isolation
         ctx = SeverityContext(phase="finalize", evidence_level="analyzer_and_reasoning",
-                              has_attack_steps=True, downgrade_items_present=5)  # min(5,2)=2 levels down
+                              has_attack_steps=True, downgrade_items_present=5)  # one level down, DG1
         result = compute_severity(matrix, "finalize", ctx)
-        # Critical(4) - min(5,2)=2 → Medium(2)
-        assert result.severity == "Medium"
+        # Critical(4) - 1 = High(3): the second step needs a kill item
+        assert result.severity == "High"
 
     def test_evidence_level_submit_no_lead(self):
         matrix = {

@@ -1,0 +1,216 @@
+# Held-out calibration set for the severity engine (2026-10-27). Public findings whose published
+# severity is known, none of them from the five 2026-10-26 matrix targets (Lock & Loan, Forton,
+# CRS, ANTTIME, Apyee). Each row carries the classification an honest reviewer would pick from the
+# finding text alone, plus `published`. `scale` names the publisher's scale: c4 tops at High (no
+# Critical), so a computed Critical is scored as agreeing with a published High in the
+# scale-adjusted count; soken and gblin scales have a Critical level.
+#
+# Sources: Code4rena reports 2022-05 Cally and 2022-06 Putty (code4rena.com/reports/<slug>);
+# SOKEN public archive (github.com/SokenDev, Solidity-Audit-Reports and Rust-Audit-Reports PDFs);
+# GBLIN audit 2026-10-02 (own audit, findings.json). Classifications are the test author's, written
+# before the engine was run; disagreements are kept, not tuned away.
+cases:
+  # ── Code4rena 2022-05 Cally ──────────────────────────────────────────────────────────────
+  - id: cally-H-01
+    title: no-revert-on-transfer ERC20 tokens can be drained (creator keeps the buyer's premium)
+    scale: c4
+    published: High
+    matrix: {impact_class: theft_of_funds, magnitude: unbounded, trigger: anyone, precondition: normal_operation, reversibility: irreversible}
+  - id: cally-H-02
+    title: Inefficiency in the Dutch auction due to lower duration
+    scale: c4
+    published: High
+    matrix: {impact_class: spec_deviation_bounded, magnitude: bounded, trigger: anyone, precondition: normal_operation, reversibility: self_recovering}
+  - id: cally-H-03
+    title: Fake balances for not-yet-existing ERC20 tokens let attackers set traps for future users
+    scale: c4
+    published: High
+    matrix: {impact_class: theft_of_funds, magnitude: unbounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}
+  - id: cally-M-01
+    title: Owner can modify the feeRate on existing vaults and steal the strike value on exercise
+    scale: c4
+    published: Medium
+    matrix: {impact_class: theft_of_funds, magnitude: unbounded, trigger: privileged_role, precondition: normal_operation, reversibility: irreversible}
+  - id: cally-M-03
+    title: Users may accidentally overpay in buyOption and the excess is paid to the vault creator
+    scale: c4
+    published: Medium
+    matrix: {impact_class: yield_or_fee_loss, magnitude: bounded, trigger: anyone, precondition: victim_unusual_action, reversibility: irreversible}
+  - id: cally-M-04
+    title: Vaults steal rebasing tokens' rewards
+    scale: c4
+    published: Medium
+    matrix: {impact_class: yield_or_fee_loss, magnitude: bounded, trigger: anyone, precondition: normal_operation, reversibility: irreversible}
+  - id: cally-M-05
+    title: Expiration calculation overflows if call option duration is 195 days or more
+    scale: c4
+    published: Medium
+    matrix: {impact_class: dos_core_function, magnitude: bounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: self_recovering}
+  - id: cally-M-06
+    title: Owner can set the feeRate above 100 percent and make every exercise revert
+    scale: c4
+    published: Medium
+    matrix: {impact_class: permanent_freeze, magnitude: unbounded, trigger: privileged_role, precondition: normal_operation, reversibility: admin_reversible}
+  - id: cally-M-07
+    title: Lack of zero amount check lets a user create infinite vaults
+    scale: c4
+    published: Medium
+    matrix: {impact_class: dos_noncore_function, magnitude: dust, trigger: anyone, precondition: none, reversibility: irreversible}
+  - id: cally-M-08
+    title: Vault is not compatible with fee-on-transfer tokens and such vaults can be exploited
+    scale: c4
+    published: Medium
+    matrix: {impact_class: theft_of_funds, magnitude: bounded, trigger: anyone, precondition: normal_operation, reversibility: irreversible}
+  - id: cally-M-09
+    title: Use safeTransferFrom instead of transferFrom for ERC721 transfers
+    scale: c4
+    published: Medium
+    matrix: {impact_class: spec_deviation_bounded, magnitude: bounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}
+  - id: cally-M-10
+    title: createVault does not confirm that tokenType and the token's type agree (NFT stuck)
+    scale: c4
+    published: Medium
+    matrix: {impact_class: permanent_freeze, magnitude: unbounded, trigger: anyone, precondition: victim_unusual_action, reversibility: irreversible}
+  # ── Code4rena 2022-06 Putty ──────────────────────────────────────────────────────────────
+  - id: putty-H-01
+    title: Fee is deducted when a put expires and not when it is exercised
+    scale: c4
+    published: High
+    matrix: {impact_class: yield_or_fee_loss, magnitude: bounded, trigger: anyone, precondition: normal_operation, reversibility: irreversible}
+  - id: putty-H-02
+    title: acceptCounterOffer may result in both orders being filled
+    scale: c4
+    published: High
+    matrix: {impact_class: griefing_with_victim_loss, magnitude: unbounded, trigger: anyone, precondition: timing_or_ordering, reversibility: irreversible}
+  - id: putty-H-03
+    title: A short call order with a non-empty floor makes the option impossible to exercise and withdraw
+    scale: c4
+    published: High
+    matrix: {impact_class: permanent_freeze, magnitude: unbounded, trigger: anyone, precondition: normal_operation, reversibility: irreversible}
+  - id: putty-H-04
+    title: Zero strike call options can be used to steal the premium from the taker
+    scale: c4
+    published: High
+    matrix: {impact_class: theft_of_funds, magnitude: unbounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}
+  - id: putty-M-01
+    title: Malicious token contracts may lock orders
+    scale: c4
+    published: Medium
+    matrix: {impact_class: griefing_with_victim_loss, magnitude: unbounded, trigger: anyone, precondition: normal_operation, reversibility: irreversible}
+  - id: putty-M-02
+    title: Unbounded loops may cause exercise and withdraw to fail
+    scale: c4
+    published: Medium
+    matrix: {impact_class: dos_core_function, magnitude: bounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}
+  - id: putty-M-03
+    title: Put option sellers can prevent exercise by specifying zero amounts or non-existent tokens
+    scale: c4
+    published: Medium
+    matrix: {impact_class: griefing_with_victim_loss, magnitude: unbounded, trigger: anyone, precondition: normal_operation, reversibility: irreversible}
+  - id: putty-M-04
+    title: Put options are free of any fees
+    scale: c4
+    published: Medium
+    matrix: {impact_class: yield_or_fee_loss, magnitude: bounded, trigger: anyone, precondition: normal_operation, reversibility: irreversible}
+  - id: putty-M-05
+    title: fillOrder and exercise may lock Ether sent to the contract forever
+    scale: c4
+    published: Medium
+    matrix: {impact_class: permanent_freeze, magnitude: bounded, trigger: anyone, precondition: victim_unusual_action, reversibility: irreversible}
+  - id: putty-M-06
+    title: Contract owner could block users from withdrawing their strike
+    scale: c4
+    published: Medium
+    matrix: {impact_class: permanent_freeze, magnitude: unbounded, trigger: privileged_role, precondition: uncommon_protocol_state, reversibility: admin_reversible}
+  - id: putty-M-09
+    title: The contract serves as a flashloan pool without fee
+    scale: c4
+    published: Medium
+    matrix: {impact_class: yield_or_fee_loss, magnitude: bounded, trigger: anyone, precondition: normal_operation, reversibility: irreversible}
+  - id: putty-M-11
+    title: fee can change without the consent of users
+    scale: c4
+    published: Medium
+    matrix: {impact_class: yield_or_fee_loss, magnitude: bounded, trigger: privileged_role, precondition: normal_operation, reversibility: admin_reversible}
+  - id: putty-M-12
+    title: Options with a small strike price round the fee to zero and can prevent assets from being withdrawn
+    scale: c4
+    published: Medium
+    matrix: {impact_class: permanent_freeze, magnitude: unbounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}
+  # ── SOKEN public archive (github.com/SokenDev) ───────────────────────────────────────────
+  - id: soken-1inch-farming-01
+    title: Fees for transfers are not checked (amount trusted, fee-on-transfer)
+    scale: soken
+    published: Medium
+    matrix: {impact_class: insolvency_or_bad_debt, magnitude: bounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}
+  - id: soken-1inch-farming-02
+    title: Multiple possible reentrancy points (ERC-777 hooks, distributor role only)
+    scale: soken
+    published: Low
+    matrix: {impact_class: unauthorized_state_change, magnitude: bounded, trigger: privileged_role, precondition: uncommon_protocol_state, reversibility: irreversible}
+  - id: soken-czpegs-01
+    title: Integer overflow and underflow in the oracle accumulators (compiler below 0.8)
+    scale: soken
+    published: Medium
+    matrix: {impact_class: incorrect_accounting_no_fund_effect, magnitude: bounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}
+  - id: soken-czpegs-02
+    title: Loop consuming excessive gas in the distributor and treasuries
+    scale: soken
+    published: Low
+    matrix: {impact_class: dos_noncore_function, magnitude: bounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}
+  - id: soken-foundation-01
+    title: Return value of low-level calls not checked (Ether may stay locked when the call fails)
+    scale: soken
+    published: Medium
+    matrix: {impact_class: permanent_freeze, magnitude: bounded, trigger: anyone, precondition: external_failure, reversibility: irreversible}
+  - id: soken-foundation-02
+    title: Use of floating pragma
+    scale: soken
+    published: Informational
+    matrix: {impact_class: best_practice, magnitude: bounded, trigger: anyone, precondition: none, reversibility: irreversible}
+  - id: soken-foundation-03
+    title: Presence of overpowered role
+    scale: soken
+    published: Informational
+    matrix: {impact_class: centralization_risk, magnitude: unbounded, trigger: privileged_role, precondition: normal_operation, reversibility: admin_reversible}
+  - id: soken-foundationtoken-01
+    title: Controlled low-level call (call or delegatecall to a user-supplied address)
+    scale: soken
+    published: High
+    matrix: {impact_class: control_takeover, magnitude: unbounded, trigger: anyone, precondition: none, reversibility: irreversible}
+  - id: soken-foundationtoken-02
+    title: Unchecked transfer (tokens that return false instead of reverting)
+    scale: soken
+    published: High
+    matrix: {impact_class: insolvency_or_bad_debt, magnitude: bounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}
+  - id: soken-foundationtoken-03
+    title: Return value of low-level calls not checked
+    scale: soken
+    published: Medium
+    matrix: {impact_class: permanent_freeze, magnitude: bounded, trigger: anyone, precondition: external_failure, reversibility: irreversible}
+  - id: soken-last-01
+    title: Presence of overpowered role
+    scale: soken
+    published: Informational
+    matrix: {impact_class: centralization_risk, magnitude: unbounded, trigger: privileged_role, precondition: normal_operation, reversibility: admin_reversible}
+  - id: soken-neonomad-01
+    title: Use of unaudited framework (Anchor)
+    scale: soken
+    published: Medium
+    matrix: {impact_class: best_practice, magnitude: bounded, trigger: anyone, precondition: none, reversibility: irreversible}
+  - id: soken-neonomad-02
+    title: Program is upgradeable (users trust the team's upgrade authority)
+    scale: soken
+    published: Medium
+    matrix: {impact_class: centralization_risk, magnitude: unbounded, trigger: upgrade_authority, precondition: normal_operation, reversibility: admin_reversible}
+  # ── GBLIN audit 2026-10-02 (own, published) ──────────────────────────────────────────────
+  - id: gblin-L-001
+    title: Mints accept prices up to 2 hours old; the specification says 30 minutes
+    scale: gblin
+    published: Low
+    matrix: {impact_class: spec_deviation_bounded, magnitude: bounded, trigger: anyone, precondition: market_condition, reversibility: irreversible}
+  - id: gblin-L-002
+    title: A delisted row can be abandoned after 26 hours of feed silence; the documentation says seven days
+    scale: gblin
+    published: Low
+    matrix: {impact_class: spec_deviation_bounded, magnitude: bounded, trigger: anyone, precondition: uncommon_protocol_state, reversibility: irreversible}

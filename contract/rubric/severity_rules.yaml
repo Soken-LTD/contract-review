@@ -1,0 +1,44 @@
+# rubric/severity_rules.yaml (owner part 04, section 7.4). The named rules the severity engine may apply
+# on top of the IxL cell (engine/severity.py). Every verdict and the report's severity table name the
+# rules that moved the value, so a client can dispute a rule by id. Reference data: the ids and the
+# effect are what the engine does; `why` records the calibration decision behind the rule.
+#
+# Reviewer-first (2026-10-27): the severity the client reads is the reviewer's claimed_severity unless
+# a rule below applies; a rule that lowers it is named with its ceiling; a matrix outcome higher than
+# the reviewer's proposal is never applied silently at submit (E_SEVERITY_CONFIRM asks the reviewer to
+# confirm, keep theirs with a reason, or reclassify).
+version: 2
+one_step: 1          # RV1 tolerance and DG1 floor, in severity steps
+reason_min_chars: 20 # severity_reason length RV1 needs
+rules:
+  - {id: K1, phase: all, kind: cap, ceiling: Medium,
+     condition: "trigger privileged_role or upgrade_authority (a trusted role) and the TR1 waiver does not apply",
+     why: "A trusted role is a centralization risk, not an attacker; the matrix prints it as Medium at most."}
+  - {id: K3, phase: all, kind: cap, ceiling: Low, condition: "magnitude dust (a rounding artefact)"}
+  - {id: K4, phase: finalize, kind: cap, ceiling: Low,
+     condition: "evidence reasoning_only at finalize: a draft that never took a challenge and quotes no deployed code"}
+  - {id: K5, phase: "post_challenge, finalize", kind: step, effect: "minus one level",
+     condition: "a downgrade item of the checklist answered present",
+     why: "One step since 2026-10-27 (was two): the second step needs a kill item (see DG1)."}
+  - {id: K6, phase: all, kind: cap, ceiling: Low, condition: "precondition victim_unusual_action"}
+  - {id: K7, phase: all, kind: cap, ceiling: Low, condition: "impact centralization_risk"}
+  - {id: K8, phase: "post_challenge, finalize", kind: cap, ceiling: High,
+     condition: "Critical without evidence reasoning_challenged or analyzer_and_reasoning, or without attack_steps, or with an open downgrade item"}
+  - {id: K10, phase: "post_challenge, finalize", kind: cap, ceiling: High,
+     condition: "a checklist item scope not covered, or no contract map"}
+  - {id: K11, phase: all, kind: cap, ceiling: High,
+     condition: "generic category without a linked analyzer lead of the same category"}
+  - {id: "max_severity", phase: all, kind: cap, ceiling: "the category's max_severity (enums.yaml)",
+     condition: "the category carries max_severity (best_practice, source_text_integrity: Informational)"}
+  - {id: IRR1, phase: all, kind: likelihood, effect: "precondition uncommon_protocol_state counts as L2, not L1",
+     condition: "impact theft_of_funds, permanent_freeze, insolvency_or_bad_debt or supply_inflation; magnitude unbounded; reversibility irreversible; trigger permissionless",
+     why: "Irreversibility outweighs state rarity. Apyee V2 F-01 (2026-10-26): a permanent freeze of all funds that anyone can trigger once supply returns to zero printed Medium under I4xL1; the independent judge and the reviewer both read it as High. I4xL2 = High."}
+  - {id: TR1, phase: all, kind: likelihood, effect: "trigger privileged_role is treated as privileged_role_unprotected and K1 is waived",
+     condition: "retail-token profile (an ERC-20 unit whose owner can move, seize, block or dilute balances); impact theft_of_funds, permanent_freeze, insolvency_or_bad_debt, control_takeover or supply_inflation; trigger privileged_role; reversibility irreversible",
+     why: "For a retail token the owner is the threat, so an owner path to a loss with no undo (mint to self, drain, brick) is as reachable as a public one. Since 2026-10-27 the waiver needs reversibility irreversible: an owner action the owner can undo is a centralization risk and keeps the K1 Medium cap. Decision on the owner pause (BNB ANTTIME F-01, blind run 2026-10-26): pause is admin_reversible by construction; the irreversible branch needs the owner to renounce while paused, which is self-sabotage, not an attack, and no funds move. Public practice agrees: Code4rena and Sherlock file admin pause or blocklist powers as centralization findings at Medium or below unless the role is unprotected. Under this rubric an owner pause prints Medium (I3xL3 = High, K1 cap). A pause with no unpause function, or a renounce that cannot be undone inside the pause path, is reversibility irreversible and prints High under TR1."}
+  - {id: RV1, phase: all, kind: reviewer, effect: "claimed_severity stands when it is within one step of the matrix outcome and severity_reason is recorded; a cap still binds it from above",
+     condition: "claimed_severity given with severity_reason of at least reason_min_chars",
+     why: "Blind run 2026-10-26: the matrix overrode the reviewer eight times and was wrong or no better all eight times (judgement section 6). At submit a proposal further than one step away, or one step away without a reason, returns E_SEVERITY_CONFIRM with the computed cell; nothing is raised or lowered silently. After a challenge the proposal follows the new outcome to the nearest value within one step."}
+  - {id: DG1, phase: "post_challenge, finalize", kind: floor, effect: "the severity never prints more than one step below the severity accepted at submit",
+     condition: "basis fallbacks, K5, K8, K10 or K4 together would lower the accepted severity by two or more steps",
+     why: "Stacked downgrades are a second step without a kill item. Apyee V2 F-03 (2026-10-26): L3 present plus the MB6 fallback took a Low to Informational; the judge read the finding as Medium. A second step needs a kill item (withdrawn) or a resubmitted matrix."}

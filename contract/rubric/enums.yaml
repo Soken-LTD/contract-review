@@ -158,8 +158,8 @@ matrix:
   impact_class: [theft_of_funds, permanent_freeze, temporary_freeze, insolvency_or_bad_debt, control_takeover,
                  yield_or_fee_loss, unauthorized_state_change, griefing_with_victim_loss, dos_core_function,
                  dos_noncore_function, incorrect_accounting_no_fund_effect, spec_deviation_bounded,
-                 centralization_risk, best_practice]
-  magnitude: [unbounded, bounded, dust]
+                 centralization_risk, best_practice, supply_inflation]
+  magnitude: [unbounded, bounded, residual, dust]
   trigger: [anyone, permissionless_role, privileged_role, privileged_role_unprotected, upgrade_authority]
   precondition: [none, normal_operation, market_condition, timing_or_ordering, uncommon_protocol_state,
                  external_failure, victim_unusual_action]
