@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -49,6 +50,19 @@ def _main_contract() -> dict | None:
 # ── contract: additive only ─────────────────────────────────────────────────
 
 
+_CLASS_RE = re.compile(r"\[[^\]]*\]")
+
+
+def _pattern_widens(old: str, new: str) -> bool:
+    """A regex pattern widens when its character classes gain characters and nothing else changes
+    (2026-10-27: `@` added to path patterns for npm-scoped paths)."""
+    if old == new:
+        return True
+    if _CLASS_RE.sub("[]", old) != _CLASS_RE.sub("[]", new):
+        return False
+    return all(set(o[1:-1]) <= set(n[1:-1]) for o, n in zip(_CLASS_RE.findall(old), _CLASS_RE.findall(new), strict=True))
+
+
 def _widens(old, new) -> bool:
     """`new` accepts every value `old` accepts, judged structurally: enums may gain values, upper
     bounds may grow, lower bounds may shrink, `required` may shrink, objects may gain properties,
@@ -71,6 +85,9 @@ def _widens(old, new) -> bool:
                     return False
             elif k == "required":
                 if not set(n) <= set(v):
+                    return False
+            elif k == "pattern":
+                if not _pattern_widens(v, n):
                     return False
             elif not _widens(v, n):
                 return False

@@ -37,7 +37,7 @@
       "type": "object", "additionalProperties": false, "required": ["text", "ref"],
       "properties": {
         "text": {"type": "string", "minLength": 1, "maxLength": 300},
-        "ref": {"type": "string", "pattern": "^[A-Za-z0-9_./-]{1,200}:[0-9]{1,6}(-[0-9]{1,6})?$"}}}},
+        "ref": {"type": "string", "pattern": "^[A-Za-z0-9@_./-]{1,200}:[0-9]{1,6}(-[0-9]{1,6})?$"}}}},
     "absence_claims": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/absence_claim"}},
     "distinct_from": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/draft_key"}},
     "documented_intent_ref": {"$ref": "#/$defs/quote"},

@@ -25,11 +25,11 @@
   },
   "line_ref": {
    "type": "string",
-   "pattern": "^[A-Za-z0-9_./-]{1,200}:[0-9]{1,6}(-[0-9]{1,6})?$"
+   "pattern": "^[A-Za-z0-9@_./-]{1,200}:[0-9]{1,6}(-[0-9]{1,6})?$"
   },
   "range_ref": {
    "type": "string",
-   "pattern": "^[A-Za-z0-9_./-]{1,200}:[0-9]{1,6}-[0-9]{1,6}$"
+   "pattern": "^[A-Za-z0-9@_./-]{1,200}:[0-9]{1,6}-[0-9]{1,6}$"
   },
   "severity": {
    "type": "string",
@@ -311,7 +311,8 @@
            "properties": {
             "path": {
              "type": "string",
-             "pattern": "^[A-Za-z0-9_./-]{1,200}$"
+             "pattern": "^[A-Za-z0-9@_./-]{1,200}$",
+             "description": "relative path as the imports name it; npm-style paths are fine (@openzeppelin/contracts/token/ERC20/ERC20.sol or node_modules/@openzeppelin/contracts/...); no leading slash, no .."
             },
             "content": {
              "type": "string",
@@ -819,6 +820,35 @@
          "string",
          "null"
         ]
+       },
+       "version_source": {
+        "type": "string",
+        "description": "where the compiler version came from: project config pin, newest release satisfying every pragma, compiler_version given with the files, verifier metadata"
+       },
+       "attempts": {
+        "type": "array",
+        "description": "every compile attempt of the build step in order; a parse error at the chosen version is retried once with the newest release that satisfies every pragma",
+        "items": {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "version": {"type": ["string", "null"]},
+          "version_source": {"type": ["string", "null"]},
+          "status": {"type": "string", "enum": ["ok", "failed"]},
+          "reason": {"type": ["string", "null"]}
+         }
+        }
+       },
+       "deployment": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "bytecode comparison of the rebuilt runtime with the deployed code, present as soon as the build step records it",
+        "properties": {
+         "match": {"type": ["string", "null"], "enum": ["exact", "metadata_only", "mismatch", "not_checkable", null]},
+         "reason": {"type": ["string", "null"]},
+         "tier": {"type": ["string", "null"], "enum": ["A", "B", "C", "D", null]},
+         "label": {"type": ["string", "null"]}
+        }
        }
       }
      },

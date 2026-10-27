@@ -42,6 +42,7 @@ from ..adapters.evm import analyze as _analyze_mod
 from ..adapters.evm import build as _build_mod
 from ..adapters.evm import fetch as _fetch_mod
 from ..adapters.evm import files as _files_mod
+from ..adapters.evm import solc_select as _solc_select
 from ..adapters.evm.repo_candidate import repo_candidate_from_manifest, safe_read_repo_tree
 from ..adapters.evm.rpc import RpcAllEndpointsFailed, RpcClientPool
 from ..adapters.tron import analyze as _tron_analyze_mod
@@ -706,10 +707,14 @@ class Supervisor:
         if isinstance(source_args, str):
             source_args = json.loads(source_args)
         if job.get("source_kind") == "files" and source_args.get("language") == "solidity":
-            # Inline Solidity files (03 4.1): the requester's files are the only candidate,
-            # compiler from the pragmas (adapters/evm/files.py).
+            # Inline Solidity files (03 4.1): the requester's files are the only candidate; the
+            # compiler from compiler_version, a pasted config pin or the pragmas, and the
+            # review_start remappings as solc settings (adapters/evm/files.py).
             cand = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _files_mod.files_candidate(source_args.get("files") or [])
+                None, lambda: _files_mod.files_candidate(
+                    source_args.get("files") or [],
+                    remappings=[r for r in (source_args.get("remappings") or []) if isinstance(r, str)],
+                    compiler_version=source_args.get("compiler_version") or None)
             )
             candidates = [cand] if cand is not None else []
         elif job.get("source_kind") == "repo":
@@ -773,9 +778,16 @@ class Supervisor:
 
         # Pin source files (09 3.4 checkpoint)
         try:
+            # Repo mode also pins the dependency files the scope imports (node_modules/, lib/), out
+            # of scope with role `dependency`: readable and searchable with review_read_code and
+            # review_search_code, never a location, never in the map or the nSLOC (1inch run
+            # 2026-10-27: the ERC20Pods gas stipend behind L-003 could not be quoted).
+            deps = _dependency_closure(best)
             pin = PinnedSource.from_files(
-                {path: content.encode("utf-8") for path, content in best.files.items()},
-                langs={path: best.language for path in best.files},
+                {path: content.encode("utf-8") for path, content in {**deps, **best.files}.items()},
+                langs={path: best.language for path in [*deps, *best.files]},
+                in_scope={path: False for path in deps},
+                roles={path: "dependency" for path in deps},
             )
             pin.persist(self._pin_root, job_id)
         except Exception:
@@ -1198,7 +1210,9 @@ class Supervisor:
 
         try:
             pin = PinnedSource.load(self._pin_root, job_id)
-            files_str = {path: "\n".join(pin.read_all(path)) for path in pin.entries}
+            # the reviewed sources only; pinned dependency files (out of scope) reach the build
+            # through the import closure of the materialised tree, as before
+            files_str = {path: "\n".join(pin.read_all(path)) for path, e in pin.entries.items() if e.in_scope}
         except Exception:
             logger.exception("failed to load pin for job %s", job_id[-8:])
             result = {"status": "failed", "reason": "pin_load_error", "nsloc": 0, "stderr_head": None}
@@ -1252,16 +1266,44 @@ class Supervisor:
         # failed every Tronscan field ("tron_0.6.2_Plato_v4.2": compiler_binary_missing).
         work_dir = out_dir / "work"
         work_dir.mkdir(exist_ok=True)
-        builder = _tron_build_mod.build_tron if await self._is_tron_job(job_id) else _build_mod.build
+        is_tron = await self._is_tron_job(job_id)
+        builder = _tron_build_mod.build_tron if is_tron else _build_mod.build
         build_result = await asyncio.get_event_loop().run_in_executor(
             None, lambda: builder(candidate, work_dir=work_dir)
         )
+        attempts = [_build_attempt_row(candidate, build_result)]
+
+        # Parse-error retry (1inch farming 2026-10-27): a ParserError at the chosen version
+        # (a stale config pin, an explorer version, or a floor) is tried once more with the
+        # newest release that satisfies every pragma of the sources and their imports. Both
+        # attempts are recorded; the successful one becomes the job's compiler.
+        retry_version = None
+        if build_result.status == "failed" and not is_tron and candidate.compiler \
+                and _solc_select.is_parse_error(build_result.stderr_head):
+            retry_version = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: _parse_error_retry_version(candidate))
+        if retry_version:
+            retry_candidate = dataclasses.replace(
+                candidate, compiler=Compiler(version=retry_version, version_pinned_by="pragma"))
+            retry_dir = out_dir / "work_retry"
+            retry_dir.mkdir(exist_ok=True)
+            second = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: builder(retry_candidate, work_dir=retry_dir))
+            attempts.append(_build_attempt_row(retry_candidate, second))
+            logger.info("job %s: parse error at %s, retried with %s: %s", job_id[-8:],
+                        candidate.compiler.version, retry_version, second.status)
+            if second.status == "ok":
+                build_result, candidate = second, retry_candidate
+                candidates_raw[0]["compiler"] = {"version": retry_version, "version_pinned_by": "pragma"}
+                candidates_raw[0]["compiler_retry"] = {"from": attempts[0]["version"], "reason": "parse_error"}
+                candidates_path.write_text(json.dumps(candidates_raw, indent=2), encoding="utf-8")
 
         result = {
             "status": build_result.status,
             "nsloc": build_result.nsloc,
             "reason": build_result.reason,
             "stderr_head": build_result.stderr_head,
+            "attempts": attempts,
             "work_dir": str(build_result.work_dir) if build_result.work_dir else None,
             "auxdata_ranges": {k: [list(r) for r in v] for k, v in build_result.auxdata_ranges.items()},
             "std_json": candidate.std_json_input is not None,
@@ -1303,6 +1345,11 @@ class Supervisor:
                     "packages": valid_pkgs,
                     "dropped_invalid": invalid_count,
                 }
+                # The status text differs by start mode: pasted files have no repository, commit
+                # or lockfile to point at (errors.yaml what_files / fix_files).
+                mode_job = await self._get_job(job_id)
+                if (mode_job or {}).get("source_kind") == "files":
+                    detail["mode"] = "files"
                 logger.info("job %s: build insufficient_source missing_import pkgs=%d dropped=%d",
                             job_id[-8:], len(valid_pkgs), invalid_count)
             else:
@@ -1380,7 +1427,8 @@ class Supervisor:
         logger.info("job %s: dep.match=%s tier=%s", job_id[-8:],
                     (prov.get("dep") or {}).get("match"), prov["tier"])
         return {"tier": prov["tier"], "dep_match": (prov.get("dep") or {}).get("match"),
-                "dep_reason": (prov.get("dep") or {}).get("reason")}
+                "dep_reason": (prov.get("dep") or {}).get("reason"), "label_reason": prov.get("label_reason"),
+                "block": prov.get("block")}
 
     async def _is_tron_job(self, job_id: str) -> bool:
         job = await self._get_job(job_id)
@@ -1516,7 +1564,7 @@ class Supervisor:
         is not pinned. (None, None) when the pin cannot be read: then no lead is dropped.
         """
         try:
-            scope = set(PinnedSource.load(self._pin_root, job_id).entries)
+            scope = {p for p, e in PinnedSource.load(self._pin_root, job_id).entries.items() if e.in_scope}
         except (OSError, ValueError, KeyError):
             logger.warning("job %s: pin unreadable for lead scoping; no lead filtered", job_id[-8:])
             return None, None
@@ -1826,6 +1874,64 @@ def _load_build_result(path: Path) -> dict[str, Any]:
 
 _SOLC_OUTPUT_COPY = "solc_output.json"
 # build_notes keys copied into build_result.json (B4 decision + why it fell back, 05 4.2).
+_DEP_PIN_MAX_FILES = 80
+_DEP_PIN_MAX_BYTES = 3 * 1024 * 1024
+
+
+def _dependency_closure(candidate: Candidate) -> dict[str, str]:
+    """Dependency .sol files the candidate's scope imports (repo mode: node_modules/ and lib/ of
+    the materialised tree), capped, for the out-of-scope pin. Empty for other providers."""
+    tree = getattr(candidate, "_full_tree", None)
+    if candidate.provider != "repo" or not tree:
+        return {}
+    remaps = list((candidate.settings or {}).get("remappings") or [])
+    closure = _solc_select.closure_sources(candidate.files, tree, remaps)
+    out: dict[str, str] = {}
+    total = 0
+    for path in sorted(closure):
+        if path in candidate.files or not path.endswith(".sol"):
+            continue
+        text = closure[path]
+        if len(out) >= _DEP_PIN_MAX_FILES or total + len(text) > _DEP_PIN_MAX_BYTES:
+            break
+        out[path] = text
+        total += len(text)
+    return out
+
+
+def _build_attempt_row(candidate: Candidate, result: BuildResult) -> dict[str, Any]:
+    """One row of build_result.json `attempts` (review_status detailed build.attempts): the
+    version tried, where it came from, and the failure class (enum token or error class names,
+    never raw compiler text)."""
+    from ..tools.map_view import build_error_summary
+
+    comp = candidate.compiler
+    return {
+        "version": comp.version.split("+", 1)[0] if comp else None,
+        "version_source": _solc_select.pinned_by_text(comp.version_pinned_by) if comp else None,
+        "status": "ok" if result.status == "ok" else "failed",
+        "reason": None if result.status == "ok" else build_error_summary(result.stderr_head or result.reason),
+    }
+
+
+def _parse_error_retry_version(candidate: Candidate) -> str | None:
+    """The newest release satisfying every pragma of the candidate's files and the tree files
+    they import, when it differs from the version just tried; None otherwise."""
+    tree = getattr(candidate, "_full_tree", None)
+    remaps = list((candidate.settings or {}).get("remappings") or [])
+    exprs = _solc_select.pragma_exprs(_solc_select.closure_sources(candidate.files, tree, remaps))
+    if not exprs:
+        return None
+    builds = _solc_select.load_builds()
+    if not builds:
+        return None
+    newest = _solc_select.newest_satisfying(exprs, builds)
+    tried = (candidate.compiler.version if candidate.compiler else "").split("+", 1)[0]
+    if newest is None or newest.split("+", 1)[0] == tried:
+        return None
+    return newest
+
+
 _BUILD_NOTE_KEYS = frozenset({
     "b4_source", "b4_rejected", "b4_detail", "libraries_unverified", "had_unknown_settings",
     "forge_version_mismatch", "forge_rc", "forge_stderr_head",

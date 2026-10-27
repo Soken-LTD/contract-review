@@ -1810,3 +1810,23 @@ class TestForgeDynamicTestLinking:
         assert br.build_notes["b4_rejected"] == "sources_differ"
         assert br.build_notes["b4_detail"] == "missing_in_tree:foundry-pp/DeployHelper1.sol"
         assert cand.untrusted_inputs is True
+
+
+class TestAderynLeadLocation:
+    def test_instances_use_line_no(self, monkeypatch):
+        """Aderyn 0.6 names the line `line_no`; reading `line` pinned every lead to line 1
+        (held-out run 2026-10-27: large-numeric-literal on the SPDX line instead of line 10)."""
+        from soken_review.adapters.evm import analyze as az
+
+        report = {"high_issues": {"issues": []},
+                  "low_issues": {"issues": [{"detector_name": "large-numeric-literal", "instances": [
+                      {"contract_path": "contracts/WallitelliToken.sol", "line_no": 10, "src": "300:30"}]}]}}
+        monkeypatch.setattr(az, "_run_sandboxed", lambda *a, **k: True)
+        monkeypatch.setattr(az, "read_sandbox_json", lambda *a, **k: report)
+        monkeypatch.setattr(az, "_DIRECT_TOOLS", False)
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "analyze"
+            (out_dir / "sbx").mkdir(parents=True)
+            raw = az._run_aderyn(out_dir / "proj", out_dir, None, None)
+        assert raw == [{"tool": f"aderyn@{az._ADERYN_VERSION}", "rule_id": "large-numeric-literal", "severity_raw": "Low",
+                        "file": "contracts/WallitelliToken.sol", "start": 10, "end": 10}]

@@ -290,7 +290,7 @@ _L7_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*[0-9][A-Za-z0-9_$]*|[A-Za-z_][A-Za-
 _ALPHA_WORD_RE = re.compile(r"[A-Za-z_]\w*")
 
 # ── Line reference patterns (L5, L6) ─────────────────────────────────────
-_L5_RE = re.compile(r"[A-Za-z0-9_./-]{1,200}:(\d+)(?:-(\d+))?")
+_L5_RE = re.compile(r"[A-Za-z0-9@_./-]{1,200}:(\d+)(?:-(\d+))?")
 _L6_RE = re.compile(
     r"(?i)\blines?\s+\d+(?:\s*,\s*\d+)*(?:\s*,?\s*(?:and|to|-)\s*\d+)?"
 )

@@ -25,8 +25,17 @@ rules:
   T11: '\b(TODO|TBD|DRAFT)\b (case-sensitive)'
   T12: '\?'
   T13: [critical, high, medium, low, informational, severe, catastrophic, devastating, serious, major, minor]  # not when the word opens a hyphenated term ("high-water mark", "low-level"); "high-risk", "low-severity" still match
+  # T13 per-word decisions (held-out run 2026-10-27, "minor"/"major" fired on "same minor series", "major version line"):
+  #   critical, high, medium, low, informational: the printed severity labels; prose never restates a label (the table does) -> keep
+  #   severe, catastrophic, devastating, serious: impact adjectives that overclaim without a matrix cell -> keep
+  #   major, minor: a severity claim only before a severity noun ("minor issue", "major flaw"); "minor release", "major version" are
+  #     version and series words -> keep only with the noun list T13_qualified_tail
+  T13_qualified: [major, minor]
+  T13_qualified_tail: [issue, issues, bug, bugs, flaw, flaws, problem, problems, risk, risks, concern, concerns, vulnerability, vulnerabilities, finding, findings, weakness, weaknesses, impact, impacts, severity, threat, threats, exploit, exploits, defect, defects]
   T14: [guaranteed, fully secure, no vulnerability, no vulnerabilities, bug-free, proven exploit, confirmed exploit, 100% safe]
   T15: '\baudit(s|ed|or|ors)?\b'
+  # T15 per-word decisions: audit, audits, audited: a claim that code was audited is not checkable from the review and the product is
+  #   a review, not an audit -> keep every form, write review / reviewed; auditor, auditors -> keep, write reviewer / reviewers
   T16: '\b(Slither|Aderyn|Wake|Semgrep|Radar|Misti|Mythril|Echidna|Medusa|Trident|Opus|Sonnet|Haiku)\b'
   T17: ['https?://', 'www\.', '\S+@\S+\.\w+']
   T18: [it is important to note, it should be noted, in conclusion, please note, as an ai, feel free, we recommend, note that]
@@ -41,12 +50,15 @@ rules:
       guard:   ['\bno (check|guard|lock|validation|modifier|protection|restriction|access control)s?\b', '\bno \w+ (check|guard|protection|validation|restriction)s?\b',
                 '\b(lacks?|lacking)\b', '\b(is|are) missing\b', '\bmissing (a |an |any )?(check|guard|lock|validation|modifier|access control|protection|restriction)s?\b',
                 '\bwithout (a |an |any )?(check|guard|lock|validation|modifier|access control|protection|restriction|limit|bound|cap)s?\b',
-                '\b(unprotected|unguarded|unchecked|unrestricted|unvalidated)\b', '\b(does|do) not (check|verify|validate|enforce|restrict)\b',
+                '\b(unprotected|unguarded|unchecked|unrestricted|unvalidated)\b', '\b(does|do) not (check|verify|validate|enforce|restrict)\b',  # unchecked + T24_unchecked_terms is a Solidity term, not an absence claim
                 '\b(is|are) not (checked|verified|validated|enforced|restricted|guarded)\b', '\bfails? to (check|verify|validate|enforce|restrict|guard|limit|bound)\b']
       caller:  ['\b(anyone|anybody|everyone|nobody) can\b', '\bany \w+( \w+){0,5} can\b', '\bnothing (prevents|stops|blocks)\b', '\b(every|all) (function|caller|path|entry point)s?\b']
       read:    ['\bnever(\s+\w+ly)?\s+(read|written|updated|set|reset|cleared|changed|modified|decremented|incremented|deleted|called|invoked|used|reached|executed|triggered|checked|validated|verified|enforced|guarded|restricted|compared|bounded|capped|limited)\b',  # never + behaviour ("can never cycle again") binds to no kind and is not matched
                 '\bnowhere\b', '\bnot\b.{0,40}\banywhere\b', '\b(is|are) not used\b']
     kinds: {guard: [no_guard, all_paths_unguarded], caller: [all_paths_unguarded], read: [no_reads, no_writes, no_calls]}
+    # "unchecked block", "unchecked arithmetic", "unchecked cast" name language constructs (1inch run 2026-10-27, title "Unchecked
+    # narrowing casts"); "unchecked return value", "unchecked call", "unchecked transfer" stay absence claims
+    unchecked_terms: [block, blocks, arithmetic, math, cast, casts, casting, conversion, conversions, narrowing, increment, increments, decrement, decrements, loop, loops, section, sections, scope, region, keyword]
   T25: '\bsoken\b'
   T26: '\b[a-z0-9-]+\s*(\.|\bdot\b)\s*(<tlds.txt>)\b'
   T27: [book a call, book a demo, contact us, contact our, reach out, hire us, hire a team, hire our, engage us, engage our, paid review, paid audit, paid plan, manual review, full review, upgrade to, pricing, discount, team of experts]
@@ -71,3 +83,43 @@ public_rules:  # scope public only (04 11.1)
 subject_words: [soken, audit, audited, certified, verified, secure, safe]
 code_span_exempt: [T5, T9, T12, T18, T19, T20, T24, 'T16 when the name is a code identifier']
 code_span_never_exempt: [step0, T4, T13, T14, T15, T17, T25, T26, T27, T28, T29, number_check]
+# rule_help: the one-line rule text and the allowed rewording every E_TEXT_GATE result prints (held-out run 2026-10-27:
+# T15 and T13 hits were unavoidable without the word list). review_get_guide topic challenge_rules prints this table.
+rule_help:
+  T1:  {text: "em dash U+2014", reword: "Use a comma, a colon or a full stop instead of the dash."}
+  T2:  {text: "en dash U+2013", reword: "Use 'to' for ranges (lines 10 to 12) or a hyphen in compound words."}
+  T3:  {text: "rightwards arrow U+2192", reword: "Write the step in words: 'then', 'calls', 'returns'."}
+  T4:  {text: "retired brand domain", reword: "Drop the domain; the report carries the brand."}
+  T5:  {text: "second person or first person plural (you, your, we, our)", reword: "Name the actor: the owner, the caller, the contract, the reviewer."}
+  T6:  {text: "confidentiality banner text", reword: "Drop it; the report prints its own banner."}
+  T7:  {text: "reserved for", reword: "State who may call it: 'only the owner may call'."}
+  T8:  {text: "the choice is", reword: "State the recommendation directly."}
+  T9:  {text: "AI, LLM or model names (AI, LLM, Claude, GPT, subagent)", reword: "Describe the code; the authorship box names the method."}
+  T10: {text: "vanity counts (890+, 255+)", reword: "Drop the count."}
+  T11: {text: "placeholders TODO, TBD, DRAFT", reword: "Finish the sentence or drop it."}
+  T12: {text: "question mark", reword: "Turn the question into a statement of what the code does or should do."}
+  T13: {text: "severity words in prose: critical, high, medium, low, informational, severe, catastrophic, devastating, serious; major or minor before a severity noun (issue, bug, flaw, risk, vulnerability, finding, impact)", reword: "Let the severity table carry the level; describe the effect ('drains the pool', 'blocks withdrawals'). 'minor release' and 'major version' are allowed."}
+  T14: {text: "completeness or certainty claims: guaranteed, fully secure, no vulnerability, no vulnerabilities, bug-free, proven exploit, confirmed exploit, 100% safe", reword: "State what was checked and what was found: 'no reentrant path was found in the reviewed functions'."}
+  T15: {text: "audit wording: audit, audits, audited, auditor, auditors", reword: "Write review, reviewed, reviewer: 'use reviewed vesting or lock contracts'."}
+  T16: {text: "analyzer and model names (Slither, Aderyn, Wake, Semgrep, Radar, Misti, Mythril, Echidna, Medusa, Trident, Opus, Sonnet, Haiku)", reword: "Write 'the static analyzer' or describe the lead."}
+  T17: {text: "URL or email address", reword: "Name the resource in words; project documents go through review_add_context."}
+  T18: {text: "filler phrases: it is important to note, it should be noted, in conclusion, please note, as an ai, feel free, we recommend, note that", reword: "Delete the filler and keep the statement."}
+  T19: {text: "double hedge: might/could/may + potentially/possibly", reword: "Use one modal: 'may revert'."}
+  T20: {text: "ASCII arrows (->, =>) or dash code points U+2010 to U+2015, U+2212", reword: "Write 'then', 'to', 'gives'; use a hyphen-minus."}
+  T21: {text: "title length and shape: 10 to 110 characters, one sentence, no trailing period, not only a code span", reword: "Write one sentence that names the mechanism and the effect."}
+  T22: {text: "let's, let us", reword: "State the step: 'the caller then withdraws'."}
+  T23: {text: "paragraph longer than 90 words", reword: "Split the paragraph at a sentence boundary into two blocks."}
+  T24: {text: "absence or universal phrase (no check, lacks, missing, unprotected, unchecked, anyone can, never read, nowhere) without an absence_claims entry", reword: "Add an absence_claims entry whose says text contains the phrase, or state what the quoted lines do instead of what is absent."}
+  T25: {text: "brand word outside the fixed brand line", reword: "Drop the brand word; the report prints the brand."}
+  T26: {text: "bare domain name", reword: "Name the service in words."}
+  T27: {text: "sales wording: book a call, contact us, hire us, paid review, manual review, full review, upgrade to, pricing, discount, team of experts", reword: "Drop the pitch; the recommendation stands on the code."}
+  T28: {text: "a count of projects, engagements, clients, reviews or audits", reword: "Drop the count."}
+  T29: {text: "raw finding or lead id (H-001, LEAD-0001) in prose", reword: "Refer to the mechanism or location; ids are linked by the tool arguments."}
+  T30: {text: "exploit script shape in a public review (step markers, attacker-led lists, sequenced attacker sentences)", reword: "Describe the weakness and its effect, not the sequence an attacker runs."}
+  T31: {text: "call syntax outside a code span", reword: "Wrap the identifier in backticks exactly as it appears in the pinned source."}
+  P1:  {text: "superlative or exclusivity words: only, first, no other, best, unique, unlike, better than, leading, #1", reword: "State the fact without the comparison."}
+  P2:  {text: "competitor name", reword: "Drop the name."}
+  P3:  {text: "score, rating or finance words: score, badge, rating, grade, buy, sell, invest, safe to buy", reword: "Describe the finding; the report gives no score or advice."}
+  P4:  {text: "endorsement wording near Anthropic or Claude", reword: "Drop the endorsement wording."}
+  step0: {text: "control, format or bidirectional characters", reword: "Remove the invisible character."}
+  subject_words: {text: "subject line words: soken, audit, audited, certified, verified, secure, safe", reword: "Name the contract and the chain only."}

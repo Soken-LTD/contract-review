@@ -384,3 +384,60 @@ def test_build_status_value_from_build_result_and_map_status(tmp_path):
     assert start_status._build_status_value(pins, "job_X", "partial") == "ok"
     (work / "build_result.json").write_text(json.dumps({"status": "weird"}))
     assert start_status._build_status_value(pins, "job_X", "lexical") is None
+
+
+# ── held-out friction 2026-10-27: files-mode dependency text, bytecode match in status ───────
+
+
+def test_status_dependency_unresolved_files_mode_talks_about_pasted_files():
+    detail = {"reason": "missing_import", "packages": ["@openzeppelin/contracts"], "dropped_invalid": 0, "mode": "files"}
+    body = start_status._build_status_response(_errored_job("E_DEPENDENCY_UNRESOLVED", detail), "json", steps=[])
+    err = body["error"]
+    assert "pasted files import @openzeppelin/contracts" in err["what"]
+    assert "repository" not in err["what"] and "lockfile" not in err["fix"]
+    assert "review_start.source.remappings" in err["fix"] and "@openzeppelin/contracts/=" in err["fix"]
+    assert "—" not in err["fix"]
+    assert list(STATUS_SCHEMA.iter_errors(body)) == []
+
+
+def _build_step(match: str | None, reason: str | None, tier: str, block: int | None = 130092367) -> dict:
+    return {"step": "build", "seq": 0, "status": "done",
+            "provenance": {"tier": tier, "dep_match": match, "dep_reason": reason, "label_reason": None, "block": block}}
+
+
+def test_status_detailed_exposes_bytecode_match_from_the_build_step():
+    job = _tiered_job("files", tier="A")
+    out = start_status._build_status_response(job, "detailed", steps=[_fetch_step("user"), _build_step("exact", None, "A")])
+    dep = out["build"]["deployment"]
+    assert dep["match"] == "exact" and dep["tier"] == "A"
+    assert dep["label"] == "Source matched to deployed code at block 130092367"
+    assert out["provenance"]["label"] == dep["label"]
+    assert list(STATUS_SCHEMA.iter_errors(out)) == []
+
+
+def test_status_detailed_bytecode_not_checkable_names_the_reason():
+    job = _tiered_job("repo")
+    out = start_status._build_status_response(job, "detailed", steps=[_build_step("not_checkable", "build_failed", "B", None)])
+    dep = out["build"]["deployment"]
+    assert dep["match"] == "not_checkable" and dep["reason"] == "build_failed"
+    assert dep["label"] == "Match to the deployed code could not be checked (build_failed)"
+    assert list(STATUS_SCHEMA.iter_errors(out)) == []
+
+
+def test_status_concise_has_no_deployment_block_and_schema_holds():
+    job = _tiered_job("repo")
+    out = start_status._build_status_response(job, "concise", steps=[_build_step("mismatch", None, "C")])
+    assert "build" not in out
+    assert list(STATUS_SCHEMA.iter_errors(out)) == []
+
+
+def test_build_attempts_reader_shape_checks(tmp_path):
+    job_id = "job_" + "2" * 26
+    work = tmp_path / "work" / job_id
+    work.mkdir(parents=True)
+    (work / "build_result.json").write_text(json.dumps({"status": "ok", "attempts": [
+        {"version": "0.8.0", "version_source": "pragma floor", "status": "failed", "reason": "ParserError"},
+        {"version": "0.8.24", "version_source": "newest", "status": "ok", "reason": None},
+        {"version": "x", "status": "weird"}]}))
+    rows = start_status._build_attempts(tmp_path / "pins", job_id)
+    assert [r["version"] for r in rows] == ["0.8.0", "0.8.24"] and rows[0]["reason"] == "ParserError"

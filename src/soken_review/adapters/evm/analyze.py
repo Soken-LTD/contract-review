@@ -741,7 +741,10 @@ def _run_aderyn(
             detector_name = issue.get("detector_name") or issue.get("name") or ""
             for inst in issue.get("instances", [issue]):
                 file_path = inst.get("contract_path") or inst.get("file") or ""
-                line = inst.get("line") or 1
+                # Aderyn's JSON report names the line `line_no` (0.6.x); `line` is never set, so
+                # every lead landed on line 1 (held-out run 2026-10-27, large-numeric-literal and
+                # centralization-risk pinned to the SPDX line).
+                line = inst.get("line_no") or inst.get("line") or 1
                 raw.append({
                     "tool": f"aderyn@{_ADERYN_VERSION}",
                     "rule_id": detector_name,

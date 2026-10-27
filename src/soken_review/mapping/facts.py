@@ -100,7 +100,16 @@ def static_facts(
     if candidate:
         version = ((candidate.get("compiler") or {}).get("version") or "").split("+")[0]
         if re.fullmatch(r"\d+\.\d+\.\d+", version):
-            out.append(fact("compiler.version", version, source=f"source candidate ({candidate.get('provider')})"))
+            # The source names where the version came from, not only who supplied the files:
+            # "(user)" for a version the server picked from the pragmas misled the apad run.
+            from soken_review.adapters.evm.solc_select import pinned_by_text
+
+            pinned_by = (candidate.get("compiler") or {}).get("version_pinned_by")
+            provider = {"user": "files supplied by the requester", "repo": "repository"}.get(
+                str(candidate.get("provider")), str(candidate.get("provider")))
+            source = (f"{provider}: {pinned_by_text(pinned_by)}" if pinned_by
+                      else f"source candidate ({candidate.get('provider')})")
+            out.append(fact("compiler.version", version, source=source))
     if nsloc is not None:
         out.append(fact("source.nsloc", nsloc, unit="lines", source="pinned source"))
     out.append(fact("source.files", pin_files, source="pin manifest"))

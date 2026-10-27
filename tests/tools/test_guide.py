@@ -90,3 +90,13 @@ async def test_severity_inputs_show_the_double_brace_placeholder_form(client):
     text = await _guide(client, topic="severity_inputs")
     assert "{{fact:<key>}}" in text and "{{calc:<expr>|<precision>}}" in text
     assert "({fact:<key>}" not in text
+
+
+def test_challenge_rules_topic_lists_the_text_rule_words():
+    """E_TEXT_GATE points here; the word lists of T13 and T15 must be readable (2026-10-27)."""
+    from soken_review.tools.guide import _topic_challenge_rules
+
+    text = "\n".join(_topic_challenge_rules())
+    assert "T15: audit wording: audit, audits, audited, auditor, auditors" in text
+    assert "T13:" in text and "minor" in text and "major" in text
+    assert "T23:" in text and "90 words" in text

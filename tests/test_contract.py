@@ -147,3 +147,42 @@ def test_context_surfaces_in_the_contract():
     for name in ("review_start", "review_add_context"):
         desc = tools[name]["description"]
         assert "context" in desc.lower() and len(desc) <= 600 and "soken" not in desc.lower()
+
+
+# ── held-out friction 2026-10-27: severity_reason is in the submit schema; npm paths allowed ──
+
+
+def test_submit_finding_input_schema_has_severity_reason_and_validator_accepts_it():
+    """The 2026-10-27 arms ran on a stale client schema; the shipped contract and the server
+    validator both know severity_reason (20 to 200 characters, next to claimed_severity)."""
+    import jsonschema
+
+    tools = {t["name"]: t for t in TOOLS}
+    schema = tools["review_submit_finding"]["inputSchema"]
+    props = schema["properties"]
+    assert props["severity_reason"]["minLength"] == 20 and props["severity_reason"]["maxLength"] == 200
+    assert "claimed_severity" in props
+    v = jsonschema.Draft202012Validator(schema)
+    reason_errors = [e for e in v.iter_errors({"severity_reason": "x" * 25, "claimed_severity": "Low"})
+                     if "severity_reason" in e.json_path or "claimed_severity" in e.json_path]
+    assert reason_errors == []
+    assert not [e for e in v.iter_errors({"severity_reason": "x" * 25}) if "additional" in e.message]
+
+
+def test_files_path_and_line_refs_accept_npm_scoped_paths():
+    tools = {t["name"]: t for t in TOOLS}
+    files_schema = next(s for s in tools["review_start"]["inputSchema"]["properties"]["source"]["oneOf"]
+                        if s["properties"]["kind"].get("const") == "files")
+    pat = files_schema["properties"]["files"]["items"]["properties"]["path"]["pattern"]
+    assert re.match(pat, "@openzeppelin/contracts/token/ERC20/ERC20.sol")
+    assert re.match(pat, "node_modules/@openzeppelin/contracts/utils/Context.sol")
+    assert not re.match(pat, "a b.sol")
+    # traversal is the server gate (units.safe_store_path), not the pattern: @ paths pass it, .. does not
+    from soken_review.adapters.evm.units import safe_store_path
+
+    assert safe_store_path("@openzeppelin/contracts/token/ERC20/ERC20.sol") == "@openzeppelin/contracts/token/ERC20/ERC20.sol"
+    assert safe_store_path("node_modules/@scope/pkg/A.sol") == "node_modules/@scope/pkg/A.sol"
+    assert safe_store_path("../etc/passwd") is None and safe_store_path("/etc/passwd") is None
+    raw = json.loads((CONTRACT_DIR / "mcp" / "tools.v1.json").read_text())["$defs"]
+    assert re.match(raw["line_ref"]["pattern"], "@openzeppelin/contracts/token/ERC20/ERC20.sol:12-14")
+    assert re.match(raw["range_ref"]["pattern"], "node_modules/@scope/pkg/A.sol:1-2")
