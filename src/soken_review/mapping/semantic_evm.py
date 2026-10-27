@@ -15,7 +15,11 @@ resolution, so a modifier, base contract or internal callee that lives in `node_
 reviewed tree. Units, functions and spans are still emitted for the pinned files only. A guard
 that executes in an unpinned file is listed on the nearest reviewed line that applies it (the
 modifier invocation on the function header, or the internal call site) with `via` naming the
-dependency line, because fp_guarded quotes pinned lines only.
+dependency line, because fp_guarded quotes pinned lines only. Such a guard is credited (a real
+`caller_check`, usable by fp_guarded and `fixed`) only when the dependency is integrity-pinned in
+this run (`trusted_prefixes`: npm packages whose tarball matched the lockfile sha512, PR #74);
+any other dependency, and every file the scope rules removed (`untrusted_paths`), yields a
+`name_only` hint that satisfies neither (security review of PR #84).
 """
 
 from __future__ import annotations
@@ -111,7 +115,8 @@ def _line_starts(text: str) -> list[int]:
 
 class _Ctx:
     def __init__(self, output: dict, texts: dict[str, str], compiled_texts: dict[str, str] | None = None,
-                 index_all: bool = False) -> None:
+                 index_all: bool = False, trusted_prefixes: tuple[str, ...] = (),
+                 untrusted_paths: frozenset[str] = frozenset()) -> None:
         """`texts` are the pinned (LF) files; `compiled_texts` the bytes the compiler actually saw
         for the same paths (the fetched Standard JSON keeps CRLF so the rebuild can be exact).
         solc `src` offsets are byte offsets into the compiled text, so lines must be resolved
@@ -131,6 +136,8 @@ class _Ctx:
         self.asts: dict[str, dict] = {}
         self.dep_asts: dict[str, dict] = {}
         self.pinned: frozenset[str] = frozenset(texts)
+        self.trusted_prefixes = tuple(p for p in trusted_prefixes if p)
+        self.untrusted_paths = frozenset(untrusted_paths)
         compiled_texts = compiled_texts or {}
         for path, src in (output.get("sources") or {}).items():
             ast = src.get("ast")
@@ -196,10 +203,25 @@ class _Ctx:
             return None
         return self.paths.get(idx)
 
+    @staticmethod
+    def ref_path(ref: str) -> str:
+        """Path of a `path:line` reference (or a bare path)."""
+        path, sep, line = ref.rpartition(":")
+        return path if sep and line.isdigit() else ref
+
     def in_pin(self, ref: str) -> bool:
         """True when a `path:line` reference (or a bare path) names a pinned file."""
-        path, sep, line = ref.rpartition(":")
-        return (path if sep and line.isdigit() else ref) in self.pinned
+        return self.ref_path(ref) in self.pinned
+
+    def credited(self, ref: str) -> bool:
+        """True when a guard executing at `ref` may be a real guard: the file is pinned (quotable),
+        or an integrity-pinned dependency of this run, and never a file the scope rules removed."""
+        path = self.ref_path(ref)
+        if path in self.untrusted_paths:
+            return False
+        if path in self.pinned:
+            return True
+        return any(path.startswith(prefix) for prefix in self.trusted_prefixes)
 
 
 def _walk(node: Any):
@@ -300,8 +322,10 @@ def _is_revert_body(node: Any) -> bool:
 
 class SemanticBuilder:
     def __init__(self, output: dict, texts: dict[str, str], categories: list[str],
-                 compiled_texts: dict[str, str] | None = None) -> None:
-        self.ctx = _Ctx(output, texts, compiled_texts, index_all=True)
+                 compiled_texts: dict[str, str] | None = None, trusted_prefixes: tuple[str, ...] = (),
+                 untrusted_paths: frozenset[str] = frozenset()) -> None:
+        self.ctx = _Ctx(output, texts, compiled_texts, index_all=True, trusted_prefixes=trusted_prefixes,
+                        untrusted_paths=untrusted_paths)
         self.categories = categories
         self.fns: dict[int, _Fn] = {}
         self.span_ids: dict[tuple[str, int], str] = {}
@@ -668,9 +692,9 @@ class SemanticBuilder:
             # a modifier declared in an unpinned dependency executes outside the reviewed tree:
             # the guard is listed on the invocation line of the reviewed function header
             site = self.ctx.ref(self.ctx.loc(m)) or self.ctx.ref(self.ctx.loc(fn.node))
-            fn.guards.extend(self._rehome(found, site))
+            self._credit(fn, self._rehome(found, site))
             fn.hints.extend(self._rehome(hints, site))
-        fn.guards.extend(self._guards_in(fn.node.get("body"), depth=0, seen=seen, role_sink=fn.role_names,
+        self._credit(fn, self._guards_in(fn.node.get("body"), depth=0, seen=seen, role_sink=fn.role_names,
                                          hints=fn.hints))
         if any(c == "caller_check" for c, _, _ in fn.guards):
             fn.features.add("caller_guard")
@@ -687,6 +711,16 @@ class SemanticBuilder:
                 continue
             fn.features |= callee.features - {"has_params", "upgrade", "initializer"}
             stack.extend((x, d + 1) for x in callee.internal_callees)
+
+    def _credit(self, fn: _Fn, found: list[tuple[str, str, str]]) -> None:
+        """A guard whose executing line (`via`, else `line`) is pinned or integrity-pinned is a
+        guard; one from any other dependency, or from a file the scope rules removed, is a
+        `name_only` hint (fp_guarded and `fixed` never accept hints)."""
+        for c, line, via in found:
+            if self.ctx.credited(via or line):
+                fn.guards.append((c, line, via))
+            else:
+                fn.hints.append((c, line, via))
 
     def _rehome(self, found: list[tuple[str, str, str]], site: str | None) -> list[tuple[str, str, str]]:
         """Guards whose line is outside the pinned files are listed at `site` (a pinned line that
@@ -1081,12 +1115,14 @@ def _dedup_dicts(items: list[dict]) -> list[dict]:
 
 
 def build_semantic(output: dict, texts: dict[str, str], categories: list[str],
-                   compiled_texts: dict[str, str] | None = None) -> tuple[dict, dict[tuple[str, int], tuple[str, str]]] | None:
+                   compiled_texts: dict[str, str] | None = None, trusted_prefixes: tuple[str, ...] = (),
+                   untrusted_paths: frozenset[str] = frozenset()) -> tuple[dict, dict[tuple[str, int], tuple[str, str]]] | None:
     """Semantic layer, or None when the output carries no AST for any pinned file (04 1.3: map partial).
 
     `compiled_texts`: the per-path source text the compiler was given (may differ from the pinned
-    text in line endings); AST offsets are resolved against it, see `_Ctx`."""
-    builder = SemanticBuilder(output, texts, categories, compiled_texts)
+    text in line endings); AST offsets are resolved against it, see `_Ctx`. `trusted_prefixes`
+    and `untrusted_paths`: which unpinned dependency files may credit a guard (module docstring)."""
+    builder = SemanticBuilder(output, texts, categories, compiled_texts, trusted_prefixes, untrusted_paths)
     if not builder.ctx.asts:
         return None
     return builder.build()

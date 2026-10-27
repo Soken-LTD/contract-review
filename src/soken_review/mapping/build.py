@@ -75,7 +75,8 @@ def validate_map(doc: dict[str, Any]) -> None:
 
 def build_map(files: dict[str, str], solc_output: dict | None, categories: list[str],
               build_ok: bool = True, compiled_texts: dict[str, str] | None = None,
-              parsed_family: str | None = None) -> MapArtifacts:
+              parsed_family: str | None = None, trusted_prefixes: tuple[str, ...] = (),
+              untrusted_paths: frozenset[str] = frozenset()) -> MapArtifacts:
     """Lexical layer for every file; semantic layer from the solc AST when the build succeeded.
 
     `compiled_texts` are the exact source strings the compiler received (per path). The build step
@@ -86,7 +87,11 @@ def build_map(files: dict[str, str], solc_output: dict | None, categories: list[
     `parsed_family="solana"`: the semantic layer comes from the Rust parse (semantic_solana), with or
     without a build. Such a map is `partial` at best (not compiler-resolved), never `full`, so the
     unreachability auto-proof that needs `full` stays off; the build outcome is reported separately
-    (map/status.json `build_status`)."""
+    (map/status.json `build_status`).
+
+    `trusted_prefixes` / `untrusted_paths`: dependency files that may credit a guard on a pinned
+    function (semantic_evm module docstring); the supervisor derives them from the npm integrity
+    record and the scope exclusions of the run (`step.dependency_trust`)."""
     lex: dict[str, LexResult] = {p: lex_file(p, t) for p, t in sorted(files.items())}
     file_rows = []
     spans: list[dict[str, Any]] = []
@@ -146,7 +151,7 @@ def build_map(files: dict[str, str], solc_output: dict | None, categories: list[
             semantic["functions"] = [f for f in semantic["functions"] if f["span"] in known]
             doc["semantic"] = semantic
     elif build_ok and solc_output:
-        built = build_semantic(solc_output, files, categories, compiled_texts)
+        built = build_semantic(solc_output, files, categories, compiled_texts, trusted_prefixes, untrusted_paths)
         if built is not None:
             semantic, span_ids = built
             known = set()

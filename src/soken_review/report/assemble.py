@@ -255,9 +255,14 @@ def _dep_reason_text(code: Any) -> str | None:
     return labels.get(key) or labels["other"].format(code=key.replace("_", " "))
 
 
-def scope_excluded_rows(cands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+_OUT_OF_SCOPE_MAX = 40   # report schema scope.out_of_scope maxItems
+
+
+def scope_excluded_rows(cands: list[dict[str, Any]], budget: int = _OUT_OF_SCOPE_MAX) -> list[dict[str, Any]]:
     """Out-of-scope rows for the files the scope rules excluded from the reviewed candidate
-    (`scope_excluded` in candidates.json: test and mock contracts), reason from the kit."""
+    (`scope_excluded` in candidates.json: test and mock contracts), reason from the kit. The
+    disclosure is never silently cut: when the rows exceed `budget`, the last row states how
+    many more files were excluded."""
     labels = kit_texts()["scope_reasons"]
     rows: list[dict[str, Any]] = []
     for item in ((cands[0].get("scope_excluded") if cands else None) or []):
@@ -265,6 +270,12 @@ def scope_excluded_rows(cands: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         rows.append({"path": str(item["path"])[:300], "reason": labels.get(str(item.get("reason") or ""))
                      or labels["other"], "by": "server"})
+    budget = max(1, budget)
+    if len(rows) > budget:
+        shown = rows[:budget - 1]
+        shown.append({"path": labels["more_path"], "reason": labels["more"].format(n=len(rows) - len(shown)),
+                      "by": "server"})
+        return shown
     return rows
 
 
@@ -1008,15 +1019,15 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
             oos.append({"path": path, "reason": "Excluded by the scope rules", "by": "server"})
     if not scope_files:
         raise AssemblyError("schema", "no in-scope file")
-    # Files the scope rules kept out of the reviewed candidate (test and mock contracts): listed
-    # with the rule's reason, so the reader sees what was left out and why.
-    oos.extend(scope_excluded_rows(cands))
     sections = {r["section"]: r["content"] for r in await _rows(conn, """
         select distinct on (section) section, content from sections where job_id = %s
         order by section, revision desc""", (job_id,))}
-    for row in section_rows(sections.get("out_of_scope_reasons"))[:20]:
-        if pin.has_path(row.get("path", "")):
-            oos.append({"path": row["path"], "reason": row["reason"], "by": "model"})
+    model_oos = [{"path": row["path"], "reason": row["reason"], "by": "model"}
+                 for row in section_rows(sections.get("out_of_scope_reasons"))[:20] if pin.has_path(row.get("path", ""))]
+    # Files the scope rules kept out of the reviewed candidate (test and mock contracts): listed
+    # with the rule's reason within the schema cap; the count of any further files is printed.
+    oos.extend(scope_excluded_rows(cands, budget=_OUT_OF_SCOPE_MAX - len(oos) - len(model_oos)))
+    oos.extend(model_oos)
     nsloc = sum(f["nsloc"] for f in scope_files)
 
     # Leads per analyzer, promoted, dismissed (08 2.2 Review coverage; KPIs)

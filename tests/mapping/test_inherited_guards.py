@@ -4,6 +4,10 @@ node_modules/ were not indexed).
 
 Fixture: `src/Managed.sol` is the pinned file; `lib/oz/*` are minimal OpenZeppelin v5 replicas
 (Ownable, Pausable, ReentrancyGuard) present in the solc output and in the compiled texts only.
+
+Trust (security review of PR #84): a dependency guard is credited only when the dependency is
+integrity-pinned in the run (`trusted_prefixes`); otherwise it is a `name_only` hint that
+fp_guarded and `fixed` never accept. `doc` builds with `lib/oz/` trusted; `untrusted_doc` without.
 """
 
 from __future__ import annotations
@@ -26,13 +30,22 @@ def _texts(paths) -> dict[str, str]:
     return {p: (FIX / p).read_text(encoding="utf-8") for p in paths}
 
 
-@pytest.fixture(scope="module")
-def doc() -> dict:
+def _build(**kw) -> dict:
     out = json.loads((FIX / "solc_output.json").read_text(encoding="utf-8"))
     art = build_map(_texts([PINNED]), out, list(family_categories("evm")), build_ok=True,
-                    compiled_texts=_texts([PINNED, *DEPS]))
+                    compiled_texts=_texts([PINNED, *DEPS]), **kw)
     assert art.status == "full"
     return art.doc
+
+
+@pytest.fixture(scope="module")
+def doc() -> dict:
+    return _build(trusted_prefixes=("lib/oz/",))
+
+
+@pytest.fixture(scope="module")
+def untrusted_doc() -> dict:
+    return _build()
 
 
 def _fn(doc: dict, span: str) -> dict:
@@ -93,6 +106,51 @@ def test_dependency_without_text_still_resolves_and_names_the_path(doc):
     """No compiled text for the dependency (urls sources): the guard is still verified and the
     call site carries the dependency path as `via`."""
     out = json.loads((FIX / "solc_output.json").read_text(encoding="utf-8"))
-    art = build_map(_texts([PINNED]), out, list(family_categories("evm")), build_ok=True)
+    art = build_map(_texts([PINNED]), out, list(family_categories("evm")), build_ok=True,
+                    trusted_prefixes=("lib/oz/",))
     f = _fn(art.doc, "Managed.setFee(uint256)")
     assert f["guards"] == [{"class": "caller_check", "line": f"{PINNED}:23", "via": "lib/oz/access/Ownable.sol"}]
+
+
+# ---------------------------------------------------------------- untrusted dependency
+
+def test_untrusted_dependency_guard_is_a_name_only_hint(untrusted_doc):
+    """Without an integrity pin the OZ check is a hint: the class is kept as `hint`, the line and
+    `via` still tell the reviewer where to look, and no caller_check exists for fp_guarded."""
+    f = _fn(untrusted_doc, "Managed.setFee(uint256)")
+    assert f["modifiers"] == ["onlyOwner"]
+    assert f["guards"] == [{"class": "name_only", "hint": "caller_check", "line": f"{PINNED}:23",
+                            "via": "lib/oz/access/Ownable.sol:32"}]
+    dep = _fn(untrusted_doc, "Managed.deposit()")["guards"]
+    assert {g["class"] for g in dep} == {"name_only"} and {g["hint"] for g in dep} == {"pause_check", "reentrancy_lock"}
+    assert _fn(untrusted_doc, "Managed.sweep(address)")["guards"][0]["class"] == "name_only"
+
+
+def test_untrusted_dependency_does_not_gate_roles_or_centralization(untrusted_doc):
+    roles = {r["name"]: r["gated_functions"] for r in untrusted_doc["semantic"]["roles"]}
+    assert "onlyOwner" not in roles and roles["onlyKeeper"] == ["Managed.harvest()"]
+    assert "Managed.setFee(uint256)" not in untrusted_doc["semantic"]["category_to_functions"]["evm.centralization"]
+
+
+def test_pinned_custom_modifier_is_credited_without_any_trust(untrusted_doc):
+    assert _fn(untrusted_doc, "Managed.harvest()")["guards"] == [{"class": "caller_check", "line": f"{PINNED}:17"}]
+
+
+def test_prefix_must_cover_the_executing_file():
+    d = _build(trusted_prefixes=("lib/oz/utils/",))   # Pausable and ReentrancyGuard trusted, Ownable not
+    assert _fn(d, "Managed.setFee(uint256)")["guards"][0]["class"] == "name_only"
+    assert {g["class"] for g in _fn(d, "Managed.deposit()")["guards"]} == {"pause_check", "reentrancy_lock"}
+
+
+def test_file_removed_by_the_scope_rules_is_never_credited():
+    d = _build(trusted_prefixes=("lib/oz/",), untrusted_paths=frozenset({"lib/oz/access/Ownable.sol"}))
+    assert _fn(d, "Managed.setFee(uint256)")["guards"][0]["class"] == "name_only"
+    assert _fn(d, "Managed.sweep(address)")["guards"][0]["class"] == "name_only"
+    assert _fn(d, "Managed.deposit()")["guards"][0]["class"] in {"pause_check", "reentrancy_lock"}
+
+
+def test_hints_never_satisfy_fp_guarded(untrusted_doc):
+    """The dismissal check matches `class == caller_check` on the guards list (tools/dismiss.py);
+    a hint row has class `name_only`, so a quote of the header line cannot pass as fp_guarded."""
+    f = _fn(untrusted_doc, "Managed.setFee(uint256)")
+    assert not any(g["class"] == "caller_check" for g in f["guards"])

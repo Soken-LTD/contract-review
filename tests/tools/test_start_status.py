@@ -305,3 +305,20 @@ class TestReviewStartWithDB:
         body = json.loads(r2.content[0].text)
         errors = list(validator.iter_errors(body))
         assert errors == [], errors
+
+
+# ── scope_excluded in review_status (security review of PR #84) ───────────────
+
+def test_scope_excluded_status_from_fetch_provenance():
+    from soken_review.tools.start_status import _scope_excluded_status
+
+    steps = [{"step": "fetch", "status": "done", "provenance": {"provider": "repo", "scope_excluded": {
+        "count": 3, "files": [{"path": "contracts/mocks/MockUSDC.sol", "reason": "test_or_mock_dir"},
+                              {"path": "contracts/Vault.t.sol", "reason": "mock_name"},
+                              {"path": "contracts/Odd.sol", "reason": "unknown_code"}]}}}]
+    brief = _scope_excluded_status(steps, detailed=False)
+    assert brief["count"] == 3 and "files" not in brief and brief["note"]
+    detailed = _scope_excluded_status(steps, detailed=True)
+    assert [f["reason"] for f in detailed["files"]] == ["test_or_mock_dir", "mock_name", "other"]
+    assert _scope_excluded_status([{"step": "fetch", "status": "done", "provenance": {"provider": "repo"}}],
+                                  detailed=True) is None

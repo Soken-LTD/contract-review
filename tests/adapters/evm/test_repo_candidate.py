@@ -681,8 +681,8 @@ class TestTestAndMockScope:
         ("src/TestVault.sol", "", "mock_name"),
         ("src/VaultTest.sol", "", "mock_name"),
         ("src/Vault.sol", _FORGE_TEST, "test_harness"),
-        ("src/Debug.sol", _CONSOLE, "test_harness"),
         ("src/Harness.sol", "contract H is Vault, DSTest {}", "test_harness"),
+        ("src/Script.sol", "import \"forge-std/Script.sol\";\ncontract Deploy is Script {}", "test_harness"),
     ])
     def test_test_and_mock_files_are_recognised(self, path, content, reason):
         assert scope_exclusion_reason(path, content) == reason
@@ -691,6 +691,46 @@ class TestTestAndMockScope:
                                       "src/Vault.sol", "contracts/Protest.sol", "src/Testament.sol"])
     def test_real_contracts_are_not(self, path):
         assert scope_exclusion_reason(path, _SIMPLE_CONTRACT) is None
+
+    def test_console_import_alone_is_not_a_harness(self):
+        # a reviewed contract may import console.sol for debug output (security review of PR #84)
+        assert scope_exclusion_reason("src/Debug.sol", _CONSOLE) is None
+        assert scope_exclusion_reason("src/Vault.sol", 'import "forge-std/Test.sol";\ncontract Vault {}') is None
+
+    def test_mock_named_base_inherited_by_a_kept_contract_stays_in_scope(self):
+        scope = {
+            "contracts/Vault.sol": 'import {MockBase} from "./MockBase.sol";\ncontract Vault is MockBase {}',
+            "contracts/MockBase.sol": "contract MockBase { function sweep() external {} }",
+            "contracts/mocks/MockUSDC.sol": "contract MockUSDC {}",
+        }
+        kept, excluded = split_test_and_mock_files(scope)
+        assert set(kept) == {"contracts/Vault.sol", "contracts/MockBase.sol"}
+        assert excluded == [{"path": "contracts/mocks/MockUSDC.sol", "reason": "test_or_mock_dir"}]
+
+    def test_imports_are_followed_transitively_and_through_remapped_paths(self):
+        scope = {
+            "contracts/Vault.sol": 'import "@shared/MockLib.sol";\ncontract Vault {}',
+            "contracts/mocks/MockLib.sol": 'import "../test/TestMath.sol";\nlibrary MockLib {}',
+            "contracts/test/TestMath.sol": "library TestMath {}",
+            "contracts/test/Unused.sol": "contract Unused {}",
+        }
+        kept, excluded = split_test_and_mock_files(scope)
+        assert set(kept) == {"contracts/Vault.sol", "contracts/mocks/MockLib.sol", "contracts/test/TestMath.sol"}
+        assert excluded == [{"path": "contracts/test/Unused.sol", "reason": "test_or_mock_dir"}]
+
+    def test_import_from_an_excluded_file_only_does_not_keep_it(self):
+        scope = {"contracts/Vault.sol": "contract Vault {}",
+                 "contracts/mocks/MockA.sol": 'import "./MockB.sol";\ncontract MockA {}',
+                 "contracts/mocks/MockB.sol": "contract MockB {}"}
+        kept, excluded = split_test_and_mock_files(scope)
+        assert set(kept) == {"contracts/Vault.sol"} and len(excluded) == 2
+
+    def test_exclusions_are_not_truncated(self, tmp_path):
+        files = {"contracts/Vault.sol": _SIMPLE_CONTRACT}
+        files.update({f"contracts/mocks/Mock{i}.sol": f"contract Mock{i} {{}}" for i in range(250)})
+        src, manifest = _make_src(tmp_path, files)
+        cand, reason = _rcfm(src, manifest)
+        assert reason is None and len(cand.scope_excluded) == 250
 
     def test_split_keeps_real_files_and_records_the_reason(self):
         scope = {"contracts/Vault.sol": _SIMPLE_CONTRACT, "contracts/mocks/MockUSDC.sol": "contract M {}",

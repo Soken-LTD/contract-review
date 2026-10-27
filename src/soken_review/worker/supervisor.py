@@ -817,6 +817,10 @@ class Supervisor:
             await repo.update_job_fields(job_id, source_pin=pin.source_pin)
 
         fetch_prov: dict[str, Any] = {"provider": best.provider, "sha256": best.sha256}
+        if best.scope_excluded:
+            # files the scope rules kept out of the review (review_status.scope_excluded)
+            fetch_prov["scope_excluded"] = {"count": len(best.scope_excluded),
+                                            "files": list(best.scope_excluded[:200])}
         deps_path = out_dir / "dependencies.json"
         if best.provider == "repo" and deps_path.is_file() and not deps_path.is_symlink():
             # Host-written summary of vendored npm packages (_resolve_npm_deps); review_status shows it.
@@ -1559,6 +1563,10 @@ class Supervisor:
             if static_map.get("aderyn", "not_run") != "not_run":
                 analyzers["aderyn"] = _analyze_mod._ADERYN_VERSION
         detail = None if build_ok else (build.get("stderr_head") or build.get("reason"))
+        # npm integrity record of this run: the only dependencies whose guards the map may credit
+        deps_path = out_dir / "dependencies.json"
+        dependencies = (json.loads(deps_path.read_text(encoding="utf-8"))
+                        if deps_path.is_file() and not deps_path.is_symlink() else None)
         summary = await asyncio.get_event_loop().run_in_executor(None, lambda: _map_step.run_map_step(
             self._pin_root, job_id,
             family="evm", chain=(job or {}).get("chain"),
@@ -1566,6 +1574,7 @@ class Supervisor:
             std_input_path=_compiled_input_path(out_dir, build),
             build_ok=build_ok, job=job, chain_state=chain_state,
             candidate=cands[0] if cands else None,
+            dependencies=dependencies if isinstance(dependencies, dict) else None,
             nsloc=int(build["nsloc"]) if build.get("nsloc") is not None else None,
             analyzers=analyzers, build_detail=detail,
             # the real build outcome for review_status build.status (TRON compiles with a substitute

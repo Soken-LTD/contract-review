@@ -186,6 +186,25 @@ class TestScopeExcludedRows:
     def test_no_candidate_or_no_field_gives_no_rows(self):
         assert scope_excluded_rows([]) == [] and scope_excluded_rows([{"provider": "repo"}]) == []
 
+    def test_rows_over_the_budget_end_with_a_count_row_not_a_silent_cut(self):
+        labels = kit_texts()["scope_reasons"]
+        cands = [{"scope_excluded": [{"path": f"contracts/mocks/Mock{i}.sol", "reason": "test_or_mock_dir"}
+                                      for i in range(57)]}]
+        rows = scope_excluded_rows(cands, budget=40)
+        assert len(rows) == 40 and rows[-1] == {"path": labels["more_path"], "by": "server",
+                                               "reason": labels["more"].format(n=18)}
+        assert [r["path"] for r in rows[:39]] == [f"contracts/mocks/Mock{i}.sol" for i in range(39)]
+        assert len(scope_excluded_rows(cands, budget=57)) == 57
+        tiny = scope_excluded_rows(cands, budget=1)
+        assert len(tiny) == 1 and tiny[0]["reason"] == labels["more"].format(n=57)
+
+    def test_more_row_passes_the_schema_and_the_kit_gate(self):
+        from soken_review.report.kit import build as kb
+
+        labels = kit_texts()["scope_reasons"]
+        assert kb.gate_kit_text("more", labels["more"].format(n=18)) == []
+        assert kb.gate_kit_text("more_path", labels["more_path"]) == []
+
     def test_new_kit_texts_pass_the_public_gate(self):
         from soken_review.report.kit import build as kb
 
