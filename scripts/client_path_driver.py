@@ -624,19 +624,19 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
         units = parse_units(cmap["text"])
         head = cmap["text"].splitlines()[0]
         res.check("contract map returned (partial or full)", head.startswith("contract map") and bool(units), head[:200])
-        # KNOWN_GAPS (matrix-run-2026-10-26 Apyee friction 3 and 11): repo mode excludes only
-        # repo_candidate._NON_SOURCE_DIRS (no mocks/), and an OpenZeppelin onlyOwner modifier whose body is
-        # `_checkOwner()` is not credited as a caller_check. Recorded as gaps until the server closes them.
+        # Apyee blind run 2026-10-26 friction 3 and 11, closed by PR #84: contracts/mocks and test contracts
+        # are scope_excluded in repo mode, and an OpenZeppelin onlyOwner modifier in lib/ is followed to its
+        # caller check. Both are regression checks now.
         for frag in spec.expect_out_of_scope:
             hit = sorted({u["file"] for u in units if frag in u["file"]})
-            res.gap(f"{frag} units are out of scope", not hit, f"in-scope units matching: {hit[:4]}")
+            res.check(f"{frag} units are out of scope", not hit, f"in-scope units matching: {hit[:4]}")
         if spec.expect_guarded_entry:
             unit_frag, entry = spec.expect_guarded_entry
             block = cmap["text"]
             m = re.search(rf"^  entry \S*{re.escape(unit_frag)}\S*\.{re.escape(entry)}\([^\n]*\n    guards: ([^\n]*)",
                           block, re.MULTILINE)
             guards = m.group(1) if m else "(entry not listed)"
-            res.gap(f"{entry} credited with a caller_check guard", "caller_check" in guards, guards[:200])
+            res.check(f"{entry} credited with a caller_check guard", "caller_check" in guards, guards[:200])
         leads_out = client.call("review_leads", job_id=res.job_id, status="all", page_size=100)
         leads = parse_leads(leads_out["text"])
         res.check("leads > 0", len(leads) > 0, leads_out["text"].splitlines()[0][:200])
