@@ -21,6 +21,7 @@ import yaml
 
 from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
+from ..engine.severity import explain_rules
 from ..mapping.build import load_map
 from ..mapping.facts import load_facts
 from ..mapping.lifecycle import load_lifecycle
@@ -907,7 +908,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
 
     # Findings (03 4.14 final ids, 08 2.3 card)
     drafts = await _rows(conn, """
-        select d.*, r.content, r.category, r.impact_class, r.computed_severity, r.severity_rule, r.caps_applied,
+        select d.*, r.content, r.category, r.impact_class, r.computed_severity,
+               r.severity_rule as submit_severity_rule, r.caps_applied as submit_caps_applied,
                r.map_unavailable
         from finding_drafts d join finding_revisions r
           on r.job_id = d.job_id and r.draft_key = d.draft_key and r.revision = d.current_revision
@@ -955,10 +957,16 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
                 for q in code_qs[:blocks_cap]]
         further = [_ref(q["path"], q["start_line"], q["end_line"]) for q in code_qs[blocks_cap:]][:20]
         matrix = d.get("matrix_effective") or c.get("matrix") or {}
-        basis = {"head": ["Impact class", "Magnitude", "Trigger", "Precondition", "Reversibility", "Rule"],
+        # The rule, who set the severity and why are the draft's final values (challenge and finalize
+        # write them); the revision's submit-time rule is the fallback for rows older than migration 014.
+        rule = d.get("severity_rule") or d.get("submit_severity_rule") or ""
+        set_by = d.get("severity_set_by") or ("reviewer" if c.get("claimed_severity") == sev else "matrix")
+        reason = d.get("severity_reason") or explain_rules(list(d.get("caps_applied") or d.get("submit_caps_applied") or []))
+        basis = {"head": ["Impact class", "Magnitude", "Trigger", "Precondition", "Reversibility", "Rule",
+                          "Set by", "Reason"],
                  "rows": [[matrix.get("impact_class", d["impact_class"]), matrix.get("magnitude", ""),
                            matrix.get("trigger", ""), matrix.get("precondition", ""), matrix.get("reversibility", ""),
-                           d["severity_rule"]]]}
+                           rule, set_by, reason[:200]]]}
         level = d["evidence_level"] or "reasoning_only"
         ch = chal.get(d["draft_key"])
         challenge = None

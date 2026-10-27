@@ -351,6 +351,9 @@ async def _assign_final_ids(
                       d.current_revision,
                       r.category, r.category_family, r.impact_class,
                       r.content->>'matrix' as matrix_json,
+                      r.content->>'claimed_severity' as claimed_severity,
+                      r.content->>'severity_reason' as severity_reason,
+                      r.computed_severity as submit_severity,
                       d.matrix_effective,
                       r.map_unavailable,
                       jsonb_array_length(coalesce(r.content->'attack_steps', '[]'::jsonb)) > 0
@@ -463,6 +466,11 @@ async def _assign_final_ids(
             # per finding: the unit holding the location decides the retail-token profile
             token_review=detect_token_review(f_semantic, units_holding(f_semantic, _loc_quotes(d))),
             has_location_quote=bool(d["has_location_quote"]),
+            claimed_severity=d.get("claimed_severity"),
+            claimed_reason=d.get("severity_reason"),
+            # DG1 measures from the severity accepted at submit for this revision, so finalize
+            # repeats the post-challenge result instead of flooring from it a second time.
+            severity_before=d.get("submit_severity"),
         )
 
         if matrix:
@@ -472,19 +480,26 @@ async def _assign_final_ids(
             sev_result = compute_severity(matrix, "finalize", sev_ctx)
             finalize_sev = sev_result.severity
             finalize_caps = sev_result.caps_applied
+            finalize_rule, finalize_set_by, finalize_reason = (
+                sev_result.severity_rule, sev_result.set_by, sev_result.reason[:200])
         else:
             finalize_sev = stored_sev
             finalize_caps = []
+            finalize_rule, finalize_set_by, finalize_reason = None, None, None
 
         effective_severities[d["draft_key"]] = finalize_sev
-        # Update the draft with recomputed severity and caps
-        if finalize_sev != stored_sev or finalize_caps:
-            # caps_applied is text[] in the schema; pass as Python list (psycopg3 converts)
-            await conn.execute(
-                """update finding_drafts set severity = %s, caps_applied = %s
-                   where job_id = %s and draft_key = %s""",
-                (finalize_sev, finalize_caps, job_id, d["draft_key"]),
-            )
+        # Update the draft with the recomputed severity, the rules that set it, who set it and why:
+        # the report prints these, so they are written on every finalize, changed or not.
+        # caps_applied is text[] in the schema; pass as Python list (psycopg3 converts)
+        await conn.execute(
+            """update finding_drafts set severity = %s, caps_applied = %s,
+                   severity_rule = coalesce(%s, severity_rule),
+                   severity_set_by = coalesce(%s, severity_set_by),
+                   severity_reason = coalesce(%s, severity_reason)
+               where job_id = %s and draft_key = %s""",
+            (finalize_sev, finalize_caps, finalize_rule, finalize_set_by, finalize_reason,
+             job_id, d["draft_key"]),
+        )
 
     # Group drafts by effective severity
     by_sev: dict[str, list[dict[str, Any]]] = {s: [] for s in _SEVS}
