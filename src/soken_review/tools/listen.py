@@ -27,14 +27,32 @@ def job_hash(job_id: str) -> str:
 
 
 class JobChangeListener:
+    """One per conninfo and process. Its task, ready flag and waiter events belong to the event
+    loop that first subscribed; when a later subscriber runs on another loop (a new loop per
+    test session, a restarted server loop) the listener starts over on that loop instead of
+    touching primitives bound to a dead one ("Event bound to a different event loop")."""
+
     def __init__(self, conninfo: str) -> None:
         self._conninfo = conninfo
         self._waiters: dict[str, set[asyncio.Event]] = {}
         self._task: asyncio.Task | None = None
         self._ready = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.notifications = 0
 
+    def _bind_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self._loop is loop:
+            return
+        if self._task is not None and not self._task.done() and self._loop is not None and not self._loop.is_closed():
+            self._task.cancel()
+        self._task = None
+        self._waiters = {}
+        self._ready = asyncio.Event()
+        self._loop = loop
+
     def subscribe(self, h: str) -> asyncio.Event:
+        self._bind_loop()
         ev = asyncio.Event()
         self._waiters.setdefault(h, set()).add(ev)
         self._ensure()
@@ -48,6 +66,7 @@ class JobChangeListener:
                 self._waiters.pop(h, None)
 
     async def wait_ready(self, timeout: float) -> bool:
+        self._bind_loop()
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._ready.wait(), timeout)
         return self._ready.is_set()

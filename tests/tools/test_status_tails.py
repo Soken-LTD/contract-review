@@ -22,7 +22,9 @@ from soken_review.tools.git_probe import GitLsRemoteProbe, pick_ref, resolve_ref
 from soken_review.tools.listen import listener_for
 from soken_review.tools.start_status import _compute_eta, set_pool, set_repo_probe
 
-pytestmark = pytest.mark.anyio
+from ._client import task_scoped_client
+
+ASYNC = pytest.mark.asyncio(loop_scope="session")   # the db_pool loop (tests/conftest.py)
 STATUS_SCHEMA = Draft202012Validator({t["name"]: t for t in bundle_tools()}["review_status"]["outputSchema"])
 A = "a" * 40
 B = "b" * 40
@@ -75,11 +77,13 @@ def test_safe_ref(ref, ok):
     assert safe_ref(ref) is ok
 
 
+@ASYNC
 async def test_unsafe_url_never_runs_git():
     assert await GitLsRemoteProbe().is_reachable("https://github.com/a/b?upload-pack=touch") is False
 
 
 @pytest.mark.live
+@ASYNC
 async def test_live_ls_remote_probe_and_peeled_tag():
     url = "https://github.com/OpenZeppelin/openzeppelin-contracts"
     assert await GitLsRemoteProbe().is_reachable(url) is True
@@ -88,6 +92,7 @@ async def test_live_ls_remote_probe_and_peeled_tag():
     assert await resolve_ref(url, "v5.0.0") == "932fddf69a699a9a80fd2396fd1a2ab91cdda123"
 
 
+@ASYNC
 async def test_review_start_repo_unreachable_is_rejection():
     class Down:
         async def is_reachable(self, repo_url: str) -> bool:
@@ -125,11 +130,11 @@ def test_eta_defaults_and_medians():
 # ── DB: drafts, ETA, long-poll ───────────────────────────────────────────────
 
 
-@pytest_asyncio.fixture()
+@pytest_asyncio.fixture(loop_scope="session")
 async def client(db_pool):
     set_pool(db_pool)
     try:
-        async with Client(SokenServer()) as c:
+        async with task_scoped_client() as c:
             yield c
     finally:
         set_pool(None)  # type: ignore[arg-type]
@@ -148,6 +153,7 @@ async def _status(client, job_id: str, **kw) -> dict:
     return body
 
 
+@ASYNC
 async def test_server_drafts_in_status(client, db_pool):
     job_id = await _new_job(client)
     flags = [{"file": "src/A.sol", "line": 3, "rule": "J2", "detail": "U+202E"},
@@ -172,12 +178,14 @@ async def test_server_drafts_in_status(client, db_pool):
     assert rev == ("evm.source_text_integrity", "Informational", "J2")
 
 
+@ASYNC
 async def test_eta_in_status(client):
     job_id = await _new_job(client)
     body = await _status(client, job_id)
     assert isinstance(body["eta_s"], int) and body["eta_s"] > 0
 
 
+@ASYNC
 async def test_long_poll_wakes_on_notify(client, db_pool):
     job_id = await _new_job(client)
 
@@ -198,6 +206,7 @@ async def test_long_poll_wakes_on_notify(client, db_pool):
     assert lst.notifications > before
 
 
+@ASYNC
 async def test_long_poll_times_out_without_change(client):
     job_id = await _new_job(client)
     t0 = time.monotonic()
@@ -206,6 +215,7 @@ async def test_long_poll_times_out_without_change(client):
     assert 1.8 <= time.monotonic() - t0 < 4.0
 
 
+@ASYNC
 async def test_long_poll_returns_at_once_when_ready(client, db_pool):
     job_id = await _new_job(client)
     async with db_pool.connection() as conn, conn.transaction():

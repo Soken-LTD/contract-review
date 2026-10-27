@@ -11,33 +11,33 @@ import re
 
 import pytest
 import pytest_asyncio
-from mcp import Client
 
 # Register tool handlers before any test runs
 import soken_review.tools  # noqa: F401 – side-effect: @handler decorators fire
-from soken_review.server import SokenServer
 from soken_review.tools.start_status import set_pool as tools_set_pool
 
-pytestmark = pytest.mark.anyio
+from ._client import task_scoped_client
+
+ASYNC = pytest.mark.asyncio(loop_scope="session")   # the db_pool loop (tests/conftest.py)
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest_asyncio.fixture()
+@pytest_asyncio.fixture(loop_scope="session")
 async def client_no_db():
     """SDK client without a DB pool; only input-validation tests work here."""
-    async with Client(SokenServer()) as c:
+    async with task_scoped_client() as c:
         yield c
 
 
-@pytest_asyncio.fixture()
+@pytest_asyncio.fixture(loop_scope="session")
 async def client_with_db(db_pool):
     """SDK client with the test pool injected into the tools module."""
     tools_set_pool(db_pool)
     try:
-        async with Client(SokenServer()) as c:
+        async with task_scoped_client() as c:
             yield c
     finally:
         tools_set_pool(None)  # type: ignore[arg-type]
@@ -50,12 +50,14 @@ async def client_with_db(db_pool):
 class TestReviewStartValidation:
     """Schema and synchronous validation checks; no DB pool required."""
 
+    @ASYNC
     async def test_missing_source_is_invalid_argument(self, client_no_db):
         result = await client_no_db.call_tool("review_start", {})
         assert result.is_error
         body = json.loads(result.content[0].text)
         assert body["errors"][0]["code"] == "E_INVALID_ARGUMENT"
 
+    @ASYNC
     async def test_evm_without_chain_id_rejected(self, client_no_db):
         """evm without chain_id -> E_CHAIN_ID_REQUIRED (03 §4.1)."""
         result = await client_no_db.call_tool(
@@ -67,6 +69,7 @@ class TestReviewStartValidation:
         assert body["accepted"] is False
         assert body["errors"][0]["code"] == "E_CHAIN_ID_REQUIRED"
 
+    @ASYNC
     async def test_evm_bad_address_rejected(self, client_no_db):
         """Bad EVM address format -> E_ADDRESS_INVALID."""
         result = await client_no_db.call_tool(
@@ -77,6 +80,7 @@ class TestReviewStartValidation:
         assert body["accepted"] is False
         assert body["errors"][0]["code"] == "E_ADDRESS_INVALID"
 
+    @ASYNC
     async def test_inline_too_many_files(self, client_no_db):
         """20 files × 10001 chars = 200020 total chars -> E_SIZE_LIMIT (handler-level, 03 §4.1).
 
@@ -94,6 +98,7 @@ class TestReviewStartValidation:
         assert body["accepted"] is False
         assert body["errors"][0]["code"] == "E_SIZE_LIMIT"
 
+    @ASYNC
     async def test_inline_total_chars_exceeded(self, client_no_db):
         """200001 total chars -> E_SIZE_LIMIT."""
         # 4 files, 50001 chars each > 200000 total
@@ -107,6 +112,7 @@ class TestReviewStartValidation:
         assert body["accepted"] is False
         assert body["errors"][0]["code"] == "E_SIZE_LIMIT"
 
+    @ASYNC
     async def test_repo_bad_url_rejected_by_schema(self, client_no_db):
         """Non-github/gitlab/codeberg URL rejected by schema (E_INVALID_ARGUMENT)."""
         result = await client_no_db.call_tool(
@@ -117,6 +123,7 @@ class TestReviewStartValidation:
         body = json.loads(result.content[0].text)
         assert body["errors"][0]["code"] == "E_INVALID_ARGUMENT"
 
+    @ASYNC
     async def test_upload_kind_accepted_by_schema(self, client_no_db):
         """upload kind is valid in schema; handler will fail without DB."""
         result = await client_no_db.call_tool(
@@ -131,6 +138,7 @@ class TestReviewStartValidation:
         schema_errors = [e for e in errors if e["code"] == "E_INVALID_ARGUMENT"]
         assert not schema_errors, "upload kind should pass schema validation"
 
+    @ASYNC
     async def test_chain_without_rpc_rejected(self, client_no_db):
         """A deployed address on a chain the worker cannot read is refused at start with
         E_CHAIN_DISABLED instead of a job that fails minutes later (2026-10-22, Sepolia)."""
@@ -144,6 +152,7 @@ class TestReviewStartValidation:
         assert err["code"] == "E_CHAIN_DISABLED"
         assert "11155111" in err["what"] and "1" in err["fix"]
 
+    @ASYNC
     async def test_repo_deployment_on_chain_without_rpc_rejected(self, client_no_db):
         result = await client_no_db.call_tool(
             "review_start",
@@ -160,6 +169,7 @@ class TestReviewStartValidation:
          "deployment": {"chain": "starknet", "address": "0x" + "1" * 63}},
         {"kind": "files", "language": "cairo", "files": [{"path": "src/lib.cairo", "content": "mod a;"}]},
     ])
+    @ASYNC
     async def test_disabled_family_is_refused_at_start(self, client_no_db, monkeypatch, source):
         """Launch without Starknet (decision 2026-10-23): SOKEN_DISABLED_FAMILIES=starknet refuses
         every Starknet entry with E_CHAIN_DISABLED and names the chains that are on."""
@@ -171,6 +181,7 @@ class TestReviewStartValidation:
         assert err["code"] == "E_CHAIN_DISABLED"
         assert "starknet" not in err["fix"] and "solana" in err["fix"] and "sui" in err["fix"]
 
+    @ASYNC
     async def test_hyperevm_chain_normalised(self, client_no_db):
         """evm with chain_id 999 is normalised to hyperevm (03 §4.1) — no DB needed."""
         # Without DB the job creation will fail, but chain normalization is checked first.
@@ -197,6 +208,7 @@ class TestReviewStartValidation:
 )
 class TestReviewStartWithDB:
 
+    @ASYNC
     async def test_deployed_creates_job_queued(self, client_with_db):
         result = await client_with_db.call_tool(
             "review_start",
@@ -208,6 +220,7 @@ class TestReviewStartWithDB:
         assert body["state"] == "queued"
         assert body["resume_phrase"].startswith("Resume Soken review job_")
 
+    @ASYNC
     async def test_upload_creates_job_awaiting_upload(self, client_with_db):
         result = await client_with_db.call_tool(
             "review_start",
@@ -223,6 +236,7 @@ class TestReviewStartWithDB:
         ), body.get("upload_url")
         assert "upload_expires_at" in body
 
+    @ASYNC
     async def test_files_kind_receives_file_list(self, client_with_db):
         files = [{"path": "src/Token.sol", "content": "// SPDX-License-Identifier: MIT\n"}]
         result = await client_with_db.call_tool(
@@ -237,6 +251,7 @@ class TestReviewStartWithDB:
         assert re.match(r"^[0-9a-f]{64}$", f["sha256"])
         assert f["role"] == "source"
 
+    @ASYNC
     async def test_review_status_returns_queued(self, client_with_db):
         # First create a job
         r1 = await client_with_db.call_tool(
@@ -257,6 +272,7 @@ class TestReviewStartWithDB:
         assert body["step"] == "queued"
         assert body["percent"] == 0
 
+    @ASYNC
     async def test_review_status_unknown_job(self, client_with_db):
         fake_id = "job_" + "A" * 26
         result = await client_with_db.call_tool(
@@ -267,6 +283,7 @@ class TestReviewStartWithDB:
         body = json.loads(result.content[0].text)
         assert body["errors"][0]["code"] == "E_JOB_NOT_FOUND"
 
+    @ASYNC
     async def test_output_validates_against_schema(self, client_with_db):
         """Output of review_start must conform to the bundled outputSchema (03 §1)."""
         from jsonschema import Draft202012Validator
@@ -285,6 +302,7 @@ class TestReviewStartWithDB:
         errors = list(validator.iter_errors(body))
         assert errors == [], errors
 
+    @ASYNC
     async def test_status_output_validates_against_schema(self, client_with_db):
         """Output of review_status must conform to the bundled outputSchema (03 §1)."""
         from jsonschema import Draft202012Validator
