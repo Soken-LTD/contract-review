@@ -424,7 +424,7 @@ async def _assign_final_ids(
 
         # Read challenge_answers for this draft to get real downgrade counts (04 §8.1).
         # At finalize F3 guarantees no needs_challenge findings exist, so open_downgrade_item
-        # is always False.  scope_not_covered is derived from stored items (K10).
+        # is always False.  scope_not_covered is derived from stored items (recorded, no cap).
         async with conn.cursor(row_factory=dict_row) as cur2:
             await cur2.execute(
                 """select items, answers from challenge_answers

@@ -618,3 +618,23 @@ async def test_leads_detector_filter_matches_tool_and_category(server: SokenServ
     assert await ids("evm.input_validation") == ["LEAD-0002"]
     assert await ids("reentrancy") == ["LEAD-0001"]
     assert await ids("missing-zero-check") == ["LEAD-0002"]
+
+
+async def test_leads_label_never_exceeds_the_category_cap(server: SokenServer, pin_root: Path) -> None:
+    """A best_practice lead the analyzer rated High prints info, and the header does not count it
+    among the open High and Medium leads (D18, 29 "best_practice high" rows on the TON run)."""
+    leads = [
+        {**SAMPLE_LEADS[0]},
+        {"id": "LEAD-0004", "rule_id": "TON-THROW-01", "tools": ["soken-ton-rules@1"], "category": "evm.best_practice",
+         "analyzer_severity_raw": "error", "severity_norm": "High", "file": "src/Vault.sol", "start": 9, "end": 9,
+         "state": "open", "origin": "analyzer", "message": "nativeThrowUnless style check"},
+    ]
+    path = pin_root / JOB_ID / "leads.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(leads))
+    async with Client(server) as client:
+        result = await client.call_tool("review_leads", {"job_id": JOB_ID})
+    text = result.content[0].text
+    assert "High and Medium open 1" in text, text
+    row = next(ln for ln in text.splitlines() if ln.startswith("LEAD-0004"))
+    assert row.split()[2:4] == ["best_practice", "info"], row

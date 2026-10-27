@@ -31,6 +31,7 @@ import psycopg_pool
 from .. import quota
 from ..context.items import check_cap, status_counts, validate_items
 from ..context.store import ContextStore
+from ..contract import schema_version
 from ..db.job_repo import JobRepo, new_job_id
 from ..db.pool import get_pool
 from ..errors import ReviewError
@@ -447,6 +448,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
         },
         "poll_after_s": 2,
         "guide_version": _GUIDE_VERSION,
+        "schema_version": schema_version(),
         "resume_phrase": f"Resume Soken review {job_id}",
         "limits": limits,
     }
@@ -857,6 +859,7 @@ def _build_status_response(
         "state": state,
         "step": _STATE_STEP.get(state, "stopped"),
         "percent": _compute_percent(state, _steps, medians or {}),
+        "schema_version": schema_version(),
     }
 
     # Upload fields only in awaiting_upload (03 §4.2)

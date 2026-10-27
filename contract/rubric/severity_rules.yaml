@@ -25,7 +25,7 @@ rules:
   - {id: K8, phase: "post_challenge, finalize", kind: cap, ceiling: High,
      condition: "Critical without evidence reasoning_challenged or analyzer_and_reasoning, or without attack_steps, or with an open downgrade item"}
   - {id: K10, phase: "post_challenge, finalize", kind: cap, ceiling: High,
-     condition: "a checklist item scope not covered, or no contract map"}
+     condition: "no contract map for the job (scopes are lexical). A checklist item whose scope the map cannot supply applies no cap since 2026-10-27: its present answer is unverifiable and rejected, its absent answer stands"}
   - {id: K11, phase: all, kind: cap, ceiling: High,
      condition: "generic category without a linked analyzer lead of the same category"}
   - {id: "max_severity", phase: all, kind: cap, ceiling: "the category's max_severity (enums.yaml)",
