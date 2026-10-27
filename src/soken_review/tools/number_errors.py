@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..engine.numbers import NumberContext
+from ..engine.claims import claim_facts_text
+from ..engine.numbers import NumberContext, placeholder_example
 from ..engine.text_gate import Violation
 from ..errors import ReviewError
 
@@ -24,9 +25,20 @@ def nearest_allowed(ctx: NumberContext | None) -> str:
     return ", ".join(allowed[:_MAX_VALUES])
 
 
+def claim_error(v: Violation, field: str, facts: list[dict[str, Any]] | None, **extra: Any) -> dict[str, Any]:
+    """ReviewError envelope for one owner/deployer identity claim the facts do not support
+    (engine.claims): the sentence, the recorded accounts and what to write instead."""
+    recorded, hint = claim_facts_text(facts)
+    return ReviewError(v.code, rule=v.rule_id, match=(v.match or "")[:120], field=field, facts=recorded,
+                       hint=hint, pos=v.span[0], **extra).envelope()
+
+
 def number_error(v: Violation, field: str, ctx: NumberContext | None = None, **extra: Any) -> dict[str, Any]:
-    """ReviewError envelope for one number violation."""
+    """ReviewError envelope for one number violation. A half placeholder (`{fact:key}`) carries
+    its double-brace form as `example`, so the fix names the exact text to write."""
     match = v.match or ""
+    if v.code == "E_PLACEHOLDER_SYNTAX":
+        extra.setdefault("example", placeholder_example(match)[:90])
     return ReviewError(
         v.code, rule=v.rule_id, match=match[:80], token=match[:40], field=field, cp=match[:5],
         pos=v.span[0], values=nearest_allowed(ctx), **extra,

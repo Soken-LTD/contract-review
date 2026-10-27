@@ -180,3 +180,13 @@ def test_text_result_gets_the_hint_as_a_last_line():
     res = _with_schema_hint(CallToolResult(content=[TextContent(type="text", text="leads open 0 of 0\nend")]))
     lines = res.content[0].text.splitlines()
     assert lines[:2] == ["leads open 0 of 0", "end"] and lines[2].startswith("schema_hint Your tool list predates")
+
+
+def test_stale_schema_hint_tells_a_claude_ai_user_how_to_refresh():
+    """JUDGEMENT 2026-10-27 E2: the stale list was the client's cache; the hint must say what to do."""
+    from soken_review.server import _stale_schema_hint
+
+    hint = _stale_schema_hint()
+    assert hint.startswith("Your tool list predates the current schema")
+    assert "remove this connector and add it again" in hint and "start a new chat" in hint
+    assert "reload the tool list" in hint

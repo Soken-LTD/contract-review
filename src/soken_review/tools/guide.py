@@ -129,7 +129,8 @@ def _topic_severity_inputs() -> list[str]:
                " A self-inflicted loss (the actor forfeits its own value to block another party) is"
                " griefing_with_victim_loss, not a freeze.")
     out.append("Quotes: role location quotes must copy the pinned lines exactly (review_read_code). Numbers in"
-               " text need a source ({fact:<key>} or {calc:...}); a count in words up to ten, once, twice and"
+               " text need a source ({{fact:<key>}} or {{calc:<expr>|<precision>}}, two braces on each side; a single"
+               " brace is rejected); a count in words up to ten, once, twice and"
                " third pass on their own (two pools, the third call, paid twice) but not before a unit, percent"
                " or token word (two tokens, ten percent, five days); absence phrases (never, nowhere, no"
                " function) need an absence_claims entry.")

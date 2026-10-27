@@ -365,6 +365,13 @@
           "maxLength": 60,
           "x-text-class": "server"
         },
+        "build_failure": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 400,
+          "description": "Present when the build failed: compiler chosen, error class and consequence, printed on the cover and in the summary",
+          "x-text-class": "server"
+        },
         "chain_id": {
           "type": [
             "integer",

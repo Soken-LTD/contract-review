@@ -1,0 +1,5 @@
+{
+ "map_status": "failed",
+ "build_detail": "ParserError: Expected ';' but got '('\n  --> contracts/FarmingPod.sol:19:35:\n   |\n19 |     error ZeroFarmableTokenAddress();\n   |                                   ^\n\n; ParserError: Expected ';' but got '('\n  --> contracts/FarmingPool.sol:21:34:\n   |\n21 |     error ZeroStakingTokenAddress();\n   |                                  ^\n\n; ParserError: Expected ';' but got '('\n  --> contracts/MultiFarmingPod.sol:22:35:\n   |\n22 |     error ZeroFarmableTokenAddress();\n   |                                   ^\n\n; ParserError: Expected ';' but got '('\n --> contracts/accounting/FarmAccounting.sol:8:34:\n  |\n8 |     error CheckpointBeforeStarted();\n  |                                  ^\n\n; ParserError: Expected ';' but got '('\n --> node_modules/@1inch/erc20-pods/contracts/Pod.sol:8:23:\n  |\n8 |     error AccessDenied();\n  |                       ^\n\n\n",
+ "build_status": "failed"
+}

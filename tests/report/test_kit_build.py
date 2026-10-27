@@ -49,9 +49,11 @@ def test_public_review_withholds_high_and_critical(tmp_path):
         assert "Call <span class=\"mono\">withdraw</span> from a contract" not in doc  # attack steps
         assert kb.kit_texts()["withheld_line"] in doc
         assert kb.kit_texts()["public_review_banner"] in doc
-    # Medium card is shown, its amount-at-risk fact is withheld and its figure row dropped
+    # Medium card is shown, the sentence with its amount-at-risk fact is dropped whole (never printed
+    # as "(withheld)" inside prose) and its figure row dropped
     assert "Balance written after the external call in withdraw path 1" in html
-    assert "1,250 ETH" not in html and "(withheld)" in html
+    assert "1,250 ETH" not in html and "(withheld)" not in html and "at the pinned block" not in html
+    assert "sends value before it writes the caller balance" in html
     assert kb.kit_texts()["footer_public_review"] in html
 
 

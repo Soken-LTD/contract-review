@@ -84,6 +84,14 @@ async def test_context_topic_describes_the_documents_surface(client):
     assert "role context" in rules
 
 
+@ASYNC
+async def test_severity_inputs_show_the_double_brace_placeholder_form(client):
+    """The guide once showed `{fact:<key>}`; the Wallitelli reviewer copied it and the PDF printed it raw."""
+    text = await _guide(client, topic="severity_inputs")
+    assert "{{fact:<key>}}" in text and "{{calc:<expr>|<precision>}}" in text
+    assert "({fact:<key>}" not in text
+
+
 def test_challenge_rules_topic_lists_the_text_rule_words():
     """E_TEXT_GATE points here; the word lists of T13 and T15 must be readable (2026-10-27)."""
     from soken_review.tools.guide import _topic_challenge_rules

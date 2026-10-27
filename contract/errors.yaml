@@ -313,14 +313,14 @@ codes:
     class: "input"
     tools: "write tools with text"
     what: "Number or digit-bearing word {token} in {field} has no source (rule {rule})."
-    fix: "Digits: write {{fact:<key>}} or {{calc:...}}, or quote the code line that holds the value; nearest allowed: {values}. A word with digits must be an identifier spelled exactly as in the pinned code."
+    fix: "Digits: write {{{{fact:<key>}}}} or {{{{calc:...}}}} (two braces on each side), or quote the code line that holds the value; nearest allowed: {values}. A word with digits must be an identifier spelled exactly as in the pinned code."
   - code: E_NUMBER_FORMAT
     owner: "04"
     channel: "rejection"
     class: "input"
     tools: "write tools with text"
     what: "Number word or format {token} is not allowed in report text (rule {rule})."
-    fix: "Write the amount as a code literal quoted from the pinned lines or as a {{fact:<key>}} or {{calc:...}} placeholder, or drop the quantity; a count of code things in words (two pools, the third call) needs no source."
+    fix: "Write the amount as a code literal quoted from the pinned lines or as a {{{{fact:<key>}}}} or {{{{calc:...}}}} placeholder (two braces on each side), or drop the quantity; a count of code things in words (two pools, the third call) needs no source."
   - code: E_NUMBER_UNIT
     owner: "04"
     channel: "rejection"
@@ -349,6 +349,20 @@ codes:
     tools: "write tools with text"
     what: "calc placeholder does not parse."
     fix: "Grammar: {grammar}."
+  - code: E_PLACEHOLDER_SYNTAX
+    owner: "04"
+    channel: "rejection"
+    class: "input"
+    tools: "write tools with text"
+    what: "Placeholder {token} in {field} has one brace on a side; the report would print it as written."
+    fix: "Write {example} (two braces on each side). The report expands {{{{fact:<key>}}}}, {{{{calc:<expr>|<precision>}}}} and {{{{finding:<draft_key>}}}} only."
+  - code: E_CLAIM_UNSUPPORTED
+    owner: "04"
+    channel: "rejection"
+    class: "input"
+    tools: "write tools with text"
+    what: "The sentence {match} in {field} states that the owner and the deployer are the same account; the recorded facts do not support it ({facts})."
+    fix: "{hint}"
   - code: E_CALC_ROUNDING
     owner: "04"
     channel: "rejection"
@@ -361,7 +375,7 @@ codes:
     channel: "rejection"
     class: "input"
     tools: "write tools with text"
-    what: "{{finding:{key}}} names no draft."
+    what: "{{{{finding:{key}}}}} names no draft."
     fix: "Valid keys: {keys}."
   - code: E_CATEGORY_UNKNOWN
     owner: "04"

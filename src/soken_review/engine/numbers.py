@@ -54,6 +54,16 @@ _PLACEHOLDER_FULL_RE = re.compile(
 )
 # Spurious placeholder: looks like {{...}} but is not a valid placeholder (04 §6.4).
 _SPURIOUS_PLACEHOLDER_RE = re.compile(r"\{\{[^{}\n]*\}\}")
+# Half placeholder: a fact, calc or finding placeholder with one brace on either side
+# (`{fact:key}`, `{{fact:key}`, `{fact:key}}`). The kit expands the double-brace form only, so
+# this text would print as written (Wallitelli PDF, matrix run 2026-10-27: `{fact:onchain.total_supply}`
+# on page 4). Rejected at write time with the double-brace form as the example.
+HALF_PLACEHOLDER_RE = re.compile(r"\{{1,2}(?:fact|calc|finding):[^{}\n]*\}{1,2}")
+
+
+def placeholder_example(token: str) -> str:
+    """The double-brace form of a half placeholder: `{fact:k}` -> `{{fact:k}}`."""
+    return "{{" + token.strip("{}") + "}}"
 
 
 @dataclass(frozen=True)
@@ -369,6 +379,14 @@ def lex_numbers(text: str, context: NumberContext | None = None) -> list[Violati
             if sm:
                 violations.append(Violation("E_CALC_SYNTAX", "L0", (sm.start(), sm.end()), sm.group()))
                 pos = sm.end()
+                continue
+
+        # ── L0 half: a placeholder with one brace on either side is printed as written ──
+        if nfkc[pos] == "{":
+            hm = HALF_PLACEHOLDER_RE.match(nfkc, pos)
+            if hm:
+                violations.append(Violation("E_PLACEHOLDER_SYNTAX", "L0", (hm.start(), hm.end()), hm.group()))
+                pos = hm.end()
                 continue
 
         # ── L1: code span ─────────────────────────────────────────────────

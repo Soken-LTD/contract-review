@@ -1,0 +1,159 @@
+[
+ {
+  "key": "analyzer.aderyn",
+  "value": "0.6.8",
+  "unit": null,
+  "unit_id": null,
+  "source": "analyzer image",
+  "tags": []
+ },
+ {
+  "key": "analyzer.slither",
+  "value": "0.11.6",
+  "unit": null,
+  "unit_id": null,
+  "source": "analyzer image",
+  "tags": []
+ },
+ {
+  "key": "chain.block",
+  "value": "130092164",
+  "unit": "block",
+  "unit_id": null,
+  "source": "eth_blockNumber at pin, minus one",
+  "tags": []
+ },
+ {
+  "key": "chain.chain_id",
+  "value": "56",
+  "unit": null,
+  "unit_id": null,
+  "source": "job input",
+  "tags": []
+ },
+ {
+  "key": "compiler.version",
+  "value": "0.8.38",
+  "unit": null,
+  "unit_id": null,
+  "source": "source candidate (user)",
+  "tags": []
+ },
+ {
+  "key": "deploy.address",
+  "value": "0x51b27860c3432a72e24a7e0a98916d10cb716d5c",
+  "unit": null,
+  "unit_id": null,
+  "source": "job input",
+  "tags": []
+ },
+ {
+  "key": "deploy.code_bytes",
+  "value": "4277",
+  "unit": "bytes",
+  "unit_id": null,
+  "source": "eth_getCode at block 130092164",
+  "tags": []
+ },
+ {
+  "key": "deploy.code_hash",
+  "value": "0x0df83f63f1393d524300c3d50f173ba1bda09b6c26062a6c64d208a0ebe57e64",
+  "unit": null,
+  "unit_id": null,
+  "source": "keccak256 of eth_getCode at block 130092164",
+  "tags": []
+ },
+ {
+  "key": "onchain.balance",
+  "value": "0",
+  "unit": "wei",
+  "unit_id": "StandardBEP20.sol:StandardBEP20",
+  "source": "eth_getBalance at block 130092164",
+  "tags": [
+   "amount_at_risk"
+  ]
+ },
+ {
+  "key": "onchain.decimals",
+  "value": "18",
+  "unit": null,
+  "unit_id": "StandardBEP20.sol:StandardBEP20",
+  "source": "eth_call decimals() at block 130092164",
+  "tags": []
+ },
+ {
+  "key": "onchain.owner",
+  "value": "0xa9e3e9afa056d200241b85aec824b039ffe17582",
+  "unit": null,
+  "unit_id": "StandardBEP20.sol:StandardBEP20",
+  "source": "eth_call owner() at block 130092164",
+  "tags": []
+ },
+ {
+  "key": "onchain.owner.holder_code_size",
+  "value": "0",
+  "unit": "bytes",
+  "unit_id": "StandardBEP20.sol:StandardBEP20",
+  "source": "eth_getCode at block 130092164",
+  "tags": []
+ },
+ {
+  "key": "onchain.owner.holder_is_contract",
+  "value": "false",
+  "unit": null,
+  "unit_id": "StandardBEP20.sol:StandardBEP20",
+  "source": "eth_getCode at block 130092164",
+  "tags": []
+ },
+ {
+  "key": "onchain.owner.holder_kind",
+  "value": "eoa",
+  "unit": null,
+  "unit_id": "StandardBEP20.sol:StandardBEP20",
+  "source": "eth_getCode at block 130092164",
+  "tags": []
+ },
+ {
+  "key": "onchain.total_supply",
+  "value": "1000000000000000000000000000",
+  "unit": "token_units",
+  "unit_id": "StandardBEP20.sol:StandardBEP20",
+  "source": "eth_call totalSupply() at block 130092164",
+  "tags": [
+   "amount_at_risk"
+  ]
+ },
+ {
+  "key": "source.files",
+  "value": "1",
+  "unit": null,
+  "unit_id": null,
+  "source": "pin manifest",
+  "tags": []
+ },
+ {
+  "key": "source.nsloc",
+  "value": "261",
+  "unit": "lines",
+  "unit_id": null,
+  "source": "pinned source",
+  "tags": []
+ },
+ {
+  "key": "source.pin",
+  "value": "00a425e6fb5e528855d12473f4fba9481d2a94f2379248a18c04f0ff194d6e4a",
+  "unit": null,
+  "unit_id": null,
+  "source": "pin manifest sha256",
+  "tags": []
+ },
+ {
+  "key": "state.get_owner",
+  "value": "0xa9e3e9afa056d200241b85aec824b039ffe17582",
+  "unit": null,
+  "unit_id": "StandardBEP20.sol:StandardBEP20",
+  "source": "eth_call getOwner() at block 130092164",
+  "tags": [],
+  "type": "address"
+ }
+]

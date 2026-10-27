@@ -12,6 +12,7 @@ import pytest
 
 from soken_review.adapters.ton.provenance import deployment_doc
 from soken_review.report.assemble import (
+    NO_DEPLOYMENT_LABEL,
     AssemblyError,
     _build_verification_blocks,
     _deployment_method_detail,
@@ -133,5 +134,5 @@ class TestReportChain:
 
     def test_network_label(self):
         assert _network_label(_ton_job(), None, None) == "TON mainnet"
-        assert _network_label({"chain": "ton", "address": None, "chain_id": None}, None, None) == "Not deployed"
+        assert _network_label({"chain": "ton", "address": None, "chain_id": None}, None, None) == NO_DEPLOYMENT_LABEL
         assert _network_label({"chain": "ethereum", "chain_id": 10, "address": "0x" + "1" * 40}, None, None).endswith("(10)")

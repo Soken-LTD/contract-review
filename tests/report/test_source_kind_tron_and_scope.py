@@ -21,6 +21,7 @@ from soken_review.db.job_repo import JobRepo, new_job_id
 from soken_review.pinning.store import PinnedSource
 from soken_review.report import kit
 from soken_review.report.assemble import (
+    NO_DEPLOYMENT_LABEL,
     _build_verification_blocks,
     _dep_reason_text,
     _job_chain_id,
@@ -110,11 +111,11 @@ class TestTronHeader:
     def test_tron_repo_job_without_address_stays_not_deployed(self):
         job = _job(source_kind="repo", chain="tron", resolved_commit=COMMIT, source_args={"repo_url": REPO})
         assert _job_chain_id(job) is None
-        assert _report_chain(job) == "tron" and _network_label(job, None, None) == "Not deployed"
+        assert _report_chain(job) == "tron" and _network_label(job, None, None) == NO_DEPLOYMENT_LABEL
 
     def test_evm_job_without_chain_id_is_unchanged(self):
         job = _job(source_kind="repo", chain="evm", resolved_commit=COMMIT, source_args={"repo_url": REPO})
-        assert _report_chain(job) == "evm" and _network_label(job, None, None) == "Not deployed"
+        assert _report_chain(job) == "evm" and _network_label(job, None, None) == NO_DEPLOYMENT_LABEL
 
     def test_verification_table_names_the_tron_network(self):
         job = _job(tier="A", source_kind="deployed", chain="tron", address=TRON_ADDRESS)
@@ -286,6 +287,8 @@ async def test_tron_deployed_job_renders_tron_mainnet_and_the_address(db_pool, t
     assert meta["addr_url"] == "https://tronscan.org/#/contract/{a}"
     prov = meta["provenance"]
     assert prov["tier"] == "B" and prov["label_key"] == "tier_b_third_party" and prov["address"] == TRON_ADDRESS
-    assert meta["source_id_label"] == "Bytecode hash"
+    # tier B without a deployed code hash: the cover prints the source pin, labelled as the sha256 it is
+    # (2026-10-27: a pin under "Bytecode hash" or "Commit" is the E6 cover defect)
+    assert meta["source_id_label"] == "Files sha256" and "code_hash" not in prov
     assert "verification" not in report
     assert any(a["area_id"].startswith("evm.") for a in report["review_coverage"]["areas"])

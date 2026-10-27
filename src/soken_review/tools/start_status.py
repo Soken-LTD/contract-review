@@ -902,6 +902,11 @@ def _build_status_response(
     # Build status (03 §4.2)
     out["map_status"] = job.get("map_status", "none")
     out["analyzer_degraded"] = job.get("analyzer_degraded", False)
+    # A failed build in one sentence (compiler, error class, consequence): the same sentence the
+    # report prints on its cover and in its summary, so the reviewer reads it before submitting.
+    build_failure = _build_failure_note(job)
+    if build_failure:
+        out["build_failure"] = build_failure
 
     # Error info for terminal states. `detail` is an optional schema string (tools.v1.json
     # error object: all props `type: string`, additionalProperties false) — a terminal error
@@ -1136,6 +1141,22 @@ def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[di
     elif not out:
         out = ["review_finalize"]
     return out[:3]
+
+
+def _build_failure_note(job: dict[str, Any]) -> str | None:
+    """`build_failure` of review_status: `mapping.build_note.job_build_failure` for a job whose map
+    status is failed; None otherwise or when the pin root is not configured (unit tests)."""
+    if job.get("map_status") != "failed":
+        return None
+    try:
+        from ..mapping.build_note import job_build_failure
+        from .read import _get_ctx
+
+        pin_root = _get_ctx().get_pin_root()
+        return job_build_failure(pin_root, job["job_id"], map_status="failed", family=str(job.get("chain") or "evm"))
+    except Exception as exc:  # noqa: BLE001  # the sentence is an aid; status never fails on it
+        logger.debug("_build_failure_note: %s", type(exc).__name__)
+        return None
 
 
 def _detailed_extras(job: dict[str, Any]) -> dict[str, Any]:
