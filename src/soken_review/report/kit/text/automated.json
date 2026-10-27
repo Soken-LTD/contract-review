@@ -205,6 +205,7 @@
   "test_or_mock_dir": "Test or mock contract under a test or mocks directory; excluded from the review by the scope rules",
   "mock_name": "Mock or test contract by file name; excluded from the review by the scope rules",
   "test_harness": "Test harness importing a test framework; excluded from the review by the scope rules",
+  "build_excluded": "Did not compile with the reviewed contracts and none of them imports it; left out of the build and the review",
   "other": "Excluded from the review by the scope rules",
   "more": "{n} more files excluded from the review by the scope rules",
   "more_path": "further files"

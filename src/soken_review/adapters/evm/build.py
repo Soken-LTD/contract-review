@@ -414,7 +414,8 @@ def build(candidate: Candidate, cache_dir: Path | None = None, work_dir: Path | 
         forge_diag: dict = {}
         forge_result, forge_fail_reason = forge_build_repo(candidate.src_tree_dir, _wdir, solc_bin, cache,
                                                            diag=forge_diag,
-                                                           extra_remappings=_npm_remappings(candidate))
+                                                           extra_remappings=_npm_remappings(candidate),
+                                                           paths=candidate.build_paths)
         if forge_result is not None:
             gate_diag: dict = {}
             match_ok, reject_reason = _forge_sources_match_pin(
@@ -793,6 +794,7 @@ def forge_build_repo(
     cache: SolcCache,
     diag: dict | None = None,
     extra_remappings: list[str] | None = None,
+    paths: list[str] | None = None,
 ) -> tuple[ForgeStdInput | None, str]:
     """B4: run forge to resolve sources+remappings into a Standard JSON input only.
 
@@ -867,6 +869,14 @@ def forge_build_repo(
         safe = sanitize_remapping(remap)
         if safe is not None:
             command += ["--remappings", safe]
+    # A narrowed build (build_scope): forge compiles exactly these files and what they import.
+    # Every path is a pinned, re-checked relative path; `--` ends the options so a path can never
+    # be read as one (nor as a value of the multi-value `--skip`).
+    if paths is not None:
+        safe_paths = [p for p in paths if _safe_relative_path(p) and p.endswith(".sol")]
+        if not safe_paths:
+            return None, "forge_failed"
+        command += ["--", *safe_paths]
 
     try:
         argv = docker_argv(
@@ -1015,8 +1025,13 @@ def _run_build(
     if fatal:
         msg = "; ".join(e.get("formattedMessage", e.get("message", ""))[:200] for e in fatal[:5])
         reason = _missing_import_reason(fatal) or "failed"
+        # the source files the errors point at (build_scope.failing_files): runtime only, never
+        # persisted (repo paths)
+        error_sources = sorted({str(loc["file"]) for e in fatal
+                                if isinstance(loc := e.get("sourceLocation"), dict) and loc.get("file")})
         return BuildResult(candidate=candidate, status="failed", reason=reason,
-                           stderr_head=(msg + "\n" + stderr_head)[:2000])
+                           stderr_head=(msg + "\n" + stderr_head)[:2000],
+                           build_notes={"error_sources": error_sources[:200]} if error_sources else {})
 
     advisories = [e.get("message", "")[:200] for e in errors if e.get("severity") != "error"]
     artifacts = _parse_artifacts(output)

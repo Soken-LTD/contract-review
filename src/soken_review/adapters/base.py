@@ -51,6 +51,9 @@ class Candidate:
     scope_excluded: list[dict[str, str]] = field(default_factory=list)
     # Runtime-only: path to the materialized source tree for B4 forge build; never serialised.
     src_tree_dir: str | None = None
+    # Runtime-only: the files a narrowed repo build compiles (build_scope closure or exclusion),
+    # passed to forge as its paths; None builds the whole project. Never serialised.
+    build_paths: list[str] | None = None
     # Runtime-only: full O_NOFOLLOW tree read (all files, not just scope) for B4 source
     # integrity check; never serialised into persisted/public payloads.  Populated only for
     # repo candidates by repo_candidate_from_manifest.  Keys are repo-root-relative paths,

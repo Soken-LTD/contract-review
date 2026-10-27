@@ -38,6 +38,7 @@ _PINNED_BY_TEXT = {
     "config": "project config pin (foundry.toml, hardhat.config or truffle-config)",
     "pragma": "newest release satisfying every pragma of the reviewed files and their imports",
     "pragma_guess": "pragma floor (compiler release list unavailable)",
+    "pragma_partial": "newest release satisfying the most pragmas (the pragmas of the files conflict)",
     "user": "compiler_version given with the files",
     "sourcify": "Sourcify metadata", "eth_bytecode_db": "eth-bytecode-db record", "ipfs": "metadata on IPFS",
     "metadata": "contract metadata", "std_json": "explorer Standard JSON", "cbor": "CBOR metadata hash",
@@ -133,14 +134,19 @@ def version_satisfies_all(version: str, exprs: list[str]) -> bool:
 
 
 def floor_version(exprs: list[str]) -> str | None:
-    """Highest version literal named by the pragmas (the old pragma_guess): the floor of `^x.y.z`."""
-    versions: list[Version] = []
+    """Without a release list: the highest version literal named by the pragmas that satisfies
+    every pragma (the floor of `^x.y.z`), else the one satisfying the most pragmas, highest first.
+
+    Lambo.win 2026-10-27: `=0.8.23` next to `^0.8.24` gave 0.8.24, which the exact pin rejects;
+    a literal above an upper bound (`<0.8.25`) is never picked over one that fits."""
+    versions: set[Version] = set()
     for e in exprs:
         for m in re.finditer(r"(\d+)\.(\d+)\.(\d+)", e):
-            versions.append((int(m.group(1)), int(m.group(2)), int(m.group(3))))
+            versions.add((int(m.group(1)), int(m.group(2)), int(m.group(3))))
     if not versions:
         return None
-    return ".".join(str(x) for x in max(versions))
+    best = max(versions, key=lambda v: (sum(1 for e in exprs if satisfies(e, v)), v))
+    return ".".join(str(x) for x in best)
 
 
 def load_builds() -> list[dict[str, Any]] | None:
@@ -169,14 +175,30 @@ def pick_config_version(config: list[tuple[str, str]], exprs: list[str]) -> tupl
     return max(fitting or exact, key=key)
 
 
+def newest_satisfying_most(exprs: list[str], builds: list[dict[str, Any]]) -> str | None:
+    """Newest release satisfying the largest number of the expressions (they conflict as a set:
+    a vendored file pinned `=0.8.23` next to `^0.8.24`); None when it satisfies none."""
+    best: tuple[int, Version, str] | None = None
+    for v, long_version in _releases(builds):
+        n = sum(1 for e in exprs if satisfies(e, v))
+        if n and (best is None or n > best[0]):
+            best = (n, v, long_version)
+    return best[2] if best else None
+
+
 def choose_pragma_version(exprs: list[str], builds: list[dict[str, Any]] | None) -> tuple[str, str] | None:
-    """(version, version_pinned_by) from the pragmas: newest satisfying release, else the floor."""
+    """(version, version_pinned_by) from the pragmas: newest satisfying release (`pragma`), else
+    the newest release satisfying the most of them when they conflict (`pragma_partial`; the build
+    step then leaves the files it does not satisfy out, build_scope), else the floor."""
     if not exprs:
         return None
     if builds:
         v = newest_satisfying(exprs, builds)
         if v:
             return v, "pragma"
+        v = newest_satisfying_most(exprs, builds)
+        if v:
+            return v, "pragma_partial"
     floor = floor_version(exprs)
     return (floor, "pragma_guess") if floor else None
 
