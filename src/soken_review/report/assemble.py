@@ -181,6 +181,11 @@ def _report_chain(job: dict[str, Any]) -> str:
         fam = getattr(rec, "family", "evm")
         return fam if fam in ("hyperevm", "tron") else "evm"
     chain = str(job.get("chain") or "")
+    # A TRON or HyperEVM job started by chain name carries no chain_id (review_start rejects TRON with one
+    # while chains.json keeps it `enabled: false`); the job chain still names the registry family. Without
+    # this the CRS TRON report printed chain evm beside network TRON Mainnet (client-path e2e 2026-10-27).
+    if chain in ("hyperevm", "tron"):
+        return chain
     return chain if chain in _NON_EVM_CHAINS else "evm"
 
 
