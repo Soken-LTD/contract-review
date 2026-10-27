@@ -591,3 +591,30 @@ def test_read_on_terminal_job_rejects_with_e_job_terminal(ctx: MemoryJobContext,
         read_mod._check_job_readable(JOB_ID)
     assert exc.value.code == "E_JOB_TERMINAL"
     assert state in exc.value.envelope()["what"]
+
+
+async def test_leads_line_carries_rule_tool_and_message_in_both_formats(server: SokenServer, leads_file: Path) -> None:
+    """Blind run 2026-10-26: TON and "other" leads showed category, severity and line only. Every
+    lead line names its rule id, the tool and a detector message (a server fallback when the
+    analyzer gave none)."""
+    for fmt in ("concise", "detailed"):
+        async with Client(server) as client:
+            result = await client.call_tool("review_leads", {"job_id": JOB_ID, "response_format": fmt})
+        text = result.content[0].text
+        line = next(ln for ln in text.splitlines() if ln.startswith("LEAD-0002"))
+        assert "missing-zero-check" in line and "[aderyn]" in line, line
+        assert "no message" in line, line
+
+
+async def test_leads_detector_filter_matches_tool_and_category(server: SokenServer, leads_file: Path) -> None:
+    """`detector` takes a rule id, a tool name or the category (two runs filtered by the category
+    name and got nothing)."""
+    async def ids(detector: str) -> list[str]:
+        async with Client(server) as client:
+            result = await client.call_tool("review_leads", {"job_id": JOB_ID, "detector": detector})
+        return [ln.split()[0] for ln in result.content[0].text.splitlines() if ln.startswith("LEAD-")]
+
+    assert await ids("aderyn") == ["LEAD-0002"]
+    assert await ids("evm.input_validation") == ["LEAD-0002"]
+    assert await ids("reentrancy") == ["LEAD-0001"]
+    assert await ids("missing-zero-check") == ["LEAD-0002"]

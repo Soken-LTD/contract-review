@@ -42,7 +42,7 @@ from ..mapping.build import load_map
 from ..mapping.lifecycle import load_lifecycle
 from ..mapping.semantic_evm import detect_token_review, units_holding
 from ..mapping.step import job_number_context, load_flags
-from ..report.render import queue_render
+from ..report.render import MAX_RENDER_RESETS, MAX_TOTAL_REOPENS, queue_render, render_failure_client_caused
 from ..server import handler
 from .context import JobContext
 from .coverage import EnumsLoadError, category_allowed_na_reasons, compute_coverage_rows
@@ -327,10 +327,6 @@ async def compute_finalize_checks(
 
 def _final_id(prefix: str, n: int) -> str:
     return f"{prefix}-{n:03d}"
-
-
-# Failed renders after which a job is no longer reset to ready by review_finalize.
-_MAX_RENDER_RESETS = 3
 
 
 async def _assign_final_ids(
@@ -824,9 +820,11 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
     Per 03 §7.1: open items return a rejection (accepted: false) with E_FINALIZE_OPEN.
     Idempotent: if already finalized (or beyond), returns the stored result.
 
-    render_failed recovery: if called on a render_failed job, resets the job to ready
-    and returns E_RENDER_FAILED with the stored gate error so the model can revise the
-    text and call review_finalize again.
+    render_failed recovery: a call on a render_failed job reopens it and finalizes again in the
+    same call (``recovered_from`` names the previous failure). A server-caused failure (internal,
+    schema, empty_page, layout_overflow, a late gate on server text, ...) is free and never makes
+    the job terminal; only a late gate on the reviewer's own text spends one of
+    ``MAX_RENDER_RESETS`` and, once they are used, answers E_JOB_TERMINAL.
     """
     job_id: str = args["job_id"]
     pool = _get_pool()
@@ -841,29 +839,26 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
             raise ReviewError("E_JOB_NOT_FOUND")
 
         state = job["state"]
+        recovered_from: dict[str, str] | None = None
 
         # ── render_failed recovery (03 §4.14 recovery path) ──────────
-        # Calling review_finalize on a render_failed job resets it to ready so the
-        # model can revise the flagged text and finalize again.  The stored gate error
-        # is surfaced here; report_at and report_id were already cleared in render.py.
         if state == "render_failed":
-            # At most _MAX_RENDER_RESETS resets per job; after that the job stays failed.
-            # Use jobs.render_resets column (incremented each time we do this reset) rather
-            # than counting job_steps rows, which miscount because each retry inserts a new row.
-            render_resets = job.get("render_resets") or 0
             stored_detail = job.get("error_detail") or {}
-            # Only the failure kind and, for a gate failure, the rule and matched phrase go back.
-            shown = {"detail": str(stored_detail.get("detail", ""))[:40]}
-            if stored_detail.get("detail") == "late_gate":
-                shown["rule"] = str(stored_detail.get("note", ""))[:120]
-            if render_resets >= _MAX_RENDER_RESETS:
+            code = str(stored_detail.get("detail", ""))[:40]
+            client_caused = render_failure_client_caused(stored_detail)
+            # jobs.render_resets counts the reviewer's text failures only (job_steps rows miscount
+            # because each retry inserts a new row).
+            render_resets = int(job.get("render_resets") or 0)
+            # Hard cap whatever the cause (jobs.render_reopens): no classification bug yields endless retries.
+            total_reopens = int(job.get("render_reopens") or 0)
+            if total_reopens >= MAX_TOTAL_REOPENS or (client_caused and render_resets >= MAX_RENDER_RESETS):
                 return {"accepted": False, "state": "render_failed",
                         "errors": [ReviewError("E_JOB_TERMINAL", state="render_failed",
                                                exit_code="E_RENDER_FAILED").envelope()]}
-            # Increment the counter atomically before transitioning to ready.
             await conn.execute(
-                "update jobs set render_resets = render_resets + 1 where job_id = %s",
-                (job_id,),
+                "update jobs set render_reopens = render_reopens + 1, render_resets = render_resets + %s"
+                " where job_id = %s",
+                (1 if client_caused else 0, job_id),
             )
             repo = JobRepo(conn)
             await repo.transition(job_id, "ready")
@@ -872,16 +867,11 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
             await conn.execute("update finding_drafts set final_id = null where job_id = %s", (job_id,))
             await conn.execute("update leads set state = 'open' where job_id = %s and state = 'not_reviewed'",
                                (job_id,))
-            return {
-                "accepted": False,
-                "state": "ready",
-                "errors": [ReviewError("E_RENDER_FAILED",
-                                       detail=json.dumps(shown)).envelope()],
-                "hint": (
-                    "Job reset to ready; revise the flagged text (see 'detail') "
-                    "and call review_finalize again."
-                ),
-            }
+            # Only the failure kind and, for a gate failure, the rule and matched phrase go back.
+            recovered_from = {"code": code, "cause": "model" if client_caused else "server"}
+            if code == "late_gate":
+                recovered_from["rule"] = str(stored_detail.get("note", ""))[:120]
+            state = "ready"
 
         # ── Idempotent replay (ambiguity SF-008) ──────────────────────
         if state in ("finalized", "render_queued", "rendering", "rendered"):
@@ -897,70 +887,87 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
                 ReviewError("E_JOB_NOT_READY", state=state, eta_s=0).envelope()
             ]}
 
-        # ── Run finalize checks ────────────────────────────────────────
-        checks = await compute_finalize_checks(conn, job_id)
-        open_checks = [c for c in checks if c["open"]]
+        out = await _finalize_ready(conn, job, job_id)
+        if recovered_from is not None:
+            out["recovered_from"] = recovered_from
+            out.setdefault("state", "ready")
+            if not out.get("accepted"):
+                out["hint"] = (
+                    "Job reopened after the render failure named in recovered_from; "
+                    "close the items listed here and call review_finalize again."
+                    if recovered_from["cause"] == "server" else
+                    "Job reopened after a render failure on reviewer text (see recovered_from); "
+                    "revise that text, close the items listed here and call review_finalize again."
+                )
+        return out
 
-        if open_checks:
-            items = [
-                {"id": c["id"], "open": 1, **{k: c[k] for k in ("tool", "section", "reason") if c.get(k)}}
-                for c in open_checks[:40]
-            ]
-            return {
-                "accepted": False,
-                "errors": [ReviewError("E_FINALIZE_OPEN", items=str([c["id"] for c in open_checks[:40]])).envelope()],
-                "items": items,
-            }
 
-        # ── Pre-freeze text gate (04 §11.4 render parity) ─────────────
-        # Run the full model-scope text gate on all report prose before freezing so
-        # a render-time late_gate failure can never happen on text that passed write
-        # time (e.g. a T27 phrase added to the rule list after the finding was submitted).
-        job_profile = "owner" if job.get("ownership_proven") else "public_review"
-        gate_errors = await _check_gate_violations(conn, job_id, job_profile)
-        if gate_errors:
-            return {
-                "accepted": False,
-                "errors": [ReviewError("E_FINALIZE_OPEN",
-                                       items="gate_violations").envelope()],
-                "gate_violations": gate_errors[:40],
-            }
+async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], job_id: str) -> dict[str, Any]:
+    """Checks, pre-freeze gate, quota, final ids and the render queue for a ready job (job row locked)."""
+    # ── Run finalize checks ────────────────────────────────────────
+    checks = await compute_finalize_checks(conn, job_id)
+    open_checks = [c for c in checks if c["open"]]
 
-        # ── All checks pass: finalize ──────────────────────────────────
-
-        # Daily report quota (quota.py): this is where a report is issued, so the count is
-        # taken under an advisory lock per key; a refusal leaves the job ready for tomorrow.
-        try:
-            await quota.check(conn, job.get("limit_key"), job_id=job_id, lock=True)
-        except ReviewError as exc:
-            return {"accepted": False, "errors": [exc.envelope()]}
-
-        # Assign report_id (SF-007)
-        report_id = _derive_report_id(job_id)
-        await conn.execute(
-            "update jobs set report_id = %s, report_at = now() where job_id = %s and report_id is null",
-            (report_id, job_id),
-        )
-
-        # Assign final ids, close open leads
-        final_ids, _carried, leads_not_reviewed = await _assign_final_ids(conn, job_id)
-
-        # Transition: ready -> finalized
-        repo = JobRepo(conn)
-        await repo.transition(job_id, "finalized")
-
-        # Queue render: finalized -> render_queued
-        await queue_render(conn, job_id)
-
-        await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
-
+    if open_checks:
+        items = [
+            {"id": c["id"], "open": 1, **{k: c[k] for k in ("tool", "section", "reason") if c.get(k)}}
+            for c in open_checks[:40]
+        ]
         return {
-            "accepted": True,
-            "state": "render_queued",
-            "final_ids": final_ids,
-            "leads_not_reviewed": leads_not_reviewed,
-            "poll_after_s": 2,
+            "accepted": False,
+            "errors": [ReviewError("E_FINALIZE_OPEN", items=str([c["id"] for c in open_checks[:40]])).envelope()],
+            "items": items,
         }
+
+    # ── Pre-freeze text gate (04 §11.4 render parity) ─────────────
+    # Run the full model-scope text gate on all report prose before freezing so
+    # a render-time late_gate failure can never happen on text that passed write
+    # time (e.g. a T27 phrase added to the rule list after the finding was submitted).
+    job_profile = "owner" if job.get("ownership_proven") else "public_review"
+    gate_errors = await _check_gate_violations(conn, job_id, job_profile)
+    if gate_errors:
+        return {
+            "accepted": False,
+            "errors": [ReviewError("E_FINALIZE_OPEN",
+                                   items="gate_violations").envelope()],
+            "gate_violations": gate_errors[:40],
+        }
+
+    # ── All checks pass: finalize ──────────────────────────────────
+
+    # Daily report quota (quota.py): this is where a report is issued, so the count is
+    # taken under an advisory lock per key; a refusal leaves the job ready for tomorrow.
+    try:
+        await quota.check(conn, job.get("limit_key"), job_id=job_id, lock=True)
+    except ReviewError as exc:
+        return {"accepted": False, "errors": [exc.envelope()]}
+
+    # Assign report_id (SF-007)
+    report_id = _derive_report_id(job_id)
+    await conn.execute(
+        "update jobs set report_id = %s, report_at = now() where job_id = %s and report_id is null",
+        (report_id, job_id),
+    )
+
+    # Assign final ids, close open leads
+    final_ids, _carried, leads_not_reviewed = await _assign_final_ids(conn, job_id)
+
+    # Transition: ready -> finalized
+    repo = JobRepo(conn)
+    await repo.transition(job_id, "finalized")
+
+    # Queue render: finalized -> render_queued
+    await queue_render(conn, job_id)
+
+    await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
+
+    return {
+        "accepted": True,
+        "state": "render_queued",
+        "final_ids": final_ids,
+        "leads_not_reviewed": leads_not_reviewed,
+        "poll_after_s": 2,
+    }
 
 
 async def _stored_finalize_result(

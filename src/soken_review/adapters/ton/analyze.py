@@ -275,6 +275,7 @@ def _parse_misti_sarif(data: bytes) -> list[dict[str, Any]] | None:
                     "file": file_path,
                     "start": start_line,
                     "end": end_line,
+                    "message": str((result.get("message") or {}).get("text") or "")[:600],
                 })
     return raw
 
@@ -354,6 +355,10 @@ def _build_leads(raw_items: list[dict[str, Any]]) -> list[Lead]:
                 "end": max(i["end"] for i in group_items),
                 "state": "open",
             }
+            # Detector text (misti SARIF message, soken-ton-rules docstring): review_leads prints it.
+            message = next((str(i.get("message") or "") for i in group_items if i.get("message")), "")
+            if message:
+                lead["message"] = message[:600]
             try:
                 jsonschema.validate(lead, _LEAD_SCHEMA)
             except jsonschema.ValidationError as exc:

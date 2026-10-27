@@ -5,7 +5,7 @@ A walk (map/lifecycle.json, text in contract/rubric/invariants.yaml) is answered
   {walk_id, outcome: holds | violated | not_applicable, refs: [path:start-end], note, draft_key?}
 
 Coverage rules, the point of the pass (a walk is traced through code, not asserted):
-  - holds and violated need 1 to 8 refs, every ref read in full with review_read_code first;
+  - holds and violated need 1 to 16 refs, every ref read in full with review_read_code first;
   - the refs overlap at least min(2, n) of the walk's n focus function spans;
   - the refs contain every anchor line (the lifecycle leads the walk is bound to);
   - violated names a live draft (accepted, needs_challenge or needs_text) whose location quote
@@ -23,7 +23,7 @@ from .challenge import _parse_range_ref
 
 OUTCOMES = ("holds", "violated", "not_applicable")
 LIVE_DRAFT = frozenset({"accepted", "needs_challenge", "needs_text"})
-_NOTE_MIN, _NOTE_MAX, _REFS_MAX = 40, 600, 8
+_NOTE_MIN, _NOTE_MAX, _REFS_MAX = 40, 600, 16  # _REFS_MAX = challenge.ANSWER_REFS_MAX
 
 
 def _covered(path: str, start: int, end: int, reads: dict[str, list[tuple[int, int]]]) -> bool:
