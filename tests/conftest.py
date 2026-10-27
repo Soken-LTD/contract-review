@@ -131,9 +131,14 @@ async def db_pool(pg_dsn):
     await pool.close()
 
 
-@pytest_asyncio.fixture()
+@pytest_asyncio.fixture(loop_scope="session")
 async def db_conn(db_pool):
-    """Single async connection, auto-rollback after each test for isolation."""
+    """Single async connection, auto-rollback after each test for isolation.
+
+    Runs on the session loop that owns `db_pool`: a pool used from another loop (a function-scoped
+    fixture loop, or the anyio plugin's runner) hangs on its loop-bound primitives (PoolTimeout) and
+    tears async fixtures down in another task (anyio "exit cancel scope in a different task"), as
+    CI run 40501752418 showed. Every DB test is `pytest.mark.asyncio(loop_scope="session")`."""
     async with db_pool.connection() as conn, conn.transaction():
         yield conn
         raise psycopg.Rollback()

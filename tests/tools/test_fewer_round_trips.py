@@ -29,7 +29,9 @@ from soken_review.tools import read as read_mod
 from soken_review.tools.context import MemoryJobContext
 from soken_review.tools.start_status import _status_next_tools, set_pool
 
-ANYIO = pytest.mark.anyio
+from ._client import task_scoped_client
+
+ASYNC = pytest.mark.asyncio(loop_scope="session")   # the db_pool loop (tests/conftest.py)
 TOOLS = {t["name"]: t for t in bundle_tools()}
 JOB = "job_BBBBBBBBBBBBBBBBBBBBBBBBBB"
 
@@ -131,7 +133,7 @@ def test_new_shapes_validate():
 # ── review_get_guide topics ─────────────────────────────────────────────────
 
 
-@ANYIO
+@ASYNC
 async def test_guide_several_topics_in_one_call():
     async with Client(SokenServer()) as c:
         multi = await c.call_tool("review_get_guide", {"topics": ["severity_inputs", "checklist"], "chain": "ton"})
@@ -143,7 +145,7 @@ async def test_guide_several_topics_in_one_call():
     assert text.endswith(one.content[0].text)  # each block is exactly the single-topic answer
 
 
-@ANYIO
+@ASYNC
 async def test_guide_without_topic_names_both_options():
     async with Client(SokenServer()) as c:
         r = await c.call_tool("review_get_guide", {"chain": "evm"})
@@ -167,7 +169,7 @@ def read_ctx(tmp_path: Path) -> MemoryJobContext:
     return ctx
 
 
-@ANYIO
+@ASYNC
 async def test_read_ranges_returns_every_range_and_logs_each(read_ctx):
     async with Client(SokenServer()) as c:
         r = await c.call_tool("review_read_code", {"job_id": JOB, "ranges": [
@@ -181,7 +183,7 @@ async def test_read_ranges_returns_every_range_and_logs_each(read_ctx):
     assert read_ctx.reads == [(JOB, "src/A.sol", 1, 5), (JOB, "src/B.sol", 3, 10), (JOB, "src/A.sol", 28, 30)]
 
 
-@ANYIO
+@ASYNC
 async def test_read_ranges_bad_range_is_reported_inline_and_not_logged(read_ctx):
     async with Client(SokenServer()) as c:
         r = await c.call_tool("review_read_code", {"job_id": JOB, "ranges": [
@@ -194,7 +196,7 @@ async def test_read_ranges_bad_range_is_reported_inline_and_not_logged(read_ctx)
     assert read_ctx.reads == [(JOB, "src/B.sol", 1, 2)]
 
 
-@ANYIO
+@ASYNC
 async def test_read_ranges_respect_batch_cap(read_ctx, monkeypatch):
     monkeypatch.setattr(read_mod, "_CAP_READ_BATCH", 12_000)
     async with Client(SokenServer()) as c:
@@ -205,7 +207,7 @@ async def test_read_ranges_respect_batch_cap(read_ctx, monkeypatch):
     assert len(read_ctx.reads) < 8        # only printed ranges are recorded as read
 
 
-@ANYIO
+@ASYNC
 async def test_read_single_range_unchanged_and_missing_fields_named(read_ctx):
     async with Client(SokenServer()) as c:
         one = await c.call_tool("review_read_code", {"job_id": JOB, "path": "src/B.sol", "start_line": 1,
@@ -239,11 +241,11 @@ def test_status_next_tools(state, drafts, checks, expected):
 _DOCKER = subprocess.run(["docker", "info"], capture_output=True, check=False).returncode == 0
 
 
-@pytest_asyncio.fixture()
+@pytest_asyncio.fixture(loop_scope="session")
 async def client(db_pool):
     set_pool(db_pool)
     try:
-        async with Client(SokenServer()) as c:
+        async with task_scoped_client() as c:
             yield c
     finally:
         set_pool(None)  # type: ignore[arg-type]
@@ -259,7 +261,7 @@ async def _advance(db_pool, job_id: str, states: tuple[str, ...], gap: float = 0
             await JobRepo(conn).transition(job_id, s)
 
 
-@ANYIO
+@ASYNC
 @pytest.mark.skipif(not _DOCKER, reason="docker unavailable")
 async def test_status_settled_waits_through_intermediate_states(client, db_pool):
     r = await client.call_tool("review_start", _START)
@@ -274,7 +276,7 @@ async def test_status_settled_waits_through_intermediate_states(client, db_pool)
     assert list(Draft202012Validator(TOOLS["review_status"]["outputSchema"]).iter_errors(body)) == []
 
 
-@ANYIO
+@ASYNC
 @pytest.mark.skipif(not _DOCKER, reason="docker unavailable")
 async def test_status_change_mode_still_returns_on_first_change(client, db_pool):
     r = await client.call_tool("review_start", _START)
@@ -285,7 +287,7 @@ async def test_status_change_mode_still_returns_on_first_change(client, db_pool)
     assert json.loads(s.content[0].text)["state"] == "fetching"
 
 
-@ANYIO
+@ASYNC
 @pytest.mark.skipif(not _DOCKER, reason="docker unavailable")
 async def test_start_wait_seconds_returns_settled_status(client, db_pool):
     async def advance_new_job():
@@ -310,7 +312,7 @@ async def test_start_wait_seconds_returns_settled_status(client, db_pool):
     assert list(Draft202012Validator(TOOLS["review_start"]["outputSchema"]).iter_errors(body)) == []
 
 
-@ANYIO
+@ASYNC
 @pytest.mark.skipif(not _DOCKER, reason="docker unavailable")
 async def test_start_without_wait_has_no_status(client):
     r = await client.call_tool("review_start", _START)
@@ -319,7 +321,6 @@ async def test_start_without_wait_has_no_status(client):
 
 # ── DB: review_set_section with several sections ────────────────────────────
 
-ASYNC = pytest.mark.asyncio(loop_scope="session")
 _ROLES = {"rows": [{"role": "owner", "risk_note": "The owner can pause every transfer and change the fee."}]}
 _CONTEXT = {"notes": [{"p": "No project documents were supplied for this review."}]}
 
