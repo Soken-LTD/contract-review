@@ -568,6 +568,11 @@
      "poll_after_s": {
       "type": "integer"
      },
+     "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{12}$",
+      "description": "Hash of the tool list this server serves. When it differs from the one you saw at the previous call, reload the tool list before the next call."
+     },
      "guide_version": {
       "type": "string"
      },
@@ -674,6 +679,11 @@
        "complete",
        "stopped"
       ]
+     },
+     "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{12}$",
+      "description": "Hash of the tool list this server serves. When it differs from the one you saw at the previous call, reload the tool list before the next call."
      },
      "percent": {
       "type": "integer",

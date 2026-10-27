@@ -39,10 +39,22 @@ class TestSolanaLockAndLoan:
         sev, _, by = _sev(self.F02)
         assert (sev, by) == ("High", "matrix")
 
-    def test_f01_borrower_block_stays_high_under_k10(self):
+    def test_f01_borrower_block_not_covered_scope_applies_no_cap(self):
+        """The ata_owner_reassign items shipped empty scopes; K10 capped F-01 at High for ever. A scope
+        the map could not supply is no cap since 2026-10-27: the cell (Critical) or the reviewer's
+        High with a reason (RV1) prints, never a rule the reviewer cannot answer."""
         f01 = {**self.F02, "reversibility": "irreversible"}
-        sev, rules, _ = _sev(f01, "post_challenge", **_POST, scope_not_covered=True, severity_before="Critical")
-        assert sev == "High" and "K10" in rules
+        sev, rules, by = _sev(f01, "post_challenge", **_POST, scope_not_covered=True, severity_before="Critical")
+        assert (sev, rules, by) == ("Critical", [], "matrix")
+        reason = "The borrower needs the loan to default first and the lender keeps the collateral claim path."
+        sev, rules, by = _sev(f01, "post_challenge", **_POST, scope_not_covered=True, severity_before="High",
+                              claimed_severity="High", claimed_reason=reason)
+        assert (sev, by) == ("High", "reviewer") and rules == ["RV1:reviewer=High"]
+
+    def test_no_contract_map_still_caps_at_high(self):
+        f01 = {**self.F02, "reversibility": "irreversible"}
+        sev, rules, _ = _sev(f01, "post_challenge", **_POST, map_unavailable=True, severity_before="Critical")
+        assert sev == "High" and rules == ["K10"]
 
 
 class TestTonForton:

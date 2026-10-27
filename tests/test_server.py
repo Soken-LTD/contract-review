@@ -123,3 +123,60 @@ async def test_set_section_accepts_section_object_sent_as_string():
     body = json.loads(result.content[0].text)
     err = body["errors"][0]
     assert not (err["code"] == "E_INVALID_ARGUMENT" and err.get("field") == "invariant_walks"), body
+
+
+def test_schema_version_is_the_hash_of_the_shipped_tool_list():
+    """review_start and review_status return it; a client compares it with the list it loaded."""
+    import hashlib
+    import re
+
+    from soken_review.contract import TOOLS_FILE, schema_version
+
+    v = schema_version()
+    assert re.fullmatch(r"[0-9a-f]{12}", v)
+    assert v == hashlib.sha256(TOOLS_FILE.read_bytes()).hexdigest()[:12]
+    props = {t["name"]: t["outputSchema"]["properties"] for t in bundle_tools() if "outputSchema" in t}
+    assert props["review_start"]["schema_version"]["pattern"] == props["review_status"]["schema_version"]["pattern"]
+
+
+async def test_stale_client_shape_gets_a_reload_hint_once_per_result():
+    """A JSON-string object is the one visible sign of a tool list loaded before a deploy (PR #77):
+    the result carries a one-line hint naming the served schema_version; a native object does not."""
+    from soken_review.contract import schema_version
+
+    args = {"job_id": "job_00000000000000000000000000", "section": "invariant_walks"}
+    rows = {"rows": [{"walk_id": "W1", "outcome": "holds", "refs": []}]}
+    async with Client(SokenServer()) as client:
+        stale = await client.call_tool("review_set_section", {**args, "invariant_walks": json.dumps(rows)})
+        fresh = await client.call_tool("review_set_section", {**args, "invariant_walks": rows})
+    stale_body = json.loads(stale.content[0].text)
+    assert stale_body["schema_hint"].startswith("Your tool list predates the current schema")
+    assert schema_version() in stale_body["schema_hint"] and "reload" in stale_body["schema_hint"].lower()
+    if stale.structured_content is not None:
+        assert stale.structured_content["schema_hint"] == stale_body["schema_hint"]
+    assert "schema_hint" not in json.loads(fresh.content[0].text)
+    assert stale_body["errors"][0]["code"] == json.loads(fresh.content[0].text)["errors"][0]["code"]
+
+
+async def test_stale_shape_hint_rides_a_rejection_result_too():
+    """Channel `rejection` (accepted false, structured): the hint sits beside the errors."""
+    from soken_review.contract import schema_version
+
+    async with Client(SokenServer()) as client:
+        res = await client.call_tool("review_submit_finding", {
+            "job_id": "job_00000000000000000000000000", "draft_key": "d-1", "category": "evm.other",
+            "title": "t", "quotes": "[]", "matrix": "{}", "body": "{}"})
+    body = json.loads(res.content[0].text)
+    assert body["accepted"] is False and schema_version() in body["schema_hint"]
+    if res.structured_content is not None:
+        assert res.structured_content["schema_hint"] == body["schema_hint"]
+
+
+def test_text_result_gets_the_hint_as_a_last_line():
+    from mcp.types import CallToolResult, TextContent
+
+    from soken_review.server import _with_schema_hint
+
+    res = _with_schema_hint(CallToolResult(content=[TextContent(type="text", text="leads open 0 of 0\nend")]))
+    lines = res.content[0].text.splitlines()
+    assert lines[:2] == ["leads open 0 of 0", "end"] and lines[2].startswith("schema_hint Your tool list predates")

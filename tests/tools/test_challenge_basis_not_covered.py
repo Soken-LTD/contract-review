@@ -1,5 +1,5 @@
-"""A NOT_COVERED challenge scope caps the severity (K10); it never zeroes it through forced basis
-fallbacks, and every verdict names its cause (Solana blind run 2026-10-26, ata_owner_reassign).
+"""A NOT_COVERED challenge scope never zeroes the severity through forced basis fallbacks, never caps
+it, and every verdict names its cause (Solana blind run 2026-10-26, ata_owner_reassign).
 
 Replayed inputs: F-01 "Borrower can block claim_default by reassigning the owner of their USDC
 ATA": permanent_freeze / unbounded / permissionless_role / normal_operation / irreversible, computed
@@ -7,7 +7,9 @@ Critical at submit. The location is an Accounts struct that no function span cov
 scope was `not_covered`. The reviewer answered the kill and downgrade items absent, MB0 and MB1
 present with quotes matched to the pinned source, MB2 and MB3 absent. The server applied the MB0
 and MB1 fallbacks anyway (impact incorrect_accounting, magnitude bounded) and printed Low with
-`caps_applied: []`.
+`caps_applied: []`; after the first fix it printed High under K10, a cap the reviewer could not
+lift because the scope had no ranges to cover. Since 2026-10-27 a not_covered item applies no cap:
+the severity is the cell's, or the reviewer's within one step (RV1).
 """
 
 from __future__ import annotations
@@ -60,21 +62,29 @@ class TestBasisFallbackDecision:
 class TestSeverityReplay:
     """The matrix the reviewer defended, through the post-challenge chain with the scope not covered."""
 
+    REASON = "The borrower needs a defaulted loan first and the lender keeps every other claim path."
+
     def _ctx(self, prior: str = "reasoning_only") -> SeverityContext:
         return SeverityContext(phase="post_challenge", evidence_level=prior, has_attack_steps=True,
                                open_downgrade_item=False, downgrade_items_present=0, scope_not_covered=True,
                                map_unavailable=False, category_generic=False, category_max_severity=None,
                                linked_lead_same_cat=False, token_review=False, has_location_quote=True)
 
-    def test_f01_stays_high_with_the_cap_named(self):
+    def test_f01_unchallenged_evidence_is_high_under_k8_only(self):
         r = compute_severity(F01_MATRIX, "post_challenge", self._ctx())
         assert r.base == "Critical" and r.severity == "High"
-        assert r.caps_applied and set(r.caps_applied) <= {"K8", "K10"}
-        assert r.severity_rule.startswith("I4xL3=Critical caps=[")
+        assert r.caps_applied == ["K8"]
+        assert r.severity_rule.startswith("I4xL3=Critical caps=[K8]")
 
-    def test_f01_with_analyzer_evidence_is_capped_by_k10_only(self):
+    def test_f01_with_analyzer_evidence_prints_the_cell_no_cap_from_the_scope(self):
         r = compute_severity(F01_MATRIX, "post_challenge", self._ctx("analyzer_and_reasoning"))
-        assert r.severity == "High" and r.caps_applied == ["K10"]
+        assert r.severity == "Critical" and r.caps_applied == [] and "K10" not in r.severity_rule
+
+    def test_f01_reviewers_high_stands_by_rv1_not_by_a_scope_cap(self):
+        ctx = self._ctx("analyzer_and_reasoning")
+        ctx.claimed_severity, ctx.claimed_reason, ctx.severity_before = "High", self.REASON, "High"
+        r = compute_severity(F01_MATRIX, "post_challenge", ctx)
+        assert r.severity == "High" and r.set_by == "reviewer" and r.caps_applied == ["RV1:reviewer=High"]
 
     def test_f02_passes_as_high(self):
         r = compute_severity(F02_MATRIX, "post_challenge", self._ctx())
@@ -112,11 +122,13 @@ async def _submit_f01(db_pool, job_id: str, pin_root) -> dict[str, Any]:
                  "impact": [{"p": "The lender loses the seizure path while the loan stays active."}],
                  "recommendation": [{"p": "Make the surplus account optional."}]},
         "attack_steps": [{"text": "The borrower reassigns the owner of the token account.", "ref": "src/Vault.sol:6"}],
+        "claimed_severity": "High",
+        "severity_reason": "The borrower needs a defaulted loan first and the lender keeps every other claim path.",
     })
 
 
 @ASYNC
-async def test_answer_challenge_on_not_covered_scope_keeps_high_and_names_the_cap(db_pool):
+async def test_answer_challenge_on_not_covered_scope_prints_the_reviewers_high_without_a_cap(db_pool):
     from soken_review.tools import challenge as challenge_mod
     from soken_review.tools.context import MemoryJobContext
 
@@ -128,7 +140,8 @@ async def test_answer_challenge_on_not_covered_scope_keeps_high_and_names_the_ca
 
     sub = await _submit_f01(db_pool, job_id, pin_root)
     assert sub["accepted"] is True, sub
-    assert sub["computed_severity"] == "Critical" and sub["status"] == "needs_challenge"
+    assert sub["computed_severity"] == "High" and sub["status"] == "needs_challenge", sub
+    assert sub["severity_set_by"] == "reviewer", sub
     draft_key, revision = sub["draft_key"], sub["revision"]
 
     ch = await challenge_mod.handle_review_challenge({"job_id": job_id, "draft_key": draft_key})
@@ -152,11 +165,15 @@ async def test_answer_challenge_on_not_covered_scope_keeps_high_and_names_the_ca
     res = await challenge_mod.handle_review_answer_challenge(
         {"job_id": job_id, "draft_key": draft_key, "revision": revision, "answers": answers})
     assert res["accepted"] is True, res
-    assert res["severity_before"] == "Critical"
+    assert res["severity_before"] == "High"
     assert res["severity_after"] == "High", res
-    assert res["verdict"] == "downgraded"
-    assert res["caps_applied"] and all(c.startswith("K") for c in res["caps_applied"]), res
-    assert res["severity_rule"].startswith("I4xL3=Critical caps=[") and "basis=" not in res["severity_rule"]
+    assert res["verdict"] == "passed"
+    # K8 (Critical needs challenged evidence) is the only rule between the cell and the reviewer's
+    # High; the scope with no ranges names nothing. Before 2026-10-27 this list carried K10.
+    assert res["caps_applied"] == ["K8"], res
+    assert res["severity_set_by"] == "reviewer"
+    assert res["severity_rule"].startswith("I4xL3=Critical caps=[K8]") and "basis=" not in res["severity_rule"]
+    assert "K10" not in res["severity_rule"]
 
     async with db_pool.connection() as conn:
         row = await (await conn.execute(

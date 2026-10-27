@@ -19,8 +19,14 @@ Verdict (04 §8.3):
 Auto checks (04 §8.5): run_auto(id) -> present|absent|unknown.  unknown means
 no map data; the answer stands unchallenged.
 
-Scope resolution (04 §8.4): entry_function without a semantic layer -> NOT_COVERED;
-K10 caps the severity at High.
+Scope resolution (04 §8.4): every scope resolves from the semantic map. entry_function is the
+functions holding the location (for Solana also the `#[derive(Accounts)]` struct of the
+instruction, and the handlers of a struct the location sits in), callers, modifiers and callees;
+account_struct is that struct; the other named scopes narrow to the entry_function ranges when
+the map has no dedicated resolver. A scope the map cannot supply at all is `not_covered` with no
+ranges: a present answer on such a kill or downgrade item cannot be verified and is rejected, and
+the item applies no cap (blind run 2026-10-26: `ata_owner_reassign` shipped empty scopes that K10
+turned into a permanent High cap the reviewer could not lift). K10 is the no-contract-map cap only.
 
 Design choices (fail-closed):
   - Recompute items fresh from the current revision; if the revision changed,
@@ -585,17 +591,51 @@ def _resolve_scope(
         return [], True, "not_covered"
 
     # Semantic layer available
-    if scope_name == "entry_function":
-        ranges, nc = _resolve_entry_function_scope(family, map_doc, location_quotes)
-        return ranges, nc, "not_covered" if nc else "semantic"
-    elif scope_name == "call_site":
+    if scope_name == "call_site":
         ranges, nc = _resolve_call_site_scope(location_quotes)
         # call_site uses location quote directly (no BFS), so always lexical
         return ranges, nc, "not_covered" if nc else "lexical"
-    elif scope_name in ("shared_state_writers", "account_struct", "handler", "module"):
-        # W0: not implemented without full map traversal
+    if scope_name not in _SCOPE_NAMES:
         return [], True, "not_covered"
-    return [], True, "not_covered"
+    ranges, nc, structs = _resolve_entry_function_scope(family, map_doc, location_quotes)
+    if scope_name == "account_struct" and structs:
+        # The `#[derive(Accounts)]` struct(s) of the instruction(s) in scope, alone. Without one (a
+        # native program parses accounts in the handler body) the entry ranges are the parsing block.
+        return structs, False, "semantic"
+    # entry_function, and the named scopes without a dedicated resolver (shared_state_writers,
+    # handler, module, account_struct without a struct): the entry_function ranges, which hold the
+    # instruction, its guards and its callees. Narrower than scopes.yaml describes for those three,
+    # but real ranges from the map; an empty scope could never be answered (2026-10-26).
+    return ranges, nc, "not_covered" if nc else "semantic"
+
+
+# Scope names of rubric/enums.yaml `challenge_scope`; anything else is a rubric error -> not_covered.
+_SCOPE_NAMES = frozenset({"entry_function", "call_site", "shared_state_writers", "account_struct", "handler",
+                          "module"})
+
+
+def _solana_contexts(map_doc: dict) -> dict[str, dict[str, Any]]:
+    """`#[derive(Accounts)]` structs by name from the parsed Solana layer (file, start, end)."""
+    extras = ((map_doc.get("semantic") or {}).get("chain_extras") or {}).get("solana") or {}
+    out: dict[str, dict[str, Any]] = {}
+    for name, ctx in (extras.get("contexts") or {}).items():
+        if isinstance(ctx, dict) and ctx.get("file") and isinstance(ctx.get("start"), int) \
+                and isinstance(ctx.get("end"), int) and ctx["end"] >= ctx["start"] > 0:
+            out[str(name)] = ctx
+    return out
+
+
+def _solana_instructions(map_doc: dict) -> list[dict[str, Any]]:
+    """Instruction handlers (name, span, context) from the parsed Solana layer."""
+    extras = ((map_doc.get("semantic") or {}).get("chain_extras") or {}).get("solana") or {}
+    return [i for i in (extras.get("instructions") or []) if isinstance(i, dict) and i.get("span")]
+
+
+def _context_holding(contexts: dict[str, dict[str, Any]], path: str, start: int, end: int) -> str | None:
+    for name, ctx in contexts.items():
+        if ctx["file"] == path and not (ctx["end"] < start or ctx["start"] > end):
+            return name
+    return None
 
 
 _SCOPE_LINE_CAP = 400       # scopes.yaml: above this the item is NOT_COVERED
@@ -606,9 +646,11 @@ def _resolve_entry_function_scope(
     family: str,
     map_doc: dict,
     location_quotes: list[dict[str, Any]],
-) -> tuple[list[str], bool]:
+) -> tuple[list[str], bool, list[str]]:
     """Resolve entry_function scope (scopes.yaml): the functions holding the location, the entry
     functions that reach them, their modifiers, and internal callees to call-graph depth 2.
+    Returns (ranges, not_covered, struct_ranges): the third is the Solana Accounts struct ranges
+    among `ranges` (the `account_struct` scope), [] for other families.
 
     When the location sits in an internal function the evidence for reachability (L1) and for
     the guards lives in the external caller, not in the internal body. Until 2026-10-22 the
@@ -621,7 +663,7 @@ def _resolve_entry_function_scope(
     `_SCOPE_LINE_CAP` lines the scope is NOT_COVERED. Callees are added only while the cap holds.
     """
     if not location_quotes:
-        return [], True
+        return [], True, []
     loc = location_quotes[0]
     loc_path = loc.get("file", "")
     loc_start = loc.get("start", 0)
@@ -640,8 +682,24 @@ def _resolve_entry_function_scope(
             and not (sp.get("end", 0) < loc_start or sp.get("start", 0) > loc_end)
 
     covering = [sid for sid in fn_by_span if overlaps(sid)]
+
+    # Solana: the `#[derive(Accounts)]` struct carries the instruction's constraints (Signer, has_one,
+    # seeds, associated_token), so a finding is often located there and no function span covers it
+    # (Lock & Loan 2026-10-26: `ClaimDefaultCtx.recipient_loan_token`, every item not_covered). The
+    # scope is then the handlers that take that struct, and the struct itself; a location inside a
+    # handler (or a helper a handler reaches) takes the handler's struct too, see below.
+    contexts = _solana_contexts(map_doc) if family == "solana" else {}
+    instructions = _solana_instructions(map_doc) if contexts else []
+    ctx_names: list[str] = []
+    held = _context_holding(contexts, loc_path, loc_start, loc_end) if contexts else None
+    if held is not None:
+        ctx_names.append(held)
+        for ins in instructions:
+            if ins.get("context") == held and ins["span"] in fn_by_span and ins["span"] not in covering:
+                covering.append(ins["span"])
+
     if not covering:
-        return [], True
+        return [], True, []
 
     ordered: list[str] = []
     seen: set[str] = set()
@@ -672,16 +730,25 @@ def _resolve_entry_function_scope(
             for msid in mod_by_name.get(mname, ()):
                 add(msid)
 
+    # the Accounts struct of every instruction collected so far (the location's, or a caller's)
+    for ins in instructions:
+        if ins["span"] in seen and ins.get("context") in contexts and ins["context"] not in ctx_names:
+            ctx_names.append(ins["context"])
+    struct_ranges = [f"{contexts[n]['file']}:{contexts[n]['start']}-{contexts[n]['end']}" for n in ctx_names]
+    struct_lines = sum(contexts[n]["end"] - contexts[n]["start"] + 1 for n in ctx_names)
+
     def total(sids: list[str]) -> int:
-        return sum(span_meta[s].get("end", 0) - span_meta[s].get("start", 0) + 1 for s in sids)
+        return struct_lines + sum(span_meta[s].get("end", 0) - span_meta[s].get("start", 0) + 1 for s in sids)
 
     if total(ordered) > _SCOPE_LINE_CAP:
-        return [], True
+        return [], True, []
 
-    # callees depth 2 from the location functions, same unit only, while the cap holds.
+    # callees depth 2 from the location functions while the cap holds. EVM: same unit only.
     # `using X for` library helpers and base-contract helpers arrive as `internal` edges too;
     # pulling SafeMath into every scope would only grow the read requirement of an `absent`
-    # answer without holding evidence for the item, so callees stay inside the unit.
+    # answer without holding evidence for the item, so callees stay inside the unit. Other
+    # families have no library units: a Solana instruction in the `#[program]` module calls its
+    # handler in `instructions/*.rs`, a module of its own, and that body is the evidence.
     frontier = list(covering)
     for _ in range(_SCOPE_CALL_DEPTH):
         nxt = []
@@ -692,7 +759,9 @@ def _resolve_entry_function_scope(
                     continue
                 for callee in fn_by_name.get(call.get("target", ""), []):
                     csid = callee.get("span", "")
-                    if not csid or csid in seen or _span_unit(span_meta.get(csid) or {}, csid) != unit:
+                    if not csid or csid in seen:
+                        continue
+                    if family == "evm" and _span_unit(span_meta.get(csid) or {}, csid) != unit:
                         continue
                     if total(ordered + [csid]) > _SCOPE_LINE_CAP:
                         continue
@@ -701,10 +770,10 @@ def _resolve_entry_function_scope(
         frontier = nxt
 
     ranges = sorted(
-        (f"{span_meta[s]['file']}:{span_meta[s]['start']}-{span_meta[s]['end']}" for s in ordered),
+        {f"{span_meta[s]['file']}:{span_meta[s]['start']}-{span_meta[s]['end']}" for s in ordered} | set(struct_ranges),
         key=lambda r: (_parse_range_ref(r) or ("", 0, 0))[:2],
     )
-    return ranges, False
+    return ranges, False, sorted(struct_ranges)
 
 
 def _function_indexes(functions: list[dict], span_meta: dict[str, dict[str, Any]]
@@ -1326,7 +1395,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
     kill_present: str | None = None       # item_id of the first kill answered present
     downgrade_count = 0
     basis_fallbacks: list[dict[str, Any]] = []  # for matrix_effective updates
-    scope_not_covered = False             # for K10
+    scope_not_covered = False             # reported to the severity engine; no cap since 2026-10-27
 
     # Build internal items map for looking up fallback info
     raw_items_by_id: dict[str, dict[str, Any]] = {}
@@ -1463,7 +1532,8 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                         "E_CHALLENGE_SCOPE", item=item_id,
                         ranges=", ".join(missing[:SCOPE_RANGES_MAX]),
                     ).envelope())
-            # If scope is NOT_COVERED: check passes trivially, K10 will apply
+            # A not_covered scope has no ranges to cover: the absent answer stands on the reviewer's
+            # word, and the item applies no cap (K10 is the no-contract-map cap only).
 
         elif value == "not_applicable":
             reason = answer.get("reason", "")
@@ -1482,9 +1552,9 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 rule="must be present, absent, or not_applicable", value80=str(value)[:80],
             ).envelope())
 
-        # For basis items: track fallbacks based on answer vs expect. On a NOT_COVERED scope the
-        # severity cap is K10 (compute_severity); a present answer with a verified quote keeps the
-        # matrix, a present answer without one falls back (basis_fallback).
+        # For basis items: track fallbacks based on answer vs expect. On a NOT_COVERED scope a
+        # present answer with a verified quote keeps the matrix, a present answer without one
+        # falls back (basis_fallback).
         raw_item = raw_items_by_id.get(item_id)
         if raw_item:
             fb = basis_fallback(raw_item, value, scope_not_covered=scope_not_covered_item,
