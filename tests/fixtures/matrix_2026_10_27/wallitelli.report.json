@@ -1,0 +1,683 @@
+{
+ "meta": {
+  "report_type": "automated",
+  "kind": "Smart contract security review",
+  "subject": "WallitelliToken",
+  "subject_source": "verified_name",
+  "chain": "evm",
+  "network": "BNB Smart Chain Mainnet (56)",
+  "chain_id": 56,
+  "explorer": null,
+  "addr_url": null,
+  "deployed_noun": "contract",
+  "source_id_label": "Bytecode hash",
+  "provenance": {
+   "tier": "A",
+   "label": "Source matched to deployed code at block 130092367 (27 October 2026)",
+   "label_key": "tier_a",
+   "source_hash": "094b7e2ae3e8c1630d8bc4dd674f3be07ce4afe7e6d42fbd11405f18cc68273d",
+   "address": "0xc6A031fd206C72c614dB391590F48a5Ed9B2f9dC",
+   "code_hash": "sha256:8dd38321e207d185c066e78fd6558aa39009c48a61c9988fe1f1563d99ebc1fa",
+   "as_of": {
+    "block_or_slot": 130092367,
+    "date": "27 October 2026"
+   },
+   "upgrade_authority": "NotChecked"
+  },
+  "report_id": "o2ce6augcmy4owk4qgygc4icag",
+  "report_id_short": "o2ce6augcm",
+  "ownership_proven": false,
+  "profile": "public_review",
+  "requested_by": {
+   "role": "owner",
+   "label": "Code owner or its team"
+  },
+  "date": "27 October 2026",
+  "expires": "2026-11-26",
+  "out_name": "Automated_Review_o2ce6augcm.pdf"
+ },
+ "facts": {
+  "analyzer.aderyn": {
+   "value": "0.6.8",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "analyzer.slither": {
+   "value": "0.11.6",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "chain.block": {
+   "value": "130,092,367",
+   "unit": "block",
+   "amount_at_risk": false
+  },
+  "chain.chain_id": {
+   "value": "56",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "compiler.version": {
+   "value": "0.8.28",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "deploy.address": {
+   "value": "0xc6a031fd206c72c614db391590f48a5ed9b2f9dc",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "deploy.code_bytes": {
+   "value": "1888",
+   "unit": "bytes",
+   "amount_at_risk": false
+  },
+  "deploy.code_hash": {
+   "value": "0x7c6b112d277a6ad2780634dc00f4f6612dae713a40ebec931172c075f6fa671a",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "onchain.balance": {
+   "value": "0",
+   "unit": "wei",
+   "amount_at_risk": true
+  },
+  "onchain.decimals": {
+   "value": "18",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "onchain.total_supply": {
+   "value": "1,000,000,000,000,000,000,000,000,000",
+   "unit": "token_units",
+   "amount_at_risk": true
+  },
+  "source.files": {
+   "value": "6",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "source.nsloc": {
+   "value": "186",
+   "unit": "lines",
+   "amount_at_risk": false
+  },
+  "source.pin": {
+   "value": "094b7e2ae3e8c1630d8bc4dd674f3be07ce4afe7e6d42fbd11405f18cc68273d",
+   "unit": null,
+   "amount_at_risk": false
+  }
+ },
+ "summary": {
+  "kpis": [
+   {
+    "key": "files",
+    "value": 6,
+    "label": "Files in scope"
+   },
+   {
+    "key": "nsloc",
+    "value": 186,
+    "label": "Source lines in scope"
+   },
+   {
+    "key": "leads",
+    "value": 1,
+    "label": "Analyzer leads"
+   },
+   {
+    "key": "promoted",
+    "value": 0,
+    "label": "Leads promoted to findings"
+   },
+   {
+    "key": "areas_returned",
+    "value": "3 of 23",
+    "label": "Areas with code returned"
+   },
+   {
+    "key": "deployed_code",
+    "value": "Matched",
+    "label": "Deployed code"
+   }
+  ],
+  "dismissed_leads": {
+   "rows": [
+    {
+     "detector": "large-numeric-literal",
+     "severity_class": "Low",
+     "location": {
+      "path": "contracts/WallitelliToken.sol",
+      "start": 1,
+      "end": 1
+     },
+     "reason": "not_a_vulnerability"
+    }
+   ],
+   "remainder": 0
+  }
+ },
+ "scope": {
+  "head": [
+   "Unit",
+   "File",
+   "nSLOC",
+   "Address"
+  ],
+  "files": [
+   {
+    "name": "draft-IERC6093",
+    "file": "@openzeppelin/contracts/interfaces/draft-IERC6093.sol",
+    "nsloc": 28
+   },
+   {
+    "name": "ERC20",
+    "file": "@openzeppelin/contracts/token/ERC20/ERC20.sol",
+    "nsloc": 120
+   },
+   {
+    "name": "IERC20",
+    "file": "@openzeppelin/contracts/token/ERC20/IERC20.sol",
+    "nsloc": 11
+   },
+   {
+    "name": "IERC20Metadata",
+    "file": "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol",
+    "nsloc": 7
+   },
+   {
+    "name": "Context",
+    "file": "@openzeppelin/contracts/utils/Context.sol",
+    "nsloc": 12
+   },
+   {
+    "name": "WallitelliToken",
+    "file": "contracts/WallitelliToken.sol",
+    "nsloc": 8,
+    "addr": "0xc6A031fd206C72c614dB391590F48a5Ed9B2f9dC"
+   }
+  ],
+  "out_of_scope": []
+ },
+ "context": {
+  "documents": [],
+  "comparison": [],
+  "notes": [
+   {
+    "p": "The project supplied no website, whitepaper, documentation, terms of use or privacy policy. The review covers the verified on-chain source only; declared supply, distribution and governance claims could not be compared with the code."
+   }
+  ]
+ },
+ "architecture": {
+  "title": "Units in scope and their external dependencies",
+  "cols": 4,
+  "rows": 1,
+  "row_height": 120,
+  "nodes": [
+   {
+    "id": "u_wallitellitoken",
+    "label": "WallitelliToken",
+    "kind": "scope",
+    "sub": "deployed, 0 entries",
+    "col": 1.5,
+    "row": 0
+   }
+  ],
+  "edges": []
+ },
+ "roles": {
+  "rows": [],
+  "notes": [
+   {
+    "p": "Deployer (initial holder): Receives the full initial supply at construction. Holds market power over the token but has no privileged function in the contract after deployment."
+   }
+  ]
+ },
+ "method": [
+  {
+   "step": "Source pinning",
+   "detail": "6 files pinned by sha256; source pin 094b7e2ae3e8c163"
+  },
+  {
+   "step": "Static analysis",
+   "detail": "aderyn 0.6.8 unknown: 1 leads."
+  },
+  {
+   "step": "Finding selection",
+   "detail": "2 findings accepted, 0 withdrawn"
+  },
+  {
+   "step": "Server checks",
+   "detail": "Every code quote matched to the pinned source; text and number rules on every finding; severity mapped from the classifications through the fixed matrix"
+  },
+  {
+   "step": "Deployment check",
+   "detail": "The pinned source was rebuilt and compared with the deployed runtime code at block 130,092,367: matched byte for byte"
+  }
+ ],
+ "severity_scale": [
+  {
+   "severity": "Critical",
+   "text": "Loss or permanent freeze of holder funds with no unusual precondition"
+  },
+  {
+   "severity": "High",
+   "text": "Loss or freeze under realistic preconditions"
+  },
+  {
+   "severity": "Medium",
+   "text": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol"
+  },
+  {
+   "severity": "Low",
+   "text": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification"
+  },
+  {
+   "severity": "Informational",
+   "text": "Documentation, hardening and integration notes"
+  }
+ ],
+ "findings": [
+  {
+   "id": "L-001",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "The whole initial supply is minted to the deployer account at construction",
+   "component": "WallitelliToken",
+   "location": {
+    "path": "contracts/WallitelliToken.sol",
+    "start": 9,
+    "end": 11
+   },
+   "category": "Centralization",
+   "category_key": "evm.centralization",
+   "description": [
+    {
+     "p": "The constructor mints the full supply of {fact:onchain.total_supply} token units to msg.sender, the account that sent the deployment transaction. The token exposes only the standard ERC-20 entry points, so the supply is fixed after deployment and the contract itself holds no privileged role. Distribution, vesting and lock-ups, if any, take place outside this contract and cannot be verified from the code."
+    }
+   ],
+   "impact": [
+    {
+     "p": "At deployment a single externally controlled account holds every token. Holders depend on that account's key management and on off-chain commitments for how the supply is distributed. A compromise or a sale from that account moves the whole supply at once. This is a property of the launch, not a defect in the token logic."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Publish the distribution plan and move allocations into vesting or lock contracts, or a multisignature treasury, soon after deployment.",
+      "Keep the deployer key in a hardware wallet or multisignature account and document which addresses hold team and treasury allocations."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contracts/WallitelliToken.sol",
+        "start": 9,
+        "end": 11
+       },
+       "lines": [
+        [
+         9,
+         "    constructor() ERC20(\"Wallitelli\", \"WALLI\") {"
+        ],
+        [
+         10,
+         "        _mint(msg.sender, 1_000_000_000 * 10 ** decimals());"
+        ],
+        [
+         11,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "centralization_risk",
+       "unbounded",
+       "privileged_role",
+       "none",
+       "irreversible",
+       "I2xL1=Low set_by=reviewer",
+       "reviewer",
+       "reviewer and matrix agree"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null
+   }
+  },
+  {
+   "id": "I-001",
+   "severity": "Informational",
+   "evidence_level": "reasoning_only",
+   "title": "Floating compiler pragma and UNLICENSED identifier on the token source file",
+   "component": "WallitelliToken",
+   "location": {
+    "path": "contracts/WallitelliToken.sol",
+    "start": 1,
+    "end": 2
+   },
+   "category": "Best practice",
+   "category_key": "evm.best_practice",
+   "description": [
+    {
+     "p": "The token file declares a caret pragma range instead of the exact compiler version {fact:compiler.version} used for the verified deployment, and marks the source as UNLICENSED. The deployed bytecode is already fixed, so the pragma affects only future rebuilds and verification; the license identifier affects how third parties may reuse the source."
+    }
+   ],
+   "impact": [
+    {
+     "p": "A later rebuild with a newer compiler in the allowed range could produce different bytecode and complicate re-verification. The UNLICENSED marker restricts reuse of a file that is otherwise a thin wrapper over an MIT-licensed library."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Pin the pragma to the exact version used for deployment.",
+      "Choose an explicit license identifier such as MIT if the source is meant to be public."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contracts/WallitelliToken.sol",
+        "start": 1,
+        "end": 2
+       },
+       "lines": [
+        [
+         1,
+         "// SPDX-License-Identifier: UNLICENSED"
+        ],
+        [
+         2,
+         "pragma solidity ^0.8.28;"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "best_practice",
+       "dust",
+       "anyone",
+       "none",
+       "irreversible",
+       "I0xL3=Informational set_by=reviewer",
+       "reviewer",
+       "reviewer and matrix agree"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null
+   }
+  }
+ ],
+ "review_coverage": {
+  "areas": [
+   {
+    "area_id": "evm.access_control",
+    "area": "Access control",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.selfdestruct",
+    "area": "Selfdestruct",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.centralization",
+    "area": "Centralization",
+    "code_returned": "Yes",
+    "result": [
+     "L-001"
+    ]
+   },
+   {
+    "area_id": "evm.upgradeability.initialization",
+    "area": "Upgradeability initialization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.storage_authority",
+    "area": "Upgradeability storage authority",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.delegatecall_proxy",
+    "area": "Delegatecall proxy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.storage",
+    "area": "Storage",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.reentrancy",
+    "area": "Reentrancy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.ordering_mev",
+    "area": "Ordering MEV",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.unchecked_call",
+    "area": "Unchecked call",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.arithmetic_precision",
+    "area": "Arithmetic precision",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.accounting_logic",
+    "area": "Accounting logic",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.token_integration",
+    "area": "Token integration",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.oracle_manipulation",
+    "area": "Oracle manipulation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.randomness",
+    "area": "Randomness",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.timestamp",
+    "area": "Timestamp",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.signature_replay",
+    "area": "Signature replay",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.dos",
+    "area": "DoS",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.input_validation",
+    "area": "Input validation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.compiler_bug",
+    "area": "Compiler bug",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.other",
+    "area": "Other",
+    "code_returned": "Yes",
+    "result": "No finding submitted"
+   },
+   {
+    "area_id": "evm.events",
+    "area": "Events",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.best_practice",
+    "area": "Best practice",
+    "code_returned": "Yes",
+    "result": [
+     "I-001"
+    ]
+   }
+  ],
+  "leads": [
+   {
+    "analyzer": "aderyn 0.6.8",
+    "version": "unknown",
+    "leads": 1,
+    "promoted": 0,
+    "dismissed": 1
+   }
+  ],
+  "withdrawn": [],
+  "injection_flags": []
+ },
+ "verification": [
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Address",
+      {
+       "addr": "0xc6a031fd206c72c614db391590f48a5ed9b2f9dc"
+      }
+     ],
+     [
+      "Chain / network",
+      "BNB Smart Chain Mainnet (56)"
+     ],
+     [
+      "Block",
+      130092367
+     ],
+     [
+      "On-chain code hash",
+      "sha256:8dd38321e207d185c066e78fd6558aa39009c48a61c9988fe1f1563d99ebc1fa"
+     ],
+     [
+      "Entry contract",
+      {
+       "src": "WallitelliToken"
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Outcome",
+      "exact"
+     ],
+     [
+      "Local length",
+      1888
+     ],
+     [
+      "On-chain length",
+      1888
+     ],
+     [
+      "Masked bytes (immutables)",
+      0
+     ],
+     [
+      "Masked bytes (links)",
+      0
+     ],
+     [
+      "Masked bytes (auxdata)",
+      12
+     ],
+     [
+      "Differing bytes",
+      0
+     ],
+     [
+      "Auxdata source",
+      "x2"
+     ]
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,1070 @@
+{
+ "meta": {
+  "report_type": "automated",
+  "kind": "Smart contract security review",
+  "subject": "StandardBEP20",
+  "subject_source": "verified_name",
+  "chain": "evm",
+  "network": "BNB Smart Chain Mainnet (56)",
+  "chain_id": 56,
+  "explorer": null,
+  "addr_url": null,
+  "deployed_noun": "contract",
+  "source_id_label": "Bytecode hash",
+  "provenance": {
+   "tier": "A",
+   "label": "Source matched to deployed code at block 130092164 (27 October 2026)",
+   "label_key": "tier_a",
+   "source_hash": "00a425e6fb5e528855d12473f4fba9481d2a94f2379248a18c04f0ff194d6e4a",
+   "address": "0x51b27860c3432a72e24a7e0a98916d10cb716d5c",
+   "code_hash": "sha256:a245847de364d238220d2a5284187fe7ca59dd57a3ae97875ba11639e9b96dd1",
+   "as_of": {
+    "block_or_slot": 130092164,
+    "date": "27 October 2026"
+   },
+   "upgrade_authority": "NotChecked"
+  },
+  "report_id": "aq4ce4wgwkqsqicmkoaqcgkgie",
+  "report_id_short": "aq4ce4wgwk",
+  "ownership_proven": false,
+  "profile": "public_review",
+  "requested_by": {
+   "role": "owner",
+   "label": "Code owner or its team"
+  },
+  "date": "27 October 2026",
+  "expires": "2026-11-26",
+  "out_name": "Automated_Review_aq4ce4wgwk.pdf"
+ },
+ "facts": {
+  "analyzer.aderyn": {
+   "value": "0.6.8",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "analyzer.slither": {
+   "value": "0.11.6",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "chain.block": {
+   "value": "130,092,164",
+   "unit": "block",
+   "amount_at_risk": false
+  },
+  "chain.chain_id": {
+   "value": "56",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "compiler.version": {
+   "value": "0.8.38",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "deploy.address": {
+   "value": "0x51b27860c3432a72e24a7e0a98916d10cb716d5c",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "deploy.code_bytes": {
+   "value": "4277",
+   "unit": "bytes",
+   "amount_at_risk": false
+  },
+  "deploy.code_hash": {
+   "value": "0x0df83f63f1393d524300c3d50f173ba1bda09b6c26062a6c64d208a0ebe57e64",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "onchain.balance": {
+   "value": "0",
+   "unit": "wei",
+   "amount_at_risk": true
+  },
+  "onchain.decimals": {
+   "value": "18",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "onchain.owner": {
+   "value": "0xa9e3e9afa056d200241b85aec824b039ffe17582",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "onchain.owner.holder_code_size": {
+   "value": "0",
+   "unit": "bytes",
+   "amount_at_risk": false
+  },
+  "onchain.owner.holder_is_contract": {
+   "value": "false",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "onchain.owner.holder_kind": {
+   "value": "eoa",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "onchain.total_supply": {
+   "value": "1,000,000,000,000,000,000,000,000,000",
+   "unit": "token_units",
+   "amount_at_risk": true
+  },
+  "source.files": {
+   "value": "1",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "source.nsloc": {
+   "value": "261",
+   "unit": "lines",
+   "amount_at_risk": false
+  },
+  "source.pin": {
+   "value": "00a425e6fb5e528855d12473f4fba9481d2a94f2379248a18c04f0ff194d6e4a",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "state.get_owner": {
+   "value": "0xa9e3e9afa056d200241b85aec824b039ffe17582",
+   "unit": null,
+   "amount_at_risk": false
+  }
+ },
+ "summary": {
+  "kpis": [
+   {
+    "key": "files",
+    "value": 1,
+    "label": "Files in scope"
+   },
+   {
+    "key": "nsloc",
+    "value": 261,
+    "label": "Source lines in scope"
+   },
+   {
+    "key": "leads",
+    "value": 2,
+    "label": "Analyzer leads"
+   },
+   {
+    "key": "promoted",
+    "value": 1,
+    "label": "Leads promoted to findings"
+   },
+   {
+    "key": "areas_returned",
+    "value": "3 of 23",
+    "label": "Areas with code returned"
+   },
+   {
+    "key": "deployed_code",
+    "value": "Matched",
+    "label": "Deployed code"
+   }
+  ],
+  "dismissed_leads": {
+   "rows": [
+    {
+     "detector": "centralization-risk",
+     "severity_class": "Low",
+     "location": {
+      "path": "StandardBEP20.sol",
+      "start": 1,
+      "end": 1
+     },
+     "reason": "not_a_vulnerability"
+    }
+   ],
+   "remainder": 0
+  }
+ },
+ "scope": {
+  "head": [
+   "Unit",
+   "File",
+   "nSLOC",
+   "Address"
+  ],
+  "files": [
+   {
+    "name": "StandardBEP20",
+    "file": "StandardBEP20.sol",
+    "nsloc": 261,
+    "addr": "0x51b27860c3432a72e24a7e0a98916d10cb716d5c"
+   }
+  ],
+  "out_of_scope": []
+ },
+ "context": {
+  "documents": [],
+  "comparison": [],
+  "notes": [
+   {
+    "p": "The client supplied the token source as a single file and stated that the project has no website and no whitepaper. No documentation, terms of use or privacy policy exists for this token, so no declared values could be compared against the code or the chain. The review covers the code and the deployed contract on BNB Smart Chain only."
+   }
+  ]
+ },
+ "architecture": {
+  "title": "Units in scope and their external dependencies",
+  "cols": 4,
+  "rows": 2,
+  "row_height": 120,
+  "nodes": [
+   {
+    "id": "a_onlyowner",
+    "label": "onlyOwner",
+    "kind": "actor",
+    "col": 1.5,
+    "row": 0
+   },
+   {
+    "id": "u_standardbep20",
+    "label": "StandardBEP20",
+    "kind": "scope",
+    "sub": "deployed, 0 entries",
+    "col": 1.5,
+    "row": 1
+   }
+  ],
+  "edges": []
+ },
+ "roles": {
+  "rows": [],
+  "notes": [
+   {
+    "p": "onlyOwner: Held by the deployer account. Gates only renounceOwnership and transferOwnership; it cannot mint, burn, pause, exclude or set fees, so holders carry no code-level exposure to it."
+   }
+  ],
+  "related_contracts": [
+   {
+    "label": "owner",
+    "address": "0xa9e3...7582",
+    "kind": "EOA",
+    "verified": "Unknown"
+   }
+  ]
+ },
+ "method": [
+  {
+   "step": "Source pinning",
+   "detail": "1 file pinned by sha256; source pin 00a425e6fb5e5288"
+  },
+  {
+   "step": "Static analysis",
+   "detail": "aderyn 0.6.8 unknown: 1 leads, slither 0.11.6 unknown: 1 leads."
+  },
+  {
+   "step": "Finding selection",
+   "detail": "4 findings accepted, 0 withdrawn"
+  },
+  {
+   "step": "Server checks",
+   "detail": "Every code quote matched to the pinned source; text and number rules on every finding; severity mapped from the classifications through the fixed matrix"
+  },
+  {
+   "step": "Deployment check",
+   "detail": "The pinned source was rebuilt and compared with the deployed runtime code at block 130,092,164: matched with immutables, library links and metadata masked"
+  }
+ ],
+ "severity_scale": [
+  {
+   "severity": "Critical",
+   "text": "Loss or permanent freeze of holder funds with no unusual precondition"
+  },
+  {
+   "severity": "High",
+   "text": "Loss or freeze under realistic preconditions"
+  },
+  {
+   "severity": "Medium",
+   "text": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol"
+  },
+  {
+   "severity": "Low",
+   "text": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification"
+  },
+  {
+   "severity": "Informational",
+   "text": "Documentation, hardening and integration notes"
+  }
+ ],
+ "findings": [
+  {
+   "id": "I-001",
+   "severity": "Informational",
+   "evidence_level": "analyzer_and_reasoning",
+   "title": "Payable constructor can strand native currency that the contract has no path to release",
+   "component": "StandardBEP20",
+   "location": {
+    "path": "StandardBEP20.sol",
+    "start": 843,
+    "end": 855
+   },
+   "category": "Accounting logic",
+   "category_key": "evm.accounting_logic",
+   "description": [
+    {
+     "p": "StandardBEP20 declares a payable constructor, and the deployment transaction may carry native currency. In the token-factory template this value is forwarded by the ServicePayer helper to a fee receiver. StandardBEP20 does not inherit ServicePayer and its constructor body only mints the initial balance, which leaves any attached value on the token contract. The token exposes only the standard transfer, allowance and ownership functions; the constructor is the single payable entry, and value that enters there stays for the life of the contract."
+    },
+    {
+     "p": "The deployed instance holds a native balance of {{fact:onchain.balance}}, which shows that the deployment transaction carried nothing. The pattern is therefore a code hygiene point for this deployment rather than a live loss."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Native currency sent with the deployment transaction would be unrecoverable. For the reviewed instance the balance is zero and nothing is at risk; the point matters for re-deployments of the same source."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Remove the payable modifier from the StandardBEP20 constructor, or inherit ServicePayer so that the attached value is forwarded as the template intends.",
+      "Keep the deployment script free of attached value when the current source is reused on another chain."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "StandardBEP20.sol",
+        "start": 843,
+        "end": 855
+       },
+       "lines": [
+        [
+         843,
+         "    constructor("
+        ],
+        [
+         844,
+         "        string memory name_,"
+        ],
+        [
+         845,
+         "        string memory symbol_,"
+        ],
+        [
+         846,
+         "        uint8 decimals_,"
+        ],
+        [
+         847,
+         "        uint256 initialBalance_"
+        ],
+        [
+         848,
+         "    )"
+        ],
+        [
+         849,
+         "        payable"
+        ],
+        [
+         850,
+         "        ERC20Detailed(name_, symbol_, decimals_)"
+        ],
+        [
+         851,
+         "    {"
+        ],
+        [
+         852,
+         "        require(initialBalance_ > 0, \"Initial supply cannot be zero\");"
+        ],
+        [
+         853,
+         ""
+        ],
+        [
+         854,
+         "        _mint(_msgSender(), initialBalance_);"
+        ],
+        [
+         855,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "permanent_freeze",
+       "residual",
+       "anyone",
+       "victim_unusual_action",
+       "irreversible",
+       "I1xL0=Low caps=[RV1:reviewer=Informational] set_by=reviewer",
+       "reviewer",
+       "The constructor has already run and the deployed instance holds a zero native balance; the value path is closed for this deployment and only matters for re-deployments."
+      ]
+     ]
+    },
+    "challenge": {
+     "head": [
+      "Item",
+      "Condition",
+      "Answer"
+     ],
+     "rows": []
+    },
+    "lead": {
+     "analyzer": "slither 0.11.6",
+     "rule_id": "locked-ether"
+    },
+    "further": [
+     {
+      "path": "StandardBEP20.sol",
+      "start": 775,
+      "end": 779
+     }
+    ]
+   }
+  },
+  {
+   "id": "I-002",
+   "severity": "Informational",
+   "evidence_level": "reasoning_only",
+   "title": "Owner role is retained although it gates only the ownership transfer functions",
+   "component": "StandardBEP20",
+   "location": {
+    "path": "StandardBEP20.sol",
+    "start": 842,
+    "end": 842
+   },
+   "category": "Other",
+   "category_key": "evm.other",
+   "description": [
+    {
+     "p": "StandardBEP20 inherits BEP20TokenOwner, which brings in the Ownable module and the getOwner view that the BEP20 interface expects. The onlyOwner modifier is applied only to renounceOwnership and transferOwnership. The token has a fixed supply minted once in the constructor, and the transfer, approve and transferFrom paths carry no owner hook, fee, pause or exclusion list. The owner therefore holds a title with the ability to pass it on or give it up, and nothing else."
+    },
+    {
+     "p": "The current owner is the deployer account {{fact:onchain.owner}}, an externally owned account, which also received the whole initial supply. Holders are not exposed to owner action through the contract code; their exposure is limited to the deployer's token balance, which is a market consideration rather than a code one."
+    }
+   ],
+   "impact": [
+    {
+     "p": "The role has no effect on balances, supply or transferability. Keeping it adds a privileged account that listing checkers and holders may read as a control surface that does not exist, and a lost owner key has no consequence beyond the getOwner value."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Document that the owner role exists only to satisfy the BEP20 getOwner convention and controls nothing in the token.",
+      "If the role is meant to stay inert, consider renouncing it after listing requirements are met, or keep the key in cold storage."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "StandardBEP20.sol",
+        "start": 842,
+        "end": 842
+       },
+       "lines": [
+        [
+         842,
+         "contract StandardBEP20 is ERC20Detailed, BEP20TokenOwner {"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "best_practice",
+       "bounded",
+       "privileged_role",
+       "none",
+       "admin_reversible",
+       "I0xL1=Informational set_by=reviewer",
+       "reviewer",
+       "reviewer and matrix agree"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "StandardBEP20.sol",
+      "start": 116,
+      "end": 118
+     },
+     {
+      "path": "StandardBEP20.sol",
+      "start": 124,
+      "end": 129
+     },
+     {
+      "path": "StandardBEP20.sol",
+      "start": 752,
+      "end": 754
+     }
+    ]
+   }
+  },
+  {
+   "id": "I-003",
+   "severity": "Informational",
+   "evidence_level": "reasoning_only",
+   "title": "ServicePayer and IPayable are compiled into the source but unused by the deployed token",
+   "component": "StandardBEP20",
+   "location": {
+    "path": "StandardBEP20.sol",
+    "start": 767,
+    "end": 779
+   },
+   "category": "Best practice",
+   "category_key": "evm.best_practice",
+   "description": [
+    {
+     "p": "The flattened source carries the IPayable interface and the abstract ServicePayer contract from the token-factory template. StandardBEP20 inherits ERC20Detailed and BEP20TokenOwner only, so ServicePayer is dead code in this file. The helper performs an external call with forwarded value in a constructor, which is the kind of code a reader of the verified source would expect to matter, and it adds review surface without behaviour."
+    }
+   ],
+   "impact": [
+    {
+     "p": "There is no runtime effect. The unused contract lengthens the verified source and can mislead readers into assuming a deployment-fee payment that does not happen."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Remove IPayable and ServicePayer from the flattened source, or inherit ServicePayer if the fee payment is intended.",
+      "Flatten only the inheritance chain that the final contract uses before verifying on the explorer."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "StandardBEP20.sol",
+        "start": 767,
+        "end": 779
+       },
+       "lines": [
+        [
+         767,
+         "interface IPayable {"
+        ],
+        [
+         768,
+         "    function pay(string calldata serviceName, bytes calldata signature, address wallet) external payable;"
+        ],
+        [
+         769,
+         "}"
+        ],
+        [
+         770,
+         ""
+        ],
+        [
+         771,
+         "/**"
+        ],
+        [
+         772,
+         " * @title ServicePayer"
+        ],
+        [
+         773,
+         " * @dev Utility contract to pay the deployment fee. Used only during construction."
+        ],
+        [
+         774,
+         " */"
+        ],
+        [
+         775,
+         "abstract contract ServicePayer {"
+        ],
+        [
+         776,
+         "    constructor(address payable receiver, string memory serviceName, bytes memory signature, address wallet) payable {"
+        ],
+        [
+         777,
+         "        IPayable(receiver).pay{value: msg.value}(serviceName, signature, wallet);"
+        ],
+        [
+         778,
+         "    }"
+        ],
+        [
+         779,
+         "}"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "best_practice",
+       "bounded",
+       "anyone",
+       "none",
+       "admin_reversible",
+       "I0xL3=Informational set_by=reviewer",
+       "reviewer",
+       "reviewer and matrix agree"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "StandardBEP20.sol",
+      "start": 842,
+      "end": 842
+     }
+    ]
+   }
+  },
+  {
+   "id": "I-004",
+   "severity": "Informational",
+   "evidence_level": "reasoning_only",
+   "title": "Floating pragma leaves the compiler version open across every unit of the source",
+   "component": "StandardBEP20",
+   "location": {
+    "path": "StandardBEP20.sol",
+    "start": 836,
+    "end": 842
+   },
+   "category": "Best practice",
+   "category_key": "evm.best_practice",
+   "description": [
+    {
+     "p": "Every unit in the file declares a caret pragma, so the source accepts any compiler release of the same series above the stated floor. The library units keep the caret because they are vendored, but the final StandardBEP20 unit should pin the exact version used for the verified build so that re-compilation reproduces the deployed bytecode and avoids picking up compiler changes that were not tested."
+    }
+   ],
+   "impact": [
+    {
+     "p": "A re-deployment from the same source may compile with a different compiler than the one tested, which changes bytecode and can alter gas and edge behaviour. The deployed instance is unaffected."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Pin the pragma of the StandardBEP20 unit to the exact compiler version used for the verified deployment.",
+      "Record the compiler version and optimizer settings alongside the source so the build can be reproduced."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "StandardBEP20.sol",
+        "start": 836,
+        "end": 842
+       },
+       "lines": [
+        [
+         836,
+         "pragma solidity ^0.8.20;"
+        ],
+        [
+         837,
+         ""
+        ],
+        [
+         838,
+         "/**"
+        ],
+        [
+         839,
+         " * @title StandardBEP20"
+        ],
+        [
+         840,
+         " * @dev Implementation of the StandardBEP20."
+        ],
+        [
+         841,
+         " */"
+        ],
+        [
+         842,
+         "contract StandardBEP20 is ERC20Detailed, BEP20TokenOwner {"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "best_practice",
+       "bounded",
+       "anyone",
+       "none",
+       "admin_reversible",
+       "I0xL3=Informational set_by=reviewer",
+       "reviewer",
+       "reviewer and matrix agree"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "StandardBEP20.sol",
+      "start": 14,
+      "end": 26
+     }
+    ]
+   }
+  }
+ ],
+ "review_coverage": {
+  "areas": [
+   {
+    "area_id": "evm.access_control",
+    "area": "Access control",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.selfdestruct",
+    "area": "Selfdestruct",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.centralization",
+    "area": "Centralization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.initialization",
+    "area": "Upgradeability initialization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.storage_authority",
+    "area": "Upgradeability storage authority",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.delegatecall_proxy",
+    "area": "Delegatecall proxy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.storage",
+    "area": "Storage",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.reentrancy",
+    "area": "Reentrancy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.ordering_mev",
+    "area": "Ordering MEV",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.unchecked_call",
+    "area": "Unchecked call",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.arithmetic_precision",
+    "area": "Arithmetic precision",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.accounting_logic",
+    "area": "Accounting logic",
+    "code_returned": "Yes",
+    "result": [
+     "I-001"
+    ]
+   },
+   {
+    "area_id": "evm.token_integration",
+    "area": "Token integration",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.oracle_manipulation",
+    "area": "Oracle manipulation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.randomness",
+    "area": "Randomness",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.timestamp",
+    "area": "Timestamp",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.signature_replay",
+    "area": "Signature replay",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.dos",
+    "area": "DoS",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.input_validation",
+    "area": "Input validation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.compiler_bug",
+    "area": "Compiler bug",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.other",
+    "area": "Other",
+    "code_returned": "Yes",
+    "result": [
+     "I-002"
+    ]
+   },
+   {
+    "area_id": "evm.events",
+    "area": "Events",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.best_practice",
+    "area": "Best practice",
+    "code_returned": "Yes",
+    "result": [
+     "I-003",
+     "I-004"
+    ]
+   }
+  ],
+  "leads": [
+   {
+    "analyzer": "aderyn 0.6.8",
+    "version": "unknown",
+    "leads": 1,
+    "promoted": 0,
+    "dismissed": 1
+   },
+   {
+    "analyzer": "slither 0.11.6",
+    "version": "unknown",
+    "leads": 1,
+    "promoted": 1,
+    "dismissed": 0
+   }
+  ],
+  "withdrawn": [],
+  "injection_flags": [],
+  "invariant_walks": [
+   {
+    "walk_id": "IW-TK-1",
+    "title": "Supply and balance consistency",
+    "verdict": "holds",
+    "lines": [
+     {
+      "path": "StandardBEP20.sol",
+      "start": 124,
+      "end": 139
+     },
+     {
+      "path": "StandardBEP20.sol",
+      "start": 522,
+      "end": 659
+     }
+    ]
+   },
+   {
+    "walk_id": "IW-TK-2",
+    "title": "Authorities after deployment",
+    "verdict": "holds",
+    "lines": [
+     {
+      "path": "StandardBEP20.sol",
+      "start": 88,
+      "end": 139
+     },
+     {
+      "path": "StandardBEP20.sol",
+      "start": 639,
+      "end": 644
+     },
+     {
+      "path": "StandardBEP20.sol",
+      "start": 752,
+      "end": 754
+     },
+     {
+      "path": "StandardBEP20.sol",
+      "start": 842,
+      "end": 856
+     }
+    ]
+   }
+  ]
+ },
+ "verification": [
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Address",
+      {
+       "addr": "0x51b27860c3432a72e24a7e0a98916d10cb716d5c"
+      }
+     ],
+     [
+      "Chain / network",
+      "BNB Smart Chain Mainnet (56)"
+     ],
+     [
+      "Block",
+      130092164
+     ],
+     [
+      "On-chain code hash",
+      "sha256:a245847de364d238220d2a5284187fe7ca59dd57a3ae97875ba11639e9b96dd1"
+     ],
+     [
+      "Entry contract",
+      {
+       "src": "StandardBEP20"
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "table": {
+    "head": [
+     "Field",
+     "Value"
+    ],
+    "rows": [
+     [
+      "Outcome",
+      "metadata_only"
+     ],
+     [
+      "Local length",
+      4277
+     ],
+     [
+      "On-chain length",
+      4277
+     ],
+     [
+      "Masked bytes (immutables)",
+      32
+     ],
+     [
+      "Masked bytes (links)",
+      0
+     ],
+     [
+      "Masked bytes (auxdata)",
+      53
+     ],
+     [
+      "Differing bytes",
+      0
+     ],
+     [
+      "Auxdata source",
+      "x2"
+     ]
+    ]
+   }
+  }
+ ]
+}

@@ -48,6 +48,15 @@ HIDDEN_RANGES = [(0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064), (0x2066, 
                  (0xFEFF, 0xFEFF), (0x00AD, 0x00AD)]
 HIDDEN_RE = re.compile("[" + "".join(f"{chr(a)}-{chr(z)}" for a, z in HIDDEN_RANGES) + "]")
 PLACEHOLDER_RE = re.compile(r"\{\{(fact|calc|finding):([^{}]*)\}\}")
+# Anything that looks like a placeholder, in any brace form: the late check fails the render on a
+# form `expand()` does not substitute instead of printing it (Wallitelli PDF, matrix run 2026-10-27:
+# `{fact:onchain.total_supply}` and `{fact:compiler.version}` printed on page 4).
+PLACEHOLDER_ANY_RE = re.compile(r"\{{1,2}(?:fact|calc|finding):[^{}\n]*\}{1,2}")
+# Sentence boundary for withholding: a model sentence that carries a withheld amount is dropped
+# whole, never printed with "(withheld)" inside it (APAD PDF, matrix run 2026-10-27: "holds a native
+# balance of (withheld), which shows that the deployment transaction carried nothing").
+_SENTENCE_RE = re.compile(r"((?<=[.!?])\s+)")
+_WITHHELD_MARK = "\x00withheld\x00"
 MAX_COMPONENT_ROWS, MAX_FILE_ROWS = 12, 15
 # Pagination (kit CSS contract): a table or a heading-plus-table block is kept on one page
 # (break-inside:avoid) only when it is short enough to always fit: at most MAX_KEEP_ROWS rows and
@@ -219,6 +228,41 @@ def gate_kit_text(key: str, text: str) -> list[tuple[str, str]]:
     return hits
 
 
+def malformed_placeholder(text: str) -> str | None:
+    """The first placeholder-like token of a model string that `expand()` would not substitute: a
+    half form (`{fact:k}`, `{{fact:k}`) or a double-brace form whose body does not parse (04 6.4).
+    None when every placeholder is well formed."""
+    from soken_review.engine.numbers import parse_placeholder
+
+    for m in PLACEHOLDER_ANY_RE.finditer(text):
+        tok = m.group()
+        if not (tok.startswith("{{") and tok.endswith("}}")) or parse_placeholder(tok) is None:
+            return tok
+    return None
+
+
+def _walk_strings(obj: Any, path: str = "$"):
+    """(path, string) for every string of a plain JSON object, schema-free (projected reports drop
+    required keys of withheld cards, so the schema walk does not apply to them)."""
+    if isinstance(obj, str):
+        yield path, obj
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _walk_strings(v, f"{path}[{i}]")
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from _walk_strings(v, f"{path}.{k}")
+
+
+def assert_expanded(projected: dict[str, Any]) -> None:
+    """The late check after projection: no placeholder form may survive into the HTML. A leftover
+    is a projection fault (the string classes above decide who fixes it), never printed."""
+    for path, text in _walk_strings(projected):
+        m = PLACEHOLDER_ANY_RE.search(text)
+        if m:
+            raise BuildError("schema", f"placeholder not expanded {m.group()!r}", path)
+
+
 def check_strings(report: dict[str, Any]) -> None:
     """08 1.5: 04 gate by field class on data, never on HTML. A hit is `late_gate`.
 
@@ -236,6 +280,11 @@ def check_strings(report: dict[str, Any]) -> None:
         if cls == "src" or not text:
             continue
         if cls == "model":
+            bad = malformed_placeholder(text)
+            if bad:
+                # A placeholder the projection will not expand is the reviewer's text to fix: the
+                # render fails as a late gate (rule L0) and never prints the token.
+                raise BuildError("late_gate", f"L0 {bad!r}", path, rule="L0")
             hits = [
                 v for v in check_model_field(text, field=_field_of(path), profile=profile, is_list_item=".ul[" in path)
                 if v.rule_id not in LATE_GATE_SKIP
@@ -326,6 +375,44 @@ def expand(text: str, facts: dict[str, Any], profile: str, withheld_value: str) 
     return PLACEHOLDER_RE.sub(sub, text)
 
 
+def expand_prose(text: str, facts: dict[str, Any], profile: str) -> str | None:
+    """Model prose after projection: placeholders expanded; a sentence whose value is withheld under
+    the profile is dropped whole. None when nothing of the string survives, so the caller drops the
+    paragraph, list item or row instead of printing an empty one."""
+    expanded = expand(text, facts, profile, _WITHHELD_MARK)
+    if _WITHHELD_MARK not in expanded:
+        return expanded
+    sentences = _SENTENCE_RE.split(expanded)[::2]  # sentence, separator, sentence, ...: sentences only
+    out = " ".join(s.strip() for s in sentences if s.strip() and _WITHHELD_MARK not in s)
+    return out or None
+
+
+def _project_blocks(blocks: list[dict[str, Any]], exp) -> list[dict[str, Any]]:
+    """Model blocks through `expand_prose`: an emptied paragraph, item or table row is dropped."""
+    out: list[dict[str, Any]] = []
+    for b in blocks:
+        if "p" in b:
+            text = exp(b["p"])
+            if text:
+                out.append({**b, "p": text})
+        elif "ul" in b:
+            items = [t for t in (exp(x) for x in b["ul"]) if t]
+            if items:
+                out.append({**b, "ul": items})
+        elif "table" in b:
+            t = b["table"]
+            rows = []
+            for row in t.get("rows", []):
+                cells = [exp(c) if isinstance(c, str) else c for c in row]
+                if all(c is not None for c in cells):
+                    rows.append(cells)
+            if rows:
+                out.append({**b, "table": {**t, "rows": rows}})
+        else:
+            out.append(b)
+    return out
+
+
 def _map_strings(obj: Any, fn) -> Any:
     if isinstance(obj, str):
         return fn(obj)
@@ -350,18 +437,16 @@ def project(report: dict[str, Any], profile: str | None = None) -> dict[str, Any
 
     Withheld High and Critical findings keep only server fields (id, severity, category,
     component, evidence level, status) plus `withheld: true`; attack steps are dropped for
-    every finding under `public_review`; amount-at-risk facts print `withheld_value` and their
-    Figures used rows are dropped.
+    every finding under `public_review`; a sentence that carries an amount-at-risk fact is dropped
+    whole (an emptied block, item, row or note with it) and the fact's Figures used rows are dropped.
     """
-    texts = kit_texts()
     profile = profile or report["meta"]["profile"]
     facts = report["facts"]
     out = copy.deepcopy(report)
     out["meta"]["profile"] = profile
-    wv = texts["withheld_value"]
 
-    def exp(s: str) -> str:
-        return expand(s, facts, profile, wv)
+    def prose(s: str) -> str | None:
+        return expand_prose(s, facts, profile)
 
     findings = []
     for f in out["findings"]:
@@ -373,24 +458,49 @@ def project(report: dict[str, Any], profile: str | None = None) -> dict[str, Any
             continue
         if profile == "public_review":
             f.pop("attack_steps", None)
-        for key in ("title", "description", "impact", "recommendation", "attack_steps"):
+        # A title that only states a withheld amount falls back to the category label (server text).
+        f["title"] = prose(f["title"]) or f["category"]
+        for key in ("description", "impact", "recommendation"):
             if key in f:
-                f[key] = _map_strings(f[key], exp)
+                f[key] = _project_blocks(f[key], prose)
+        if f.get("attack_steps"):
+            steps = [{**s, "text": t} for s in f["attack_steps"] if (t := prose(s["text"]))]
+            if steps:
+                f["attack_steps"] = steps
+            else:
+                f.pop("attack_steps")
         figs = f["evidence"].get("figures")
         if figs is not None and profile == "public_review":
             f["evidence"]["figures"] = [g for g in figs if not _figure_risky(g, facts)]
         findings.append(f)
     out["findings"] = findings
     roles = out["roles"]
-    roles["rows"] = [{**r, "risk_note": exp(r["risk_note"])} if "risk_note" in r else r for r in roles["rows"]]
-    roles["notes"] = _map_strings(roles["notes"], exp)
+    rows = []
+    for r in roles["rows"]:
+        if "risk_note" in r:
+            note = prose(r["risk_note"])
+            r = {**{k: v for k, v in r.items() if k != "risk_note"}, **({"risk_note": note} if note else {})}
+        rows.append(r)
+    roles["rows"] = rows
+    roles["notes"] = _project_blocks(roles["notes"], prose)
     if "figures" in roles and profile == "public_review":
         roles["figures"] = [g for g in roles["figures"] if not _figure_risky(g, facts)]
     if "context" in out:  # context_notes blocks expand like roles notes (same gates, same projection)
-        out["context"]["notes"] = _map_strings(out["context"]["notes"], exp)
+        out["context"]["notes"] = _project_blocks(out["context"]["notes"], prose)
     cov = out["review_coverage"]
-    cov["areas"] = [{**a, "note": exp(a["note"])} if "note" in a else a for a in cov["areas"]]
-    out["scope"]["out_of_scope"] = [{**r, "reason": exp(r["reason"])} for r in out["scope"]["out_of_scope"]]
+    areas = []
+    for a in cov["areas"]:
+        if "note" in a:
+            note = prose(a["note"])
+            a = {**{k: v for k, v in a.items() if k != "note"}, **({"note": note} if note else {})}
+        areas.append(a)
+    cov["areas"] = areas
+    oos = []
+    for r in out["scope"]["out_of_scope"]:
+        reason = prose(r["reason"])
+        if reason:
+            oos.append({**r, "reason": reason})
+    out["scope"]["out_of_scope"] = oos
     return out
 
 
@@ -856,6 +966,10 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     banner = (f'<div class="banner">{esc(t["public_review_banner"])}</div>' if m["profile"] == "public_review" else "")
     tierc = (f'<div class="banner tierc">{esc(t["tier_c_warning"].format(address=prov.get("address", ""), noun=m["deployed_noun"]))}</div>'
              if prov["tier"] == "C" else "")
+    # A failed build is stated on the cover and in the summary in the same sentence (meta.build_failure,
+    # server text), not only in the per-card "Checked without a contract map" line.
+    if m.get("build_failure"):
+        tierc += f'<div class="banner tierc" data-block="build_failure">{esc(m["build_failure"])}</div>'
     nohigh = f'<p class="nofind">{esc(t["no_high_line"])}</p>' if no_high else ""
     files = r["scope"]["files"]
     nsloc = sum(f["nsloc"] for f in files)
@@ -1095,6 +1209,7 @@ def build(report: dict[str, Any], out_dir: Path | str, *, mode: str = "print",
     check_strings(report)
     texts = kit_texts()
     projected = project(report)
+    assert_expanded(projected)
     ctx = BuildContext(texts=texts, mode=mode, profile=projected["meta"]["profile"], compact=compact_evidence)
     body = render_body(projected, ctx)
     m = projected["meta"]

@@ -102,8 +102,9 @@ class SokenServer(MCPServer):
 def _stale_schema_hint() -> str:
     """One line for a client whose tool list predates the served schema. The JSON-string shape is
     the one signal the server can see (03 section 13: the list is a snapshot the client caches)."""
-    return (f"Your tool list predates the current schema (schema_version {schema_version()}). Reload the"
-            " tool list to see the current fields, sections and guide topics.")
+    return (f"Your tool list predates the current schema (schema_version {schema_version()}). In claude.ai,"
+            " remove this connector and add it again, or start a new chat; other clients reload the tool list."
+            " The current schema carries the fields, sections and guide topics this server expects.")
 
 
 def _with_schema_hint(res: CallToolResult) -> CallToolResult:

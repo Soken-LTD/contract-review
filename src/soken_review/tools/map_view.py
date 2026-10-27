@@ -6,16 +6,13 @@ records (server data); identifiers in the map passed the identifier grammar (04 
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
-# Compiler output quotes source lines; only its error class names are printed (no source text).
-_ERROR_CLASS_RE = re.compile(r"\b([A-Z][A-Za-z]{2,40}Error|not_checkable|failed|no_candidates|"
-                             r"compiler_version_unknown|sandbox_unavailable|pin_load_error)\b")
+from ..mapping.build_note import ERROR_CLASS_RE as _ERROR_CLASS_RE
+from ..mapping.build_note import REASON_RE as _REASON_RE
 
 _CAP = 20_000
 _HANDLER_NAMES = frozenset({"receive", "bounced", "external"})
-_REASON_RE = re.compile(r"[a-z][a-z0-9_]{1,40}")
 
 
 def build_error_summary(build_detail: str | None) -> str | None:

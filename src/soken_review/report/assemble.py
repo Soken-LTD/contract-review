@@ -23,6 +23,7 @@ from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
 from ..engine.severity import explain_rules
 from ..mapping.build import load_map
+from ..mapping.build_note import job_build_failure
 from ..mapping.facts import load_facts
 from ..mapping.lifecycle import load_lifecycle
 from ..mapping.related import load_related_contracts
@@ -200,10 +201,16 @@ def _report_chain(job: dict[str, Any]) -> str:
     return chain if chain in _NON_EVM_CHAINS or chain in _EVM_FAMILY_CHAINS else "evm"
 
 
+# Cover line for a job started without a deployment: a scope statement, not a finding about the
+# code (matrix run 2026-10-27, 1inch repo job: "Chain and network: Not deployed" read as a defect).
+NO_DEPLOYMENT_LABEL = "No deployment given; source review only"
+
+
 def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
                    deployment: dict[str, Any] | None) -> str:
     """Server text for meta.network and the verification table: registry name and id for EVM
-    chains; the chain's mainnet for a deployed non-EVM unit; 'Not deployed' without an address."""
+    chains; the chain's mainnet for a deployed non-EVM unit; the no-deployment scope line without
+    an address."""
     chain_id = _job_chain_id(job, chain_state)
     rec = get_chain(int(chain_id)) if chain_id is not None else None
     if rec is not None:
@@ -213,7 +220,18 @@ def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
     chain = str((deployment or {}).get("chain") or job.get("chain") or "")
     if job.get("address") and chain in _CHAIN_NETWORK:
         return _CHAIN_NETWORK[chain]
-    return "Not deployed"
+    return NO_DEPLOYMENT_LABEL
+
+
+def _source_id_label(prov: dict[str, Any], chain: str) -> str:
+    """Label of the hash the cover prints under the source line: the label names the value that
+    follows it. With a deployed code hash it is the bytecode hash (code hash on non-EVM chains);
+    otherwise the value is the source pin, a sha256 over the pinned files, and the label says so.
+    Matrix run 2026-10-27 (1inch repo job): the 64-hex source pin printed under "Commit", directly
+    below the real commit."""
+    if prov.get("code_hash"):
+        return "Bytecode hash" if chain in ("evm", "hyperevm", "tron") else "Code hash"
+    return "Files sha256"
 
 
 _ADDR_URL_RE = re.compile(r"^https://[^\s\"'<>]*\{a\}[^\s\"'<>]*$")   # report schema meta.addr_url
@@ -1113,9 +1131,12 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     m = texts["method_steps"]
     tools_line = ", ".join(f"{n} {v}: {r['leads']:,} leads" for (n, v), r in sorted(per_tool.items())) or "No analyzer leads"
     degraded = " One analyzer did not run." if job.get("analyzer_degraded") else ""
+    # A failed build is one sentence (compiler, error class, consequence) on the cover, in the
+    # summary and in the method table; review_status carries the same sentence before submitting.
+    build_failure = job_build_failure(pin_root, job_id, map_status=job.get("map_status"), family=family)
     method = [
         {"step": m["pin"], "detail": f"{len(pin.entries):,} file{"s" if len(pin.entries) != 1 else ""} pinned by sha256; source pin {job['source_pin'][:16]}"},
-        {"step": m["analyzer"], "detail": (tools_line + "." + degraded)[:400]},
+        {"step": m["analyzer"], "detail": (build_failure or tools_line + "." + degraded)[:400]},
         {"step": m["selection"], "detail": f"{len(accepted):,} findings accepted, "
                                            f"{sum(1 for d in drafts if d['status'] == 'withdrawn'):,} withdrawn"},
         {"step": m["checks"], "detail": "Every code quote matched to the pinned source; text and number rules on every "
@@ -1130,18 +1151,20 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     subj_cands = subject_candidates(job, cands, pin)
     subj = pick_subject(subj_cands)
     days = int(_limits()["report"]["default_days"])
+    prov = provenance(job, cands, chain_state, deployment, today=today)
     meta: dict[str, Any] = {
         "report_type": "automated", "kind": texts["sub_line"], "subject": subj["value"], "subject_source": subj["source"],
         "chain": chain, "network": network[:60], "chain_id": chain_id, "explorer": None,
         "addr_url": _addr_url(rec),
         "deployed_noun": _DEPLOYED_NOUN.get(chain, "contract"),
-        "source_id_label": "Bytecode hash" if job.get("address") else
-        ("Commit" if job.get("resolved_commit") else "Files sha256"),
-        "provenance": provenance(job, cands, chain_state, deployment, today=today), "report_id": rid, "report_id_short": short,
+        "source_id_label": _source_id_label(prov, chain),
+        "provenance": prov, "report_id": rid, "report_id_short": short,
         "ownership_proven": bool(job["ownership_proven"]), "profile": profile,
         "requested_by": {"role": job["requester_role"], "label": ROLE_LABELS[job["requester_role"]]},
         "date": date_text(today), "expires": (today + timedelta(days=days)).isoformat(),
     }
+    if build_failure:
+        meta["build_failure"] = build_failure[:400]
     if job.get("previous_report_id"):
         meta["previous_report_id"] = job["previous_report_id"]
     meta["out_name"] = out_name({**meta, "date_iso": today.isoformat()}, profile, subj["value"])

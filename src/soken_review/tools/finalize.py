@@ -33,6 +33,7 @@ from psycopg.rows import dict_row
 from .. import quota
 from ..db.job_repo import JobRepo
 from ..db.pool import get_pool
+from ..engine.claims import check_owner_deployer
 from ..engine.injection import check_echo
 from ..engine.numbers import NumberContext, lex_numbers
 from ..engine.severity import SeverityContext, compute_severity
@@ -46,9 +47,9 @@ from ..report.render import MAX_RENDER_RESETS, MAX_TOTAL_REOPENS, queue_render, 
 from ..server import handler
 from .context import JobContext
 from .coverage import EnumsLoadError, category_allowed_na_reasons, compute_coverage_rows
-from .number_errors import number_error
-from .set_section import _check_na_predicate_for_section
-from .submit import _category_info, _family_from_chain, _iter_text_fields
+from .number_errors import claim_error, number_error
+from .set_section import _check_na_predicate_for_section, _claim_text_fields
+from .submit import _category_info, _family_from_chain, _iter_text_fields, _job_facts
 from .walks import latest_rows, load_drafts, open_walks, walk_index
 
 _pool: psycopg_pool.AsyncConnectionPool | None = None
@@ -610,6 +611,10 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
         nctx = job_number_context(_get_ctx().get_pin_root(), job_id)
     except Exception:  # noqa: BLE001 - the word set is a convenience; the check still runs without it
         nctx = NumberContext()
+    try:
+        job_facts = _job_facts(_get_ctx().get_pin_root(), job_id)
+    except Exception:  # noqa: BLE001 - no pin root: no facts to compare claims against
+        job_facts = []
 
     # ── Finding text ──────────────────────────────────────────────────────────
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -644,6 +649,9 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
             for v in lex_numbers(field_text, nctx):
                 errors.append(number_error(v, field_name, nctx,
                                            hint=f"{finding_ref}.{field_name}: number rule {v.rule_id}"))
+            # V6b: owner/deployer identity claims against the recorded facts (same check as submit)
+            for v in check_owner_deployer(field_text, job_facts):
+                errors.append(claim_error(v, f"{finding_ref}.{field_name}", job_facts))
 
         # ── V5: text gate (check_model_field) on every prose block ───────────
         # title
@@ -773,6 +781,9 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
             continue  # only the latest revision counts
         seen_sections.add(sec_name)
         field = _SEC_FIELD[sec_name]
+        for field_path, text in _claim_text_fields(sec_name, sec["content"] or []):
+            for v in check_owner_deployer(text, job_facts):
+                errors.append(claim_error(v, field_path, job_facts))
         for block in (sec["content"] or []):
             if not isinstance(block, dict):
                 continue

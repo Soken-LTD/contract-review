@@ -39,19 +39,21 @@ from psycopg.rows import dict_row
 
 from ..context.store import ContextStore, is_context_path
 from ..db.pool import get_pool
+from ..engine.claims import check_owner_deployer
 from ..engine.injection import check_echo
 from ..engine.numbers import lex_numbers
 from ..engine.severity import SeverityContext, compute_severity, k_caps_only
 from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
+from ..mapping.facts import load_facts
 from ..mapping.semantic_evm import detect_token_review, units_holding
 from ..mapping.step import job_number_context, load_flags
 from ..pinning.quote_match import QuoteMatchError, quote_match
 from ..pinning.store import PinnedSource
 from ..server import handler
 from .context import JobContext
-from .number_errors import number_error
+from .number_errors import claim_error, number_error
 
 RUBRIC_DIR = Path(__file__).resolve().parents[3] / "contract" / "rubric"
 
@@ -117,6 +119,15 @@ def _iter_text_fields(args: dict[str, Any]) -> list[tuple[str, str]]:
     if reason := args.get("severity_reason"):
         result.append(("severity_reason", str(reason)))
     return result
+
+
+def _job_facts(pin_root: Path, job_id: str) -> list[dict[str, Any]]:
+    """The job's fact records for the claim check; empty when the map step has not written them
+    (nothing to compare) or the file is unreadable (the number gate reports that separately)."""
+    try:
+        return load_facts(pin_root, job_id) or []
+    except (OSError, ValueError):
+        return []
 
 
 def _violation_to_error(v: Any, field: str | None = None) -> dict[str, Any]:
@@ -636,6 +647,13 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             for field_name, field_text in _iter_text_fields(sd_text_args):
                 for v in check_model_field(field_text, field=field_name, profile=job_profile):
                     violations.append(_violation_to_error(v, field=field_name))
+            try:
+                sd_facts = _job_facts(_get_ctx().get_pin_root(), job_id)
+            except ReviewError:  # no job context wired (unit tests): no facts to compare against
+                sd_facts = []
+            for field_name, field_text in _iter_text_fields(sd_text_args):
+                for v in check_owner_deployer(field_text, sd_facts):
+                    violations.append(claim_error(v, field_name, sd_facts))
         else:
             # Model draft: full field requirements
             category: str = args.get("category", "")
@@ -730,6 +748,13 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             for field_name, field_text in _iter_text_fields(args):
                 for v in lex_numbers(field_text, nctx):
                     violations.append(number_error(v, field_name, nctx))
+
+            # V6b: owner/deployer identity claims against the recorded facts (engine.claims; APAD
+            # PDF 2026-10-27 stated twice that the owner is the deployer, false on chain).
+            job_facts = _job_facts(pin_root, job_id)
+            for field_name, field_text in _iter_text_fields(args):
+                for v in check_owner_deployer(field_text, job_facts):
+                    violations.append(claim_error(v, field_name, job_facts))
 
             # V7.5: trigger check against semantic map.
             # FileNotFoundError = map worker not run; degrade to map_unavailable=True (K10

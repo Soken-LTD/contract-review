@@ -1,0 +1,1383 @@
+{
+ "meta": {
+  "report_type": "automated",
+  "kind": "Smart contract security review",
+  "subject": "MultiFarmingPod",
+  "subject_source": "largest_unit",
+  "chain": "evm",
+  "network": "Not deployed",
+  "chain_id": null,
+  "explorer": null,
+  "addr_url": null,
+  "deployed_noun": "contract",
+  "source_id_label": "Commit",
+  "provenance": {
+   "tier": "B",
+   "label": "Source at commit bbb8b0db45df; deployment not checked",
+   "label_key": "tier_b_commit",
+   "source_hash": "f732a4a39124f79675f90b8e5f611557874c4f3401577081de817b3fb1a6b462",
+   "repo": "https://github.com/1inch/farming",
+   "commit": "bbb8b0db45dfb4ae0be860fef3ca4df9a761845f"
+  },
+  "report_id": "acsaas6uiq2oaayoaqaq42uoos",
+  "report_id_short": "acsaas6uiq",
+  "ownership_proven": false,
+  "profile": "public_review",
+  "requested_by": {
+   "role": "third_party_public_code",
+   "label": "Third party reviewing public code"
+  },
+  "date": "27 October 2026",
+  "expires": "2026-11-26",
+  "out_name": "Automated_Review_acsaas6uiq.pdf"
+ },
+ "facts": {
+  "compiler.version": {
+   "value": "0.8.0",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "source.files": {
+   "value": "9",
+   "unit": null,
+   "amount_at_risk": false
+  },
+  "source.nsloc": {
+   "value": "624",
+   "unit": "lines",
+   "amount_at_risk": false
+  },
+  "source.pin": {
+   "value": "f732a4a39124f79675f90b8e5f611557874c4f3401577081de817b3fb1a6b462",
+   "unit": null,
+   "amount_at_risk": false
+  }
+ },
+ "summary": {
+  "kpis": [
+   {
+    "key": "files",
+    "value": 9,
+    "label": "Files in scope"
+   },
+   {
+    "key": "nsloc",
+    "value": 483,
+    "label": "Source lines in scope"
+   },
+   {
+    "key": "leads",
+    "value": 0,
+    "label": "Analyzer leads"
+   },
+   {
+    "key": "promoted",
+    "value": 0,
+    "label": "Leads promoted to findings"
+   },
+   {
+    "key": "areas_returned",
+    "value": "6 of 23",
+    "label": "Areas with code returned"
+   },
+   {
+    "key": "deployed_code",
+    "value": "Not checked",
+    "label": "Deployed code"
+   }
+  ]
+ },
+ "scope": {
+  "head": [
+   "Unit",
+   "File",
+   "nSLOC",
+   "Address"
+  ],
+  "files": [
+   {
+    "name": "FarmingLib",
+    "file": "contracts/FarmingLib.sol",
+    "nsloc": 70
+   },
+   {
+    "name": "FarmingPod",
+    "file": "contracts/FarmingPod.sol",
+    "nsloc": 78
+   },
+   {
+    "name": "FarmingPool",
+    "file": "contracts/FarmingPool.sol",
+    "nsloc": 104
+   },
+   {
+    "name": "MultiFarmingPod",
+    "file": "contracts/MultiFarmingPod.sol",
+    "nsloc": 112
+   },
+   {
+    "name": "FarmAccounting",
+    "file": "contracts/accounting/FarmAccounting.sol",
+    "nsloc": 33
+   },
+   {
+    "name": "UserAccounting",
+    "file": "contracts/accounting/UserAccounting.sol",
+    "nsloc": 51
+   },
+   {
+    "name": "IFarmingPod",
+    "file": "contracts/interfaces/IFarmingPod.sol",
+    "nsloc": 10
+   },
+   {
+    "name": "IFarmingPool",
+    "file": "contracts/interfaces/IFarmingPool.sol",
+    "nsloc": 13
+   },
+   {
+    "name": "IMultiFarmingPod",
+    "file": "contracts/interfaces/IMultiFarmingPod.sol",
+    "nsloc": 12
+   }
+  ],
+  "out_of_scope": [
+   {
+    "path": "contracts/mocks/EthTransferMock.sol",
+    "reason": "Test or mock contract under a test or mocks directory; excluded from the review by the scope rules",
+    "by": "server"
+   }
+  ]
+ },
+ "context": {
+  "documents": [],
+  "comparison": [],
+  "notes": [
+   {
+    "p": "The client supplied no project documents: no website, whitepaper, documentation, terms of use or privacy policy were given for this review. Declared facts could not be compared with the code, and documentation mismatches are outside what this report can state. The review rests on the repository code at the pinned commit and on the inline NatSpec comments in the contracts."
+   }
+  ]
+ },
+ "architecture": {
+  "title": "Units in scope and their external dependencies",
+  "cols": 4,
+  "rows": 1,
+  "edges": [],
+  "nodes": [
+   {
+    "id": "no_map",
+    "label": "map",
+    "kind": "scope",
+    "col": 0,
+    "row": 0
+   }
+  ]
+ },
+ "roles": {
+  "rows": [],
+  "notes": [
+   {
+    "p": "owner: Appoints the distributor and registers reward tokens in MultiFarmingPod; single-step ownership transfer; a compromised owner can hand the reward balance to any address through a new distributor."
+   },
+   {
+    "p": "distributor: Schedules rewards with any amount and period and can move any token the farm holds to itself through rescueFunds; FarmingPool protects only the staking token balance."
+   },
+   {
+    "p": "farmable token (pod caller): The pods trust the token to call updateBalances for every balance change; a dropped or starved call leaves the farming accounting out of sync with pod balances."
+   },
+   {
+    "p": "staker: Unprivileged; can only deposit, withdraw, claim and exit its own position; relies on the distributor leaving the reward balance in place."
+   }
+  ]
+ },
+ "method": [
+  {
+   "step": "Source pinning",
+   "detail": "9 files pinned by sha256; source pin f732a4a39124f796"
+  },
+  {
+   "step": "Static analysis",
+   "detail": "No analyzer leads. One analyzer did not run."
+  },
+  {
+   "step": "Finding selection",
+   "detail": "7 findings accepted, 0 withdrawn"
+  },
+  {
+   "step": "Server checks",
+   "detail": "Every code quote matched to the pinned source; text and number rules on every finding; severity mapped from the classifications through the fixed matrix"
+  },
+  {
+   "step": "Deployment check",
+   "detail": "Not run: the deployed code was not compared with a rebuild of the source"
+  }
+ ],
+ "severity_scale": [
+  {
+   "severity": "Critical",
+   "text": "Loss or permanent freeze of holder funds with no unusual precondition"
+  },
+  {
+   "severity": "High",
+   "text": "Loss or freeze under realistic preconditions"
+  },
+  {
+   "severity": "Medium",
+   "text": "Limited loss, or larger loss that needs an uncommon state, a privileged role or a failure outside the protocol"
+  },
+  {
+   "severity": "Low",
+   "text": "Limited loss under those conditions, an unusual victim action, centralization, or a bounded departure from the specification"
+  },
+  {
+   "severity": "Informational",
+   "text": "Documentation, hardening and integration notes"
+  }
+ ],
+ "findings": [
+  {
+   "id": "L-001",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "The distributor can withdraw reward tokens owed to stakers through rescueFunds in all three farms",
+   "component": "FarmingPod",
+   "location": {
+    "path": "contracts/FarmingPod.sol",
+    "start": 86,
+    "end": 92
+   },
+   "category": "Centralization",
+   "category_key": "evm.centralization",
+   "description": [
+    {
+     "p": "rescueFunds lets the distributor move any token held by the farm to its own address. In FarmingPod and MultiFarmingPod the transfer is unconditional. In FarmingPool only the staking token is protected by the balance check against totalSupply; the reward token, which holds the amount already scheduled to stakers through startFarming, can be withdrawn in full. The owner appoints the distributor and the contracts use a single-step ownership transfer."
+    },
+    {
+     "p": "The same role also controls the schedule: startFarming may be called at any time with any period, which re-spreads the carried remainder over a new window and changes the rate stakers receive mid-period."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Stakers depend on the distributor and owner keys for every reward they have accrued but not yet claimed. A compromised or malicious distributor empties the reward balance, after which claim reverts for everyone with a pending amount, and a schedule restart can dilute or accelerate rewards at will."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Restrict rescueFunds to tokens other than rewardsToken, or to the excess above the scheduled but unclaimed reward (reward minus the amount emitted since the schedule start).",
+      "Hold the distributor and owner roles behind a multisig or timelock and document the trust assumption for stakers.",
+      "Use a two-step ownership transfer and reject the zero address in setDistributor."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contracts/FarmingPod.sol",
+        "start": 86,
+        "end": 92
+       },
+       "lines": [
+        [
+         86,
+         "    function rescueFunds(IERC20 token, uint256 amount) external onlyDistributor {"
+        ],
+        [
+         87,
+         "        if(token == IERC20(address(0))) {"
+        ],
+        [
+         88,
+         "            payable(distributor).sendValue(amount);"
+        ],
+        [
+         89,
+         "        } else {"
+        ],
+        [
+         90,
+         "            token.safeTransfer(distributor, amount);"
+        ],
+        [
+         91,
+         "        }"
+        ],
+        [
+         92,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "centralization_risk",
+       "unbounded",
+       "privileged_role",
+       "none",
+       "irreversible",
+       "I2xL1=Low set_by=reviewer",
+       "reviewer",
+       "reviewer and matrix agree"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contracts/MultiFarmingPod.sol",
+      "start": 126,
+      "end": 132
+     },
+     {
+      "path": "contracts/FarmingPool.sol",
+      "start": 107,
+      "end": 110
+     },
+     {
+      "path": "contracts/FarmingPool.sol",
+      "start": 51,
+      "end": 56
+     },
+     {
+      "path": "contracts/FarmingPool.sol",
+      "start": 15,
+      "end": 15
+     }
+    ]
+   },
+   "no_map_line": true
+  },
+  {
+   "id": "L-002",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "Reward emitted while total stake is zero is stranded until the distributor rescues it by hand",
+   "component": "UserAccounting",
+   "location": {
+    "path": "contracts/accounting/UserAccounting.sol",
+    "start": 21,
+    "end": 28
+   },
+   "category": "Accounting logic",
+   "category_key": "evm.accounting_logic",
+   "description": [
+    {
+     "p": "The per-token accumulator advances only while total stake is above zero. In farmedPerToken the supply check skips the update, and the checkpoint moves to the current block only inside updateFarmedPerToken, which runs at the next mint, burn or schedule restart. The reward the schedule emits between the last checkpoint and that moment is skipped: it stays in the contract balance and is credited to nobody."
+    },
+    {
+     "p": "The restart path in startFarming carries over prev.reward minus the amount the schedule has emitted since its start, not the amount actually credited to stakers. The skipped reward counts as emitted, so it is excluded from the carry and remains stranded. The single way out is rescueFunds by the distributor. A farm started before the first stake, and a farm whose last staker exits mid-period, both reach this state under normal operation."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Reward tokens for every interval with zero stake accumulate in the contract outside the schedule. Stakers lose nothing they earned, but the distributor has to notice the idle interval and recover the amount by hand, and a later restart does not redistribute it. The stranded amount is bounded by the scheduled reward of the affected period."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Compute the carry in startFarming from the reward actually credited to the accumulator (track a cumulative emitted-to-stakers counter) instead of from elapsed schedule time.",
+      "Alternatively, when supply is zero, extend the schedule end by the idle time so the idle reward is emitted later, or add the idle reward to the next schedule.",
+      "Document the behaviour for operators and emit an event with the idle amount when a restart detects it."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contracts/accounting/UserAccounting.sol",
+        "start": 21,
+        "end": 28
+       },
+       "lines": [
+        [
+         21,
+         "        if (block.timestamp != checkpoint) {"
+        ],
+        [
+         22,
+         "            uint256 supply = lazyGetSupply(context);"
+        ],
+        [
+         23,
+         "            if (supply > 0) {"
+        ],
+        [
+         24,
+         "                uint256 changePerToken;"
+        ],
+        [
+         25,
+         "                unchecked { changePerToken = lazyGetFarmed(context, checkpoint) / supply; }"
+        ],
+        [
+         26,
+         "                fpt += changePerToken;"
+        ],
+        [
+         27,
+         "            }"
+        ],
+        [
+         28,
+         "        }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "yield_or_fee_loss",
+       "bounded",
+       "anyone",
+       "normal_operation",
+       "admin_reversible",
+       "I2xL3=Medium caps=[K4] set_by=reviewer",
+       "reviewer",
+       "Known trait of checkpoint accumulators; stakers lose nothing earned and the distributor recovers the idle amount with rescueFunds."
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contracts/accounting/FarmAccounting.sol",
+      "start": 34,
+      "end": 34
+     },
+     {
+      "path": "contracts/accounting/UserAccounting.sol",
+      "start": 40,
+      "end": 42
+     },
+     {
+      "path": "contracts/accounting/FarmAccounting.sol",
+      "start": 36,
+      "end": 40
+     },
+     {
+      "path": "contracts/FarmingPool.sol",
+      "start": 103,
+      "end": 112
+     }
+    ]
+   },
+   "no_map_line": true
+  },
+  {
+   "id": "L-003",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "Pod balance updates grow with the reward token count and the pod cannot detect a dropped update",
+   "component": "MultiFarmingPod",
+   "location": {
+    "path": "contracts/MultiFarmingPod.sol",
+    "start": 111,
+    "end": 124
+   },
+   "category": "Accounting logic",
+   "category_key": "evm.accounting_logic",
+   "description": [
+    {
+     "p": "The pods learn about balance changes only through updateBalances, which the farmable token calls on every mint, burn, transfer, pod add and pod remove. The pod design hands each pod a fixed gas stipend chosen by the token and continues the transfer whether or not the pod call succeeds. The pod has no way to notice a skipped call and keeps the accounting it had before."
+    },
+    {
+     "p": "In MultiFarmingPod the cost of one update is the sum over all registered reward tokens: for each token the accumulator is refreshed, the checkpoint pair is rewritten on mint or burn, and two correction slots are rewritten. A transfer to a fresh address with several registered reward tokens writes several zero slots in one call, which is the costliest case. The limit on reward tokens bounds this cost but does not tie it to the stipend the token grants."
+    },
+    {
+     "p": "When a call is dropped, the token balance moves while the corrections stay. The receiver then holds balance times the accumulator with no matching correction, so farmed reports reward it did not earn; the sender keeps a correction larger than its balance, so its farmed underflows into a huge value and claim reverts."
+    }
+   ],
+   "impact": [
+    {
+     "p": "An actor who can cause the pod call to exceed its stipend (fresh receiver, full reward-token set) receives reward belonging to other stakers up to the reward balance of the farm, and later claimants find the balance short. Stakers on the sending side lose access to their pending reward until their balance grows back. The effect is permanent in the accounting."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Measure the worst-case gas of updateBalances with the maximum reward-token count and fresh correction slots, and require at deployment that the farmable token's pod stipend exceeds it with margin.",
+      "Keep the per-pod cost flat: store the accumulator refresh once per call and share it across reward tokens, or cap the reward-token limit lower for tokens with a small stipend.",
+      "Expose a view that reports the required stipend so integrators can check it before adding the pod."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contracts/MultiFarmingPod.sol",
+        "start": 111,
+        "end": 124
+       },
+       "lines": [
+        [
+         111,
+         "    function updateBalances(address from, address to, uint256 amount) external onlyToken {"
+        ],
+        [
+         112,
+         "        address[] memory tokens = _rewardsTokens.items.get();"
+        ],
+        [
+         113,
+         "        unchecked {"
+        ],
+        [
+         114,
+         "            for (uint256 i = 0; i < tokens.length; i++) {"
+        ],
+        [
+         115,
+         "                _farmInfo(IERC20(tokens[i])).updateBalances(from, to, amount);"
+        ],
+        [
+         116,
+         "            }"
+        ],
+        [
+         117,
+         "        }"
+        ],
+        [
+         118,
+         "        if (from == address(0)) {"
+        ],
+        [
+         119,
+         "            _totalSupply += amount;"
+        ],
+        [
+         120,
+         "        }"
+        ],
+        [
+         121,
+         "        if (to == address(0)) {"
+        ],
+        [
+         122,
+         "            _totalSupply -= amount;"
+        ],
+        [
+         123,
+         "        }"
+        ],
+        [
+         124,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "theft_of_funds",
+       "bounded",
+       "anyone",
+       "external_failure",
+       "irreversible",
+       "I2xL0=Low set_by=reviewer",
+       "reviewer",
+       "The gas stipend the farmable token grants to pods lives outside the reviewed files; the break needs that stipend to be below the worst-case update cost."
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contracts/MultiFarmingPod.sol",
+      "start": 47,
+      "end": 47
+     },
+     {
+      "path": "contracts/accounting/UserAccounting.sol",
+      "start": 44,
+      "end": 60
+     },
+     {
+      "path": "contracts/accounting/UserAccounting.sol",
+      "start": 32,
+      "end": 34
+     },
+     {
+      "path": "contracts/FarmingPod.sol",
+      "start": 76,
+      "end": 84
+     }
+    ]
+   },
+   "no_map_line": true
+  },
+  {
+   "id": "L-004",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "Fee-on-transfer, rebasing or blocklisting tokens break the stake and reward accounting",
+   "component": "FarmingPool",
+   "location": {
+    "path": "contracts/FarmingPool.sol",
+    "start": 78,
+    "end": 81
+   },
+   "category": "Token integration",
+   "category_key": "evm.token_integration",
+   "description": [
+    {
+     "p": "deposit mints farm shares for the requested amount before pulling the staking token, and startFarming schedules the requested amount as reward. Neither path measures the balance received. A staking token that charges a transfer fee leaves the pool holding less than totalSupply, and a reward token with a fee or a shrinking rebase leaves the farm holding less than the schedule promises."
+    },
+    {
+     "p": "In MultiFarmingPod a reward token stays registered for the life of the contract. The aggregate claim walks every registered token; a token that reverts for the caller, for example through a blocklist or a pause, makes that path revert for the affected account, while the per-token claim still works for the other tokens."
+    }
+   ],
+   "impact": [
+    {
+     "p": "With a fee or rebasing staking token the last withdrawers cannot redeem their shares; with such a reward token the last claimants cannot collect. The shortfall equals the fee or rebase delta and can be topped up by the distributor. A reverting reward token degrades the aggregate claim for the affected accounts."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Measure balance deltas in deposit and startFarming and use the received amount for shares and schedule, or document that only standard tokens are supported and enforce it at deployment.",
+      "Allow the owner to retire a reward token from the aggregate claim list once its schedule has ended and its balance is drained.",
+      "Document that a rebasing token must not be used as staking or reward token."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contracts/FarmingPool.sol",
+        "start": 78,
+        "end": 81
+       },
+       "lines": [
+        [
+         78,
+         "    function deposit(uint256 amount) external override {"
+        ],
+        [
+         79,
+         "        _mint(msg.sender, amount);"
+        ],
+        [
+         80,
+         "        stakingToken.safeTransferFrom(msg.sender, address(this), amount);"
+        ],
+        [
+         81,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "insolvency_or_bad_debt",
+       "bounded",
+       "privileged_role",
+       "uncommon_protocol_state",
+       "admin_reversible",
+       "I2xL1=Low set_by=reviewer",
+       "reviewer",
+       "Both tokens are fixed by the deployer or owner at setup; the break needs a non-standard token to be chosen and the shortfall can be topped up."
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contracts/FarmingPool.sol",
+      "start": 58,
+      "end": 64
+     },
+     {
+      "path": "contracts/FarmingPod.sol",
+      "start": 57,
+      "end": 61
+     },
+     {
+      "path": "contracts/accounting/FarmAccounting.sol",
+      "start": 34,
+      "end": 34
+     },
+     {
+      "path": "contracts/MultiFarmingPod.sol",
+      "start": 101,
+      "end": 109
+     },
+     {
+      "path": "contracts/MultiFarmingPod.sol",
+      "start": 66,
+      "end": 70
+     }
+    ]
+   },
+   "no_map_line": true
+  },
+  {
+   "id": "L-005",
+   "severity": "Low",
+   "evidence_level": "reasoning_only",
+   "title": "Silent narrowing casts and an unbounded accumulator can halt transfers under extreme reward-to-stake ratios",
+   "component": "UserAccounting",
+   "location": {
+    "path": "contracts/accounting/UserAccounting.sol",
+    "start": 32,
+    "end": 34
+   },
+   "category": "Arithmetic precision",
+   "category_key": "evm.arithmetic_precision",
+   "description": [
+    {
+     "p": "The accumulator fpt is the scaled reward divided by the stake that held it. The reward cap in startFarming bounds the numerator but nothing relates it to the stake size, so a single-wei stake during a schedule near the cap drives fpt to the scale of the cap times the scale constant. The cap check also runs before the carry from the previous period is added, so the stored reward may exceed the documented bound."
+    },
+    {
+     "p": "Every later product balance times fpt in farmed, eraseFarmed and updateBalances is checked arithmetic and reverts once it overflows, while the explicit conversions to int256, uint216 and uint184 truncate silently. A reverting updateBalances blocks mint, burn and transfer of the farm shares in FarmingPool through the transfer hook, and blocks the pod update in the pod variants, for every balance above the overflow threshold."
+    }
+   ],
+   "impact": [
+    {
+     "p": "A farm whose accumulator was inflated by a dust-sized stake under a very large reward schedule rejects deposits and transfers above a size threshold for the rest of its life, since fpt is monotone and cannot be reset. The precondition needs a reward amount far above ordinary token supplies, so ordinary deployments stay inside the headroom; the silent conversions remain a latent correctness hazard."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Apply the reward cap after the carry is added and lower the cap to a value that keeps balance times fpt inside the signed range for the largest plausible stake.",
+      "Use a checked downcast library for the conversions to uint216, uint184 and int256, or revert explicitly when fpt exceeds the field width.",
+      "Consider rejecting dust-sized total stake when a schedule starts, or starting the accumulator only once stake exceeds a minimum."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contracts/accounting/UserAccounting.sol",
+        "start": 32,
+        "end": 34
+       },
+       "lines": [
+        [
+         32,
+         "    function farmed(Info storage info, address account, uint256 balance, uint256 fpt) internal view returns(uint256) {"
+        ],
+        [
+         33,
+         "        return uint256(int256(balance * fpt) - info.corrections[account]) / _SCALE;"
+        ],
+        [
+         34,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "dos_core_function",
+       "bounded",
+       "anyone",
+       "uncommon_protocol_state",
+       "irreversible",
+       "I2xL1=Low set_by=reviewer",
+       "reviewer",
+       "Reaching the failing range needs a reward near the configured cap over a dust-sized stake; realistic reward sizes stay far inside the headroom."
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contracts/accounting/UserAccounting.sol",
+      "start": 40,
+      "end": 42
+     },
+     {
+      "path": "contracts/accounting/UserAccounting.sol",
+      "start": 52,
+      "end": 52
+     },
+     {
+      "path": "contracts/accounting/FarmAccounting.sol",
+      "start": 42,
+      "end": 42
+     },
+     {
+      "path": "contracts/accounting/FarmAccounting.sol",
+      "start": 34,
+      "end": 34
+     },
+     {
+      "path": "contracts/accounting/FarmAccounting.sol",
+      "start": 22,
+      "end": 27
+     }
+    ]
+   },
+   "no_map_line": true
+  },
+  {
+   "id": "I-001",
+   "severity": "Informational",
+   "evidence_level": "reasoning_only",
+   "title": "The floating pragma admits compiler releases that cannot compile the custom errors the contracts declare",
+   "component": "FarmAccounting",
+   "location": {
+    "path": "contracts/accounting/FarmAccounting.sol",
+    "start": 3,
+    "end": 11
+   },
+   "category": "Best practice",
+   "category_key": "evm.best_practice",
+   "description": [
+    {
+     "p": "Every file declares a caret pragma whose floor is the earliest release of the version line, yet the contracts use custom errors, which the compiler accepted only from a later release. Picking the lowest release the pragma allows ends in a parser error, as happened in this review's build step. The pragma therefore misstates the supported compiler range and leaves the exact release used for verification unrecorded in the source."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Builds that resolve the pragma to its floor fail, and bytecode verification or reproduction by third parties depends on an unstated compiler choice. The deployed behaviour is unaffected."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Pin a single compiler release in all files, matching the one used for deployment and verification.",
+      "If a range must stay, raise the floor to the earliest release that supports custom errors."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contracts/accounting/FarmAccounting.sol",
+        "start": 3,
+        "end": 11
+       },
+       "lines": [
+        [
+         3,
+         "pragma solidity ^0.8.0;"
+        ],
+        [
+         4,
+         ""
+        ],
+        [
+         5,
+         "import \"@openzeppelin/contracts/utils/math/Math.sol\";"
+        ],
+        [
+         6,
+         ""
+        ],
+        [
+         7,
+         "library FarmAccounting {"
+        ],
+        [
+         8,
+         "    error CheckpointBeforeStarted();"
+        ],
+        [
+         9,
+         "    error ZeroDuration();"
+        ],
+        [
+         10,
+         "    error DurationTooLarge();"
+        ],
+        [
+         11,
+         "    error AmountTooLarge();"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "best_practice",
+       "bounded",
+       "anyone",
+       "none",
+       "self_recovering",
+       "I0xL3=Informational set_by=reviewer",
+       "reviewer",
+       "reviewer and matrix agree"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contracts/FarmingPod.sol",
+      "start": 14,
+      "end": 21
+     }
+    ]
+   },
+   "no_map_line": true
+  },
+  {
+   "id": "I-002",
+   "severity": "Informational",
+   "evidence_level": "reasoning_only",
+   "title": "Claim and rescue paths emit no events and setDistributor accepts the zero address",
+   "component": "FarmingPool",
+   "location": {
+    "path": "contracts/FarmingPool.sol",
+    "start": 88,
+    "end": 96
+   },
+   "category": "Events",
+   "category_key": "evm.events",
+   "description": [
+    {
+     "p": "claim in all three farms pays reward without an event, so the only trace is the token transfer, which does not identify the farm action. rescueFunds moves arbitrary tokens or ether to the distributor silently. setDistributor accepts the zero address, which disables startFarming and rescueFunds until the owner sets a new one, and the rescue path in the pods sends ether although the contracts declare no receive or fallback function."
+    }
+   ],
+   "impact": [
+    {
+     "p": "Off-chain monitoring and accounting of reward payouts and admin withdrawals is harder than it needs to be, and an accidental zero distributor pauses the farm until the owner intervenes."
+    }
+   ],
+   "recommendation": [
+    {
+     "ul": [
+      "Emit a Claimed(account, token, amount) event on every claim path and a FundsRescued(token, amount) event in rescueFunds.",
+      "Reject the zero address in setDistributor, or document the pause effect.",
+      "Drop the ether branch of rescueFunds in the pods or add a payable receive if ether is expected."
+     ]
+    }
+   ],
+   "evidence": {
+    "code": [
+     {
+      "code": {
+       "ref": {
+        "path": "contracts/FarmingPool.sol",
+        "start": 88,
+        "end": 96
+       },
+       "lines": [
+        [
+         88,
+         "    function claim() public override {"
+        ],
+        [
+         89,
+         "        uint256 fpt = farmedPerToken();"
+        ],
+        [
+         90,
+         "        uint256 balance = balanceOf(msg.sender);"
+        ],
+        [
+         91,
+         "        uint256 amount = userInfo.farmed(msg.sender, balance, fpt);"
+        ],
+        [
+         92,
+         "        if (amount > 0) {"
+        ],
+        [
+         93,
+         "            userInfo.eraseFarmed(msg.sender, balance, fpt);"
+        ],
+        [
+         94,
+         "            rewardsToken.safeTransfer(msg.sender, amount);"
+        ],
+        [
+         95,
+         "        }"
+        ],
+        [
+         96,
+         "    }"
+        ]
+       ]
+      }
+     }
+    ],
+    "basis": {
+     "head": [
+      "Impact class",
+      "Magnitude",
+      "Trigger",
+      "Precondition",
+      "Reversibility",
+      "Rule",
+      "Set by",
+      "Reason"
+     ],
+     "rows": [
+      [
+       "best_practice",
+       "bounded",
+       "anyone",
+       "none",
+       "self_recovering",
+       "I0xL3=Informational set_by=reviewer",
+       "reviewer",
+       "reviewer and matrix agree"
+      ]
+     ]
+    },
+    "challenge": null,
+    "lead": null,
+    "further": [
+     {
+      "path": "contracts/FarmingPod.sol",
+      "start": 68,
+      "end": 74
+     },
+     {
+      "path": "contracts/MultiFarmingPod.sol",
+      "start": 126,
+      "end": 132
+     },
+     {
+      "path": "contracts/FarmingPod.sol",
+      "start": 50,
+      "end": 55
+     }
+    ]
+   },
+   "no_map_line": true
+  }
+ ],
+ "review_coverage": {
+  "areas": [
+   {
+    "area_id": "evm.access_control",
+    "area": "Access control",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.selfdestruct",
+    "area": "Selfdestruct",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.centralization",
+    "area": "Centralization",
+    "code_returned": "Yes",
+    "result": [
+     "L-001"
+    ]
+   },
+   {
+    "area_id": "evm.upgradeability.initialization",
+    "area": "Upgradeability initialization",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.upgradeability.storage_authority",
+    "area": "Upgradeability storage authority",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.delegatecall_proxy",
+    "area": "Delegatecall proxy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.storage",
+    "area": "Storage",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.reentrancy",
+    "area": "Reentrancy",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.ordering_mev",
+    "area": "Ordering MEV",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.unchecked_call",
+    "area": "Unchecked call",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.arithmetic_precision",
+    "area": "Arithmetic precision",
+    "code_returned": "Yes",
+    "result": [
+     "L-005"
+    ]
+   },
+   {
+    "area_id": "evm.accounting_logic",
+    "area": "Accounting logic",
+    "code_returned": "Yes",
+    "result": [
+     "L-002",
+     "L-003"
+    ]
+   },
+   {
+    "area_id": "evm.token_integration",
+    "area": "Token integration",
+    "code_returned": "Yes",
+    "result": [
+     "L-004"
+    ]
+   },
+   {
+    "area_id": "evm.oracle_manipulation",
+    "area": "Oracle manipulation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.randomness",
+    "area": "Randomness",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.timestamp",
+    "area": "Timestamp",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.signature_replay",
+    "area": "Signature replay",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.dos",
+    "area": "DoS",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.input_validation",
+    "area": "Input validation",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.compiler_bug",
+    "area": "Compiler bug",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.other",
+    "area": "Other",
+    "code_returned": "No",
+    "result": "Not covered"
+   },
+   {
+    "area_id": "evm.events",
+    "area": "Events",
+    "code_returned": "Yes",
+    "result": [
+     "I-002"
+    ]
+   },
+   {
+    "area_id": "evm.best_practice",
+    "area": "Best practice",
+    "code_returned": "Yes",
+    "result": [
+     "I-001"
+    ]
+   }
+  ],
+  "leads": [],
+  "withdrawn": [],
+  "injection_flags": [],
+  "invariant_walks": [
+   {
+    "walk_id": "IW-SR-1",
+    "title": "Rewards while nothing is staked",
+    "verdict": "violated",
+    "lines": [
+     {
+      "path": "contracts/accounting/UserAccounting.sol",
+      "start": 14,
+      "end": 30
+     },
+     {
+      "path": "contracts/accounting/UserAccounting.sol",
+      "start": 40,
+      "end": 60
+     },
+     {
+      "path": "contracts/accounting/FarmAccounting.sol",
+      "start": 23,
+      "end": 44
+     },
+     {
+      "path": "contracts/FarmingLib.sol",
+      "start": 39,
+      "end": 64
+     }
+    ],
+    "finding": "L-002"
+   },
+   {
+    "walk_id": "IW-SR-2",
+    "title": "Full exit and re-entry",
+    "verdict": "holds",
+    "lines": [
+     {
+      "path": "contracts/FarmingLib.sol",
+      "start": 49,
+      "end": 60
+     },
+     {
+      "path": "contracts/FarmingPod.sol",
+      "start": 68,
+      "end": 84
+     },
+     {
+      "path": "contracts/FarmingPool.sol",
+      "start": 83,
+      "end": 101
+     },
+     {
+      "path": "contracts/FarmingPool.sol",
+      "start": 116,
+      "end": 122
+     }
+    ]
+   },
+   {
+    "walk_id": "IW-SR-3",
+    "title": "Reward schedule changes mid-period",
+    "verdict": "holds",
+    "lines": [
+     {
+      "path": "contracts/accounting/FarmAccounting.sol",
+      "start": 31,
+      "end": 44
+     },
+     {
+      "path": "contracts/accounting/FarmAccounting.sol",
+      "start": 23,
+      "end": 29
+     },
+     {
+      "path": "contracts/accounting/UserAccounting.sol",
+      "start": 40,
+      "end": 42
+     },
+     {
+      "path": "contracts/FarmingLib.sol",
+      "start": 39,
+      "end": 43
+     }
+    ]
+   }
+  ]
+ }
+}

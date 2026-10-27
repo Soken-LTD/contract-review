@@ -34,3 +34,22 @@ def test_format_rejection_names_the_word_and_the_rule():
 def test_nearest_allowed_caps_the_list():
     ctx = NumberContext(allowed_literals=frozenset(str(i) for i in range(10, 30)))
     assert nearest_allowed(ctx).count(",") == 5
+
+
+def test_half_placeholder_error_names_the_double_brace_form_to_write():
+    """E_PLACEHOLDER_SYNTAX (matrix run 2026-10-27): the fix says exactly what to write."""
+    v = lex_numbers("supply of {fact:onchain.total_supply} token units", NumberContext())[0]
+    env = number_error(v, "description", NumberContext())
+    assert env["code"] == "E_PLACEHOLDER_SYNTAX" and env["field"] == "description"
+    assert "{fact:onchain.total_supply}" in env["what"]
+    assert env["fix"].startswith("Write {{fact:onchain.total_supply}} (two braces on each side)")
+    assert "{{fact:<key>}}" in env["fix"]
+
+
+def test_number_unsourced_fix_prints_the_double_brace_form():
+    """The catalogue template once printed `{fact:<key>}` after formatting, which taught reviewers
+    the single-brace form the kit does not expand."""
+    v = lex_numbers("the fee is 250 units", NumberContext())[0]
+    env = number_error(v, "impact", NumberContext())
+    assert "{{fact:<key>}}" in env["fix"] and "{{calc:...}}" in env["fix"]
+    assert "{fact:<key>}" not in env["fix"].replace("{{fact:<key>}}", "")

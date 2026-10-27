@@ -517,3 +517,34 @@ class TestQualitativeHalfAndDouble:
     def test_halves_and_quarters_stay_magnitude_words(self):
         assert "E_NUMBER_FORMAT" in error_codes("split into halves")
         assert "E_NUMBER_FORMAT" in error_codes("a quarter of the pool")
+
+
+# ── L0 half placeholders (matrix run 2026-10-27, Wallitelli PDF printed `{fact:...}` raw) ──
+
+class TestHalfPlaceholder:
+    WALLITELLI = ("The constructor mints the full supply of {fact:onchain.total_supply} token units to msg.sender, "
+                  "the account that sent the deployment transaction.")
+    PRAGMA = "The token file declares a caret pragma range instead of the exact compiler version {fact:compiler.version} used."
+
+    def test_single_brace_fact_is_rejected_with_the_placeholder_code(self):
+        for text in (self.WALLITELLI, self.PRAGMA):
+            vs = lex_numbers(text, NumberContext())
+            assert [(v.code, v.rule_id) for v in vs] == [("E_PLACEHOLDER_SYNTAX", "L0")]
+            assert vs[0].match.startswith("{fact:") and vs[0].match.endswith("}")
+
+    def test_mismatched_brace_pairs_are_rejected(self):
+        assert error_codes("value {{fact:onchain.balance} here") == {"E_PLACEHOLDER_SYNTAX"}
+        assert error_codes("value {fact:onchain.balance}} here") == {"E_PLACEHOLDER_SYNTAX"}
+        assert error_codes("ratio {calc:fact:a/2|2} here") == {"E_PLACEHOLDER_SYNTAX"}
+        assert error_codes("see {finding:owner-role} here") == {"E_PLACEHOLDER_SYNTAX"}
+
+    def test_double_brace_forms_still_pass_and_spurious_stays_calc_syntax(self):
+        assert passes("supply of {{fact:onchain.total_supply}} token units")
+        assert passes("ratio {{calc:bps_to_pct(250)|2}} and {{finding:owner-role}}")
+        assert error_codes("{{not a placeholder}}") == {"E_CALC_SYNTAX"}
+
+    def test_example_is_the_double_brace_form(self):
+        from soken_review.engine.numbers import placeholder_example
+
+        assert placeholder_example("{fact:onchain.total_supply}") == "{{fact:onchain.total_supply}}"
+        assert placeholder_example("{{fact:compiler.version}") == "{{fact:compiler.version}}"

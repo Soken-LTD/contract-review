@@ -37,10 +37,12 @@ import yaml
 from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
+from ..engine.claims import check_owner_deployer
 from ..engine.numbers import NumberContext, lex_numbers
 from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
+from ..mapping.facts import load_facts
 from ..mapping.lifecycle import load_lifecycle, rubric
 from ..mapping.step import job_number_context
 from ..server import handler
@@ -54,7 +56,7 @@ from .coverage import (
 from .coverage import (
     rows_index as cov_rows_index,
 )
-from .number_errors import number_error
+from .number_errors import claim_error, number_error
 from .submit import _family_from_chain
 from .walks import latest_rows, load_drafts, load_reads, merge_rows, open_walks, validate_row, walk_index
 
@@ -204,6 +206,31 @@ def _collect_text_fields(section: str, content: Any) -> list[tuple[str, str]]:
     return result
 
 
+def _claim_text_fields(section: str, content: Any) -> list[tuple[str, str]]:
+    """Texts for the owner/deployer claim check: a roles row as one string (role and note), every
+    other section as `_collect_text_fields` gives it."""
+    if section != "roles_notes":
+        return _collect_text_fields(section, content)
+    out: list[tuple[str, str]] = []
+    if isinstance(content, list):
+        for i, row in enumerate(content):
+            if not isinstance(row, dict):
+                continue
+            note = str(row.get("risk_note") or row.get("notes") or "")
+            role = str(row.get("role") or "")
+            if note:
+                out.append((f"roles_notes[{i}]", f"{role}: {note}" if role else note))
+    return out
+
+
+def _job_facts(job_id: str) -> list[dict[str, Any]]:
+    """The job's fact records for the claim check; empty when not written or not readable."""
+    try:
+        return load_facts(_get_ctx().get_pin_root(), job_id) or []
+    except Exception:  # noqa: BLE001  # no pin root or facts: nothing to compare against
+        return []
+
+
 _SECTION_KEYS = ("roles_notes", "out_of_scope_reasons", "coverage", "context_notes", "invariant_walks")
 
 
@@ -349,6 +376,14 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
             ).envelope())
         for v in lex_numbers(text, nctx):
             violations.append(number_error(v, field_path, nctx))
+
+    # Owner/deployer identity claims against the recorded facts (engine.claims). A roles row is
+    # checked as "role: note", so "onlyOwner: Held by the deployer account" (APAD 2026-10-27) is
+    # read as the claim it is.
+    job_facts = _job_facts(job_id)
+    for field_path, text in _claim_text_fields(section, content):
+        for v in check_owner_deployer(text, job_facts):
+            violations.append(claim_error(v, field_path, job_facts))
 
     if violations:
         return {"accepted": False, "errors": violations}
