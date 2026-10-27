@@ -18,7 +18,9 @@ After `soken-fetch` materializes a git tree into `src_dir`, this module:
 The entry selection rule (plan 05/04): all non-test, non-script, non-dependency
 Solidity sources the compile actually builds (from forge/solc output, not directory
 names).  When no forge project is found, falls back to all *.sol files in the tree
-that are not under `test/`, `tests/`, `script/`, `scripts/`, `lib/`, `node_modules/`.
+that are not under `test/`, `tests/`, `script/`, `scripts/`, `lib/`, `node_modules/`, minus test
+and mock contracts inside the source tree (`split_test_and_mock_files`; recorded on the
+candidate as `scope_excluded` and printed in the report as out of scope with the reason).
 
 All paths are re-checked by `filter_candidate_files` inside `make_candidate`.
 
@@ -37,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import os
+import posixpath
 import re
 import stat
 import tomllib
@@ -69,6 +72,82 @@ _NON_SOURCE_DIRS = frozenset({
     "test", "tests", "script", "scripts", "lib", "node_modules",
     ".git", ".github",
 })
+
+# Test and mock contracts inside the source tree (Hardhat `contracts/mocks`, `contracts/test`,
+# `MockERC20.sol`, `Vault.t.sol`, a file importing forge-std/Test or hardhat/console). They are
+# compiled with the project but are not the reviewed code: analyzer leads on them were High
+# leads the reviewer had to dismiss by hand (Apyee blind run 2026-10-26). Reason codes are the
+# report kit `scope_reasons` keys.
+_TEST_MOCK_DIRS = frozenset({"mock", "mocks", "test", "tests", "testing", "__tests__", "harness", "harnesses"})
+_MOCK_NAME_RE = re.compile(r"(?:^|[^A-Za-z])[Mm]ock(?:[^a-z]|$)|(?<=[a-z0-9])Mocks?$")
+_TEST_NAME_RE = re.compile(r"^Test(?:[A-Z_]|$)|(?<=[a-z0-9])Test$|\.t$|\.s$|^test_|_test$")
+# A test harness is a contract that inherits a test or script base (forge-std Test / Script,
+# ds-test DSTest). A file that merely imports a console library is not one (security review of
+# PR #84: a reviewed contract may import console.sol for debug output).
+_TEST_HARNESS_RE = re.compile(r"\bcontract\s+\w+\s+is\s+[^{;]*\b(?:Test|DSTest|Script|StdCheats)\b")
+_IMPORT_RE = re.compile(r"""\bimport\s+(?:[^;"']*?\bfrom\s+)?["']([^"']+)["']""")
+_REASON_DIR, _REASON_NAME, _REASON_HARNESS = "test_or_mock_dir", "mock_name", "test_harness"
+
+
+def _imported_scope_paths(path: str, content: str, scope_paths: set[str]) -> set[str]:
+    """Scope files that `path` imports (and so may inherit from or call): relative specifiers
+    resolved against the importing directory; others matched as written or by suffix (a
+    remapped prefix such as `@mocks/` or `mocks/`). Over-matching keeps a file in scope, which is
+    the safe direction."""
+    out: set[str] = set()
+    base = posixpath.dirname(path)
+    for spec in _IMPORT_RE.findall(content):
+        if spec.startswith(("./", "../")):
+            resolved = posixpath.normpath(posixpath.join(base, spec))
+            if resolved in scope_paths:
+                out.add(resolved)
+            continue
+        for candidate in scope_paths:
+            if candidate == spec or candidate.endswith(("/" + spec, "/" + posixpath.basename(spec))):
+                out.add(candidate)
+    return out
+
+
+def scope_exclusion_reason(path: str, content: str) -> str | None:
+    """Reason code when `path` is a test or mock contract, else None."""
+    parts = path.split("/")
+    if any(seg.lower() in _TEST_MOCK_DIRS for seg in parts[:-1]):
+        return _REASON_DIR
+    base = parts[-1].removesuffix(".sol")
+    if _MOCK_NAME_RE.search(base) or _TEST_NAME_RE.search(base):
+        return _REASON_NAME
+    if _TEST_HARNESS_RE.search(content):
+        return _REASON_HARNESS
+    return None
+
+
+def split_test_and_mock_files(scope: dict[str, str]) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """(reviewed files, excluded rows) of a scope: test and mock contracts leave the reviewed set
+    with their reason, unless they are the only sources (then the scope stays as given).
+
+    A file any reviewed file imports, directly or through other reviewed files, stays in scope
+    whatever its name or directory: reviewed code may inherit from or call it, and a mock-looking
+    name must not hide reviewed logic (security review of PR #84)."""
+    kept: dict[str, str] = {}
+    candidates: dict[str, str] = {}
+    for path, content in scope.items():
+        if scope_exclusion_reason(path, content) is None:
+            kept[path] = content
+        else:
+            candidates[path] = content
+    if not kept:
+        return scope, []
+    scope_paths = set(scope)
+    frontier = list(kept)
+    while frontier:
+        path = frontier.pop()
+        for dep in _imported_scope_paths(path, scope[path], scope_paths):
+            if dep in candidates:
+                kept[dep] = candidates.pop(dep)
+                frontier.append(dep)
+    excluded = [{"path": path, "reason": scope_exclusion_reason(path, content) or _REASON_DIR}
+                for path, content in scope.items() if path in candidates]
+    return {p: scope[p] for p in scope if p in kept}, excluded
 
 # ---------------------------------------------------------------------------
 # Constants for trust checks
@@ -319,8 +398,10 @@ def repo_candidate_from_manifest(
         or _has_forge_compiler_trust_issues(foundry_cfg, safe_files)
     )
 
-    # 7. Select scope files (non-test, non-script, non-dep .sol).
+    # 7. Select scope files (non-test, non-script, non-dep .sol), then take test and mock
+    #    contracts out of the reviewed set (listed in the report as out of scope with the reason).
     sol_files = _select_scope_files(safe_files, foundry_cfg)
+    sol_files, scope_excluded = split_test_and_mock_files(sol_files)
     if not sol_files:
         # If we refused any .sol paths, the source is incomplete — name it explicitly.
         if refused_sol_paths:
@@ -353,6 +434,7 @@ def repo_candidate_from_manifest(
         _caller_context="repo",
     )
     cand.untrusted_inputs = untrusted
+    cand.scope_excluded = scope_excluded
     # Record refused paths in the candidate so the provenance layer can surface them.
     # Fix 4: refused .sol files are not silently dropped — they are visible in the candidate.
     if refused_paths:

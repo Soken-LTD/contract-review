@@ -37,11 +37,12 @@ import yaml
 from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
-from ..engine.numbers import lex_numbers
+from ..engine.numbers import NumberContext, lex_numbers
 from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
 from ..mapping.lifecycle import load_lifecycle, rubric
+from ..mapping.step import job_number_context
 from ..server import handler
 from .context import JobContext
 from .coverage import (
@@ -53,6 +54,7 @@ from .coverage import (
 from .coverage import (
     rows_index as cov_rows_index,
 )
+from .number_errors import number_error
 from .submit import _family_from_chain
 from .walks import latest_rows, load_drafts, load_reads, merge_rows, open_walks, validate_row, walk_index
 
@@ -324,6 +326,10 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
 
     # ── V5/V6 on all text fields ──────────────────────────────────────────────
     violations: list[dict[str, Any]] = []
+    try:
+        nctx = job_number_context(_get_ctx().get_pin_root(), job_id)
+    except Exception:  # noqa: BLE001 - the word set is a convenience; the check still runs without it
+        nctx = NumberContext()
     for field_path, text in _collect_text_fields(section, content):
         # context_notes strings are report prose (field class `notes`, same rules as roles notes;
         # list items get the T30 list-actor check); the other sections keep their path as field.
@@ -341,15 +347,8 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
                 pos=v.span[0],
                 token=(v.match[:40] if v.match else ""),
             ).envelope())
-        for v in lex_numbers(text):
-            violations.append(ReviewError(
-                v.code, rule=v.rule_id,
-                match=v.match[:80] if v.match else "",
-                token=v.match[:40] if v.match else "",
-                field=field_path,
-                cp=(v.match[:5] if v.match else ""),
-                pos=v.span[0],
-            ).envelope())
+        for v in lex_numbers(text, nctx):
+            violations.append(number_error(v, field_path, nctx))
 
     if violations:
         return {"accepted": False, "errors": violations}

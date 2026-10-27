@@ -854,3 +854,56 @@ class TestWriteTimeParityWithLateGate:
         )
         t27 = [v for v in vs if v.rule_id == "T27"]
         assert t27, "T27 must fire on 'book a call' CTA phrase at write time"
+
+
+# ── T13 compounds and T24 `never` (matrix run 2026-10-26) ───────────────────
+
+class TestT13HyphenatedTerms:
+    @pytest.mark.parametrize("text", [
+        "The performance fee baseline has no high-water mark.",
+        "A low-level call forwards all gas.",
+        "The medium-term lock keeps the shares.",
+    ])
+    def test_hyphenated_term_is_not_a_severity_word(self, text):
+        assert "T13" not in rules(text, "model")
+
+    @pytest.mark.parametrize("text", [
+        "This is a high-risk path.",
+        "A low-severity note.",
+        "The impact is high.",
+        "high water mark",
+    ])
+    def test_severity_claims_still_fire(self, text):
+        assert "T13" in rules(text, "model")
+
+
+class TestT24NeverBindsToAKind:
+    @pytest.mark.parametrize("text", [
+        "The matrix level can never cycle again.",
+        "The increment is never undone.",
+        "Never revert inside the accrual.",
+        "The transaction never succeeds after the price moves.",
+    ])
+    def test_never_as_behaviour_is_not_an_absence_claim(self, text):
+        assert "T24" not in rules(text, "model", field="description")
+
+    @pytest.mark.parametrize("text", [
+        "The snapshot is never updated after exclusion.",
+        "The caller is never checked on this path.",
+        "lastSharePrice is never reset.",
+        "The hook is never actually called.",
+        "The bound is nowhere enforced.",
+    ])
+    def test_never_denying_a_read_write_call_or_check_still_binds(self, text):
+        assert "T24" in rules(text, "model", field="description")
+
+    def test_anyone_can_still_needs_a_claim(self):
+        assert "T24" in rules("Anyone can trigger the reset with a few-wei donation.", "model", field="title")
+        vs = [v for v in check_text("Anyone can trigger the reset.", "model", CheckContext(field="title"))
+              if v.rule_id == "T24"]
+        assert vs and vs[0].code == "E_ABSENCE_UNRESOLVED" and vs[0].match.lower() == "anyone can"
+
+    def test_bound_claim_still_passes(self):
+        claims = [{"says": "anyone can trigger the reset", "kind": "all_paths_unguarded",
+                   "target": "caller_check", "scope": "entry_function", "entry": "Vault.reset()"}]
+        assert "T24" not in rules("Anyone can trigger the reset.", "model", field="title", absence_claims=claims)

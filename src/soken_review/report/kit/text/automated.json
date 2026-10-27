@@ -176,5 +176,36 @@
    "not_applicable": "Not applicable",
    "not_answered": "Not answered"
   }
+ },
+ "dep_match_reasons": {
+  "match_rebuild": "The pinned source was rebuilt with the recorded compiler and settings; the result equals the deployed code.",
+  "rebuild_differs": "The pinned source was rebuilt with the recorded compiler and settings; the result differs from the deployed code.",
+  "differs": "The rebuilt code differs from the deployed code.",
+  "no_deployment_given": "No deployment was given, so the rebuilt code was not compared with a chain.",
+  "no_deployed_code": "The address holds no deployed code to compare against.",
+  "no_source_found": "No source was found for the deployed code.",
+  "no_checkable_source": "No source could be rebuilt and compared with the deployed code.",
+  "source_not_owner_linked": "The source is not linked to the deployer or owner of the address.",
+  "source_toolchain_gap": "The compiler version of the source is not installed, so the rebuild was skipped; a third party attests the match.",
+  "source_not_rebuilt": "The source was not rebuilt in this run.",
+  "untrusted_inputs": "The build inputs are not trusted, so no comparison was made.",
+  "build_failed": "The build of the pinned source failed, so no comparison was made.",
+  "settings_unknown": "The compiler settings are unknown, so the rebuild could not be compared.",
+  "build_settings_unknown": "The compiler settings are unknown, so the rebuild could not be compared.",
+  "compiler_binary_missing": "The exact compiler binary is not available, so no rebuild was made.",
+  "tron_compiler_unmapped": "The TRON compiler version has no mapped build, so no rebuild was made.",
+  "tron_compiler_ambiguous": "The TRON compiler version maps to more than one build, so no rebuild was made.",
+  "auxdata_rule_missing": "No metadata masking rule exists for this compiler, so no comparison was made.",
+  "state_changed_during_read": "The chain state changed while it was read, so no comparison was made.",
+  "package_not_found": "The package was not found on chain.",
+  "other": "Comparison outcome recorded as {code}."
+ },
+ "scope_reasons": {
+  "test_or_mock_dir": "Test or mock contract under a test or mocks directory; excluded from the review by the scope rules",
+  "mock_name": "Mock or test contract by file name; excluded from the review by the scope rules",
+  "test_harness": "Test harness importing a test framework; excluded from the review by the scope rules",
+  "other": "Excluded from the review by the scope rules",
+  "more": "{n} more files excluded from the review by the scope rules",
+  "more_path": "further files"
  }
 }

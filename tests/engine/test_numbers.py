@@ -4,6 +4,8 @@ Plan: 04 §6.1 (scope), §6.2 (lexer L0-L9b), §6.3 (allowed set), §6.4 (placeh
 """
 from __future__ import annotations
 
+import pytest
+
 from soken_review.engine.numbers import (
     NumberContext,
     lex_numbers,
@@ -463,3 +465,55 @@ class TestFailClosed:
         ctx = NumberContext(quoted_line_ranges=[("src/A.sol", 10, 20)])
         assert any(v.code == "E_LINEREF_OUTSIDE" for v in lex_numbers("See lines 12 and 90.", ctx))
         assert not any(v.code == "E_LINEREF_OUTSIDE" for v in lex_numbers("See lines 12 and 15.", ctx))
+
+
+# ── Identifiers and qualitative factor words (matrix run 2026-10-26) ─────────
+
+class TestIdentifiersWithDigitsAgainstTheWordSet:
+    WORDS = frozenset({"ERC20Burnable", "claim_v2", "u5", "u6", "ANTToken"})
+
+    @pytest.mark.parametrize("text", [
+        "The contract inherits ERC20Burnable and Pausable",
+        "the claim_v2 handler skips the signer check",
+        "fields u5 and u6 are never reset",
+    ])
+    def test_identifier_in_the_word_set_passes(self, text):
+        assert passes(text, word_set=self.WORDS)
+
+    def test_identifier_outside_the_word_set_is_still_unsourced(self):
+        vs = lex_numbers("the claim_v3 handler", NumberContext(word_set=self.WORDS))
+        assert [(v.code, v.rule_id, v.match) for v in vs] == [("E_NUMBER_UNSOURCED", "L7", "claim_v3")]
+
+    def test_without_a_word_set_identifiers_are_flagged(self):
+        # the tools always pass the job word set (mapping.step.job_number_context); bare use keeps the rule
+        assert "E_NUMBER_UNSOURCED" in error_codes("ERC20Burnable")
+
+
+class TestQualitativeHalfAndDouble:
+    @pytest.mark.parametrize("text", [
+        "the burn is double-counted in the reflection path",
+        "a double-spend of the same receipt",
+        "the socket stays half-open after the failed send",
+        "rewards are counted double when the pool is empty",
+        "double counting of the burn amount",
+        "a double entry in the ledger for each transfer",
+        "the second half of the function never runs the check",
+    ])
+    def test_qualitative_use_passes(self, text):
+        assert passes(text)
+
+    @pytest.mark.parametrize("text", [
+        "the fee is double the limit",
+        "half the supply is burned",
+        "half of the deposit goes to the treasury",
+        "a two-fold increase",
+        "a half-percent fee",
+        "double the tokens are minted",
+    ])
+    def test_amount_use_is_still_rejected(self, text):
+        codes = error_codes(text)
+        assert "E_NUMBER_FORMAT" in codes or "E_NUMBER_UNSOURCED" in codes
+
+    def test_halves_and_quarters_stay_magnitude_words(self):
+        assert "E_NUMBER_FORMAT" in error_codes("split into halves")
+        assert "E_NUMBER_FORMAT" in error_codes("a quarter of the pool")

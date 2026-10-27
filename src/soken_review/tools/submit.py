@@ -46,11 +46,12 @@ from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
 from ..mapping.build import load_map
 from ..mapping.semantic_evm import detect_token_review, units_holding
-from ..mapping.step import load_flags
+from ..mapping.step import job_number_context, load_flags
 from ..pinning.quote_match import QuoteMatchError, quote_match
 from ..pinning.store import PinnedSource
 from ..server import handler
 from .context import JobContext
+from .number_errors import number_error
 
 RUBRIC_DIR = Path(__file__).resolve().parents[3] / "contract" / "rubric"
 
@@ -723,19 +724,12 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                 ):
                     violations.append(_violation_to_error(v, field=field_name))
 
-            # V6: number check on every prose field
+            # V6: number check on every prose field, with the job's word set so identifiers that
+            # carry a digit are not read as numbers (04 6.2 L7)
+            nctx = job_number_context(pin_root, job_id)
             for field_name, field_text in _iter_text_fields(args):
-                for v in lex_numbers(field_text):
-                    violations.append(
-                        ReviewError(
-                            v.code, rule=v.rule_id,
-                            match=v.match[:80] if v.match else "",
-                            token=v.match[:40] if v.match else "",
-                            field=field_name,
-                            cp=(v.match[:5] if v.match else ""),
-                            pos=v.span[0],
-                        ).envelope()
-                    )
+                for v in lex_numbers(field_text, nctx):
+                    violations.append(number_error(v, field_name, nctx))
 
             # V7.5: trigger check against semantic map.
             # FileNotFoundError = map worker not run; degrade to map_unavailable=True (K10
