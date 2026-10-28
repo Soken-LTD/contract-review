@@ -829,9 +829,15 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             except (OSError, ValueError) as exc:
                 raise ReviewError("E_INTERNAL", incident=f"flags.json unreadable: {exc!s:.80}") from exc
             j1_flags = [f for f in _raw_flags if f.get("rule") == "J1"]
-            combined_text = "\n".join(t for _, t in _iter_text_fields(text_args))
-            for v in check_echo(combined_text, j1_flags):
-                gate.violation(v, None)
+            # Both forms: a publication rewrite (audit -> review, dashes) must never turn an echoed
+            # injected span into one the 6-word match misses (security review 2026-10-28).
+            seen_echo: set[str] = set()
+            for src_args in (args, text_args):
+                combined_text = "\n".join(t for _, t in _iter_text_fields(src_args))
+                for v in check_echo(combined_text, j1_flags):
+                    if v.match not in seen_echo:
+                        seen_echo.add(v.match)
+                        gate.violation(v, None)
 
             # V5: text gate (FULL model scope) on every prose field.  check_model_field
             # enforces all rules including T24/T29/T31 (no LATE_GATE_SKIP at write time,
