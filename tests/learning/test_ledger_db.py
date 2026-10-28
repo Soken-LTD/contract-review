@@ -289,3 +289,30 @@ async def test_judge_import_tags_the_target_and_feeds_protection(db_pool):
         assert "Apyee" not in " ".join(_all_text(row)) and "0xabc" not in " ".join(_all_text(row))
         await conn.execute("delete from judge_verdicts where round = 'r4-test'")
         await conn.set_autocommit(False)
+
+
+@ASYNC
+async def test_advisory_warnings_are_copied_as_friction_without_text_and_survive_purge(db_pool):
+    import json as _json
+
+    from soken_review.tools.delete import purge_job
+
+    job_id, _ = await _ready_job(db_pool, with_pin=False)
+    warn = [{"code": "E_TEXT_GATE", "class": "advisory", "rule": "T13", "field": "body.description",
+             "what": f"{_TITLE} uses a major claim", "suggest": "reword", "match": "reentrancy guard"}]
+    async with db_pool.connection() as conn:
+        principal = (await (await conn.execute("select principal_key from jobs where job_id = %s", (job_id,))).fetchone())[0]
+        await conn.execute("insert into gate_warnings (job_id, tool, owner_key, revision, warnings)"
+                           " values (%s, 'review_submit_finding', 'draft-info', 0, %s::jsonb)", (job_id, _json.dumps(warn)))
+        await ledger.record_job(conn, job_id, "finalize")
+        await ledger.record_job(conn, job_id, "finalize")                     # replaced, not doubled
+    async with db_pool.connection() as conn, conn.transaction():
+        await purge_job(conn, job_id, reason="expiry", to_state="expired")
+    async with db_pool.connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("select * from gate_events where job_tag = any(%s)", (job_tags(job_id),))
+            rows = await cur.fetchall()
+        assert [(r["kind"], r["error_code"], r["rule_id"], r["warning_class"], r["field"]) for r in rows] == \
+            [("warning", "E_TEXT_GATE", "T13", "advisory", "body.description")]
+        assert (await (await conn.execute("select count(*) from gate_warnings where job_id = %s", (job_id,))).fetchone())[0] == 0
+        await _assert_anonymous(conn, job_id, principal)

@@ -755,6 +755,10 @@ def context_documents(entries: list[dict[str, Any]], today: date) -> list[dict[s
     return rows
 
 
+_NOT_TAKEN_KINDS = frozenset({"leads_not_triaged", "challenge_not_answered", "coverage_na_unconfirmed",
+                              "roles_notes_missing", "drafts_not_accepted", "walks_not_answered"})
+
+
 def context_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Declared-vs-observed rows (spec 6) in report shape. The claim is server text from the fixed
     claim set; a row with an unknown status or an empty claim is a compare bug and fails assembly."""
@@ -1251,6 +1255,12 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     }
     if lower:
         report["review_coverage"]["rule_tiers"] = {"version": tier_summary["version"][:40], "lower_priority": len(lower)}
+    # Coverage note (never-worse, gate_policy.yaml finalize_checks): the advisory steps the requester's
+    # session did not take, as finalize recorded them. Server data, printed from kit text.
+    not_taken = [{"kind": str(g["kind"]), "count": max(1, int(g.get("count") or 1))}
+                 for g in (job.get("coverage_gaps") or []) if isinstance(g, dict) and g.get("kind") in _NOT_TAKEN_KINDS]
+    if not_taken:
+        report["review_coverage"]["not_taken"] = not_taken[:9]
     walk_rows = invariant_walk_rows(load_lifecycle(pin_root, job_id), sections.get("invariant_walks"), keymap)
     if walk_rows:
         report["review_coverage"]["invariant_walks"] = walk_rows

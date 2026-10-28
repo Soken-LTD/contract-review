@@ -33,11 +33,13 @@ from psycopg.rows import dict_row
 from .. import quota
 from ..db.job_repo import JobRepo
 from ..db.pool import get_pool
+from ..engine import gate_policy
 from ..engine.claims import check_owner_deployer
 from ..engine.injection import check_echo
-from ..engine.numbers import NumberContext, lex_numbers
+from ..engine.numbers import NumberContext
+from ..engine.numbers import lex_numbers as _lex_numbers_all
 from ..engine.severity import SeverityContext, compute_severity
-from ..engine.text_gate import check_model_field
+from ..engine.text_gate import check_model_field as _check_model_field_all
 from ..errors import ReviewError
 from ..learning import ledger
 from ..mapping.build import load_map
@@ -50,8 +52,32 @@ from .context import JobContext
 from .coverage import EnumsLoadError, category_allowed_na_reasons, compute_coverage_rows
 from .number_errors import claim_error, number_error
 from .set_section import _check_na_predicate_for_section, _claim_text_fields
-from .submit import _category_info, _family_from_chain, _iter_text_fields, _job_facts
+from .submit import (
+    _category_info,
+    _family_from_chain,
+    _iter_text_fields,
+    _job_facts,
+    finding_number_context,
+    store_warnings,
+)
 from .walks import latest_rows, load_drafts, open_walks, walk_index
+
+# Advisory text and number rules never refuse finalize (gate_policy.yaml); the pre-freeze gate runs the
+# same engines and keeps the blocking hits only. The advisory hits were returned as warnings when the
+# text was written.
+
+
+def _blocking_hits(vs: list[Any], field: str | None) -> list[Any]:
+    return [v for v in vs if gate_policy.is_blocking(v.code, v.rule_id)
+            and not gate_policy.is_exempt(v.code, v.rule_id, field)]
+
+
+def check_model_field(text: str, field: str | None = None, **kw: Any) -> list[Any]:
+    return _blocking_hits(_check_model_field_all(text, field=field, **kw), field)
+
+
+def lex_numbers(text: str, ctx: NumberContext | None = None) -> list[Any]:
+    return _blocking_hits(_lex_numbers_all(text, ctx), None)
 
 _pool: psycopg_pool.AsyncConnectionPool | None = None
 _ctx: JobContext | None = None
@@ -178,7 +204,8 @@ async def compute_finalize_checks(
         chain_broken = (await cur.fetchone())[0]
 
     f2_open = bool(open_hm + chain_broken)
-    checks.append({"id": "F2", "open": int(f2_open), **({"tool": "review_dismiss_lead"} if f2_open else {})})
+    checks.append({"id": "F2", "open": int(f2_open), "count": int(open_hm + chain_broken),
+                   **({"tool": "review_dismiss_lead"} if f2_open else {})})
 
     # F3: findings in needs_challenge
     async with conn.cursor() as cur:
@@ -188,7 +215,8 @@ async def compute_finalize_checks(
         )
         f3_count = (await cur.fetchone())[0]
     f3_open = f3_count > 0
-    checks.append({"id": "F3", "open": int(f3_open), **({"tool": "review_answer_challenge"} if f3_open else {})})
+    checks.append({"id": "F3", "open": int(f3_open), "count": int(f3_count),
+                   **({"tool": "review_answer_challenge"} if f3_open else {})})
 
     # F4: promoted leads whose draft is withdrawn (invariant)
     async with conn.cursor() as cur:
@@ -307,7 +335,7 @@ async def compute_finalize_checks(
     f9_open_ids: list[str] = []
     if walk_index(_f9_lc):
         f9_open_ids = open_walks(_f9_lc, await latest_rows(conn, job_id), await load_drafts(conn, job_id))
-    checks.append({"id": "F9", "open": len(f9_open_ids), **(
+    checks.append({"id": "F9", "open": len(f9_open_ids), "count": len(f9_open_ids), **(
         {"tool": "review_set_section", "section": "invariant_walks",
          "reason": "unanswered invariant walks: " + ", ".join(f9_open_ids[:12])} if f9_open_ids else {}
     )})
@@ -320,8 +348,13 @@ async def compute_finalize_checks(
         )
         f8_count = (await cur.fetchone())[0]
     f8_open = f8_count > 0
-    checks.append({"id": "F8", "open": int(f8_open), **({"tool": "review_submit_finding"} if f8_open else {})})
+    checks.append({"id": "F8", "open": int(f8_open), "count": int(f8_count),
+                   **({"tool": "review_submit_finding"} if f8_open else {})})
 
+    # Gate policy (never-worse): every check says whether it refuses finalize. Advisory checks are
+    # recommendations; finalize lists them in coverage_gaps and the report prints the coverage note.
+    for c in checks:
+        c["blocking"] = gate_policy.finalize_check_blocks(c["id"])
     return checks
 
 
@@ -440,25 +473,37 @@ async def _assign_final_ids(
             ca_items = ca_row["items"] if isinstance(ca_row["items"], list) else []
             ca_answers = ca_row["answers"] if isinstance(ca_row["answers"], list) else []
             ca_by_id = {a["item_id"]: a for a in ca_answers if isinstance(a, dict)}
+            # Only verified answers count (an answer stored before 2026-10-27 has no flag: verified).
             downgrade_count = sum(
                 1 for item in ca_items
                 if isinstance(item, dict) and item.get("kind") == "downgrade"
                 and ca_by_id.get(item.get("id", ""), {}).get("value") == "present"
+                and ca_by_id.get(item.get("id", ""), {}).get("verified", True)
+            )
+            open_downgrade = any(
+                isinstance(item, dict) and item.get("kind") == "downgrade"
+                and not ca_by_id.get(item.get("id", ""), {}).get("verified", item.get("id") in ca_by_id)
+                for item in ca_items
             )
             scope_not_cov = any(
                 isinstance(item, dict) and item.get("scope", {}).get("not_covered", False)
                 for item in ca_items
             )
         else:
-            # No challenge taken (Low/Info findings go directly to accepted)
+            # No challenge taken: Low/Info findings go directly to accepted; a Medium or above draft
+            # skipped its optional challenge (never-worse), so its downgrade items stay open (K8).
             downgrade_count = 0
             scope_not_cov = False
+            open_downgrade = d.get("status") == "needs_challenge" or _SEV_RANK.get(
+                d.get("submit_severity") or "Informational", 0) >= _SEV_RANK["Medium"]
 
         sev_ctx = SeverityContext(
             phase="finalize",
             evidence_level=ev_level,
             has_attack_steps=has_attack_steps,
-            open_downgrade_item=False,          # F3 guarantees no needs_challenge
+            open_downgrade_item=open_downgrade,  # an unanswered optional challenge keeps them open (K8)
+            # never-worse: an unchallenged draft keeps its severity; K4 does not cap it
+            challenge_skipped=ev_level == "reasoning_only",
             downgrade_items_present=downgrade_count,
             scope_not_covered=scope_not_cov,    # from challenge_answers items
             map_unavailable=map_unavail,
@@ -539,8 +584,9 @@ async def _assign_final_ids(
     carried_lead_final_ids: list[dict[str, Any]] = []
 
     for lead in open_leads:
-        if lead["origin"] == "analyzer" and lead["severity_norm"] in ("Low", "Info"):
-            # Auto-close as not_reviewed
+        if lead["origin"] == "analyzer":
+            # Auto-close as not_reviewed: Low and Info always; High and Medium since 2026-10-27
+            # (F2 is advisory, the coverage note counts them)
             await conn.execute(
                 "update leads set state = 'not_reviewed' where job_id = %s and lead_id = %s",
                 (job_id, lead["lead_id"]),
@@ -630,9 +676,18 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
         )
         drafts = await cur.fetchall()
 
+    draft_keys = frozenset(d["draft_key"] for d in drafts)
     for d in drafts:
         content = d["content"] or {}
         finding_ref = f"F-{d['finding_no']:02d}"
+        # The finding's own number context (quoted lines, line ranges, facts), the same one submit
+        # used, so finalize never refuses a number submit accepted.
+        try:
+            fctx = finding_number_context(_get_ctx().get_pin_root(), job_id,
+                                          [q for q in (content.get("quotes") or []) if isinstance(q, dict)],
+                                          draft_keys)
+        except Exception:  # noqa: BLE001 - no pin root (unit tests): the job context
+            fctx = nctx
         # Extract absence_claims from stored content so T24 can bind them (04 §7.6).
         absence_claims: list[dict[str, str]] = content.get("absence_claims") or []
 
@@ -647,8 +702,8 @@ async def _check_gate_violations(conn: psycopg.AsyncConnection, job_id: str, pro
 
         # ── V6: number check on all prose fields via shared walker ───────────
         for field_name, field_text in _iter_text_fields(content):
-            for v in lex_numbers(field_text, nctx):
-                errors.append(number_error(v, field_name, nctx,
+            for v in lex_numbers(field_text, fctx):
+                errors.append(number_error(v, field_name, fctx,
                                            hint=f"{finding_ref}.{field_name}: number rule {v.rule_id}"))
             # V6b: owner/deployer identity claims against the recorded facts (same check as submit)
             for v in check_owner_deployer(field_text, job_facts):
@@ -932,8 +987,14 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
 async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], job_id: str) -> dict[str, Any]:
     """Checks, pre-freeze gate, quota, final ids and the render queue for a ready job (job row locked)."""
     # ── Run finalize checks ────────────────────────────────────────
+    # Gate policy (never-worse): only blocking checks refuse (F1 no source, F4 server invariant, F6
+    # unresolved placeholder). Advisory checks are recorded as coverage gaps and printed as the
+    # report's coverage note; finalize never refuses on ceremony.
     checks = await compute_finalize_checks(conn, job_id)
-    open_checks = [c for c in checks if c["open"]]
+    open_checks = [c for c in checks if c["open"] and c.get("blocking", True)]
+    gaps = [{"check": c["id"], "kind": gate_policy.finalize_check(c["id"]).get("kind", c["id"]),
+             "count": int(c.get("count") or c["open"] or 1)}
+            for c in checks if c["open"] and not c.get("blocking", True)]
 
     if open_checks:
         items = [
@@ -944,12 +1005,14 @@ async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], jo
             "accepted": False,
             "errors": [ReviewError("E_FINALIZE_OPEN", items=str([c["id"] for c in open_checks[:40]])).envelope()],
             "items": items,
+            **({"coverage_gaps": gaps} if gaps else {}),
         }
 
     # ── Pre-freeze text gate (04 §11.4 render parity) ─────────────
     # Run the full model-scope text gate on all report prose before freezing so
     # a render-time late_gate failure can never happen on text that passed write
     # time (e.g. a T27 phrase added to the rule list after the finding was submitted).
+    # Blocking rules only (gate_policy.yaml); advisory rules were warnings at write time.
     job_profile = "owner" if job.get("ownership_proven") else "public_review"
     gate_errors = await _check_gate_violations(conn, job_id, job_profile)
     if gate_errors:
@@ -976,8 +1039,22 @@ async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], jo
         (report_id, job_id),
     )
 
+    # Advisory gaps the freeze resolves: an unanswered optional challenge is accepted as filed, a
+    # not-applicable coverage row the map no longer confirms is dropped (it prints as not covered).
+    await _accept_unchallenged(conn, job_id)
+    if any(g["check"] == "F5" for g in gaps):
+        await _drop_unconfirmed_na_rows(conn, job_id, job.get("chain"))
+
     # Assign final ids, close open leads
     final_ids, _carried, leads_not_reviewed = await _assign_final_ids(conn, job_id)
+    await conn.execute("update jobs set coverage_gaps = %s where job_id = %s",
+                       (psycopg.types.json.Jsonb(gaps), job_id))
+    if gaps:
+        await store_warnings(conn, job_id, "review_finalize", job_id, None,
+                             [{"code": "E_FINALIZE_OPEN", "class": "advisory", "rule": g["check"],
+                               "what": f"{g['kind']}: {g['count']}",
+                               "suggest": str(gate_policy.finalize_check(g["check"]).get("why", ""))[:300]}
+                              for g in gaps])
 
     # Transition: ready -> finalized
     repo = JobRepo(conn)
@@ -997,7 +1074,47 @@ async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], jo
         "final_ids": final_ids,
         "leads_not_reviewed": leads_not_reviewed,
         "poll_after_s": 2,
+        **({"coverage_gaps": gaps} if gaps else {}),
     }
+
+
+async def _accept_unchallenged(conn: psycopg.AsyncConnection, job_id: str) -> None:
+    """needs_challenge drafts at finalize: the challenge is optional (gate_policy.yaml F3), so the
+    draft is accepted as filed; its severity is recomputed at finalize with evidence as it stands."""
+    await conn.execute(
+        "update finding_drafts set status = 'accepted' where job_id = %s and status = 'needs_challenge'",
+        (job_id,),
+    )
+
+
+async def _drop_unconfirmed_na_rows(conn: psycopg.AsyncConnection, job_id: str, chain: str | None) -> None:
+    """F5 advisory: keep the coverage rows whose not-applicable predicate still holds; the others
+    print as not covered. Stored as a new section revision, so the history is kept."""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """select revision, content from sections where job_id = %s and section = 'coverage'
+               order by revision desc limit 1""", (job_id,))
+        row = await cur.fetchone()
+    if not row:
+        return
+    family = _family_from_chain(chain)
+    try:
+        map_doc, _ = load_map(_get_ctx().get_pin_root(), job_id)
+    except FileNotFoundError:
+        map_doc = None
+    keep = []
+    for na in row["content"] or []:
+        reason, area = na.get("reason", ""), na.get("area_id", "")
+        if reason and area and reason in category_allowed_na_reasons(family, area) \
+                and _check_na_predicate_for_section(reason, family, map_doc) == "true":
+            keep.append(na)
+    if len(keep) == len(row["content"] or []):
+        return
+    digest = hashlib.sha256(json.dumps(keep, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    await conn.execute(
+        "insert into sections (job_id, section, revision, content, content_hash) values (%s, 'coverage', %s, %s, %s)",
+        (job_id, row["revision"] + 1, psycopg.types.json.Jsonb(keep), digest),
+    )
 
 
 async def _stored_finalize_result(

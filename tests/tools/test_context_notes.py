@@ -93,11 +93,14 @@ async def test_context_notes_text_gate_and_number_gate(db_pool):
     ss, job_id = await _wired(db_pool)
     em = await ss.handle_review_set_section({"job_id": job_id, "section": "context_notes",
                                              "content": [{"ul": ["Supply is fixed " + chr(0x2014) + " per the whitepaper."]}]})
-    assert em["accepted"] is False and em["errors"][0]["code"].startswith("E_TEXT")
+    # never-worse: the em dash is rewritten for publication (T1) and stored with a warning
+    assert em["accepted"] is True and em["warnings"][0]["class"] == "rewrite", em
     num = await ss.handle_review_set_section({"job_id": job_id, "section": "context_notes",
                                               "content": [{"table": {"head": ["Fee"], "rows": [["The whitepaper says 25 bps"]]}}]})
+    # an unsourced digit is still blocking (evidence integrity)
     assert num["accepted"] is False and num["errors"][0]["code"].startswith("E_NUMBER")
-    assert await _stored(db_pool, job_id) == []
+    stored = await _stored(db_pool, job_id)
+    assert len(stored) == 1 and chr(0x2014) not in json.dumps(stored, ensure_ascii=False)
 
 
 @ASYNC

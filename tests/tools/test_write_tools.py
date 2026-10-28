@@ -834,8 +834,9 @@ async def test_review_set_section_coverage_na_on_read_category_rejected(db_pool)
                      "note": "Attempting to mark as N/A but category is fully read."}],
     })
 
-    assert result["accepted"] is False
-    assert result["errors"][0]["code"] == "E_COVERAGE_NA_UNCONFIRMED"
+    # never-worse: an unconfirmed not-applicable row is dropped with a warning, nothing is refused
+    assert result["accepted"] is True and result.get("stored") is False, result
+    assert result["warnings"][0]["code"] == "E_COVERAGE_NA_UNCONFIRMED"
 
 
 @ASYNC
@@ -861,8 +862,9 @@ async def test_review_set_section_coverage_reason_for_wrong_category_rejected(db
                      "note": "Trying to use reentrancy reason on access-control category."}],
     })
 
-    assert result["accepted"] is False
-    assert result["errors"][0]["code"] == "E_COVERAGE_NA_UNCONFIRMED"
+    # never-worse: an unconfirmed not-applicable row is dropped with a warning, nothing is refused
+    assert result["accepted"] is True and result.get("stored") is False, result
+    assert result["warnings"][0]["code"] == "E_COVERAGE_NA_UNCONFIRMED"
 
 
 @ASYNC
@@ -885,8 +887,9 @@ async def test_review_set_section_coverage_category_with_no_na_entries_rejected(
                      "note": "Oracle category has no allowed N/A reasons at all."}],
     })
 
-    assert result["accepted"] is False
-    assert result["errors"][0]["code"] == "E_COVERAGE_NA_UNCONFIRMED"
+    # never-worse: an unconfirmed not-applicable row is dropped with a warning, nothing is refused
+    assert result["accepted"] is True and result.get("stored") is False, result
+    assert result["warnings"][0]["code"] == "E_COVERAGE_NA_UNCONFIRMED"
 
 
 @ASYNC
@@ -929,8 +932,9 @@ async def test_review_set_section_coverage_false_predicate_rejected(db_pool):
                      "note": "Claiming no external calls but map shows one exists."}],
     })
 
-    assert result["accepted"] is False
-    assert result["errors"][0]["code"] == "E_COVERAGE_NA_UNCONFIRMED"
+    # never-worse: an unconfirmed not-applicable row is dropped with a warning, nothing is refused
+    assert result["accepted"] is True and result.get("stored") is False, result
+    assert result["warnings"][0]["code"] == "E_COVERAGE_NA_UNCONFIRMED"
 
 
 @ASYNC
@@ -1258,9 +1262,13 @@ async def test_answer_challenge_incomplete_answers(db_pool):
         "revision": revision, "answers": partial_answers,
     })
 
-    assert result["accepted"] is False
-    codes = [e["code"] for e in result["errors"]]
+    # never-worse: a partial answer is recorded; the missing items are a warning and the evidence
+    # level is not upgraded
+    assert result["accepted"] is True, result
+    codes = [w["code"] for w in result["warnings"]]
     assert "E_CHALLENGE_INCOMPLETE" in codes
+    assert result["complete"] is False and result["items_unverified"]
+    assert result["evidence_level"] == "reasoning_only"
 
 
 @ASYNC
@@ -2171,17 +2179,15 @@ async def test_absent_answer_unread_range_e_challenge_scope(db_pool):
         "revision": ch["revision"],
         "answers": answers,
     })
-    # At least one answer must produce E_CHALLENGE_SCOPE (unread refs)
-    assert ans["accepted"] is False, (
-        f"Expected rejection for unread refs, got accepted=True: {ans}"
-    )
-    all_codes = [e["code"] for e in ans.get("errors", [])]
-    assert "E_CHALLENGE_SCOPE" in all_codes, (
-        f"Expected E_CHALLENGE_SCOPE in errors, got: {all_codes}"
-    )
-    # the envelope names the failing item (a reviewer re-filed the wrong answers without it)
-    scope_err = next(e for e in ans["errors"] if e["code"] == "E_CHALLENGE_SCOPE")
-    assert scope_err["what"].startswith(f"Item {target['id']}:"), scope_err
+    # never-worse: the unread-refs answer is recorded as unverified with an E_CHALLENGE_SCOPE warning;
+    # it has no effect and the evidence level is not upgraded
+    assert ans["accepted"] is True, ans
+    all_codes = [w["code"] for w in ans.get("warnings", [])]
+    assert "E_CHALLENGE_SCOPE" in all_codes, f"Expected E_CHALLENGE_SCOPE warning, got: {all_codes}"
+    # the warning names the failing item (a reviewer re-filed the wrong answers without it)
+    scope_w = next(w for w in ans["warnings"] if w["code"] == "E_CHALLENGE_SCOPE")
+    assert scope_w["what"].startswith(f"Item {target['id']}:"), scope_w
+    assert target["id"] in ans["items_unverified"] and ans["complete"] is False
 
 
 @ASYNC

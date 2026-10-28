@@ -1,0 +1,252 @@
+# rubric/gate_policy.yaml (never-worse, CEO direction 2026-10-27 section A). Reference data, read by
+# engine/gate_policy.py. Every rejection review_submit_finding, review_set_section, review_answer_challenge
+# and review_finalize can return is listed here with its class and a one-line rationale:
+#
+#   blocking  evidence integrity or publication safety: the call is refused, nothing is stored.
+#   advisory  the call succeeds; the result carries a warning (rule id, matched text, suggested rewording)
+#             and the server stores it. Finalize never refuses on an advisory item; the report prints a
+#             coverage note for the steps that were not taken.
+#   rewrite   the call succeeds; the server rewrites the matched text for publication (outside code spans
+#             and placeholders) and returns a warning naming the old and the new text.
+#
+# A code or rule that is not listed is blocking (fail closed); tests/engine/test_gate_policy.py asserts
+# that every code a write tool can return has a row. A violation that carries a rule id is classified by
+# its explicit `rules` row only: a rule id with no row is blocking (fail closed), whatever its code's class,
+# so a new rule cannot become advisory by accident (tests/engine/test_gate_policy.py collects every rule id
+# the engines emit and asserts each has a row). The code row classifies rejections without a rule id.
+# `exempt_fields` lists prose fields where the rule does not apply at all.
+version: 1
+default_class: blocking
+
+codes:
+  # ── Evidence integrity: the quote, the file and the range must match the pinned source ──────────────
+  E_QUOTE_MISMATCH: {class: blocking, why: "A quote that does not match the pinned lines would print code the contract does not contain."}
+  E_QUOTE_ELISION: {class: blocking, why: "More than one elision makes the printed quote unverifiable against the pinned lines."}
+  E_QUOTE_TOO_LONG: {class: blocking, why: "The report prints at most 40 quoted lines; a longer quote cannot be printed as evidence."}
+  E_QUOTE_TRIVIAL: {class: blocking, why: "A quote with no code tokens is not evidence of the finding."}
+  E_FILE_UNKNOWN: {class: blocking, why: "A path that is not pinned cannot be printed as evidence."}
+  E_RANGE_INVALID: {class: blocking, why: "A range outside the file cannot be printed as evidence."}
+  E_FILE_OUT_OF_SCOPE: {class: blocking, why: "The report prints the reviewed scope; a finding located in a file outside it contradicts that table."}
+  E_INVALID_ARGUMENT: {class: blocking, why: "The argument does not have the shape the server stores; nothing can be kept."}
+  E_CATEGORY_UNKNOWN: {class: blocking, why: "Severity and the checklist are computed from the category; an unknown id cannot be classified."}
+  E_FIELD_FIXED: {class: blocking, why: "Server drafts carry analyzer evidence that the reviewer may not change."}
+  E_DISPROVED_LOCKED: {class: blocking, why: "The reviewer's own answered kill item disproved this range; printing it again contradicts the record."}
+  E_REVISION_CONFLICT: {class: blocking, why: "A stale revision would overwrite a newer one."}
+  E_RETRY_BUDGET: {class: blocking, why: "Rate limit on rejected calls per draft; advisory warnings never count against it."}
+  E_DRAFT_STATUS: {class: blocking, why: "The draft has no open checklist to answer."}
+  E_FINDING_NOT_FOUND: {class: blocking, why: "The draft does not exist."}
+  E_LEAD_NOT_FOUND:
+    class: advisory
+    why: "An unknown or already used lead is dropped from the link; the finding is kept without the analyzer evidence level."
+  E_LEAD_NO_OVERLAP:
+    class: advisory
+    why: "A lead that does not overlap a location quote is dropped from the link; the finding is kept without the analyzer evidence level."
+  E_CATEGORY_MISMATCH:
+    class: advisory
+    why: "A lead of another category is dropped from the link; the finding is kept without the analyzer evidence level."
+
+  # ── Facts and numbers: a printed figure must come from a recorded fact, the quoted code or a calc ──
+  E_NUMBER_UNSOURCED:
+    class: blocking
+    why: "A digit in report text must come from a recorded fact, a quoted code line or a calc placeholder."
+    rules:
+      L0: {class: blocking, why: "A placeholder naming a fact key the job does not have cannot expand."}
+      L8c: {class: blocking, why: "A bare digit not on a quoted line and not a recorded fact is an unsourced printed figure."}
+      L7: {class: advisory, why: "A word with a digit (V2, Uniswap V3, an external contract name) is a name, not a printed quantity."}
+      L9: {class: advisory, why: "A number word followed by a unit is reasoning prose; the PDF prints it as the reviewer's statement and the warning asks for a fact when it is an amount."}
+  E_NUMBER_FORMAT:
+    class: blocking
+    why: "A percent, currency, magnitude suffix or malformed digit group is a printed amount without a source."
+    rules:
+      U: {class: blocking, why: "Non-ASCII numerals render outside the embedded fonts and can spoof a value."}
+      L8: {class: blocking, why: "A malformed digit group prints an ambiguous value."}
+      L8a: {class: blocking, why: "A currency amount is a printed figure without a source."}
+      L8b: {class: blocking, why: "A bare percent is a printed figure without a source."}
+      L8d: {class: blocking, why: "A magnitude suffix or digit ordinal is a printed figure without a source."}
+      L9a: {class: advisory, why: "Multiplier words (half, twice, double) are reasoning prose, not printed figures."}
+      L9b: {class: advisory, why: "Fraction words (a third of) are reasoning prose, not printed figures."}
+  E_NUMBER_UNIT: {class: blocking, why: "A unit that contradicts the identifier prints a false value."}
+  E_NUMBER_CONTEXT:
+    class: blocking
+    why: "The fact is used against its recorded meaning, so the printed value would be false."
+    rules: {L0: {class: blocking, why: "The fact is used against its recorded meaning."}}
+  E_LINEREF_OUTSIDE:
+    class: advisory
+    why: "A line reference outside the finding's quotes still points into the pinned source the reader can open; it asserts no value."
+    rules: {L5: {class: advisory, why: "A path:line reference outside the quotes asserts no value."}, L6: {class: advisory, why: "A lines N reference outside the quotes asserts no value."}}
+  E_CALC_SYNTAX:
+    class: blocking
+    why: "A calc placeholder that does not parse cannot expand; the report would print the raw token."
+    rules: {L0: {class: blocking, why: "A calc placeholder that does not parse cannot expand."}}
+  E_CALC_ROUNDING:
+    class: blocking
+    why: "The calc result cannot be printed with the requested decimals."
+    rules: {L0: {class: blocking, why: "The calc result cannot be printed with the requested decimals."}}
+  E_PLACEHOLDER_SYNTAX:
+    class: blocking
+    why: "A placeholder with one brace on a side does not expand; the report would print it as written."
+    rules: {L0: {class: blocking, why: "A half placeholder does not expand."}}
+  E_FINDING_REF_UNKNOWN:
+    class: blocking
+    why: "A finding placeholder that names no draft cannot expand."
+    rules: {L0: {class: blocking, why: "A finding placeholder that names no draft cannot expand."}}
+  E_CLAIM_UNSUPPORTED:
+    class: blocking
+    why: "The sentence contradicts the recorded on-chain accounts, so the PDF would state a false fact."
+    rules: {C1: {class: blocking, why: "Owner and deployer stated as one account against the recorded facts."}}
+  E_INJECTION_ECHO:
+    class: blocking
+    why: "The text repeats an instruction-like comment from the code; publishing it would carry the injection into the PDF."
+    rules: {V4: {class: blocking, why: "Echo of a flagged instruction-like comment."}}
+
+  # ── Text rules: style is advisory, publication safety is blocking or rewritten ───────────────────────
+  E_TEXT_CONTROL_CHAR:
+    class: blocking
+    why: "Control, format and bidi characters can hide or reorder text in the PDF (spoofing)."
+    rules: {step0: {class: blocking, why: "Control, format and bidi characters can hide or reorder text."}}
+  E_TEXT_SCRIPT:
+    class: blocking
+    why: "The PDF fonts embed Latin glyphs only and mixed scripts are a homoglyph spoofing vector."
+    rules: {step0: {class: blocking, why: "Non-Latin letters render outside the embedded fonts and can spoof identifiers."}}
+  E_CODESPAN_NOT_IN_SOURCE:
+    class: advisory
+    why: "Call syntax outside backticks is formatting; the text is printed as written."
+    rules: {T31: {class: advisory, why: "Call syntax outside backticks is formatting."}}
+  E_CODESPAN_UNGROUNDED: {class: advisory, why: "A code span not grounded in the finding's quotes is a pointer, not evidence; it is printed as written."}
+  E_ABSENCE_UNRESOLVED:
+    class: advisory
+    why: "An absence or universal phrase without an absence_claims entry is a wording choice; absence_claims is an optional evidence upgrade."
+    rules: {T24: {class: advisory, why: "An absence phrase is wording; absence_claims is an optional evidence upgrade."}}
+  E_ABSENCE_UNCHECKABLE: {class: advisory, why: "Without a map the absence claim stays the reviewer's statement; it is printed as written."}
+  E_ABSENCE_KIND: {class: advisory, why: "A mismatched claim kind drops the claim; the finding is kept."}
+  E_ABSENCE_FALSE: {class: blocking, why: "The map shows the guard the text says is absent, so the PDF would state a false fact."}
+  E_MATRIX_FIELD: {class: advisory, why: "The map disagrees with a matrix field; the severity stands with the reviewer's classification and the warning names the field."}
+  E_MATRIX_EVIDENCE: {class: advisory, why: "A matrix field without its supporting quote stands as the reviewer's classification."}
+  E_DUPLICATE: {class: advisory, why: "An overlapping finding of the same family is kept; the warning names the other draft."}
+  E_DISTINCT_INVALID: {class: advisory, why: "distinct_from is an optional assertion; the finding is kept."}
+  E_DOC_NOT_USER_SUPPLIED: {class: advisory, why: "documented_intent_ref is dropped when it does not cite a user-supplied document."}
+  E_SEVERITY_CONFIRM:
+    class: advisory
+    why: "The reviewer's severity stands within one step with its reason (RV1); further away it moves to the nearest value within one step and the warning names the computed cell."
+  E_TEXT_GATE:
+    class: advisory
+    why: "Wording rules are style; the call succeeds and the warning suggests the rewording."
+    rules:
+      T1:
+        class: rewrite
+        why: "House style prints no em dash; the server replaces it with a comma."
+      T2:
+        class: rewrite
+        why: "House style prints no en dash; a numeric range becomes 'to', any other en dash a hyphen."
+      T3:
+        class: rewrite
+        why: "House style prints no arrow glyph; the server writes 'to'."
+      T20:
+        class: rewrite
+        why: "ASCII arrows and dash code points outside code spans become 'to' or a hyphen."
+      T15:
+        class: rewrite
+        why: "Legal: the product is a review, not an audit; audit words are rewritten to review words so the PDF never claims an audit."
+      T21:
+        class: advisory
+        why: "Title shape is style (length is enforced by the input schema); a trailing period is removed when printed."
+      T13:
+        class: advisory
+        why: "Severity words in prose are style; the table carries the level."
+        exempt_fields: [severity_reason]
+      T5: {class: advisory, why: "Person (you, we) is style; the PDF prints it as written."}
+      T6: {class: advisory, why: "Banner-like wording is style; the report prints its own banner."}
+      T7: {class: advisory, why: "'reserved for' is style."}
+      T8: {class: advisory, why: "'the choice is' is style."}
+      T9: {class: advisory, why: "Naming a model or AI is style; the authorship box discloses the method."}
+      T11: {class: advisory, why: "TODO, TBD or DRAFT is unfinished wording, not a false statement."}
+      T12: {class: advisory, why: "A question mark is style."}
+      T16: {class: advisory, why: "Analyzer or model names are style; the method section names the tools."}
+      T18: {class: advisory, why: "Filler phrases are style."}
+      T19: {class: advisory, why: "A double hedge is style."}
+      T22: {class: advisory, why: "'let us' is style."}
+      T23: {class: advisory, why: "Paragraph length is style (the schema caps the characters)."}
+      T24: {class: advisory, why: "Absence phrases are wording; absence_claims is optional."}
+      T29: {class: advisory, why: "A raw finding or lead id in prose is a stale-reference risk, not a false statement."}
+      T31: {class: advisory, why: "Call syntax outside backticks is formatting."}
+      T4: {class: blocking, why: "Brand: the retired domain must never appear in a published PDF, and replacing it would change what the sentence claims."}
+      T25: {class: blocking, why: "Brand: the publisher's name in reviewer text reads as a statement by the publisher; a mechanical replacement can change the meaning."}
+      T10: {class: blocking, why: "Brand and consumer law: vanity counts are claims about the publisher that a review cannot support."}
+      T28: {class: blocking, why: "Brand and consumer law: a count of projects, clients or reviews is a claim about the publisher."}
+      T14: {class: blocking, why: "Legal: a certainty or completeness claim (guaranteed, fully secure, no vulnerabilities) is a warranty the review cannot give."}
+      T27: {class: blocking, why: "Legal: sales wording in the publisher's PDF reads as an offer the publisher did not make; only the reviewer can tell an offer from a recommendation."}
+      T17: {class: blocking, why: "Safety: a URL or email in the PDF is a live pointer the server cannot vet; untrusted code could steer the session to plant it."}
+      T26: {class: blocking, why: "Safety: a bare domain is rendered as a link by PDF viewers; same risk as a URL."}
+      T30: {class: blocking, why: "Responsible disclosure: a public review of third-party code must not print a sequenced attack recipe."}
+      P1: {class: blocking, why: "Public scope (kit text only): superlatives are marketing claims."}
+      P2: {class: blocking, why: "Public scope (kit text only): competitor names."}
+      P3: {class: blocking, why: "Public scope (kit text only): score, rating and investment words read as financial advice."}
+      P4: {class: blocking, why: "Public scope (kit text only): endorsement wording next to a model vendor name."}
+      subject_words: {class: blocking, why: "The subject line names the contract and chain only; it is server text."}
+
+  # ── Sections ───────────────────────────────────────────────────────────────────────────────────────
+  E_SECTION_INVALID:
+    class: blocking
+    why: "The section content does not have a storable shape (array of rows)."
+    rules:
+      row: {class: advisory, why: "One invalid row (an invariant walk answer or a coverage row) is dropped and named; the rest of the section is stored."}
+  E_COVERAGE_NA_UNCONFIRMED:
+    class: advisory
+    why: "A not-applicable claim the map cannot confirm is dropped and prints as not covered; the rest of the section is stored."
+  E_JOB_NOT_READY:
+    class: blocking
+    why: "The source is not pinned yet, so nothing can be checked against it."
+    rules:
+      context_notes: {class: advisory, why: "context_notes is prose about the project documents and needs no pinned source; it is stored while the job builds."}
+
+  # ── Challenge answers: an optional evidence upgrade, never a gate ──────────────────────────────────
+  E_CHALLENGE_INCOMPLETE:
+    class: advisory
+    why: "Unanswered items stay open; the answered ones are recorded and the finding keeps its severity without the challenged evidence level."
+  E_CHALLENGE_SCOPE:
+    class: advisory
+    why: "An answer whose quotes or refs do not cover the item's scope is recorded as unverified and has no effect on severity or evidence."
+  E_CHALLENGE_COMMENT_ONLY:
+    class: advisory
+    why: "A present answer that quotes a comment is recorded as unverified and has no effect."
+  E_CHALLENGE_NA_REASON:
+    class: advisory
+    why: "A not_applicable answer the map cannot confirm is recorded as unverified and has no effect."
+  E_CHALLENGE_CONTRADICTS_AUTO:
+    class: advisory
+    why: "An answer that contradicts the server's own check is recorded as unverified and has no effect; the server value is kept."
+
+  # ── Job state: no review can be written without a ready job ───────────────────────────────────────
+  E_JOB_FROZEN: {class: blocking, why: "The job is finalized; the report is frozen."}
+  E_JOB_TERMINAL: {class: blocking, why: "The job ended; nothing can be written."}
+  E_TIER_D: {class: blocking, why: "Bytecode only: there is no source to quote."}
+  E_DAILY_REPORT_LIMIT: {class: blocking, why: "Quota on issued reports."}
+
+# Finalize checks (review_finalize F1 to F9). Advisory checks never refuse finalize: they are listed in the
+# result (`coverage_gaps`) and the report prints the kit line `coverage_note.<kind>` with the count.
+finalize_checks:
+  F1: {class: blocking, why: "No tier or tier D: no pinned source, so no finding can be printed with evidence."}
+  F2: {class: advisory, kind: leads_not_triaged, why: "Open High or Medium analyzer leads are closed as not reviewed at finalize and counted in the coverage note."}
+  F3: {class: advisory, kind: challenge_not_answered, why: "A finding without its optional challenge keeps its severity with evidence reasoning_only (K8 still caps Critical at High)."}
+  F4: {class: blocking, why: "Server state invariant (a promoted lead of a withdrawn draft); never reachable through the tools."}
+  F5: {class: advisory, kind: coverage_na_unconfirmed, why: "A not-applicable coverage row whose predicate no longer holds prints as not covered."}
+  F6: {class: blocking, why: "An unresolved placeholder would print as a raw token."}
+  F7: {class: advisory, kind: roles_notes_missing, why: "Role risk notes are optional; the roles table prints from the map either way."}
+  F8: {class: advisory, kind: drafts_not_accepted, why: "A draft that never had accepted text is left out of the report and counted."}
+  F9: {class: advisory, kind: walks_not_answered, why: "Unanswered invariant walks print as not answered in the walks table and are counted."}
+
+# Rewrites applied by the server before storing reviewer text (class rewrite above). Patterns run on the
+# text outside backtick code spans and {{...}} placeholders. `case: preserve` keeps a leading capital.
+rewrites:
+  - {rule: T1, pattern: '\s*\u2014\s*', replace: ', '}
+  - {rule: T2, pattern: '(?<=\d)\s*\u2013\s*(?=\d)', replace: ' to '}
+  - {rule: T2, pattern: '\u2013', replace: '-'}
+  - {rule: T3, pattern: '\s*\u2192\s*', replace: ' to '}
+  - {rule: T20, pattern: '\s*(->|=>)\s*', replace: ' to '}
+  - {rule: T20, pattern: '[\u2010-\u2015\u2212]', replace: '-'}
+  - {rule: T15, pattern: '\baudited\b', replace: reviewed, case: preserve}
+  - {rule: T15, pattern: '\bauditors\b', replace: reviewers, case: preserve}
+  - {rule: T15, pattern: '\bauditor\b', replace: reviewer, case: preserve}
+  - {rule: T15, pattern: '\baudits\b', replace: reviews, case: preserve}
+  - {rule: T15, pattern: '\baudit\b', replace: review, case: preserve}
+  - {rule: T21, field: title, pattern: '\s*\.\s*$', replace: ''}

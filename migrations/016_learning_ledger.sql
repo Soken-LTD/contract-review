@@ -99,20 +99,27 @@ create table judge_verdicts (
   unique (round, salt_id, target_tag, arm, issue_id)
 );
 
--- Friction: one row per rejected submit violation (error code and field only, never the text).
+-- Friction: one row per rejected submit violation, and one per advisory warning of an accepted
+-- write (gate_warnings, migration 017, copied at finalize and purge). Error code, rule id, field
+-- and warning class only, never the matched text, the message or the suggestion.
 create table gate_events (
   id             bigserial primary key,
   week           date not null,
   salt_id        text not null,
+  job_tag        char(16) not null,               -- replace key for the copied warnings
   principal_tag  char(16) not null,
   draft_tag      char(16) not null,               -- links attempts of one draft (resolved / abandoned)
   chain_family   text not null,
   tool           text not null,
+  kind           text not null default 'rejection' check (kind in ('rejection','warning')),
   error_code     text not null,
+  rule_id        text,
+  warning_class  text,
   field          text,
   attempt        int not null,
   release        text not null
 );
+create index gate_events_job on gate_events (job_tag);
 create index gate_events_code on gate_events (error_code, week);
 
 -- The rule tier policy a job last saw in review_leads (contract/learning/rule_tiers/<version>.yaml),

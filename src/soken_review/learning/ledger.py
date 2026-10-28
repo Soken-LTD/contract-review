@@ -155,6 +155,32 @@ def finding_rows(job: dict[str, Any], leads: list[dict[str, Any]], drafts: list[
     return out
 
 
+_GATE_INSERT = """insert into gate_events (week, salt_id, job_tag, principal_tag, draft_tag, chain_family, tool, kind,
+                                           error_code, rule_id, warning_class, field, attempt, release)
+  values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+
+
+def warning_rows(job: dict[str, Any], stored: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+    """Friction rows for the advisory warnings of accepted writes (gate_warnings, migration 017):
+    code, rule id, class and field only; the matched text, message and suggestion are dropped."""
+    salt = current_salt()
+    common = (_week(job.get("finalized_at")), salt.salt_id, tag("job", job["job_id"], salt),
+              tag("principal", str(job.get("principal_key") or ""), salt))
+    fam = chain_family(job, [])
+    rel = release()
+    out = []
+    for row in stored:
+        draft = tag("draft", f"{job['job_id']}\t{row.get('owner_key') or ''}", salt)
+        for w in (row.get("warnings") or [])[:200]:
+            if not isinstance(w, dict):
+                continue
+            out.append((*common, draft, fam, token("tool", row.get("tool"), "unknown"), "warning",
+                        token("code", w.get("code"), "UNCATALOGUED"), token_or_none("cap", w.get("rule")),
+                        token_or_none("word", w.get("class")), token_or_none("field", w.get("field")),
+                        int(row.get("revision") or 0), rel))
+    return out
+
+
 _LEAD_INSERT = """insert into lead_outcomes
   (week, salt_id, job_tag, target_tag, principal_tag, consent_class, chain_family, tool, tool_version, rule_id,
    category, category_family, severity_norm, severity_shown, policy_version, tier_shown, outcome, dismiss_reason,
@@ -184,13 +210,18 @@ async def record_job(conn: Any, job_id: str, recorded_by: str) -> int:
     async with conn.cursor() as cur:
         await cur.execute("delete from lead_outcomes where job_tag = any(%s)", (tags,))
         await cur.execute("delete from finding_outcomes where job_tag = any(%s)", (tags,))
+        await cur.execute("delete from gate_events where job_tag = any(%s) and kind = 'warning'", (tags,))
         lrows = lead_rows(job, leads, drafts, recorded_by)
         frows = finding_rows(job, leads, drafts, recorded_by)
+        wrows = warning_rows(job, await _fetch(conn, "select tool, owner_key, revision, warnings from gate_warnings"
+                                                     " where job_id = %s order by id", (job_id,)))
         if lrows:
             await cur.executemany(_LEAD_INSERT, lrows)
         if frows:
             await cur.executemany(_FINDING_INSERT, frows)
-    return len(lrows) + len(frows)
+        if wrows:
+            await cur.executemany(_GATE_INSERT, wrows)
+    return len(lrows) + len(frows) + len(wrows)
 
 
 async def record_job_safe(conn: Any, job_id: str, recorded_by: str) -> int:
@@ -208,18 +239,17 @@ async def record_rejection(conn: Any, job: dict[str, Any], draft_key: str, tool:
     """One `gate_events` row per rejected-submit violation: error code and field name only."""
     try:
         salt = current_salt()
-        common = (_week(None), salt.salt_id, tag("principal", str(job.get("principal_key") or ""), salt),
+        common = (_week(None), salt.salt_id, tag("job", job["job_id"], salt),
+                  tag("principal", str(job.get("principal_key") or ""), salt),
                   tag("draft", f"{job['job_id']}\t{draft_key}", salt), chain_family(job, []),
-                  token("tool", tool, "unknown"))
-        rows = [(*common, token("code", v.get("code"), "UNCATALOGUED"), token_or_none("field", v.get("field")),
-                 int(attempt), release()) for v in violations[:40] if isinstance(v, dict)]
+                  token("tool", tool, "unknown"), "rejection")
+        rows = [(*common, token("code", v.get("code"), "UNCATALOGUED"), None, None,
+                 token_or_none("field", v.get("field")), int(attempt), release())
+                for v in violations[:40] if isinstance(v, dict)]
         if not rows:
             return
         async with conn.transaction(), conn.cursor() as cur:
-            await cur.executemany(
-                """insert into gate_events (week, salt_id, principal_tag, draft_tag, chain_family, tool,
-                                            error_code, field, attempt, release)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", rows)
+            await cur.executemany(_GATE_INSERT, rows)
     except Exception:  # friction logging never changes a submit result
         logger.exception("learning ledger: gate events not recorded")
 

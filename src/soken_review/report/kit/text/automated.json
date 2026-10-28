@@ -211,5 +211,16 @@
   "other": "Excluded from the review by the scope rules",
   "more": "{n} more files excluded from the review by the scope rules",
   "more_path": "further files"
+ },
+ "coverage_note": {
+  "heading": "Steps the requester's session did not take",
+  "lines": {
+   "leads_not_triaged": "{count} analyzer leads at High or Medium were not triaged and were closed as not reviewed.",
+   "challenge_not_answered": "{count} findings were not taken through the disproof checklist; their severity rests on the reasoning in the finding card.",
+   "coverage_na_unconfirmed": "Not-applicable coverage claims that the contract map could not confirm print as not covered.",
+   "roles_notes_missing": "The code has privileged roles and no role risk notes were written; the roles table comes from the contract map.",
+   "drafts_not_accepted": "{count} finding drafts never had accepted text and are not in this report.",
+   "walks_not_answered": "{count} invariant walks were not answered; the walks table marks them."
+  }
  }
 }
