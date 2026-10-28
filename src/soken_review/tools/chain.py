@@ -178,7 +178,7 @@ def check_alias(alias: str, field: str) -> str:
 # ── shared call frame ──────────────────────────────────────────────────────
 
 
-async def _run(args: dict[str, Any], ru: int, body: Any) -> dict[str, Any]:
+async def _run(args: dict[str, Any], ru: int, body: Any, actual_ru: Any = None) -> dict[str, Any]:
     """Job checks, budget, proxy, block resolution, `body(px, out)`, facts and the result envelope."""
     job_id = args["job_id"]
     try:
@@ -214,9 +214,11 @@ async def _run(args: dict[str, Any], ru: int, body: Any) -> dict[str, Any]:
         return {"accepted": False, "capability": cap.as_dict(),
                 "errors": [ReviewError("E_CHAIN_UNAVAILABLE", reason=reason, hosts=hosts,
                                        retry_after_s=30 if reason == "rate_limited" else 10).envelope()]}
+    if actual_ru is not None:   # the reserve assumed an archive read; charge what the block really cost
+        await budget.refund(max(0, ru - int(actual_ru(out.at, cj))))
     failed = [it for it in out.items if not it.get("ok") and (it.get("error") or {}).get("reason") in reads.REFUNDABLE]
-    if failed and ru:
-        await budget.refund(min(ru, _item_ru(len(failed), out.at, cj)))
+    if failed and budget.reserved:
+        await budget.refund(min(budget.reserved, _item_ru(len(failed), out.at, cj)))
     # the facts carry the redacted hosts that answered
     via = out.host
     for f in out.facts:
@@ -275,7 +277,8 @@ async def handle_chain_read(args: dict[str, Any]) -> dict[str, Any]:
         await reads.READERS[out.job.family](px, out, items)
         return None
 
-    return await _run(args, len(items) * archive_hint, body)
+    return await _run(args, len(items) * archive_hint, body,
+                      actual_ru=lambda at, cj: _item_ru(len(items), at, cj))
 
 
 @handler("review_chain_roles")

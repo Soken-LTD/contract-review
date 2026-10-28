@@ -151,13 +151,19 @@ class Cache:
         empty one (unknown host) keeps the answer job-scoped unless the host is trusted."""
         _remember(self._job, key, value, _JOB_DURABLE_TTL_S if durable else float(limits().get("latest_cache_s", 12)))
         host = operator or ("configured" if trusted else "")
-        if not durable or self._pool is None or not host:
+        if not durable or self._pool is None:
             return
         h = _hash(value)
         async with self._pool.connection() as conn, conn.transaction():
             row = await (await conn.execute(
                 "select result_hash, host, trusted, confirmed_host from chain_cache where key = %s for update",
                 (key,))).fetchone()
+            if not host:
+                # an unknown host never inserts or confirms, but its disagreement still evicts an
+                # unconfirmed answer of one operator, so a lying first answer cannot wait for a friend
+                if row is not None and not row[2] and not row[3] and row[0] != h:
+                    await conn.execute("delete from chain_cache where key = %s", (key,))
+                return
             if row is None:
                 await conn.execute(
                     "insert into chain_cache (key, result, result_hash, host, trusted) values (%s, %s::jsonb, %s, %s, %s)"

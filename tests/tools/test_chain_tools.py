@@ -232,3 +232,24 @@ async def test_same_operator_pair_does_not_confirm_and_unknown_hosts_never_count
     async with db_pool.connection() as conn:
         assert await (await conn.execute("select 1 from chain_cache where key = %s", (unknown,))).fetchone() is None
         await conn.execute("delete from chain_cache where key = %s", (key,))
+
+
+@ASYNC
+async def test_unknown_host_disagreement_evicts_an_unconfirmed_row(db_pool):
+    key = "e" * 64
+    await chain_store.Cache(db_pool, "job_1").put(key, {"r": "0x01"}, True, "drpc", False)
+    await chain_store.Cache(db_pool, "job_2").put(key, {"r": "0x02"}, True, "", False)    # unknown host disagrees
+    async with db_pool.connection() as conn:
+        assert await (await conn.execute("select 1 from chain_cache where key = %s", (key,))).fetchone() is None
+    # the row cannot come back confirmed through the old answer alone
+    await chain_store.Cache(db_pool, "job_3").put(key, {"r": "0x01"}, True, "allnodes", False)
+    chain_store._MEM.clear()
+    assert await chain_store.Cache(db_pool, "job_4").get(key) is None
+    # an unknown host that agrees changes nothing, and a confirmed row is not evicted by an unknown host
+    await chain_store.Cache(db_pool, "job_5").put(key, {"r": "0x01"}, True, "", False)
+    await chain_store.Cache(db_pool, "job_6").put(key, {"r": "0x01"}, True, "drpc", False)
+    await chain_store.Cache(db_pool, "job_7").put(key, {"r": "0x09"}, True, "", False)
+    chain_store._MEM.clear()
+    assert await chain_store.Cache(db_pool, "job_4").get(key) == {"r": "0x01"}
+    async with db_pool.connection() as conn:
+        await conn.execute("delete from chain_cache where key = %s", (key,))
