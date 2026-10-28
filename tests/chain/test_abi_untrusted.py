@@ -69,3 +69,23 @@ def test_ton_address_and_slice_roundtrip():
     assert slice_address(address_slice_boc(wc, h)) == (wc, h)
     with pytest.raises(ValueError):
         parse_address("EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDt")
+
+
+def test_abi_bounds_fixed_dims_nesting_and_value_budget():
+    for bad in ("f(uint256[257])", "f(uint256[0])", "f(uint256[][][][])", "f(((((uint256)))))", "f(uint256[1x])"):
+        with pytest.raises(abi.AbiError):
+            abi.parse_signature(bad)
+    abi.parse_signature("f(uint256[256])")
+    abi.parse_signature("f((uint256,bool)[][])")          # three levels is the cap
+    # a static shape that would decode 256 * 256 values runs out of the shared budget
+    with pytest.raises(abi.AbiError):
+        abi.decode(["uint8[256][256]"], b"\x00" * (32 * 256 * 256))
+    # many dynamic arrays share one budget per call: 3 x 4,000 > 10,000
+    arr = abi.encode(["uint8[]"], [[0] * 4000])
+    data = abi.encode(["uint8[]", "uint8[]", "uint8[]"], [[0] * 3000, [0] * 3000, [0] * 3000])
+    assert len(abi.decode(["uint8[]", "uint8[]", "uint8[]"], data)[0]) == 3000
+    with pytest.raises(abi.AbiError):
+        abi.encode(["uint8[]", "uint8[]", "uint8[]"], [[0] * 4000] * 3)
+    assert abi.decode(["uint8[]"], arr) == [[0] * 4000]
+    with pytest.raises(abi.AbiError):   # a length word over the per-array cap
+        abi.decode(["uint8[]"], (32).to_bytes(32, "big") + (5000).to_bytes(32, "big"))

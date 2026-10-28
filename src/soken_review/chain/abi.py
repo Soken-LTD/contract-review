@@ -21,6 +21,10 @@ PANIC_CODES = {
 }
 _ERROR_SEL = bytes.fromhex("08c379a0")
 _PANIC_SEL = bytes.fromhex("4e487b71")
+MAX_FIXED_DIM = 256      # T[k]: k at most this
+MAX_NESTING = 3          # arrays and tuples inside each other
+MAX_VALUES = 10_000      # values one encode or decode call may produce (security review 2026-10-28)
+MAX_DYNAMIC_LEN = 4096   # length word of one dynamic array
 _SIG_RE = re.compile(r"^([A-Za-z_$][A-Za-z0-9_$]{0,63})\((.*)\)$")
 _ELEM_RE = re.compile(r"^(uint|int)(\d{0,3})$|^address$|^bool$|^bytes(\d{1,2})?$|^string$")
 
@@ -29,41 +33,53 @@ class AbiError(ValueError):
     """Bad signature, argument or return data."""
 
 
-def split_types(s: str) -> list[str]:
-    """`uint256,(address,bool)[],string` -> top-level types."""
+def split_types(s: str, depth: int = 0) -> list[str]:
+    """`uint256,(address,bool)[],string` -> top-level types (validated, nesting bounded)."""
     s = s.strip()
     if not s:
         return []
-    out, depth, cur = [], 0, []
+    out, level, cur = [], 0, []
     for ch in s:
         if ch == "(":
-            depth += 1
+            level += 1
         elif ch == ")":
-            depth -= 1
-            if depth < 0:
+            level -= 1
+            if level < 0:
                 raise AbiError("unbalanced parentheses")
-        if ch == "," and depth == 0:
+        if ch == "," and level == 0:
             out.append("".join(cur).strip())
             cur = []
         else:
             cur.append(ch)
-    if depth:
+    if level:
         raise AbiError("unbalanced parentheses")
     out.append("".join(cur).strip())
     if any(not t for t in out):
         raise AbiError("empty type")
+    if len(out) > 64:
+        raise AbiError("more than 64 types in one tuple")
     for t in out:
-        _check_type(t)
+        _check_type(t, depth)
     return out
 
 
-def _check_type(t: str) -> None:
+def _check_type(t: str, depth: int = 0) -> None:
+    if len(t) > 400:
+        raise AbiError("type string too long")
     base, dims = _split_array(t)
-    if dims:
-        _check_type(base)
+    if dims is not None:
+        if dims and (not dims.isdigit() or not 1 <= int(dims) <= MAX_FIXED_DIM):
+            raise AbiError(f"fixed array size must be 1 to {MAX_FIXED_DIM}")
+        if depth + 1 > MAX_NESTING:
+            raise AbiError(f"types nest more than {MAX_NESTING} levels")
+        _check_type(base, depth + 1)
         return
     if base.startswith("("):
-        split_types(base[1:-1])
+        if not base.endswith(")"):
+            raise AbiError(f"unsupported type {t[:40]!r}")
+        if depth + 1 > MAX_NESTING:
+            raise AbiError(f"types nest more than {MAX_NESTING} levels")
+        split_types(base[1:-1], depth + 1)
         return
     m = _ELEM_RE.match(base)
     if not m:
@@ -74,6 +90,18 @@ def _check_type(t: str) -> None:
             raise AbiError(f"bad integer width {t}")
     if base.startswith("bytes") and m.group(3) and not 1 <= int(m.group(3)) <= 32:
         raise AbiError(f"bad bytes width {t}")
+
+
+class _Budget:
+    """One shared value budget per encode or decode call."""
+
+    def __init__(self, n: int = MAX_VALUES) -> None:
+        self.left = n
+
+    def take(self, n: int = 1) -> None:
+        self.left -= n
+        if self.left < 0:
+            raise AbiError(f"more than {MAX_VALUES} values in one call")
 
 
 def _split_array(t: str) -> tuple[str, str | None]:
@@ -182,20 +210,22 @@ def _pad(b: bytes) -> bytes:
     return b + bytes((-len(b)) % 32)
 
 
-def _enc(t: str, v: Any) -> bytes:
+def _enc(t: str, v: Any, budget: _Budget) -> bytes:
     base, dim = _split_array(t)
     if dim is not None:
         if not isinstance(v, list):
             raise AbiError(f"{t} needs a list")
         if dim and len(v) != int(dim):
             raise AbiError(f"{t} needs {dim} items")
-        body = encode([base] * len(v), v)
+        if len(v) > MAX_DYNAMIC_LEN:
+            raise AbiError(f"array longer than {MAX_DYNAMIC_LEN} items")
+        body = encode([base] * len(v), v, _budget=budget)
         return (len(v).to_bytes(32, "big") + body) if dim == "" else body
     if base.startswith("("):
         inner = split_types(base[1:-1])
         if not isinstance(v, list) or len(v) != len(inner):
             raise AbiError(f"{t} needs a list of {len(inner)} values")
-        return encode(inner, v)
+        return encode(inner, v, _budget=budget)
     if base == "string":
         if not isinstance(v, str):
             raise AbiError("a string argument must be text")
@@ -207,18 +237,23 @@ def _enc(t: str, v: Any) -> bytes:
     return _enc_elem(base, v)
 
 
-def encode(types: list[str], values: list[Any]) -> bytes:
+def encode(types: list[str], values: list[Any], *, _budget: _Budget | None = None) -> bytes:
+    budget = _budget or _Budget()
     if len(types) != len(values):
         raise AbiError(f"{len(types)} arguments expected, {len(values)} given")
+    if _budget is None:
+        for t in types:
+            _check_type(t)
+    budget.take(len(types))
     heads: list[bytes | None] = []
     tails: list[bytes] = []
     head_size = sum(32 if _is_dynamic(t) else _static_size(t) for t in types)
     for t, v in zip(types, values, strict=True):
         if _is_dynamic(t):
             heads.append(None)
-            tails.append(_enc(t, v))
+            tails.append(_enc(t, v, budget))
         else:
-            heads.append(_enc(t, v))
+            heads.append(_enc(t, v, budget))
             tails.append(b"")
     out, offset = b"", head_size
     for h, tail in zip(heads, tails, strict=True):
@@ -245,7 +280,7 @@ def _word(data: bytes, pos: int) -> int:
     return int.from_bytes(data[pos:pos + 32], "big")
 
 
-def _dec(t: str, data: bytes, pos: int, base_pos: int) -> Any:
+def _dec(t: str, data: bytes, pos: int, base_pos: int, budget: _Budget) -> Any:
     """Value of type t whose head is at data[pos]; dynamic offsets are relative to base_pos."""
     base, dim = _split_array(t)
     if _is_dynamic(t):
@@ -255,21 +290,21 @@ def _dec(t: str, data: bytes, pos: int, base_pos: int) -> Any:
         if dim is not None:
             if dim == "":
                 n = _word(data, start)
-                if n > 4096:
-                    raise AbiError("array longer than 4096 items")
-                return decode([base] * n, data, start + 32)
-            return decode([base] * int(dim), data, start)
+                if n > MAX_DYNAMIC_LEN:
+                    raise AbiError(f"array longer than {MAX_DYNAMIC_LEN} items")
+                return decode([base] * n, data, start + 32, _budget=budget)
+            return decode([base] * int(dim), data, start, _budget=budget)
         if base.startswith("("):
-            return decode(split_types(base[1:-1]), data, start)
+            return decode(split_types(base[1:-1]), data, start, _budget=budget)
         n = _word(data, start)
         if start + 32 + n > len(data):
             raise AbiError("bytes run past the return data")
         raw = data[start + 32:start + 32 + n]
         return raw.decode("utf-8", errors="replace") if base == "string" else "0x" + raw.hex()
     if dim is not None:
-        return decode([base] * int(dim), data, pos)
+        return decode([base] * int(dim), data, pos, _budget=budget)
     if base.startswith("("):
-        return decode(split_types(base[1:-1]), data, pos)
+        return decode(split_types(base[1:-1]), data, pos, _budget=budget)
     w = _word(data, pos)
     if base.startswith("uint"):
         return w
@@ -287,10 +322,15 @@ def _dec(t: str, data: bytes, pos: int, base_pos: int) -> Any:
     return "0x" + data[pos:pos + size].hex()
 
 
-def decode(types: list[str], data: bytes, base_pos: int = 0) -> list[Any]:
+def decode(types: list[str], data: bytes, base_pos: int = 0, *, _budget: _Budget | None = None) -> list[Any]:
+    budget = _budget or _Budget()
+    if _budget is None:
+        for t in types:
+            _check_type(t)
+    budget.take(len(types))
     out, pos = [], base_pos
     for t in types:
-        out.append(_dec(t, data, pos, base_pos))
+        out.append(_dec(t, data, pos, base_pos, budget))
         pos += 32 if _is_dynamic(t) else _static_size(t)
     return out
 

@@ -7,13 +7,13 @@ cap; items that failed because of a provider (5xx, 429, no archive) are refunded
 Running out of RU returns E_CHAIN_BUDGET for that call only: it never touches the report quota
 and never blocks a finding or finalize (CEO never-worse rule).
 
-Cache: answers at a final block live in `chain_cache` for every job (public data, keyed by a hash
-of family, chain, method and params; no job id and no quota key). Answers at a recent block live
-in process for `latest_cache_s`. Results never say whether they came from the cache.
+Cache: see `Cache` (job-scoped by default; shared across jobs only once two distinct hosts agreed
+or an operator-configured host answered). Results never say whether they came from the cache.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -101,44 +101,82 @@ class Budget:
         return {"charged": self.reserved, "used": int(self.used_after or 0), "left": int(self.left_after or 0)}
 
 
-_MEM: dict[str, tuple[float, Any]] = {}
+_MEM: dict[tuple[str, str], tuple[float, float, Any]] = {}   # (scope, key) -> (stored_at, ttl_s, value)
 _MEM_MAX = 4096
+_JOB_DURABLE_TTL_S = 3600.0
+
+
+def _hash(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 class Cache:
-    """`get(key)` / `put(key, value, durable)`; durable answers go to Postgres when a pool is set."""
+    """Job-scoped first, shared only when proven.
 
-    def __init__(self, pool: Any | None) -> None:
+    Every answer is cached for the job that read it (`latest_cache_s` for recent blocks, an hour
+    for final ones). An answer at a final block becomes shared (other jobs, Postgres) only when it
+    came from an operator-configured host, or when a second, distinct host later returned the same
+    answer for the same request; a different answer from another host removes the entry. Shared
+    entries expire after `shared_cache_days` (security review 2026-10-28: one lying free endpoint
+    must not poison the facts of every later job)."""
+
+    def __init__(self, pool: Any | None, job_id: str = "") -> None:
         self._pool = pool
+        self._job = job_id or "-"
 
     async def get(self, key: str) -> Any | None:
-        hit = _MEM.get(key)
-        ttl = float(limits().get("latest_cache_s", 12))
-        if hit is not None:
-            at, value = hit
-            if at < 0 or time.monotonic() - at <= ttl:
-                return value
-            _MEM.pop(key, None)
+        for scope in (self._job, "*"):
+            hit = _MEM.get((scope, key))
+            if hit is not None:
+                at, ttl, value = hit
+                if time.monotonic() - at <= ttl:
+                    return value
+                _MEM.pop((scope, key), None)
         if self._pool is None:
             return None
+        days = int(limits().get("shared_cache_days", 30))
         async with self._pool.connection() as conn:
-            row = await (await conn.execute("select result from chain_cache where key = %s", (key,))).fetchone()
+            row = await (await conn.execute(
+                "select result from chain_cache where key = %s and (trusted or confirmed_host is not null)"
+                " and created_at > now() - make_interval(days => %s)", (key, days))).fetchone()
         if row is None:
             return None
         value = row[0] if not isinstance(row[0], str) else json.loads(row[0])
-        _remember(key, value, durable=True)
+        _remember("*", key, value, _JOB_DURABLE_TTL_S)
         return value
 
-    async def put(self, key: str, value: Any, durable: bool) -> None:
-        _remember(key, value, durable)
-        if durable and self._pool is not None:
-            async with self._pool.connection() as conn:
-                await conn.execute("insert into chain_cache (key, result) values (%s, %s::jsonb) on conflict do nothing",
-                                   (key, json.dumps(value)))
+    async def put(self, key: str, value: Any, durable: bool, host: str = "", trusted: bool = False) -> None:
+        _remember(self._job, key, value, _JOB_DURABLE_TTL_S if durable else float(limits().get("latest_cache_s", 12)))
+        if not durable or self._pool is None or not host:
+            return
+        h = _hash(value)
+        async with self._pool.connection() as conn, conn.transaction():
+            row = await (await conn.execute(
+                "select result_hash, host, trusted, confirmed_host from chain_cache where key = %s for update",
+                (key,))).fetchone()
+            if row is None:
+                await conn.execute(
+                    "insert into chain_cache (key, result, result_hash, host, trusted) values (%s, %s::jsonb, %s, %s, %s)"
+                    " on conflict do nothing", (key, json.dumps(value), h, host, trusted))
+                return
+            old_hash, old_host, old_trusted, confirmed = row
+            if old_hash == h:
+                if not confirmed and not old_trusted and host != old_host:
+                    await conn.execute("update chain_cache set confirmed_host = %s where key = %s", (host, key))
+                elif trusted and not old_trusted:
+                    await conn.execute("update chain_cache set trusted = true where key = %s", (key,))
+                return
+            if trusted and not old_trusted:   # an operator-configured host replaces a free host's answer
+                await conn.execute("update chain_cache set result = %s::jsonb, result_hash = %s, host = %s, trusted = true,"
+                                   " confirmed_host = null, created_at = now() where key = %s",
+                                   (json.dumps(value), h, host, key))
+            elif not old_trusted:              # two hosts disagree: nothing is shared for this request
+                await conn.execute("delete from chain_cache where key = %s", (key,))
+                _MEM.pop(("*", key), None)
 
 
-def _remember(key: str, value: Any, durable: bool) -> None:
+def _remember(scope: str, key: str, value: Any, ttl: float) -> None:
     if len(_MEM) >= _MEM_MAX:
         for k in list(_MEM)[: _MEM_MAX // 4]:
             _MEM.pop(k, None)
-    _MEM[key] = (-1.0 if durable else time.monotonic(), value)
+    _MEM[(scope, key)] = (time.monotonic(), ttl, value)

@@ -84,7 +84,8 @@ chain_access:                  # chain access design 2026-10-27 sections 1 and 4
   max_holders: 100             # chain_balances holders per call
   upstream_calls_per_call: 400 # proxy meter per tool call
   latest_cache_s: 12           # in-process cache for reads at a recent block
-  finality_blocks: {evm: 64, tron: 19}   # a read at or below head minus this is cached in chain_cache for every job
+  finality_blocks: {evm: 64, tron: 19}   # a read at or below head minus this may enter chain_cache
+  shared_cache_days: 30        # chain_cache rows other jobs may use: two distinct hosts agreed, or an operator-configured host
 claim:                         # 08 claim page
   nonce_ttl_min: 30
 report:                        # S8 durations; keys of the 09 retention table

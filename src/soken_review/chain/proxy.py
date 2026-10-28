@@ -79,7 +79,7 @@ class Meter:
 
 
 CacheGet = Callable[[str], Awaitable[Any | None]]
-CachePut = Callable[[str, Any, bool], Awaitable[None]]
+CachePut = Callable[[str, Any, bool, str, bool], Awaitable[None]]   # key, value, durable, host, trusted
 
 
 class _Pace:
@@ -143,38 +143,50 @@ class ChainProxy:
             self.meter.cached += 1
         return hit
 
-    async def _store(self, key: str, value: Any, durable: bool) -> None:
+    async def _store(self, key: str, value: Any, durable: bool, ep: Endpoint) -> None:
+        """`durable` asks for the shared cache; the cache shares an answer only when two distinct
+        hosts agreed on it or the host is operator-configured (keyed), else it stays per job."""
         if self._cache_put is None:
             return
         try:
-            await self._cache_put(key, value, durable)
+            await self._cache_put(key, value, durable, ep.host, ep.keyed)
         except Exception as exc:  # noqa: BLE001
             logger.info("chain cache put failed: %s", type(exc).__name__)
 
     # ── transport ──────────────────────────────────────────────────────────
 
     async def _send(self, ep: Endpoint, method: str, url: str, body: Any | None) -> tuple[int, Any]:
+        """One request. The body is streamed: a Content-Length over MAX_RESPONSE_BYTES is refused
+        before reading, and reading stops at the cap; the meter is charged with the bytes read."""
         assert self._client is not None, "use ChainProxy as an async context manager"
         if self._pace:
             await _Pace.wait(ep.host, ep.per_s)
         headers = dict(ep.headers)
-        if method == "GET":
-            resp = await self._client.get(url, headers=headers)
-        else:
-            resp = await self._client.post(url, json=body, headers=headers)
-        raw = resp.content
-        self.meter.charge(len(raw))
-        if len(raw) > MAX_RESPONSE_BYTES:
-            raise ChainUnavailable("upstream", [ep.host], "response over the size cap")
-        if resp.status_code >= 400:
-            return resp.status_code, None
+        kwargs: dict[str, Any] = {"headers": headers} if method == "GET" else {"headers": headers, "json": body}
+        async with self._client.stream(method, url, **kwargs) as resp:
+            declared = resp.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > MAX_RESPONSE_BYTES:
+                self.meter.charge(0)
+                raise ChainUnavailable("upstream", [ep.host], "response over the size cap")
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in resp.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_RESPONSE_BYTES:
+                    self.meter.charge(size)
+                    raise ChainUnavailable("upstream", [ep.host], "response over the size cap")
+                chunks.append(chunk)
+            status = resp.status_code
+        self.meter.charge(size)
+        if status >= 400:
+            return status, None
         try:
-            return resp.status_code, json.loads(raw)
+            return status, json.loads(b"".join(chunks))
         except ValueError:
             return 599, None
 
     async def _failover(self, family: str, chain: int | None, path: str, http: str, body: Any,
-                        classify: Callable[[Any], tuple[str, Any]], depth: int | None = None) -> tuple[Any, str]:
+                        classify: Callable[[Any], tuple[str, Any]], depth: int | None = None) -> tuple[Any, Endpoint]:
         """Try the pool in `ordered` order; `classify(json)` returns ("ok", result) |
         ("fail", RpcFailure) | ("no_state", detail) | ("retry", detail). Host health is updated."""
         eps = ordered(self._endpoints(family, chain), depth)
@@ -209,7 +221,7 @@ class ChainProxy:
             if kind == "ok":
                 self.meter.answered_by.add(ep.host)
                 Health.ok(ep.host)
-                return val, ep.host
+                return val, ep
             if kind == "fail":
                 Health.ok(ep.host)
                 raise val
@@ -254,10 +266,10 @@ class ChainProxy:
             return "ok", data.get("result")
 
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-        result, _host = await self._failover("evm", chain_id, "", "POST", payload, classify,
-                                             depth if depth is not None else self.depth_hint)
+        result, ep = await self._failover("evm", chain_id, "", "POST", payload, classify,
+                                          depth if depth is not None else self.depth_hint)
         if result is not None:
-            await self._store(key, {"r": result}, durable)
+            await self._store(key, {"r": result}, durable, ep)
         return result
 
     # ── TRON ───────────────────────────────────────────────────────────────
@@ -275,7 +287,7 @@ class ChainProxy:
                 return "ok", data.get("result")
             return "ok", data
 
-        result, _host = await self._failover("tron", None, path, http, body, classify)
+        result, _ep = await self._failover("tron", None, path, http, body, classify)
         return result
 
     # ── Solana ─────────────────────────────────────────────────────────────
@@ -294,7 +306,7 @@ class ChainProxy:
             return "ok", data.get("result")
 
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-        result, _host = await self._failover("solana", None, "", "POST", payload, classify)
+        result, _ep = await self._failover("solana", None, "", "POST", payload, classify)
         return result
 
     # ── TON (toncenter v2) ─────────────────────────────────────────────────
@@ -321,11 +333,11 @@ class ChainProxy:
             from urllib.parse import urlencode
 
             path = f"/{method}" + (f"?{urlencode(body)}" if body else "")
-            result, _host = await self._failover("ton", None, path, "GET", None, classify)
+            result, ep = await self._failover("ton", None, path, "GET", None, classify)
         else:
-            result, _host = await self._failover("ton", None, f"/{method}", "POST", body or {}, classify)
+            result, ep = await self._failover("ton", None, f"/{method}", "POST", body or {}, classify)
         if result is not None:
-            await self._store(key, {"r": result}, durable)
+            await self._store(key, {"r": result}, durable, ep)
         return result
 
 
@@ -347,7 +359,7 @@ class ChainProxy:
         if status >= 400 or not isinstance(data, dict):
             return None
         dep = data.get("deployment") if isinstance(data.get("deployment"), dict) else None
-        await self._store(key, {"r": dep}, True)
+        await self._store(key, {"r": dep}, True, ep)
         return dep
 
 

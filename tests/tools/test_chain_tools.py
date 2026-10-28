@@ -168,3 +168,34 @@ async def test_bad_alias_and_address_are_argument_errors(db_pool, monkeypatch):
         with pytest.raises(ReviewError) as exc:
             await chain_mod.handle_chain_read({"job_id": jid, "items": [item]})
         assert exc.value.code == "E_INVALID_ARGUMENT"
+
+
+@ASYNC
+async def test_shared_cache_needs_two_agreeing_hosts_or_a_configured_one(db_pool):
+    """Security review 2026-10-28: one lying free endpoint must not poison other jobs' facts."""
+    key, other = "a" * 64, "b" * 64
+    job_a, job_b = chain_store.Cache(db_pool, "job_A"), chain_store.Cache(db_pool, "job_B")
+    await job_a.put(key, {"r": "0x01"}, True, "https://free-one.example", False)
+    assert await job_a.get(key) == {"r": "0x01"}          # the reading job keeps its own answer
+    assert await job_b.get(key) is None                     # nobody else trusts one free host
+    await job_b.put(key, {"r": "0x01"}, True, "https://free-one.example", False)
+    chain_store._MEM.clear()
+    assert await chain_store.Cache(db_pool, "job_C").get(key) is None   # same host twice is not agreement
+    await job_b.put(key, {"r": "0x01"}, True, "https://free-two.example", False)
+    chain_store._MEM.clear()
+    assert await chain_store.Cache(db_pool, "job_C").get(key) == {"r": "0x01"}
+    # a disagreeing host removes the shared entry
+    await chain_store.Cache(db_pool, "job_D").put(other, {"r": "0x02"}, True, "https://free-one.example", False)
+    await chain_store.Cache(db_pool, "job_E").put(other, {"r": "0x03"}, True, "https://free-two.example", False)
+    async with db_pool.connection() as conn:
+        assert await (await conn.execute("select 1 from chain_cache where key = %s", (other,))).fetchone() is None
+    # an operator-configured host is shared at once, and entries expire
+    await chain_store.Cache(db_pool, "job_F").put(other, {"r": "0x04"}, True, "https://mine.example", True)
+    chain_store._MEM.clear()
+    assert await chain_store.Cache(db_pool, "job_G").get(other) == {"r": "0x04"}
+    async with db_pool.connection() as conn:
+        await conn.execute("update chain_cache set created_at = now() - interval '40 days' where key = %s", (other,))
+    chain_store._MEM.clear()
+    assert await chain_store.Cache(db_pool, "job_G").get(other) is None
+    async with db_pool.connection() as conn:
+        await conn.execute("delete from chain_cache where key in (%s, %s)", (key, other))

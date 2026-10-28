@@ -96,7 +96,26 @@ def _iso(ts: float | None) -> str | None:
 
 
 def item_error(alias: str, kind: str, reason: str, detail: str) -> dict[str, Any]:
+    """`detail` is server text only; a provider's own words go through `upstream_error`."""
     return {"alias": alias, "kind": kind, "ok": False, "error": {"reason": reason, "detail": detail[:200]}}
+
+
+def upstream_error(alias: str, kind: str, provider_text: Any, origin: str = "provider error") -> dict[str, Any]:
+    """A refusal by the provider: server sentence plus the provider's message as untrusted text
+    (an error string can echo chain data, for example a revert reason)."""
+    row = item_error(alias, kind, "upstream", "the free endpoint refused the read")
+    if provider_text:
+        row["error"]["provider_message"] = {"untrusted_text": untrusted_text(provider_text, origin, cap=REVERT_CAP)}
+    return row
+
+
+def revert_text(data: bytes, origin: str) -> str | dict[str, Any]:
+    """A decoded revert for a result: server-built reasons (Panic, custom error selector) as plain
+    text, an Error(string) reason, which the contract chose, as untrusted text."""
+    rev = abi.decode_revert(data)
+    if rev["kind"] == "error_string":
+        return {"untrusted_text": untrusted_text(rev["reason"], origin, cap=REVERT_CAP)}
+    return rev["reason"]
 
 
 def _unavailable(exc: ChainUnavailable) -> tuple[str, str]:
@@ -366,7 +385,7 @@ async def _evm_storage(px: ChainProxy, out: Out, it: dict[str, Any]) -> dict[str
     except ChainUnavailable as exc:
         return item_error(alias, "storage", *_unavailable(exc))
     except RpcFailure as exc:
-        return item_error(alias, "storage", "upstream", exc.message)
+        return upstream_error(alias, "storage", exc.message)
     word = "0x" + str(word)[2:].rjust(64, "0")[-64:]
     short = slot[2:].lstrip("0")[:8] or "0"
     key = f"chain.{alias}.{it.get('field') or 'slot_' + short}"
@@ -389,7 +408,7 @@ async def _evm_account(px: ChainProxy, out: Out, it: dict[str, Any]) -> dict[str
     except ChainUnavailable as exc:
         return item_error(alias, "account", *_unavailable(exc))
     except RpcFailure as exc:
-        return item_error(alias, "account", "upstream", exc.message)
+        return upstream_error(alias, "account", exc.message)
     raw = bytes.fromhex(str(code)[2:])
     from ..mapping.keccak import keccak256
     vals = {"balance": (str(int(bal, 16)), "wei", "eth_getBalance"), "nonce": (str(int(nonce, 16)), None, "eth_getTransactionCount"),
@@ -445,7 +464,8 @@ async def _tron_call(px: ChainProxy, addr: str, canonical: str, data: bytes) -> 
     msg = str(res.get("message") or "")
     if ret == "FAILED" or "REVERT" in msg.upper() or res.get("code") == "CONTRACT_EXE_ERROR":
         return False, body
-    return RpcFailure(-1, f"TronGrid {res.get('code') or 'error'}")
+    code = str(res.get("code") or "error")
+    return RpcFailure(-1, "TronGrid " + (code if re.fullmatch(r"[A-Z_]{1,40}", code) else "error"))
 
 
 async def tron_read(px: ChainProxy, out: Out, items: list[dict[str, Any]]) -> None:
@@ -471,7 +491,7 @@ async def tron_read(px: ChainProxy, out: Out, items: list[dict[str, Any]]) -> No
                 out.items.append({**item_error(alias, kind, *_unavailable(exc)), "_i": i})
                 continue
             except RpcFailure as exc:
-                out.items.append({**item_error(alias, kind, "upstream", exc.message), "_i": i})
+                out.items.append({**upstream_error(alias, kind, exc.message), "_i": i})
                 continue
             word = "0x" + str(word or "0x")[2:].rjust(64, "0")[-64:]
             key = f"chain.{alias}.{it.get('field') or 'slot_' + (slot[2:].lstrip('0')[:8] or '0')}"
@@ -491,7 +511,7 @@ async def _tron_account(px: ChainProxy, out: Out, it: dict[str, Any], role_prefi
     except ChainUnavailable as exc:
         return item_error(alias, "account", *_unavailable(exc))
     except RpcFailure as exc:
-        return item_error(alias, "account", "upstream", exc.message)
+        return upstream_error(alias, "account", exc.message)
     acc = acc if isinstance(acc, dict) else {}
     pre = role_prefix or f"chain.{alias}"
     vals: dict[str, tuple[str, str | None]] = {
@@ -696,7 +716,7 @@ async def ton_read(px: ChainProxy, out: Out, items: list[dict[str, Any]]) -> Non
         except ChainUnavailable as exc:
             out.items.append({**item_error(alias, kind, *_unavailable(exc)), "_i": i})
         except RpcFailure as exc:
-            out.items.append({**item_error(alias, kind, "upstream", exc.message), "_i": i})
+            out.items.append({**upstream_error(alias, kind, exc.message), "_i": i})
 
 
 RESOLVERS = {"evm": evm_resolve, "tron": tron_resolve, "solana": solana_resolve, "ton": ton_resolve}
@@ -823,6 +843,11 @@ async def evm_roles(px: ChainProxy, out: Out, address: str, alias: str, extra: l
         result["roles"].append({"role": rname, "count": n, "members": names})
     if out.job.chain_id:
         dep = await px.sourcify_deployment(int(out.job.chain_id), address)
+        # third-party record: only well-formed values become facts (an address, a tx hash, a number)
+        if dep and not (EVM_ADDR.match(str(dep.get("deployer") or ""))
+                        and re.fullmatch(r"0x[0-9a-fA-F]{64}", str(dep.get("transactionHash") or ""))
+                        and re.fullmatch(r"\d{1,12}", str(dep.get("blockNumber") or ""))):
+            dep = None
         if dep and dep.get("deployer"):
             result["deployment"] = {"deployer": dep.get("deployer"), "creation_tx": dep.get("transactionHash"),
                                     "creation_block": dep.get("blockNumber")}
@@ -943,7 +968,7 @@ async def evm_balances(px: ChainProxy, out: Out, token: str, talias: str, holder
                 out.items.append(item_error(h["alias"], "balance", *_unavailable(exc)))
                 continue
             except RpcFailure as exc:
-                out.items.append(item_error(h["alias"], "balance", "upstream", exc.message))
+                out.items.append(upstream_error(h["alias"], "balance", exc.message))
                 continue
             key = out.fact(f"chain.{talias}.balance.{h['alias']}", str(int(bal, 16)), method="eth_getBalance",
                            source="eth_getBalance", unit="wei")
@@ -983,7 +1008,8 @@ def _balance_row(out: Out, talias: str, h: dict[str, Any], r: tuple[bool, bytes]
     if not ok or len(data) != 32:
         key = out.fact(f"chain.{talias}.balance.{h['alias']}.reverted", "true", method=f"{read}()", source=f"{read}(holder)")
         return {"alias": h["alias"], "kind": "balance", "ok": True, "reverted": True,
-                "revert_reason": abi.decode_revert(data)["reason"] if not ok else "not one word", "fact_keys": [key]}
+                "revert_reason": revert_text(data, f"balanceOf@{h['address']} revert") if not ok else "not one word",
+                "fact_keys": [key]}
     v = str(int.from_bytes(data, "big"))
     key = out.fact(f"chain.{talias}.balance.{h['alias']}", v, method=f"{read}()", source=f"{read}({h['address'][:12]}...)",
                    unit="token_units")
@@ -997,8 +1023,8 @@ async def tron_balances(px: ChainProxy, out: Out, token: str, talias: str, holde
             try:
                 acc = await px.tron("/wallet/getaccount", {"address": h["address"], "visible": True})
             except (ChainUnavailable, RpcFailure) as exc:
-                reason = _unavailable(exc) if isinstance(exc, ChainUnavailable) else ("upstream", exc.message)
-                out.items.append(item_error(h["alias"], "balance", *reason))
+                out.items.append(item_error(h["alias"], "balance", *_unavailable(exc)) if isinstance(exc, ChainUnavailable)
+                                 else upstream_error(h["alias"], "balance", exc.message))
                 continue
             v = str(int((acc or {}).get("balance") or 0))
             key = out.fact(f"chain.{talias}.balance.{h['alias']}", v, method="getaccount", source="TronGrid getaccount", unit="sun")
@@ -1043,7 +1069,7 @@ async def solana_balances(px: ChainProxy, out: Out, token: str, talias: str, hol
             out.items.append(item_error(h["alias"], "balance", *_unavailable(exc)))
             continue
         except RpcFailure as exc:
-            out.items.append(item_error(h["alias"], "balance", "upstream", exc.message))
+            out.items.append(upstream_error(h["alias"], "balance", exc.message))
             continue
         key = out.fact(f"chain.{talias}.balance.{h['alias']}", v, method=src.split(" ")[0], source=src,
                        unit=unit if unit != "lamports" else None)
@@ -1077,7 +1103,7 @@ async def ton_balances(px: ChainProxy, out: Out, token: str, talias: str, holder
             out.items.append(item_error(h["alias"], "balance", *_unavailable(exc)))
             continue
         except (RpcFailure, ValueError, TypeError) as exc:
-            out.items.append(item_error(h["alias"], "balance", "upstream", str(exc)[:120]))
+            out.items.append(upstream_error(h["alias"], "balance", str(exc)))
             continue
         key = out.fact(f"chain.{talias}.balance.{h['alias']}", v, method=src[:60], source=src,
                        unit=unit if unit == "token_units" else None)

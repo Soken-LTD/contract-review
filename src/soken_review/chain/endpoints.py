@@ -101,15 +101,15 @@ def ordered(eps: list[Endpoint], depth: int | None = None) -> list[Endpoint]:
     now = time.monotonic()
     rot = next(Health._rot)
 
-    def rank(ix_ep: tuple[int, Endpoint]) -> tuple[int, int, int, int]:
+    def rank(ix_ep: tuple[int, Endpoint]) -> tuple[int, int, int, int, int]:
         i, ep = ix_ep
         d = depth or 0
         fits = d <= DEPTH_BLOCKS.get(ep.depth, 100)
         ns = Health.no_state_depth.get(ep.host)
-        if ns and now < ns[1] and d >= ns[0]:
-            fits = False
+        failed_here = bool(ns and now < ns[1] and d >= ns[0])   # this host already said it has no such state
         cooling = Health.cool_until.get(ep.host, 0.0) > now
-        return (0 if fits else 1, 1 if cooling else 0, 0 if ep.keyed else 1, (i - rot) % max(len(eps), 1))
+        return (1 if failed_here else 0, 0 if fits else 1, 1 if cooling else 0, 0 if ep.keyed else 1,
+                (i - rot) % max(len(eps), 1))
 
     return [ep for _i, ep in sorted(enumerate(eps), key=rank)]
 

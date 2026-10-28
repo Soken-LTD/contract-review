@@ -195,7 +195,7 @@ async def _run(args: dict[str, Any], ru: int, body: Any) -> dict[str, Any]:
         await budget.reserve(ru)
     except ReviewError as exc:
         return {"accepted": False, "errors": [exc.envelope()]}
-    cache = Cache(pool)
+    cache = Cache(pool, job_id)
     meter = Meter(max_calls=int(limits().get("upstream_calls_per_call", 400)))
     cap = capability(cj.family, cj.chain_id)
     try:

@@ -110,10 +110,15 @@ async def test_pool_falls_back_when_a_host_has_no_state():
            Endpoint("https://deep.example", keyed=False, depth="unknown")]
     async with ChainProxy(transport=httpx.MockTransport(handler), endpoint_list=lambda f, c: eps, pace=False) as px:
         px.depth_hint = 50_000
-        assert await px.evm(1, "eth_getBalance", ["0x" + "0" * 40, hex(950_000)]) == "0x05"
+        for n in range(3):   # rotation decides who goes first; stop once the head-only host was asked
+            assert await px.evm(1, "eth_getBalance", ["0x" + f"{n:040x}", hex(950_000)]) == "0x05"
+            if "head.example" in hits:
+                break
+        assert "head.example" in hits
         hits.clear()
-        assert await px.evm(1, "eth_getBalance", ["0x" + "1" * 40, hex(950_000)]) == "0x05"
-    assert hits == ["deep.example"]
+        for n in range(3):
+            assert await px.evm(1, "eth_getBalance", ["0x" + f"{n + 10:040x}", hex(950_000)]) == "0x05"
+    assert hits == ["deep.example"] * 3   # the host that had no state at this depth is asked last
 
 
 @pytest.mark.asyncio
@@ -131,4 +136,4 @@ async def test_every_host_failing_is_said_plainly():
         with pytest.raises(ChainUnavailable) as exc:
             await px.evm(1, "eth_blockNumber", [])
     assert exc.value.reason == "rate_limited"
-    assert exc.value.hosts == ["https://a.example", "https://b.example"]
+    assert sorted(exc.value.hosts) == ["https://a.example", "https://b.example"]   # order rotates
