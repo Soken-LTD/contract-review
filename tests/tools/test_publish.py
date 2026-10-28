@@ -956,6 +956,13 @@ class TestAutoPublishEnqueue:
                      {"has_deployment": True, "chain": "evm", "chain_id": 8453}),
                     ("repo", "bbbbbbbbbbbbbbbbbbbbbbbbbb",
                      {"has_deployment": True, "chain": "evm", "chain_id": 8453}),
+                    # TON repo + mainnet address: matched (tier A) publishes, unlinked (tier B) never
+                    ("repo", "ffffffffffffffffffffffffff",
+                     {"has_deployment": True, "chain": "ton", "chain_id": None}),
+                    ("repo", "gggggggggggggggggggggggggg",
+                     {"has_deployment": True, "chain": "ton", "chain_id": None}),
+                    ("deployed", "hhhhhhhhhhhhhhhhhhhhhhhhhh",
+                     {"has_deployment": True, "chain": "evm", "chain_id": 8453}),   # tier B, verified
                     ("repo", "eeeeeeeeeeeeeeeeeeeeeeeeee",
                      {"has_deployment": False, "chain": None, "chain_id": None}),  # no deployment
                     ("upload", "cccccccccccccccccccccccccc",
@@ -976,6 +983,19 @@ class TestAutoPublishEnqueue:
                            values (%s, %s, %s, 'public_review', %s, 'R.pdf', array[repeat('0',64)]::char(64)[],
                                    '[]'::jsonb, 1, now(), now() + interval '30 days')""",
                         (rid, rid[:10], jid, f"reports/{rid}/1/"))
+                    tier = {"aaaaaaaaaaaaaaaaaaaaaaaaaa": "A", "bbbbbbbbbbbbbbbbbbbbbbbbbb": "A",
+                            "ffffffffffffffffffffffffff": "A", "gggggggggggggggggggggggggg": "B",
+                            "hhhhhhhhhhhhhhhhhhhhhhhhhh": "B"}.get(rid)
+                    if tier:
+                        await conn.execute("update jobs set tier = %s where job_id = %s", (tier, jid))
+                    # fetch/build provenance the publication rule reads (networks.deployed_code_reviewed)
+                    prov = {"gggggggggggggggggggggggggg": ("repo", {"reason": "SOURCE_UNLINKED", "dep_match": "not_checkable"}),
+                            "hhhhhhhhhhhhhhhhhhhhhhhhhh": ("etherscan", {"dep_match": "not_checkable"}),
+                            "ffffffffffffffffffffffffff": ("repo", {"reason": "MATCH_REBUILD", "dep_match": "exact"})}.get(rid)
+                    if prov:
+                        for name, body in (("fetch", {"provider": prov[0]}), ("build", prov[1])):
+                            row = await JobRepo(conn).insert_step(job_id=jid, step=name, container=False, units=0, ram_mb=0)
+                            await JobRepo(conn).complete_step(row["id"], "done", provenance=body)
                     rids[(kind, rid)] = (rid, jid)
                 for rid, jid in rids.values():
                     await _auto_enqueue_publish(conn, rid, jid, "2026-10-24T00:00:00+00:00")
@@ -993,6 +1013,12 @@ class TestAutoPublishEnqueue:
         assert got["bbbbbbbbbbbbbbbbbbbbbbbbbb"] == ((1, 2), "repo")
         # repo without deployment → private
         assert got["eeeeeeeeeeeeeeeeeeeeeeeeee"] == ((0, 0), "repo")
+        # TON repo + mainnet address: matched → queued; unlinked (SOURCE_UNLINKED, tier B) → private
+        assert got["ffffffffffffffffffffffffff"] == ((1, 2), "repo")
+        assert got["gggggggggggggggggggggggggg"] == ((0, 0), "repo")
+        # deployed mainnet address, Etherscan-verified source, own rebuild inconclusive (tier B):
+        # the reviewed code is the deployed code → queued
+        assert got["hhhhhhhhhhhhhhhhhhhhhhhhhh"] == ((1, 2), "deployed")
         # upload and files → private
         assert got["cccccccccccccccccccccccccc"] == ((0, 0), "upload")
         assert got["dddddddddddddddddddddddddd"] == ((0, 0), "files")

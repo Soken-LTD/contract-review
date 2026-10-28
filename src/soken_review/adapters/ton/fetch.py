@@ -1250,9 +1250,8 @@ async def fetch_repo_candidate(
         logger.debug("fetch_repo_candidate failed: %s", exc)
         return None
 
-    CONTRACT_EXTS = {".fc", ".func", ".tact", ".tolk", ".json", ".toml"}
-    files: dict[str, str] = {}
-    total_bytes = 0
+    files: dict[str, bytes] = {}
+    read_bytes = 0
     with tempfile.TemporaryDirectory() as tmpdir:
         archive_path = Path(tmpdir) / "archive.tar.gz"
         archive_path.write_bytes(raw_bytes)
@@ -1261,53 +1260,98 @@ async def fetch_repo_candidate(
                 for member in tf.getmembers():
                     if not member.isfile():
                         continue
-                    # Total inode cap
                     if len(files) >= _MAX_TOTAL_INODES:
                         logger.warning("fetch_repo_candidate: inode cap (%d) reached", _MAX_TOTAL_INODES)
                         break
                     parts = member.name.split("/", 1)
                     rel = parts[1] if len(parts) > 1 else member.name
-                    if subdir:
-                        prefix = subdir.rstrip("/") + "/"
-                        if not rel.startswith(prefix):
-                            continue
-                        rel = rel[len(prefix):]
-                    ext = "." + rel.rsplit(".", 1)[-1].lower() if "." in rel else ""
-                    if ext not in CONTRACT_EXTS:
+                    if not _repo_file_wanted(rel, subdir):
                         continue
+                    if member.size > _MAX_FILE_BYTES:
+                        logger.debug("skip oversized file %s in %s", rel, archive_url)
+                        continue
+                    if read_bytes + member.size > _MAX_TOTAL_FETCH_BYTES:
+                        logger.warning("fetch_repo_candidate: total byte budget exceeded at %s", rel)
+                        break
                     fobj = tf.extractfile(member)
                     if fobj is None:
                         continue
-                    raw_content = fobj.read(_MAX_FILE_BYTES + 1)
-                    if len(raw_content) > _MAX_FILE_BYTES:
-                        logger.debug("skip oversized file %s in %s", rel, archive_url)
-                        continue
-                    # Total byte budget
-                    if total_bytes + len(raw_content) > _MAX_TOTAL_FETCH_BYTES:
-                        logger.warning("fetch_repo_candidate: total byte budget exceeded at %s", rel)
-                        break
-                    try:
-                        content = raw_content.decode("utf-8", errors="replace")
-                        files[rel] = content
-                        total_bytes += len(raw_content)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.debug("skip file %s in %s: %s", rel, archive_url, exc)
+                    files[rel] = fobj.read(_MAX_FILE_BYTES + 1)
+                    read_bytes += len(files[rel])
         except Exception as exc:  # noqa: BLE001
             logger.debug("tarfile extract failed: %s", exc)
             return None
+    return repo_candidate_from_tree(
+        dict(files), repo_url=repo_url, commit=commit, subdir=subdir,
+        source_url=f"https://github.com/{owner}/{repo}/tree/{commit}")
 
-    if not files:
+
+_REPO_SOURCE_EXTS = (".fc", ".func", ".tact", ".tolk")
+_REPO_CONFIG_EXTS = (".json", ".toml")
+_REPO_SKIP_DIRS = frozenset({".git", "node_modules", "build", "dist", "out", "temp", "vendor"})
+
+
+def _repo_file_wanted(rel: str, subdir: str) -> bool:
+    """A repository file that can enter a TON candidate: a source or config extension, under
+    `subdir` when one was requested, never inside a dependency or build directory."""
+    if subdir:
+        prefix = subdir.strip("/") + "/"
+        if not rel.startswith(prefix):
+            return False
+    parts = rel.split("/")
+    if any(p in _REPO_SKIP_DIRS or p.startswith(".") for p in parts[:-1]):
+        return False
+    return rel.lower().endswith(_REPO_SOURCE_EXTS + _REPO_CONFIG_EXTS)
+
+
+def repo_candidate_from_tree(
+    files: dict[str, bytes | str],
+    *,
+    repo_url: str,
+    commit: str,
+    subdir: str = "",
+    source_url: str | None = None,
+) -> Candidate | None:
+    """TON `repo` candidate from a repository tree (the GitHub archive above, or the tree the
+    supervisor's sandboxed fetch materialised for a repo-only job; store path -> content).
+
+    With `subdir`, paths are relative to it (as before). Without one, the paths stay repository
+    relative and a JSON or TOML file is kept only when it is a Tact config or sits beside a TON
+    source, so package.json / tsconfig.json of a Blueprint project are not pinned as FunC.
+    """
+    subdir = (subdir or "").strip("/")
+    wanted = {rel: content for rel, content in files.items() if _repo_file_wanted(rel, subdir)}
+    if not subdir:
+        source_dirs = {rel.rpartition("/")[0] for rel in wanted if rel.lower().endswith(_REPO_SOURCE_EXTS)}
+        wanted = {rel: c for rel, c in wanted.items()
+                  if rel.lower().endswith(_REPO_SOURCE_EXTS) or rel.rsplit("/", 1)[-1] == "tact.config.json"
+                  or rel.rpartition("/")[0] in source_dirs}
+    out: dict[str, str] = {}
+    total_bytes = 0
+    for rel in sorted(wanted):
+        raw = wanted[rel]
+        raw_bytes = raw.encode("utf-8", errors="replace") if isinstance(raw, str) else raw
+        if len(raw_bytes) > _MAX_FILE_BYTES:
+            logger.debug("skip oversized file %s in %s", rel, repo_url)
+            continue
+        if total_bytes + len(raw_bytes) > _MAX_TOTAL_FETCH_BYTES:
+            logger.warning("repo_candidate_from_tree: total byte budget exceeded at %s", rel)
+            break
+        key = rel[len(subdir) + 1:] if subdir else rel
+        out[key] = raw_bytes.decode("utf-8", errors="replace")
+        total_bytes += len(raw_bytes)
+    if not any(p.lower().endswith(_REPO_SOURCE_EXTS) or p.rsplit("/", 1)[-1] == "tact.config.json" for p in out):
         return None
     from soken_review.adapters.ton.detect import detect_language_from_files
-    language = detect_language_from_files(files) or "func"
+    language = detect_language_from_files(out) or "func"
     return _make_ton_candidate(
         provider="repo",
-        raw_files=files,
+        raw_files=out,
         language=language,
         compiler_version=None,
         compiler_pinned_by="repo",
         entry_contract=None,
-        source_url=f"https://github.com/{owner}/{repo}/tree/{commit}",
+        source_url=source_url or f"{repo_url.rstrip('/').removesuffix('.git')}/tree/{commit}",
         source_bundle={"repo_url": repo_url, "commit": commit, "subdir": subdir},
     )
 
@@ -1396,6 +1440,7 @@ async def fetch_ton_sources(
     compiler_version: str | None = None,
     language: str | None = None,
     read_status: dict[str, str] | None = None,
+    repo_files: dict[str, str] | None = None,
 ) -> list[Candidate]:
     """Fetch TON source candidates in 06 4.2 order: user source, then the verifier bundle.
 
@@ -1407,7 +1452,11 @@ async def fetch_ton_sources(
         if user_files:
             candidates.append(make_user_candidate(user_files, compiler_version=compiler_version, language=language))
         if repo_url and repo_commit:
-            rc = await fetch_repo_candidate(client, repo_url, repo_commit, repo_subdir)
+            if repo_files is not None:
+                # repo-only job: the supervisor's sandboxed fetch already materialised the tree
+                rc = repo_candidate_from_tree(repo_files, repo_url=repo_url, commit=repo_commit, subdir=repo_subdir)
+            else:
+                rc = await fetch_repo_candidate(client, repo_url, repo_commit, repo_subdir)
             if rc is not None:
                 candidates.append(rc)
         if code_hash:

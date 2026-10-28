@@ -17,6 +17,7 @@
   "tier_b_deployer_source": "Source published by the deployer; rebuild not confirmed",
   "tier_b_files": "Source supplied by the requester; not linked to a repository or deployment",
   "tier_b_proxy_unmatched": "Implementation matched; proxy not matched",
+  "tier_b_unmatched": "Deployment given; deployment not matched to this source",
   "tier_c": "Source does not match deployed code"
  },
  "tier_c_warning": "The source code reviewed does not match the code deployed at {address}. The findings describe the source code, not the deployed {noun}.",
