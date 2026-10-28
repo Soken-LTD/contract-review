@@ -40,8 +40,9 @@ def test_reentrancy_print_screen_print_identical(tmp_path):
 
 
 def test_public_review_prints_high_and_critical_as_is(tmp_path):
-    """CEO 2026-10-28: a third-party High prints title, location, code quote, attack steps and the
-    amount-at-risk value in print and screen (the screen page is the hosted site copy)."""
+    """CEO 2026-10-28: a third-party High prints title, location, code quote and the amount-at-risk
+    value in print and screen (the screen page is the hosted site copy). The attack step list is
+    owner-only: public copies name it instead (security review 2026-10-28)."""
     r = report(severities=["Critical", "High", "Medium", "Low"])
     assert r["meta"]["requested_by"]["role"] == "third_party_public_code"
     r["findings"][1]["title"] = HIGH_TITLE
@@ -50,8 +51,9 @@ def test_public_review_prints_high_and_critical_as_is(tmp_path):
     for doc in (html, screen):
         assert HIGH_TITLE in doc
         assert "src/Vault.sol:10-14" in doc  # location
-        assert "Call <span class=\"mono\">withdraw</span> from a contract" in doc  # attack steps
-        assert "Attack steps" in doc
+        assert "Call <span class=\"mono\">withdraw</span> from a contract" not in doc  # step list owner-only
+        assert kb.kit_texts()["attack_steps_owner_only"] in doc
+        assert "sends value before it writes the caller balance" in doc  # mechanism stays
         assert "withheld" not in doc.lower() and "control of the code" not in doc
         assert kb.kit_texts()["public_review_banner"] in doc
     assert "1,250 ETH" in html and "at the pinned block" in html
@@ -65,6 +67,8 @@ def test_owner_profile_shows_everything(tmp_path):
     html = _html(r, tmp_path)
     assert HIGH_TITLE in html
     assert "Attack steps" in html
+    assert "Call <span class=\"mono\">withdraw</span> from a contract" in html
+    assert kb.kit_texts()["attack_steps_owner_only"] not in html
     assert "1,250 ETH" in html
     assert kb.kit_texts()["public_review_banner"] not in html
     assert kb.kit_texts()["footer_line"] in html

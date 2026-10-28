@@ -384,8 +384,8 @@ def project(report: dict[str, Any], profile: str | None = None) -> dict[str, Any
     """The only projection (08 2.4): expands placeholders in every model string.
 
     Every finding prints as is under every profile and requester role (CEO 2026-10-28): title,
-    severity, location, description, impact, recommendation, attack steps, code quotes and
-    Figures used rows. The profile changes only the banner, footer and link signing.
+    severity, location, description, impact, recommendation, code quotes, amount-at-risk values and
+    Figures used rows. The attack step list prints for the owner profile only (`card()`).
     """
     profile = profile or report["meta"]["profile"]
     facts = report["facts"]
@@ -769,9 +769,13 @@ def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status:
     if not fixed:
         body += f'<div class="fl">{esc(lab["description"])}</div>{blocks(f.get("description", []), ctx, meta)}'
         body += f'<div class="fl">{esc(lab["impact"])}</div>{blocks(f.get("impact", []), ctx, meta)}'
-        if f.get("attack_steps"):
+        # The step list prints for the owner profile only (security review 2026-10-28, pending the CEO's
+        # call): public copies keep title, location, quotes, mechanism and impact, and name the sequence.
+        if f.get("attack_steps") and ctx.profile == "owner":
             body += f'<div class="fl">{esc(lab["attack_steps"])}</div><ol>' + "".join(
                 f'<li>{inl(s["text"], ctx)} {esc_src(ref_text(s["ref"]), ctx)}</li>' for s in f["attack_steps"]) + "</ol>"
+        elif f.get("attack_steps"):
+            body += f'<div class="fl">{esc(lab["attack_steps"])}</div><p class="nofind">{esc(t["attack_steps_owner_only"])}</p>'
         body += f'<div class="fl">{esc(lab["recommendation"])}</div>{blocks(f.get("recommendation", []), ctx, meta)}'
     ev = f["evidence"]
     body += f'<div class="fl">{esc(lab["evidence"])}</div>'

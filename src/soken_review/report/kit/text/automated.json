@@ -5,6 +5,7 @@
  "footer_public_review": "Automated security review. Code ownership not proven; not confirmed by SOKEN LTD.",
  "generated_by": "Generated with SOKEN LTD tooling at the request of the party named on the cover",
  "requested_by_line": "Role declared by the requester, not verified by SOKEN LTD: {label}",
+ "attack_steps_owner_only": "Step-by-step exploit sequence available to the code owner.",
  "public_review_banner": "Ownership of this code is not proven. Automated output, not confirmed by SOKEN LTD.",
  "authorship_box": "Findings were written by the requester's language model session and checked by automated rules only. SOKEN LTD has not confirmed them.",
  "tier_labels": {
