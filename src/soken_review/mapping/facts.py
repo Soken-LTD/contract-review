@@ -285,15 +285,17 @@ def _is_context_fact(f: dict[str, Any]) -> bool:
 def write_facts(root: Path, job_id: str, facts: list[dict[str, Any]]) -> None:
     """facts.json holds the code and chain facts only. Context facts (`context.*`) live in
     `context_facts.json`, written by the `context` step, which may run before or after the map step
-    rewrites this file; dropping them here keeps the two files disjoint and `load_facts` the merge."""
+    rewrites this file; dropping them here keeps the two files disjoint and `load_facts` the merge.
+    Chain tool facts (`origin: chain_tool`, chain_facts.json) are dropped for the same reason."""
     d = root / job_id
     d.mkdir(parents=True, exist_ok=True)
-    rows = [f for f in facts if not _is_context_fact(f)]
+    rows = [f for f in facts if not _is_context_fact(f) and f.get("origin") != "chain_tool"]
     (d / "facts.json").write_text(json.dumps(sorted(rows, key=lambda f: f["key"]), indent=1), encoding="utf-8")
 
 
 def load_facts(root: Path, job_id: str) -> list[dict[str, Any]] | None:
-    """The job's facts: facts.json plus the context facts file when present. None without facts.json."""
+    """The job's facts: facts.json plus the context and chain facts files when present. None
+    without facts.json."""
     p = root / job_id / "facts.json"
     if not p.exists():
         return None
@@ -303,4 +305,12 @@ def load_facts(root: Path, job_id: str) -> list[dict[str, Any]] | None:
         extra = json.loads(ctx.read_text(encoding="utf-8"))
         if isinstance(extra, list):
             facts = [f for f in facts if not _is_context_fact(f)] + extra
+    # Chain facts read by the chain tools during the review (chain/facts.py). A key the pipeline
+    # already wrote keeps the pipeline value: the tools never overwrite a pin-time fact.
+    from ..chain.facts import load_chain_facts
+
+    chain = load_chain_facts(root, job_id)
+    if chain:
+        have = {f.get("key") for f in facts}
+        facts = facts + [f for f in chain if f.get("key") not in have]
     return facts

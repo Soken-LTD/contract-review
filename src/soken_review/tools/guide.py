@@ -209,6 +209,31 @@ def _topic_context() -> list[str]:
     return out
 
 
+def _topic_chain() -> list[str]:
+    """Chain tools (chain access design 2026-10-27, P1): optional, free sources only."""
+    from ..chain.untrusted import GUIDE_NOTE
+
+    return [
+        ("Chain reads: review_chain_read (getters, storage slots, accounts, TON get methods), review_chain_roles"
+         " (owner, admin and other holders, EIP-1967 proxy slots, AccessControl members, Safe threshold, deployer,"
+         " TRON account permissions, Solana upgrade and mint authorities) and review_chain_balances (native and token"
+         " balances of named holders). All optional: no step or finalize check depends on them, and a failure never"
+         " changes the job."),
+        ("When to use: confirm a supply, balance, role or revert claim on chain before rating it; a revert is a"
+         " result with its decoded reason (Panic code name, Error(string), custom error by selector)."),
+        ("Facts: every value becomes chain.<alias>.<field> with its block (slot, masterchain seqno) and source;"
+         " cite it as {{fact:chain.<alias>.<field>}}. The report prints the value with the network and block on its"
+         " first use and in the finding's Figures used table."),
+        ("Blocks: block latest (default) is frozen to a concrete block at call time; pinned is the job's pinned"
+         " block. The free endpoints of most chains keep only recent state, so an old block can fail; the result"
+         " says so (capability, block.note, item error reason archive). TRON and Solana serve latest state only."),
+        ("Budget: read units per job and per day (1 per item, 2 below the archive line; balances 1 per 10 holders;"
+         " roles 30). Items that failed because a free source capped or failed are refunded. Running out never"
+         " blocks a finding or the report."),
+        f"Chain text (token names, revert strings) arrives only in untrusted_text. {GUIDE_NOTE}",
+    ]
+
+
 def _topic_checklist(family: str) -> list[str]:
     doc = _checklist(family)
     if doc is None:
@@ -271,9 +296,11 @@ def _render_topic(topic: str, chain: str | None, job_id: str | None = None) -> s
         body = _topic_context()
     elif topic == "invariants":
         body = _topic_invariants(job_id, family)
+    elif topic == "chain":
+        body = _topic_chain()
     else:  # the input schema already enumerates topics; keep the error shape consistent
         raise ReviewError("E_INVALID_ARGUMENT", field="topic", rule="enum", value80=topic[:80],
-                          example="one of checklist, categories, severity_inputs, challenge_rules, context, invariants")
+                          example="one of checklist, categories, severity_inputs, challenge_rules, context, invariants, chain")
     text = "\n".join([f"guide_version {GUIDE_VERSION} topic {topic} chain {chain or 'evm'}", *body])
     if len(text) > _CAP:
         text = text[: _CAP - 20].rsplit("\n", 1)[0] + "\n(truncated)"

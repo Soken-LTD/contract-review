@@ -53,6 +53,16 @@
           "amount_at_risk": {
             "type": "boolean",
             "description": "04 6.3 tag from units.yaml"
+          },
+          "at": {
+            "type": "string",
+            "maxLength": 80,
+            "x-text-class": "server",
+            "description": "chain facts read by the chain tools: network and block (slot, masterchain block) of the read, printed after the value on its first use in a string"
+          },
+          "literal": {
+            "type": "boolean",
+            "description": "true for text read from the chain (class chain_text): printed as a quoted literal, never as prose"
           }
         }
       }

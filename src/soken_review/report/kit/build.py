@@ -358,6 +358,8 @@ def _risky(keys: list[str], facts: dict[str, Any]) -> bool:
 
 
 def expand(text: str, facts: dict[str, Any], profile: str, withheld_value: str) -> str:
+    seen: set[str] = set()
+
     def sub(m: re.Match) -> str:
         kind, body = m.group(1), m.group(2)
         if kind == "fact":
@@ -366,7 +368,14 @@ def expand(text: str, facts: dict[str, Any], profile: str, withheld_value: str) 
                 raise BuildError("schema", f"fact {body} not in facts")
             if profile == "public_review" and f["amount_at_risk"]:
                 return withheld_value
-            return f["value"] + (f" {f['unit']}" if f.get("unit") else "")
+            # chain text prints as a quoted literal; the network and block of chain facts print once per
+            # string (several values read at one block share one label)
+            value = f'"{f["value"]}"' if f.get("literal") else f["value"]
+            out = value + (f" {f['unit']}" if f.get("unit") else "")
+            if f.get("at") and f["at"] not in seen:
+                seen.add(f["at"])
+                out += f" ({f['at']})"
+            return out
         if kind == "calc":
             value, keys = eval_calc(body, facts)
             return withheld_value if profile == "public_review" and _risky(keys, facts) else value

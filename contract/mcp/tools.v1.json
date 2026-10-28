@@ -3,6 +3,87 @@
  "$id": "urn:soken:contract:mcp:tools.v1",
  "description": "Plan copy of the part 03 tool wrappers. contract/build.py inlines every $ref into each tool schema at release. Enum values in angle brackets are generated at startup. Server checks not expressible without root combinators are listed in part 03 section 4.",
  "$defs": {
+   "chain_alias": {
+    "type": "string",
+    "pattern": "^[a-z][a-z0-9_]{0,23}$",
+    "description": "your name for the address; fact keys are chain.<alias>.<field>. Not block or chain_id"
+   },
+   "chain_address": {
+    "type": "string",
+    "minLength": 20,
+    "maxLength": 100,
+    "description": "EVM 0x address, TRON T... address, Solana base58, TON raw or user-friendly"
+   },
+   "chain_block": {
+    "type": [
+     "string",
+     "integer"
+    ],
+    "pattern": "^(latest|pinned)$",
+    "minimum": 0,
+    "description": "latest (default, frozen to a concrete block at call time), pinned (the job's pinned block), or a block number (EVM, TON seqno). TRON and Solana serve latest only and say so"
+   },
+   "chain_output": {
+    "type": "object",
+    "required": [
+     "accepted"
+    ],
+    "properties": {
+     "accepted": {
+      "type": "boolean"
+     },
+     "errors": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/error"
+      },
+      "maxItems": 20
+     },
+     "errors_more": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "job_id": {
+      "$ref": "#/$defs/job_id"
+     },
+     "family": {
+      "type": "string"
+     },
+     "network": {
+      "type": "string"
+     },
+     "block": {
+      "type": "object",
+      "description": "requested, resolved (block, slot or masterchain seqno), block_time, head, note"
+     },
+     "capability": {
+      "type": "object",
+      "description": "what the free sources can serve: history depth, sources, degraded notes"
+     },
+     "items": {
+      "type": "array",
+      "maxItems": 120,
+      "items": {
+       "type": "object"
+      }
+     },
+     "fact_keys": {
+      "type": "array",
+      "maxItems": 600,
+      "items": {
+       "type": "string"
+      }
+     },
+     "budget": {
+      "type": "object",
+      "description": "read units charged by this call, used and left for the job"
+     },
+     "untrusted_text_note": {
+      "type": "string"
+     }
+    },
+    "additionalProperties": true
+   },
   "job_id": {
    "type": "string",
    "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
@@ -1243,7 +1324,8 @@
        "severity_inputs",
        "challenge_rules",
        "context",
-       "invariants"
+       "invariants",
+       "chain"
       ]
      },
      "job_id": {
@@ -1262,11 +1344,12 @@
         "severity_inputs",
         "challenge_rules",
         "context",
-        "invariants"
+        "invariants",
+        "chain"
        ]
       },
       "minItems": 1,
-      "maxItems": 6,
+      "maxItems": 7,
       "uniqueItems": true,
       "description": "Several topics in one call, returned in this order. Use instead of topic."
      }
@@ -3260,6 +3343,284 @@
       "description": "Permanent public URL once published; null until then."
      }
     }
+   }
+  },
+  {
+   "name": "review_chain_read",
+   "title": "Read chain state",
+   "annotations": {
+    "title": "Read chain state",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   },
+   "description": "Reads getters, storage slots and accounts on the job's chain at one block, batched (EVM, TRON, Solana accounts, TON get methods). A revert is a result with its decoded reason. Every value becomes a fact with its block, for {{fact:...}} in findings. Optional; a failure never blocks review or finalize.",
+   "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "job_id",
+     "items"
+    ],
+    "properties": {
+     "job_id": {
+      "$ref": "#/$defs/job_id"
+     },
+     "block": {
+      "$ref": "#/$defs/chain_block"
+     },
+     "chain_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "EVM chain id, only for a job without a deployment (a repository review that needs a live dependency)"
+     },
+     "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "alias",
+        "address",
+        "kind"
+       ],
+       "properties": {
+        "alias": {
+         "$ref": "#/$defs/chain_alias"
+        },
+        "address": {
+         "$ref": "#/$defs/chain_address"
+        },
+        "kind": {
+         "type": "string",
+         "enum": [
+          "call",
+          "storage",
+          "account",
+          "get_method"
+         ]
+        },
+        "fn": {
+         "type": "string",
+         "maxLength": 200,
+         "description": "call: Solidity signature, e.g. getPastTotalSupply(uint256)"
+        },
+        "args": {
+         "type": "array",
+         "maxItems": 10,
+         "description": "call and get_method arguments (numbers as decimal or 0x strings)"
+        },
+        "returns": {
+         "type": "string",
+         "maxLength": 200,
+         "description": "call: return types, e.g. uint256 or (uint256,address); without it one word is read as uint256"
+        },
+        "errors": {
+         "type": "array",
+         "maxItems": 20,
+         "items": {
+          "type": "string",
+          "maxLength": 120
+         },
+         "description": "custom error signatures to name a revert"
+        },
+        "field": {
+         "type": "string",
+         "pattern": "^[a-z][a-z0-9_]{0,39}$",
+         "description": "fact key segment; default from fn, slot or method"
+        },
+        "unit": {
+         "type": "string",
+         "enum": [
+          "wei",
+          "ether",
+          "seconds",
+          "hours",
+          "days",
+          "percent",
+          "bps",
+          "token_units",
+          "tokens"
+         ]
+        },
+        "slot": {
+         "type": [
+          "string",
+          "integer"
+         ],
+         "description": "storage: slot as 0x hex or integer"
+        },
+        "method": {
+         "type": "string",
+         "maxLength": 64,
+         "description": "get_method (TON): get method name"
+        },
+        "fields": {
+         "type": "array",
+         "maxItems": 20,
+         "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+           "name",
+           "offset",
+           "type"
+          ],
+          "properties": {
+           "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$"
+           },
+           "offset": {
+            "type": "integer",
+            "minimum": 0
+           },
+           "type": {
+            "type": "string",
+            "enum": [
+             "u8",
+             "u16",
+             "u32",
+             "u64",
+             "u128",
+             "i64",
+             "bool",
+             "pubkey"
+            ]
+           }
+          }
+         },
+         "description": "account (Solana): typed slices of the account data"
+        }
+       }
+      }
+     }
+    }
+   },
+   "outputSchema": {
+    "$ref": "#/$defs/chain_output"
+   }
+  },
+  {
+   "name": "review_chain_roles",
+   "title": "Read roles on chain",
+   "annotations": {
+    "title": "Read roles on chain",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   },
+   "description": "Reads who controls an address at one block: owner, admin and other holder getters, EIP-1967 proxy implementation, admin and beacon, AccessControl members, Safe threshold, deployer and creation transaction (verified source), TRON account permissions, Solana upgrade and mint authorities, TON admin. Each value is a fact with its block. Optional.",
+   "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "job_id",
+     "address",
+     "alias"
+    ],
+    "properties": {
+     "job_id": {
+      "$ref": "#/$defs/job_id"
+     },
+     "block": {
+      "$ref": "#/$defs/chain_block"
+     },
+     "chain_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "EVM chain id, only for a job without a deployment (a repository review that needs a live dependency)"
+     },
+     "address": {
+      "$ref": "#/$defs/chain_address"
+     },
+     "alias": {
+      "$ref": "#/$defs/chain_alias"
+     },
+     "getters": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "type": "string",
+       "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+      },
+      "description": "extra zero-argument getters that return an address"
+     }
+    }
+   },
+   "outputSchema": {
+    "$ref": "#/$defs/chain_output"
+   }
+  },
+  {
+   "name": "review_chain_balances",
+   "title": "Read balances on chain",
+   "annotations": {
+    "title": "Read balances on chain",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+   },
+   "description": "Reads native or token balances of named holders at one block (ERC-20, TRC-20, SPL, jettons), with the token's decimals and total supply where it has them. Each balance is a fact chain.<token_alias>.balance.<holder_alias> with its block. Optional.",
+   "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "job_id",
+     "token",
+     "holders"
+    ],
+    "properties": {
+     "job_id": {
+      "$ref": "#/$defs/job_id"
+     },
+     "block": {
+      "$ref": "#/$defs/chain_block"
+     },
+     "chain_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "EVM chain id, only for a job without a deployment (a repository review that needs a live dependency)"
+     },
+     "token": {
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 100,
+      "description": "token address, or native"
+     },
+     "token_alias": {
+      "$ref": "#/$defs/chain_alias"
+     },
+     "holders": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "alias",
+        "address"
+       ],
+       "properties": {
+        "alias": {
+         "$ref": "#/$defs/chain_alias"
+        },
+        "address": {
+         "$ref": "#/$defs/chain_address"
+        }
+       }
+      }
+     }
+    }
+   },
+   "outputSchema": {
+    "$ref": "#/$defs/chain_output"
    }
   }
  ]
