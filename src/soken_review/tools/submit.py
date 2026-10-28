@@ -45,6 +45,7 @@ from ..engine.numbers import lex_numbers
 from ..engine.severity import SeverityContext, compute_severity, k_caps_only
 from ..engine.text_gate import check_model_field
 from ..errors import ReviewError
+from ..learning import ledger
 from ..mapping.build import load_map
 from ..mapping.facts import load_facts
 from ..mapping.semantic_evm import detect_token_review, units_holding
@@ -929,6 +930,9 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                     "update finding_drafts set rejected_count = rejected_count + 1 where job_id = %s and draft_key = %s",
                     (job_id, draft_key),
                 )
+            # Friction ledger (learning-loop design 2.5): error codes and fields only, fail-soft.
+            await ledger.record_rejection(conn, job, draft_key, "review_submit_finding", violations,
+                                          rejected_count + 1)
             result: dict[str, Any] = {"accepted": False, "errors": violations[:20]}
             if len(violations) > 20:
                 result["errors_more"] = len(violations) - 20

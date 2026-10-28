@@ -1570,6 +1570,11 @@
               "dismissed": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "lower_priority": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Leads of this analyzer the rule tier policy listed after the others or collapsed (learning-loop P1)"
               }
             }
           }
@@ -1706,6 +1711,25 @@
                 "pattern": "^[CHMLI]-[0-9]{3}$",
                 "x-text-class": "server"
               }
+            }
+          }
+        },
+        "rule_tiers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "lower_priority"
+          ],
+          "properties": {
+            "version": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$",
+              "x-text-class": "server"
+            },
+            "lower_priority": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         }

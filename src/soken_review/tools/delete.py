@@ -39,6 +39,7 @@ from psycopg.rows import dict_row
 from ..db.job_repo import JobRepo
 from ..db.pool import get_pool
 from ..errors import ReviewError
+from ..learning import ledger
 from ..server import handler
 from .context import JobContext
 
@@ -143,6 +144,9 @@ async def purge_job(conn: psycopg.AsyncConnection, job_id: str, *, reason: str,
     await _tombstones(conn, job_id, report, reason)
     if report is not None:
         await _retain_publication(conn, report["report_id"])
+    # The outcome ledger (migration 016, no job_id column) keeps the job's lead and finding
+    # outcomes, anonymised, before the cascade removes them (learning-loop design P0).
+    await ledger.record_job_safe(conn, job_id, "purge")
     counts = await _delete_rows(conn, job_id)
     if any(counts.get(t, 0) for t in _FINDING_TABLES):
         deleted.add("findings")
