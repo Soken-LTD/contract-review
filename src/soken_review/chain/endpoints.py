@@ -58,6 +58,10 @@ class Endpoint:
     def archive(self) -> bool:
         return self.depth == "archive"
 
+    @property
+    def operator(self) -> str | None:
+        return operator_of(self.url)
+
 
 class Health:
     """Per-host run-time memory: cooldown after a rate limit or outage, and the shallowest depth
@@ -117,6 +121,20 @@ def ordered(eps: list[Endpoint], depth: int | None = None) -> list[Endpoint]:
 @lru_cache(maxsize=1)
 def _free_rpc() -> dict[str, Any]:
     return json.loads(_FREE_RPC.read_text(encoding="utf-8"))
+
+
+def operator_of(url: str) -> str | None:
+    """Independent operator of a host from the curated `operators` table of free_rpc.json (longest
+    matching suffix), None for a host the table does not know. Used for cache quorum only."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").lower()
+    table = {k: v for k, v in (_free_rpc().get("operators") or {}).items() if not k.startswith("_")}
+    best = None
+    for suffix, op in table.items():
+        if (host == suffix or host.endswith("." + suffix)) and (best is None or len(suffix) > len(best[0])):
+            best = (suffix, op)
+    return best[1] if best else None
 
 
 @dataclass

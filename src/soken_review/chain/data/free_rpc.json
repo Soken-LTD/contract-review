@@ -160,5 +160,30 @@
    "https://polygon.llamarpc.com",
    "https://rpc.ankr.com/polygon"
   ]
+ },
+ "operators": {
+  "_note": "Independent operator per host suffix (data, curated). The shared cache counts agreement only between two different operator ids from this table; a host matching no suffix is unknown and never counts. Two hostnames of one operator (bsc-dataseed.binance.org and bsc-dataseed2.bnbchain.org) are one operator.",
+  "publicnode.com": "allnodes",
+  "drpc.org": "drpc",
+  "mevblocker.io": "mevblocker",
+  "blastapi.io": "blastapi",
+  "1rpc.io": "ata",
+  "blockrazor.xyz": "blockrazor",
+  "flashbots.net": "flashbots",
+  "binance.org": "bnbchain",
+  "bnbchain.org": "bnbchain",
+  "defibit.io": "defibit",
+  "ninicoin.io": "ninicoin",
+  "arbitrum.io": "offchainlabs",
+  "base.org": "coinbase",
+  "optimism.io": "optimism",
+  "polygon-rpc.com": "polygon",
+  "llamarpc.com": "llamanodes",
+  "ankr.com": "ankr",
+  "hyperliquid.xyz": "hyperliquid",
+  "trongrid.io": "trongrid",
+  "solana.com": "solana_foundation",
+  "toncenter.com": "toncenter",
+  "sourcify.dev": "sourcify"
  }
 }

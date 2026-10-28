@@ -79,7 +79,7 @@ class Meter:
 
 
 CacheGet = Callable[[str], Awaitable[Any | None]]
-CachePut = Callable[[str, Any, bool, str, bool], Awaitable[None]]   # key, value, durable, host, trusted
+CachePut = Callable[[str, Any, bool, str, bool], Awaitable[None]]   # key, value, durable, operator, trusted
 
 
 class _Pace:
@@ -144,12 +144,13 @@ class ChainProxy:
         return hit
 
     async def _store(self, key: str, value: Any, durable: bool, ep: Endpoint) -> None:
-        """`durable` asks for the shared cache; the cache shares an answer only when two distinct
-        hosts agreed on it or the host is operator-configured (keyed), else it stays per job."""
+        """`durable` asks for the shared cache; the cache shares an answer only when two different
+        operators of the curated pool agreed on it or the host is operator-configured (keyed), else
+        it stays per job. An unknown host passes no operator and never counts."""
         if self._cache_put is None:
             return
         try:
-            await self._cache_put(key, value, durable, ep.host, ep.keyed)
+            await self._cache_put(key, value, durable, ep.operator or "", ep.keyed)
         except Exception as exc:  # noqa: BLE001
             logger.info("chain cache put failed: %s", type(exc).__name__)
 

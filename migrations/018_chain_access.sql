@@ -1,6 +1,6 @@
 -- Migration 018: chain access P0 (chain access design 2026-10-27, sections 2.2 and 4).
 -- Numbered after 016 (learning ledger, PR #94) and 017 (gate warnings, never-worse branch).
--- chain_cache: public chain data at a final block, shared across jobs only once two distinct hosts
+-- chain_cache: public chain data at a final block, shared across jobs only once two independent operators
 --   agreed (or an operator-configured host answered). No job id, no quota key: the key is sha256 of
 --   (family, chain, method, params) and the value is the provider's answer.
 -- chain_job_ru: read units a job has spent (deleted with the job, like every job_id table).
@@ -10,9 +10,9 @@ create table if not exists chain_cache (
   key            text primary key check (key ~ '^[0-9a-f]{64}$'),
   result         jsonb not null,
   result_hash    text not null check (result_hash ~ '^[0-9a-f]{64}$'),
-  host           text not null,               -- redacted host (scheme://host) that answered first
+  host           text not null,               -- operator id (free_rpc.json operators) that answered first
   trusted        boolean not null default false,  -- the host is an operator-configured endpoint
-  confirmed_host text,                        -- a second, different host gave the same answer
+  confirmed_host text,                        -- a second, different operator gave the same answer
   created_at     timestamptz not null default now()
 );
 -- Served to other jobs only when trusted or confirmed (security review 2026-10-28: one lying free

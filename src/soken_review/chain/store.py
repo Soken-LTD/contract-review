@@ -115,8 +115,9 @@ class Cache:
 
     Every answer is cached for the job that read it (`latest_cache_s` for recent blocks, an hour
     for final ones). An answer at a final block becomes shared (other jobs, Postgres) only when it
-    came from an operator-configured host, or when a second, distinct host later returned the same
-    answer for the same request; a different answer from another host removes the entry. Shared
+    came from an operator-configured host, or when a second, independent operator of the curated pool
+    (free_rpc.json `operators`) later returned the same answer for the same request; hostnames of one
+    operator count once and unknown hosts never count; a different answer removes the entry. Shared
     entries expire after `shared_cache_days` (security review 2026-10-28: one lying free endpoint
     must not poison the facts of every later job)."""
 
@@ -145,8 +146,11 @@ class Cache:
         _remember("*", key, value, _JOB_DURABLE_TTL_S)
         return value
 
-    async def put(self, key: str, value: Any, durable: bool, host: str = "", trusted: bool = False) -> None:
+    async def put(self, key: str, value: Any, durable: bool, operator: str = "", trusted: bool = False) -> None:
+        """`operator` is the curated operator id of the answering host (endpoints.operator_of); an
+        empty one (unknown host) keeps the answer job-scoped unless the host is trusted."""
         _remember(self._job, key, value, _JOB_DURABLE_TTL_S if durable else float(limits().get("latest_cache_s", 12)))
+        host = operator or ("configured" if trusted else "")
         if not durable or self._pool is None or not host:
             return
         h = _hash(value)

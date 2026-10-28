@@ -175,22 +175,22 @@ async def test_shared_cache_needs_two_agreeing_hosts_or_a_configured_one(db_pool
     """Security review 2026-10-28: one lying free endpoint must not poison other jobs' facts."""
     key, other = "a" * 64, "b" * 64
     job_a, job_b = chain_store.Cache(db_pool, "job_A"), chain_store.Cache(db_pool, "job_B")
-    await job_a.put(key, {"r": "0x01"}, True, "https://free-one.example", False)
+    await job_a.put(key, {"r": "0x01"}, True, "drpc", False)
     assert await job_a.get(key) == {"r": "0x01"}          # the reading job keeps its own answer
     assert await job_b.get(key) is None                     # nobody else trusts one free host
-    await job_b.put(key, {"r": "0x01"}, True, "https://free-one.example", False)
+    await job_b.put(key, {"r": "0x01"}, True, "drpc", False)
     chain_store._MEM.clear()
-    assert await chain_store.Cache(db_pool, "job_C").get(key) is None   # same host twice is not agreement
-    await job_b.put(key, {"r": "0x01"}, True, "https://free-two.example", False)
+    assert await chain_store.Cache(db_pool, "job_C").get(key) is None   # same operator twice is not agreement
+    await job_b.put(key, {"r": "0x01"}, True, "allnodes", False)
     chain_store._MEM.clear()
     assert await chain_store.Cache(db_pool, "job_C").get(key) == {"r": "0x01"}
     # a disagreeing host removes the shared entry
-    await chain_store.Cache(db_pool, "job_D").put(other, {"r": "0x02"}, True, "https://free-one.example", False)
-    await chain_store.Cache(db_pool, "job_E").put(other, {"r": "0x03"}, True, "https://free-two.example", False)
+    await chain_store.Cache(db_pool, "job_D").put(other, {"r": "0x02"}, True, "drpc", False)
+    await chain_store.Cache(db_pool, "job_E").put(other, {"r": "0x03"}, True, "allnodes", False)
     async with db_pool.connection() as conn:
         assert await (await conn.execute("select 1 from chain_cache where key = %s", (other,))).fetchone() is None
     # an operator-configured host is shared at once, and entries expire
-    await chain_store.Cache(db_pool, "job_F").put(other, {"r": "0x04"}, True, "https://mine.example", True)
+    await chain_store.Cache(db_pool, "job_F").put(other, {"r": "0x04"}, True, "", True)
     chain_store._MEM.clear()
     assert await chain_store.Cache(db_pool, "job_G").get(other) == {"r": "0x04"}
     async with db_pool.connection() as conn:
@@ -199,3 +199,36 @@ async def test_shared_cache_needs_two_agreeing_hosts_or_a_configured_one(db_pool
     assert await chain_store.Cache(db_pool, "job_G").get(other) is None
     async with db_pool.connection() as conn:
         await conn.execute("delete from chain_cache where key in (%s, %s)", (key, other))
+
+
+def test_operator_ids_come_from_the_curated_table():
+    from soken_review.chain.endpoints import operator_of
+
+    assert operator_of("https://bsc-dataseed.binance.org") == operator_of("https://bsc-dataseed2.bnbchain.org") == "bnbchain"
+    assert operator_of("https://bsc-rpc.publicnode.com") == "allnodes"
+    assert operator_of("https://bsc-mainnet.public.blastapi.io") == "blastapi"
+    assert operator_of("https://rpc.unknown-host.example") is None
+    assert operator_of("https://evil-drpc.org.example") is None   # suffix match is on dot boundaries
+
+
+@ASYNC
+async def test_same_operator_pair_does_not_confirm_and_unknown_hosts_never_count(db_pool):
+    from soken_review.chain.endpoints import operator_of
+
+    key = "c" * 64
+    a, b = operator_of("https://bsc-dataseed.binance.org"), operator_of("https://bsc-dataseed2.bnbchain.org")
+    await chain_store.Cache(db_pool, "job_1").put(key, {"r": "0x09"}, True, a, False)
+    await chain_store.Cache(db_pool, "job_2").put(key, {"r": "0x09"}, True, b, False)
+    chain_store._MEM.clear()
+    assert await chain_store.Cache(db_pool, "job_3").get(key) is None          # one operator, two hostnames
+    await chain_store.Cache(db_pool, "job_4").put(key, {"r": "0x09"}, True, "", False)   # unknown host
+    chain_store._MEM.clear()
+    assert await chain_store.Cache(db_pool, "job_3").get(key) is None
+    await chain_store.Cache(db_pool, "job_5").put(key, {"r": "0x09"}, True, operator_of("https://bsc-rpc.publicnode.com"), False)
+    chain_store._MEM.clear()
+    assert await chain_store.Cache(db_pool, "job_3").get(key) == {"r": "0x09"}   # two independent operators
+    unknown = "d" * 64
+    await chain_store.Cache(db_pool, "job_6").put(unknown, {"r": "0x01"}, True, "", False)
+    async with db_pool.connection() as conn:
+        assert await (await conn.execute("select 1 from chain_cache where key = %s", (unknown,))).fetchone() is None
+        await conn.execute("delete from chain_cache where key = %s", (key,))
