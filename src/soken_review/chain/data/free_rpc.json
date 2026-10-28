@@ -1,0 +1,164 @@
+{
+ "_schema": "free_rpc.v1",
+ "_note": "Free public RPC endpoints for the chain tools, on top of chains.json. No key, no cost. depth = how far back state was served when measured (eth_getBalance at head minus 1, 1,000 and 1,000,000 blocks): 'archive' (1,000,000 ok), 'recent' (1,000 ok), 'head' (only the last blocks). Measured 2026-10-28 from one host; the proxy re-learns per host at run time (health and no-state memory), so a stale row only costs one failed attempt.",
+ "checked_at": "2026-10-28",
+ "chains": {
+  "1": [
+   {
+    "url": "https://eth.drpc.org",
+    "depth": "archive",
+    "logs_max_range": 100
+   },
+   {
+    "url": "https://rpc.mevblocker.io",
+    "depth": "archive",
+    "logs_max_range": 50000
+   },
+   {
+    "url": "https://eth-mainnet.public.blastapi.io",
+    "depth": "archive",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://rpc.flashbots.net",
+    "depth": "recent",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://ethereum-rpc.publicnode.com",
+    "depth": "head",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://eth.blockrazor.xyz",
+    "depth": "head",
+    "logs_max_range": 0
+   }
+  ],
+  "56": [
+   {
+    "url": "https://bsc-mainnet.public.blastapi.io",
+    "depth": "archive",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://bsc-rpc.publicnode.com",
+    "depth": "recent",
+    "logs_max_range": 50000
+   },
+   {
+    "url": "https://bsc.blockrazor.xyz",
+    "depth": "head",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://bsc-dataseed1.ninicoin.io",
+    "depth": "head",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://bsc-dataseed1.defibit.io",
+    "depth": "head",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://bsc-dataseed.binance.org",
+    "depth": "head",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://bsc-dataseed2.bnbchain.org",
+    "depth": "head",
+    "logs_max_range": 0
+   }
+  ],
+  "8453": [
+   {
+    "url": "https://base-rpc.publicnode.com",
+    "depth": "archive",
+    "logs_max_range": 50000
+   },
+   {
+    "url": "https://base-mainnet.public.blastapi.io",
+    "depth": "archive",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://mainnet.base.org",
+    "depth": "archive",
+    "logs_max_range": 0
+   }
+  ],
+  "42161": [
+   {
+    "url": "https://arbitrum-one.public.blastapi.io",
+    "depth": "archive",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://arb1.arbitrum.io/rpc",
+    "depth": "recent",
+    "logs_max_range": 50000
+   },
+   {
+    "url": "https://arbitrum-one-rpc.publicnode.com",
+    "depth": "head",
+    "logs_max_range": 0
+   },
+   {
+    "url": "https://arbitrum.drpc.org",
+    "depth": "head",
+    "logs_max_range": 100
+   }
+  ],
+  "10": [
+   {
+    "url": "https://optimism.drpc.org",
+    "depth": "archive"
+   }
+  ],
+  "137": [
+   {
+    "url": "https://polygon.drpc.org",
+    "depth": "archive",
+    "logs_max_range": 100
+   },
+   {
+    "url": "https://polygon-bor-rpc.publicnode.com",
+    "depth": "head",
+    "logs_max_range": 10000
+   }
+  ]
+ },
+ "down": {
+  "1": [
+   "https://1rpc.io/eth",
+   "https://eth.llamarpc.com",
+   "https://rpc.ankr.com/eth"
+  ],
+  "56": [
+   "https://1rpc.io/bnb",
+   "https://bsc.drpc.org",
+   "https://bsc.llamarpc.com",
+   "https://rpc.ankr.com/bsc"
+  ],
+  "42161": [
+   "https://1rpc.io/arb",
+   "https://arbitrum.llamarpc.com",
+   "https://rpc.ankr.com/arbitrum"
+  ],
+  "8453": [
+   "https://1rpc.io/base",
+   "https://base.drpc.org",
+   "https://base.llamarpc.com",
+   "https://rpc.ankr.com/base"
+  ],
+  "137": [
+   "https://1rpc.io/matic",
+   "https://polygon-mainnet.public.blastapi.io",
+   "https://polygon-rpc.com",
+   "https://polygon.llamarpc.com",
+   "https://rpc.ankr.com/polygon"
+  ]
+ }
+}

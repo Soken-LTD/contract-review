@@ -76,6 +76,15 @@ outbound:                      # politeness, supervisor only; rate_buckets out:s
   sui_graphql: {per_s: null}   # 07 3, graphql.mainnet.sui.io; 09 UV9-8 (documented limit, then 429 probe)
   aptos_rest: {per_s: null}    # 07 3, api.mainnet.aptoslabs.com; 09 UV9-8
   starknet: {per_s: null}      # 07 3, one bucket per cleared host (out:s:starknet:<host>); 09 UV9-8, 07 U-09
+chain_access:                  # chain access design 2026-10-27 sections 1 and 4 (P0, P1); env overrides SOKEN_CHAIN_JOB_RU, SOKEN_CHAIN_KEY_RU_PER_DAY
+  job_ru: 2000                 # read units per job; chain_read 1 per item (2 below the archive line), chain_balances 1 per 10 holders, chain_roles 30
+  key_ru_per_day: 6000         # per quota key (quota.limit_key), rolling 24 h; running out never blocks a report
+  archive_line_blocks: 128     # an EVM read older than head minus this costs 2 RU
+  max_items: 50                # chain_read items per call
+  max_holders: 100             # chain_balances holders per call
+  upstream_calls_per_call: 400 # proxy meter per tool call
+  latest_cache_s: 12           # in-process cache for reads at a recent block
+  finality_blocks: {evm: 64, tron: 19}   # a read at or below head minus this is cached in chain_cache for every job
 claim:                         # 08 claim page
   nonce_ttl_min: 30
 report:                        # S8 durations; keys of the 09 retention table
