@@ -39,20 +39,22 @@ def test_reentrancy_print_screen_print_identical(tmp_path):
     assert a.count(b"Figure 1.") == 1
 
 
-def test_public_review_withholds_high_and_critical(tmp_path):
+def test_public_review_prints_high_and_critical_as_is(tmp_path):
+    """CEO 2026-10-28: a third-party High prints title, location, code quote, attack steps and the
+    amount-at-risk value in print and screen (the screen page is the hosted site copy)."""
     r = report(severities=["Critical", "High", "Medium", "Low"])
+    assert r["meta"]["requested_by"]["role"] == "third_party_public_code"
     r["findings"][1]["title"] = HIGH_TITLE
     html = _html(r, tmp_path)
     screen = _html(r, tmp_path, "screen")
     for doc in (html, screen):
-        assert HIGH_TITLE not in doc
-        assert "Call <span class=\"mono\">withdraw</span> from a contract" not in doc  # attack steps
-        assert kb.kit_texts()["withheld_line"] in doc
+        assert HIGH_TITLE in doc
+        assert "src/Vault.sol:10-14" in doc  # location
+        assert "Call <span class=\"mono\">withdraw</span> from a contract" in doc  # attack steps
+        assert "Attack steps" in doc
+        assert "withheld" not in doc.lower() and "control of the code" not in doc
         assert kb.kit_texts()["public_review_banner"] in doc
-    # Medium card is shown, the sentence with its amount-at-risk fact is dropped whole (never printed
-    # as "(withheld)" inside prose) and its figure row dropped
-    assert "Balance written after the external call in withdraw path 1" in html
-    assert "1,250 ETH" not in html and "(withheld)" not in html and "at the pinned block" not in html
+    assert "1,250 ETH" in html and "at the pinned block" in html
     assert "sends value before it writes the caller balance" in html
     assert kb.kit_texts()["footer_public_review"] in html
 
@@ -68,10 +70,14 @@ def test_owner_profile_shows_everything(tmp_path):
     assert kb.kit_texts()["footer_line"] in html
 
 
-def test_project_keeps_only_server_fields_for_withheld():
-    p = project(report(severities=["High", "Low"]))
-    h = p["findings"][0]
-    assert h["withheld"] and set(h) <= {"id", "severity", "evidence_level", "category", "component", "status", "withheld"}
+def test_project_keeps_every_field_of_every_finding_under_every_profile():
+    r = report(severities=["Critical", "High", "Low"])
+    for profile in ("public_review", "owner"):
+        p = project(r, profile)
+        for src, out in zip(r["findings"], p["findings"], strict=True):
+            assert "withheld" not in out
+            assert set(out) == set(src)
+            assert out["location"] == src["location"] and out["evidence"]["code"] == src["evidence"]["code"]
 
 
 def test_hostile_text_is_escaped(tmp_path):
@@ -220,7 +226,7 @@ CHROME = os.environ.get("CHROME_BIN")
 
 @pytest.mark.skipif(not (CHROME and Path(CHROME).exists() and shutil.which("pdftotext") and shutil.which("node")),
                     reason="needs CHROME_BIN, node and poppler (render job runs in the soken-render image in CI)")
-def test_render_job_pdf_escapes_and_withholds(tmp_path):
+def test_render_job_pdf_escapes_and_prints_high_as_is(tmp_path):
     from soken_review.report.kit import render_job
 
     r = report(severities=["High", "Medium", "Low", "Informational"])
@@ -232,7 +238,9 @@ def test_render_job_pdf_escapes_and_withholds(tmp_path):
     assert res["code"] == "ok", res
     text = subprocess.run(["pdftotext", str(tmp_path / "out" / "report.pdf"), "-"], capture_output=True, text=True,
                           check=True).stdout
-    assert "drain the vault" not in text
+    flat = " ".join(text.split())
+    assert "drain the vault" in flat  # third-party High title prints as is (CEO 2026-10-28)
+    assert "src/Vault.sol:10-14" in flat and "withheld" not in flat.lower()
     assert "</pre><style>*{}</style><script>x()</script>" in text.replace("\n", "")
     assert res["fonts"] == ["Gilroy-Bold", "Gilroy-Regular", "JetBrainsMono-Regular"]
 

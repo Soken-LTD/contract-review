@@ -548,7 +548,7 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
         state = job["state"]
         tier = job.get("tier")
         family = _family_from_chain(job.get("chain"))
-        # Profile drives profile-specific text rules (T30 public_review) at write time
+        # Profile is passed to the text gate; no rule depends on it (CEO 2026-10-28)
         # so the early gate and the render-time gate see the same set of violations.
         job_profile = "owner" if job.get("ownership_proven") else "public_review"
 

@@ -64,14 +64,6 @@ rules:
   T27: [book a call, book a demo, contact us, contact our, reach out, hire us, hire a team, hire our, engage us, engage our, paid review, paid audit, paid plan, manual review, full review, upgrade to, pricing, discount, team of experts]
   T28: '\b(projects|engagements|clients|reviews|audits)\b within 3 words of a number or magnitude word'
   T29: ['\b[CHMLIF]-\d{2,3}\b', '\bLEAD-\d{4}\b']
-  T30:
-    profile: public_review
-    applies_to: [description, impact]
-    step_marker: '\b(step\s*\d|stage\s*\d)\b'
-    list_actor_start: '^(the )?(attacker|exploiter|malicious (user|contract|account))\b'
-    actor: '\b(attacker|exploiter|malicious (user|contract|account)|reenter|re-enter|reentrant call)\b'
-    sequencing: '\b(then|next|after that|afterwards|finally|again|repeat(s|ed|edly)?|loop(s|ed)?)\b'
-    reject_when: 'step_marker; or ul whose items start with list_actor_start; or a sentence with actor plus 2+ sequencing terms or 2+ line references'
   T31:  # control 2 (04 11.2): call syntax outside a valid code span or placeholder -> E_CODESPAN_NOT_IN_SOURCE, every model field
     patterns: ['\b[A-Za-z_]\w*\.[A-Za-z_]\w*\s*\(', '\b[a-z]+(_[a-z0-9]+)+\s*\(', '\b[a-z]+[A-Z]\w*\s*\(', '\b(call|delegatecall|staticcall|transfer|send|invoke|invoke_signed|send_raw_message|transferFrom)\s*\(']
     skip: [valid_code_span, placeholder]
@@ -115,7 +107,6 @@ rule_help:
   T27: {text: "sales wording: book a call, contact us, hire us, paid review, manual review, full review, upgrade to, pricing, discount, team of experts", reword: "Drop the pitch; the recommendation stands on the code."}
   T28: {text: "a count of projects, engagements, clients, reviews or audits", reword: "Drop the count."}
   T29: {text: "raw finding or lead id (H-001, LEAD-0001) in prose", reword: "Refer to the mechanism or location; ids are linked by the tool arguments."}
-  T30: {text: "exploit script shape in a public review (step markers, attacker-led lists, sequenced attacker sentences)", reword: "Describe the weakness and its effect, not the sequence an attacker runs."}
   T31: {text: "call syntax outside a code span", reword: "Wrap the identifier in backticks exactly as it appears in the pinned source."}
   P1:  {text: "superlative or exclusivity words: only, first, no other, best, unique, unlike, better than, leading, #1", reword: "State the fact without the comparison."}
   P2:  {text: "competitor name", reword: "Drop the name."}

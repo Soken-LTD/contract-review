@@ -105,18 +105,13 @@ def _loc(f: dict[str, Any]) -> str:
 
 
 def finding_rows(projected: dict[str, Any]) -> list[dict[str, Any]]:
-    """Projected rows: a withheld card gives category label as title and `withheld_line` as location."""
-    t = kit_texts()
+    """Projected rows: every open card prints its title and location as is, under every profile."""
     out = []
     for f in projected["findings"]:
         if f.get("status") == "Fixed":
             continue
-        if f.get("withheld"):
-            out.append({"id": f["id"], "severity": f["severity"], "evidence_level": f["evidence_level"],
-                        "title": f["category"], "location": t["withheld_line"]})
-        else:
-            out.append({"id": f["id"], "severity": f["severity"], "evidence_level": f["evidence_level"],
-                        "title": f["title"], "location": _loc(f)})
+        out.append({"id": f["id"], "severity": f["severity"], "evidence_level": f["evidence_level"],
+                    "title": f["title"], "location": _loc(f)})
     return out
 
 
@@ -137,8 +132,7 @@ def summary_text(projected: dict[str, Any], c: dict[str, int], lk: dict[str, str
     if rows:
         lines.append("| Id | Severity | Title | Location |")
         for r in rows[:8]:
-            loc = r["location"] if r["location"] == t["withheld_line"] else _cut_left(r["location"], 40)
-            lines.append(f"| {r['id']} | {r['severity']} | {_cut(r['title'], 60)} | {loc} |")
+            lines.append(f"| {r['id']} | {r['severity']} | {_cut(r['title'], 60)} | {_cut_left(r['location'], 40)} |")
         if len(rows) > 8:
             lines.append(f"and {len(rows) - 8} more in the report")
     if lk:

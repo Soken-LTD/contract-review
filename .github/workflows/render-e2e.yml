@@ -60,7 +60,7 @@ jobs:
         run: |
           echo "runtime=$SOKEN_SANDBOX_RUNTIME"
           uv run python scripts/render_sandbox_check.py --image soken/soken-render:ci --runs 5 \
-            --forbid HIGHSECRET --forbid "drift clock write" --keep out tests/report/live/gblin.report.json
+            --require "HIGHSECRET drift clock write" --forbid Withheld --forbid withheld --keep out tests/report/live/gblin.report.json
           uv run python scripts/render_sandbox_check.py --image soken/soken-render:ci --keep out \
             tests/report/live/weth9.report.json
           # Live pagination cases (2026-10-27): TON tier A with a verification section before the coverage

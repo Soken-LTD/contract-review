@@ -53,10 +53,11 @@ class CheckContext:
 
     field: str | None = None
     """Field name (title, description, impact, recommendation, attack_steps, notes, …)
-    for field-specific rules T21, T22, T23, T24, T30."""
+    for field-specific rules T21, T22, T23, T24."""
 
     profile: str | None = None
-    """Job profile (``public_review`` or ``owner``).  T30 fires only for public_review."""
+    """Job profile (``public_review`` or ``owner``). No text rule depends on it: every profile
+    prints findings as is (CEO 2026-10-28; the former public-review exploit-sequence rule T30 is gone)."""
 
     absence_claims: list[dict[str, str]] = dataclasses.field(default_factory=list)
     """Absence-claim list from the finding draft (04 §7.6) for T24 phrase binding.
@@ -70,7 +71,7 @@ class CheckContext:
     """Competitor name list (01 §4 competitor table) for P2.  Skipped when ``None``."""
 
     is_list_item: bool = False
-    """True when the text is a list-item body (used by T30 list-actor check)."""
+    """True when the text is a list-item body."""
 
 
 # ── YAML loader ────────────────────────────────────────────────────────────
@@ -390,17 +391,6 @@ _T28_NUM_RE = re.compile(
 
 _T29_RE = re.compile(r"\b[CHMLIF]-\d{2,3}\b|\bLEAD-\d{4}\b")
 
-# T30: exploit sequence (04 §11.2 T30)
-_T30_STEP_RE = re.compile(r"(?i)\b(?:step\s*\d|stage\s*\d)\b")
-_T30_LIST_ACTOR_RE = re.compile(r"(?i)^(?:the )?(?:attacker|exploiter|malicious (?:user|contract|account))\b")
-_T30_ACTOR_RE = re.compile(
-    r"(?i)\b(?:attacker|exploiter|malicious (?:user|contract|account)|re-?enter(?:ant)?(?:\s+call)?)\b"
-)
-_T30_SEQ_RE = re.compile(
-    r"(?i)\b(?:then|next|after\s+that|afterwards|finally|again|repeat(?:s|ed|edly)?|loop(?:s|ed)?)\b"
-)
-_T30_LINEREF_RE = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
-
 # T31: call syntax (04 §11.2, §11.3 control 2)
 _T31_RE = re.compile(
     r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\s*\("
@@ -613,11 +603,6 @@ def check_text(text: str, scope: str, context: CheckContext | None = None) -> li
         for m in _T29_RE.finditer(nfkc):
             violations.append(Violation("E_TEXT_GATE", "T29", (m.start(), m.end()), m.group()))
 
-    # ── T30: exploit sequence (public_review profile only) ───────────────
-    _T30_FIELDS = {"description", "impact"}
-    if "T30" in active and context.profile == "public_review" and context.field in _T30_FIELDS:
-        violations.extend(_check_t30(nfkc, context))
-
     # ── T31: call syntax (model scope, code_span_exempt via valid spans) ──
     if "T31" in active:
         violations.extend(_check_t31(nfkc, code_spans, context))
@@ -770,31 +755,6 @@ def _check_t28(nfkc: str) -> list[Violation]:
     return violations
 
 
-def _check_t30(nfkc: str, context: CheckContext) -> list[Violation]:
-    """T30: no ordered exploit sequence (04 §11.2 T30, public_review profile only)."""
-    violations: list[Violation] = []
-    # Condition 1: step marker
-    for m in _T30_STEP_RE.finditer(nfkc):
-        violations.append(Violation("E_TEXT_GATE", "T30", (m.start(), m.end()), m.group()))
-        return violations  # one violation per text is sufficient
-    # Condition 2: list item starting with the attacker pattern
-    if context.is_list_item and _T30_LIST_ACTOR_RE.match(nfkc.lstrip()):
-        violations.append(Violation("E_TEXT_GATE", "T30", (0, len(nfkc)), nfkc[:60]))
-        return violations
-    # Condition 3: sentence with actor + 2+ sequencing terms or 2+ line refs
-    sentences = re.split(r"(?<=[.!?])\s+", nfkc)
-    for sent in sentences:
-        if not _T30_ACTOR_RE.search(sent):
-            continue
-        seq_count = len(_T30_SEQ_RE.findall(sent))
-        lineref_count = len(_T30_LINEREF_RE.findall(sent))
-        if seq_count >= 2 or lineref_count >= 2:
-            start = nfkc.find(sent)
-            violations.append(Violation("E_TEXT_GATE", "T30", (start, start + len(sent)), sent[:60]))
-            return violations
-    return violations
-
-
 def _check_t31(nfkc: str, code_spans: list[tuple[int, int]], context: CheckContext) -> list[Violation]:
     """T31: call syntax outside a valid code span (04 §11.2 control 2, §11.3).
 
@@ -854,8 +814,8 @@ def check_model_field(
     (absence_claims, word_set) in the assembled report.
 
     ``field``          -- field name for field-specific rules (title, description, …).
-    ``profile``        -- job profile (``"owner"`` | ``"public_review"``); None disables T30.
-    ``is_list_item``   -- True for list-item bodies (T30 list-actor check).
+    ``profile``        -- job profile (``"owner"`` | ``"public_review"``); no rule depends on it.
+    ``is_list_item``   -- True for list-item bodies.
     ``absence_claims`` -- absence-claim list for T24 (04 §7.6).  Pass the list from the
                           finding content at submit time; pass ``[]`` when unavailable so
                           T24 fires on any unmatched absence phrase rather than silently

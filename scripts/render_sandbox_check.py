@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """P0-RENDER (09 UV9-13): render report.json files through the soken-render sandbox, as the worker does.
 
-Usage: uv run python scripts/render_sandbox_check.py --image IMG [--runs N] [--forbid TEXT] report.json...
+Usage: uv run python scripts/render_sandbox_check.py --image IMG [--runs N] [--forbid TEXT] [--require TEXT] report.json...
 
 Each file is staged as in/report.json and rendered with `render.run_container` (no network,
 read-only root, uid 10001, 2 GiB, shm 512m). Prints one line per run: pages, wall seconds,
-pdf sha256, fonts. `--forbid` fails the run if the PDF text contains that string
-(public_review withholding check). Exit 1 on any failure.
+pdf sha256, fonts. `--forbid` fails the run if the PDF text contains that string (for example
+"Withheld"); `--require` fails it if the PDF text lacks that string (for example a third-party
+High title, which prints as is under every profile). Whitespace is folded before matching. Exit 1
+on any failure.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ def main() -> int:
     ap.add_argument("--image", required=True)
     ap.add_argument("--runs", type=int, default=1)
     ap.add_argument("--forbid", action="append", default=[])
+    ap.add_argument("--require", action="append", default=[])
     ap.add_argument("--keep", type=Path)
     ap.add_argument("reports", nargs="+", type=Path)
     a = ap.parse_args()
@@ -44,9 +47,11 @@ def main() -> int:
                 pdf = base / f"{rep.stem}-{run}.pdf"
                 pdf.write_bytes(o.files["report.pdf"])
                 text = subprocess.run(["pdftotext", str(pdf), "-"], capture_output=True, text=True, check=True).stdout
+                text = " ".join(text.split())
                 leaks = [f for f in a.forbid if f in text]
-                line += f" fonts={o.result.get('fonts')} leaks={leaks}"
-                if leaks:
+                missing = [r for r in a.require if r not in text]
+                line += f" fonts={o.result.get('fonts')} leaks={leaks} missing={missing}"
+                if leaks or missing:
                     failed += 1
                 if a.keep:
                     a.keep.mkdir(parents=True, exist_ok=True)

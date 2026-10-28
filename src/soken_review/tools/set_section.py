@@ -317,7 +317,7 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
             ReviewError("E_JOB_NOT_READY", state=state, eta_s=0).envelope()
         ]}
     # Note: the write transaction below re-checks state with FOR UPDATE (TOCTOU guard).
-    # Profile drives profile-specific text rules (T30) at write time.
+    # Profile is passed to the text gate; no rule depends on it (CEO 2026-10-28).
     job_profile = "owner" if job.get("ownership_proven") else "public_review"
 
     # Validate section name
@@ -359,7 +359,7 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
         nctx = NumberContext()
     for field_path, text in _collect_text_fields(section, content):
         # context_notes strings are report prose (field class `notes`, same rules as roles notes;
-        # list items get the T30 list-actor check); the other sections keep their path as field.
+        # list items are flagged as such); the other sections keep their path as field.
         # Use check_model_field (canonical early-gate = render-time gate, 04 §11.4).
         if section == "context_notes":
             field_vs = check_model_field(text, field="notes", profile=job_profile,
