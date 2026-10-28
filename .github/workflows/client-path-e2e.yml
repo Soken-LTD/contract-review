@@ -4,14 +4,16 @@ name: client-path-e2e
 # driven through the MCP tools over HTTP as a client session would, one fixture job per released
 # family: EVM deployed (WETH9, full reviewer flow with a Medium finding, challenge, every section,
 # stale-client JSON-string invariant_walks, PDF), EVM repo with npm deps (Apyee v2.0.0), Solana repo
-# (agent-loans programs/locker), TON address (Forton, tier A), TRON address (CRS). Driver and
+# (agent-loans programs/locker), TON address (Forton, tier A), TON repo with no chain and no deployment
+# (HipoFinance FunC Blueprint repo, third party, family detected from the tree), Solana repo with no deployment
+# (Pump Science Anchor workspace), TRON address (CRS). Driver and
 # assertions: scripts/client_path_driver.py; stack: scripts/client_path_e2e.py.
 on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "comma-separated targets (evm,evm-repo,solana,ton,tron)"
-        default: "evm,evm-repo,solana,ton,tron"
+        description: "comma-separated targets (evm,evm-repo,solana,solana-repo,ton,ton-repo,tron)"
+        default: "evm,evm-repo,solana,solana-repo,ton,ton-repo,tron"
   push:
     branches: [main, ci/client-path-e2e]
     paths:
@@ -29,9 +31,9 @@ permissions:
 jobs:
   client-path:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
-      TARGETS: ${{ inputs.targets || 'evm,evm-repo,solana,ton,tron' }}
+      TARGETS: ${{ inputs.targets || 'evm,evm-repo,solana,solana-repo,ton,ton-repo,tron' }}
       SOKEN_SANDBOX_RUNTIME: runc
       SOKEN_SANDBOX_DEV_PERMS: "1"
       SOKEN_RUSTSEC_DB: ${{ github.workspace }}/.sbx/rustsec-db
@@ -56,8 +58,8 @@ jobs:
           from soken_review.sandbox.profile import locked_image
           from soken_review.adapters.solana.images import build_image
           names = ["evm-analyze", "soken-render", "git-fetch", "smokescreen", "ton-build", "tron-analyze", "solana-analyze"]
-          refs = [locked_image(n) for n in names] + [build_image("3.1.8").ref]
-          missing = [n for n, r in zip(names + ["solana-build 3.1.8"], refs) if not r]
+          refs = [locked_image(n) for n in names] + [build_image("3.1.8").ref, build_image("1.18.26").ref]
+          missing = [n for n, r in zip(names + ["solana-build 3.1.8", "solana-build 1.18.26"], refs) if not r]
           assert not missing, f"unpinned images: {missing}"
           print("\n".join(refs))
           EOF
@@ -74,7 +76,7 @@ jobs:
           mkdir -p "$SOKEN_RUSTSEC_DB"
           uv run python -m soken_review.adapters.solana.rustsec fetch
       - name: Stack up, drive the targets over HTTP, stack down
-        run: uv run python scripts/client_path_e2e.py all --targets "$TARGETS" --parallel 5 --out out
+        run: uv run python scripts/client_path_e2e.py all --targets "$TARGETS" --parallel 7 --out out
       - name: Stack logs (always)
         if: always()
         run: |

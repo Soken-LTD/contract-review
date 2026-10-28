@@ -20,6 +20,7 @@ from soken_review.adapters.ton.provenance import (
     MATCH_REBUILD,
     SOURCE_NOT_OWNER_LINKED,
     SOURCE_TOOLCHAIN_GAP,
+    SOURCE_UNLINKED,
     Attempt,
     Dep,
     resolve_provenance,
@@ -234,7 +235,9 @@ class TestUntrustedInputsUnchanged:
 
 
 class TestNonVerifierProviderUnchanged:
-    def test_user_provider_stays_d(self) -> None:
+    def test_user_provider_is_reviewed_unlinked_never_toolchain_gap(self) -> None:
+        """A requester's own source never takes the verifier attestation (no tier B third party)
+        and never stops the job: SOURCE_UNLINKED, tier B (Hipo blind run 2026-10-27)."""
         cand = Candidate(
             provider="user",
             files={"main.tact": "contract A {}"},
@@ -246,7 +249,8 @@ class TestNonVerifierProviderUnchanged:
             entry_contract=None,
         )
         out = resolve_provenance(_dep(), [cand], _attempt_fn("unsupported_toolchain"))
-        assert out.tier == "D"
+        assert out.reason == SOURCE_UNLINKED and out.tier == "B" and out.src == 0
+        assert out.why == "unsupported_toolchain"
 
 
 # ── 6. ok attempt without hash match → tier D (unchanged) ─────────────────

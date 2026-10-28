@@ -1001,6 +1001,20 @@ class Supervisor:
                 logger.debug("job %s: explorer lookup failed (non-fatal)", job_id[-8:],
                              exc_info=True)
 
+        # review_start `source.chain` in repo mode (no deployment): a non-EVM chain skips the
+        # Solidity candidate and hands this step to that family's runner (Hipo FunC repo, blind run
+        # 2026-10-27: repo mode assumed Solidity and the start had no way to say otherwise).
+        from ..adapters.repo_detect import FAMILY_OF_HINT
+
+        hint = FAMILY_OF_HINT.get(str(source_args.get("chain") or "").lower())
+        if hint and hint != "evm" and not chain_name and not address:
+            detail = {"stage": "repo_candidate", "detail": "chain_hint", "chain": hint}
+            if await self._hand_repo_to_family(step, job, source_args, fetch_result.src_dir,
+                                               expected_sha, detail, family=hint):
+                return None
+            await self._repo_no_source(step_id, job_id, detail)
+            return None
+
         # npm packages the sources import (Hardhat, Foundry with node_modules): vendored into the
         # tree, lockfile-pinned and sha512-checked, before the candidate is read (npm_deps).
         npm = await self._resolve_npm_deps(step, job, out_dir, fetch_result.src_dir)
@@ -1024,23 +1038,16 @@ class Supervisor:
 
         if cand is None:
             detail: dict[str, Any] = {"stage": "repo_candidate", "detail": reason}
-            if reason == "no_solidity_sources" and not chain_name and not address:
-                # A repo-only job reaches this path with no chain. A Scarb or Move tree is not
-                # an EVM failure: hand the same fetch step to its family runner
+            if reason == "no_solidity_sources" and not chain_name and not address and hint != "evm":
+                # A repo-only job reaches this path with no chain. A Scarb, Move, Solana or TON
+                # tree is not an EVM failure: hand the same fetch step to its family runner
                 # (adapters/repo_detect). Undetectable trees keep the reason in error_detail.
                 handed = await self._hand_repo_to_family(step, job, source_args, fetch_result.src_dir,
                                                          expected_sha, detail)
                 if handed:
                     return None
             # npm-only, no sources, etc. → insufficient_source (09 3.6)
-            async with self._pool.connection() as conn:
-                repo = JobRepo(conn)
-                async with conn.transaction():
-                    await repo.complete_step(step_id, "done",
-                                             error_code="E_SOURCE_NOT_FOUND")
-                    await repo.transition(job_id, "insufficient_source",
-                                          error_code="E_SOURCE_NOT_FOUND", error_detail=detail)
-            logger.info("job %s: repo insufficient_source reason=%s", job_id[-8:], detail)
+            await self._repo_no_source(step_id, job_id, detail)
             return None
 
         candidates = [cand]
@@ -1103,19 +1110,38 @@ class Supervisor:
                                       error_code="E_DEPENDENCY_UNRESOLVED", error_detail=detail)
         return False
 
+    async def _repo_no_source(self, step_id: int, job_id: str, detail: dict[str, Any]) -> None:
+        """Repo mode found nothing it reviews: insufficient_source with the reason in error_detail
+        (review_status turns it into a fix that names a different input: errors.yaml fix_repo)."""
+        async with self._pool.connection() as conn:
+            repo = JobRepo(conn)
+            async with conn.transaction():
+                await repo.complete_step(step_id, "done", error_code="E_SOURCE_NOT_FOUND")
+                await repo.transition(job_id, "insufficient_source",
+                                      error_code="E_SOURCE_NOT_FOUND", error_detail=detail)
+        logger.info("job %s: repo insufficient_source reason=%s", job_id[-8:], detail)
+
     async def _hand_repo_to_family(self, step: dict[str, Any], job: dict[str, Any],
                                    source_args: dict[str, Any], src_dir: Path,
-                                   resolved_sha: str | None, detail: dict[str, Any]) -> bool:
+                                   resolved_sha: str | None, detail: dict[str, Any],
+                                   family: str | None = None) -> bool:
         """Non-EVM repo mode (road-to-prod item 4): a Scarb.toml tree runs the Starknet fetch, a
-        Move.toml tree the Sui/Aptos fetch, on this same step. The chain is persisted first so
-        every later step of the job routes to that family (`_run_step`). Returns False, with the
-        reason added to `detail`, when the tree is not recognised; the caller then ends the job."""
+        Move.toml tree the Sui/Aptos fetch, a Solana crate the Solana fetch and a FunC / Tact /
+        Tolk tree the TON fetch, on this same step. `family` (review_start `source.chain`) runs
+        that family's rule only. The chain is persisted first so every later step of the job
+        routes to that family (`_run_step`). Returns False, with the reason added to `detail`, when
+        the tree is not recognised; the caller then ends the job."""
         from ..adapters.repo_detect import RepoFamily, detect_repo_family
 
         job_id = job["job_id"]
         files, _refused = await asyncio.get_event_loop().run_in_executor(
             None, lambda: safe_read_repo_tree(src_dir))
-        found = detect_repo_family(files, source_args.get("subdir"))
+        found = detect_repo_family(files, source_args.get("subdir"), family=family)
+        if isinstance(found, RepoFamily) and found.chain == "evm":
+            # Solidity or Vyper files the EVM candidate did not take (no compilable scope): the
+            # family is known, the job still ends here with that reason.
+            detail["repo_family"] = "evm"
+            return False
         if not isinstance(found, RepoFamily):
             detail["repo_family"] = found.reason
             if found.manifests:
@@ -1140,6 +1166,8 @@ class Supervisor:
         args = dict(source_args)
         if not (args.get("subdir") or "").strip("/") and found.package_dir:
             args["subdir"] = found.package_dir
+        if resolved_sha:
+            args["commit"] = resolved_sha          # the family fetch pins what this fetch resolved
         handed = dict(job)
         handed.update(chain=found.chain, source_args=args, resolved_commit=resolved_sha or job.get("resolved_commit"))
         logger.info("job %s: repo is %s (%s), handing the fetch step to the %s runner",
@@ -1148,6 +1176,17 @@ class Supervisor:
             from . import starknet_steps
 
             await starknet_steps.run_step(self, step, handed)
+        elif found.chain == "ton":
+            # chain_state 0 ran on the EVM path and wrote nothing: a repo-only TON unit has no
+            # account to read (ton_pipeline reads the empty document and reviews the repo, tier B).
+            cs_path = self._job_dir(job_id) / "chain_state.json"
+            if not cs_path.exists():
+                cs_path.parent.mkdir(parents=True, exist_ok=True)
+                cs_path.write_text(json.dumps({"mc_seqno": None, "accounts": {}}), encoding="utf-8")
+            handed["_repo_src_dir"] = str(src_dir)     # the tree this fetch materialised (any host)
+            await ton_pipeline.run_step(self, step, handed)
+        elif found.chain == "solana":
+            await _solana_steps.run_step(self, step, handed)
         else:
             await self._run_move_step(step, handed)
         return True
