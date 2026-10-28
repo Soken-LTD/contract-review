@@ -1280,13 +1280,8 @@
             }
           },
           "then": {
+            "$comment": "Since 2026-10-27 (never-worse, gate_policy.yaml F3) a finding without its optional challenge keeps its severity; the card prints evidence reasoning_only and the coverage note counts it. It still carries no challenge table.",
             "properties": {
-              "severity": {
-                "enum": [
-                  "Low",
-                  "Informational"
-                ]
-              },
               "evidence": {
                 "properties": {
                   "challenge": {
@@ -1637,6 +1632,20 @@
                 }
               }
             ]
+          }
+        },
+        "not_taken": {
+          "type": "array",
+          "maxItems": 9,
+          "description": "Advisory finalize checks that were open when the job was finalized (contract/rubric/gate_policy.yaml finalize_checks); printed with kit coverage_note.lines.<kind>",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "count"],
+            "properties": {
+              "kind": {"enum": ["leads_not_triaged", "challenge_not_answered", "coverage_na_unconfirmed", "roles_notes_missing", "drafts_not_accepted", "walks_not_answered"]},
+              "count": {"type": "integer", "minimum": 1}
+            }
           }
         },
         "injection_flags": {

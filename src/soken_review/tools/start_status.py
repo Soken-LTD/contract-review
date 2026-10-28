@@ -34,6 +34,7 @@ from ..context.store import ContextStore
 from ..contract import schema_version
 from ..db.job_repo import JobRepo, new_job_id
 from ..db.pool import get_pool
+from ..engine import gate_policy
 from ..errors import ReviewError
 from ..families import require_enabled
 from ..mapping.project_url import load_suggested_context
@@ -1124,9 +1125,11 @@ def _render_failed_fix(job: dict[str, Any]) -> str:
 def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[dict[str, Any]], *,
                        finalize_reopens: bool = True) -> list[str]:
     """Tool names (schema `next_tools`, at most 3) that move the job forward from this state; names
-    only, no prose. Drafts first (a needs_text or needs_challenge draft blocks finalize), then the
-    tools named by open finalize checks, then finalize. A render_failed job names review_finalize
-    only when finalize will reopen it (``finalize_reopens``), else a new review."""
+    only, no prose. Recommendations, never requirements (never-worse, gate_policy.yaml): the shortest
+    legal path is start, read, submit, finalize, report. A blocking finalize check names its tool
+    first; otherwise review_finalize comes first and the optional steps (a draft's text, its
+    challenge, the tools of advisory checks) follow. A render_failed job names review_finalize only
+    when finalize will reopen it (``finalize_reopens``), else a new review."""
     if state in _PIPELINE_STATES:
         return ["review_status"]
     if state == "render_failed":
@@ -1135,8 +1138,17 @@ def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[di
         return ["review_report"]
     if state != "ready":
         return []
-    statuses = {d.get("status") for d in drafts}
+    if not drafts:
+        return ["review_read_code", "review_submit_finding", "review_finalize"]
     out: list[str] = []
+    for check in checks:
+        tool = check.get("tool")
+        blocks = check.get("blocking", gate_policy.finalize_check_blocks(str(check.get("id", ""))))
+        if check.get("open") and blocks and tool and tool not in out:
+            out.append(tool)
+    if "review_finalize" not in out:
+        out.append("review_finalize")
+    statuses = {d.get("status") for d in drafts}
     if "needs_text" in statuses:
         out.append("review_submit_finding")
     if "needs_challenge" in statuses:
@@ -1145,10 +1157,6 @@ def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[di
         tool = check.get("tool")
         if check.get("open") and tool and tool not in out:
             out.append(tool)
-    if not drafts:
-        out = ["review_contract_map", "review_leads", "review_read_code"]
-    elif not out:
-        out = ["review_finalize"]
     return out[:3]
 
 

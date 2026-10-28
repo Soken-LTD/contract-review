@@ -6,7 +6,9 @@
 # Reviewer-first (2026-10-27): the severity the client reads is the reviewer's claimed_severity unless
 # a rule below applies; a rule that lowers it is named with its ceiling; a matrix outcome higher than
 # the reviewer's proposal is never applied silently at submit (E_SEVERITY_CONFIRM asks the reviewer to
-# confirm, keep theirs with a reason, or reclassify).
+# confirm, keep theirs with a reason, or reclassify). Since 2026-10-27 that confirmation is a warning on
+# an accepted submit (gate_policy.yaml): further than one step, a proposal with a reason moves to the
+# nearest value within one step; without a reason the computed value prints.
 version: 2
 one_step: 1          # RV1 tolerance and DG1 floor, in severity steps
 reason_min_chars: 20 # severity_reason length RV1 needs
@@ -16,7 +18,8 @@ rules:
      why: "A trusted role is a centralization risk, not an attacker; the matrix prints it as Medium at most."}
   - {id: K3, phase: all, kind: cap, ceiling: Low, condition: "magnitude dust (a rounding artefact)"}
   - {id: K4, phase: finalize, kind: cap, ceiling: Low,
-     condition: "evidence reasoning_only at finalize: a draft that never took a challenge and quotes no deployed code"}
+     condition: "evidence reasoning_only at finalize: a draft that never took a challenge and quotes no deployed code",
+     why: "Since 2026-10-27 (never-worse, gate_policy.yaml F3) the challenge is optional: a draft finalized without it keeps its severity and prints evidence reasoning_only with a coverage note, so K4 no longer caps it. K8 still caps an unchallenged Critical at High."}
   - {id: K5, phase: "post_challenge, finalize", kind: step, effect: "minus one level",
      condition: "a downgrade item of the checklist answered present",
      why: "One step since 2026-10-27 (was two): the second step needs a kill item (see DG1)."}

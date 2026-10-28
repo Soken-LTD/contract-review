@@ -202,5 +202,6 @@ async def test_answer_without_quote_on_a_present_basis_item_is_incomplete(db_poo
                 "refs": ["src/Vault.sol:1-9"], "note": "n"} for i in ch["items"]]
     res = await challenge_mod.handle_review_answer_challenge(
         {"job_id": job_id, "draft_key": sub["draft_key"], "revision": sub["revision"], "answers": answers})
-    assert res["accepted"] is False
-    assert any(e["code"] == "E_CHALLENGE_INCOMPLETE" for e in res["errors"]), res
+    # never-worse: a present answer without a quote is a warning; the item is unverified
+    assert res["accepted"] is True and "MB1" in res["items_unverified"], res
+    assert any(w["code"] == "E_CHALLENGE_INCOMPLETE" for w in res["warnings"]), res
