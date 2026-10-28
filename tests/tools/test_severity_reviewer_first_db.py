@@ -47,18 +47,20 @@ async def _draft_row(db_pool, job_id: str, key: str) -> dict[str, Any] | None:
 
 
 @ASYNC
-async def test_claim_two_steps_from_the_cell_is_a_confirmation_not_a_rejection(db_pool):
+async def test_claim_two_steps_from_the_cell_is_accepted_with_a_warning(db_pool):
+    """never-worse: the confirmation is a warning on an accepted submit; with a reason the claim moves
+    to the nearest value within one step of the computed cell (Critical cell, Medium claim: High)."""
     job_id, pin_root = await _create_ready_job_with_pin(db_pool)
     submit_mod, _ = await _modules(db_pool, pin_root)
     args = {**_VALID_SUBMISSION, "job_id": job_id, "draft_key": "draft-rv1-far",
             "claimed_severity": "Medium", "severity_reason": REASON}     # cell Critical
     res = await submit_mod.handle_review_submit_finding(args)
-    assert res["accepted"] is False
-    assert [e["code"] for e in res["errors"]] == ["E_SEVERITY_CONFIRM"]
-    assert res["computed_severity"] == "Critical" and res["matrix_cell"] == "Critical"
-    assert res["retries_left"] == 6, res          # no retry spent
-    assert "2 steps" in res["errors"][0]["what"] and "Critical" in res["errors"][0]["fix"]
-    assert await _draft_row(db_pool, job_id, "draft-rv1-far") is None   # nothing stored
+    assert res["accepted"] is True, res
+    assert [w["code"] for w in res["warnings"]] == ["E_SEVERITY_CONFIRM"]
+    assert "2 steps" in res["warnings"][0]["what"] and res["warnings"][0]["class"] == "advisory"
+    assert res["computed_severity"] == "High" and res["matrix_cell"] == "Critical"
+    row = await _draft_row(db_pool, job_id, "draft-rv1-far")
+    assert row and row["rejected_count"] == 0
 
 
 @ASYNC
@@ -67,9 +69,9 @@ async def test_one_step_without_a_reason_asks_for_one_then_stands_with_it(db_poo
     submit_mod, _ = await _modules(db_pool, pin_root)
     args = {**_VALID_SUBMISSION, "job_id": job_id, "draft_key": "draft-rv1-one", "claimed_severity": "High"}
     res = await submit_mod.handle_review_submit_finding(args)
-    assert res["accepted"] is False and res["errors"][0]["code"] == "E_SEVERITY_CONFIRM"
-    assert "severity_reason" in res["errors"][0]["what"]
-    assert await _draft_row(db_pool, job_id, "draft-rv1-one") is None
+    # accepted at the computed value, the warning asks for a reason
+    assert res["accepted"] is True and res["warnings"][0]["code"] == "E_SEVERITY_CONFIRM", res
+    assert "severity_reason" in res["warnings"][0]["what"] and res["computed_severity"] == "Critical"
 
     res2 = await submit_mod.handle_review_submit_finding({**args, "severity_reason": REASON})
     assert res2["accepted"] is True, res2
@@ -118,8 +120,12 @@ async def test_a_reason_is_reviewer_prose_and_takes_the_text_gate(db_pool):
     args = {**_VALID_SUBMISSION, "job_id": job_id, "draft_key": "draft-rv1-gate", "claimed_severity": "High",
             "severity_reason": "You should rate this High because the impact is severe, is it not?"}
     res = await submit_mod.handle_review_submit_finding(args)
-    assert res["accepted"] is False
-    assert any(e.get("field") == "severity_reason" or "severity_reason" in str(e) for e in res["errors"]), res
+    # wording rules are advisory: accepted, the reason's T5/T12 hits come back as warnings (T13 is
+    # exempt in severity_reason, the field exists to discuss severity)
+    assert res["accepted"] is True, res
+    rules = {(w.get("rule"), w.get("field")) for w in res["warnings"]}
+    assert ("T5", "severity_reason") in rules and ("T12", "severity_reason") in rules
+    assert ("T13", "severity_reason") not in rules
 
 
 @ASYNC

@@ -37,6 +37,7 @@ import yaml
 from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
+from ..engine import gate_policy
 from ..engine.claims import check_owner_deployer
 from ..engine.numbers import NumberContext, lex_numbers
 from ..engine.text_gate import check_model_field
@@ -57,7 +58,7 @@ from .coverage import (
     rows_index as cov_rows_index,
 )
 from .number_errors import claim_error, number_error
-from .submit import _family_from_chain
+from .submit import GateRouter, _family_from_chain, store_warnings
 from .walks import latest_rows, load_drafts, load_reads, merge_rows, open_walks, validate_row, walk_index
 
 RUBRIC_DIR = Path(__file__).resolve().parents[3] / "contract" / "rubric"
@@ -90,6 +91,36 @@ def _get_ctx() -> JobContext:
 _FROZEN_STATES = frozenset({"finalized", "render_queued", "rendering", "rendered", "render_failed"})
 _TERMINAL_STATES = frozenset({"insufficient_source", "failed", "expired", "deleted"})
 _SECTIONS = ("roles_notes", "out_of_scope_reasons", "coverage", "context_notes", "invariant_walks")  # enums.yaml `section`
+# Pipeline states in which a section that needs no pinned source may be stored (gate_policy.yaml
+# E_JOB_NOT_READY rule context_notes: the start result asks for the documents note right away).
+_EARLY_STATES = frozenset({"awaiting_upload", "queued", "fetching", "building", "analyzing"})
+_EARLY_SECTIONS = frozenset({"context_notes"})
+# Prose keys rewritten for publication, per section (gate_policy.yaml rewrites); enum keys never are.
+_PROSE_KEYS = {"roles_notes": ("risk_note", "notes"), "out_of_scope_reasons": ("reason",), "coverage": ("note",),
+               "invariant_walks": ("note",)}
+
+
+def _rewrite_section(section: str, content: Any) -> tuple[Any, list[dict[str, str]]]:
+    """Publication rewrites (dashes, arrows, audit words) on the prose of one section."""
+    if not isinstance(content, list):
+        return content, []
+    if section == "context_notes":
+        out, applied = gate_policy.rewrite_blocks(content, "notes")
+        return out, [{**a, "field": section} for a in applied]
+    keys = _PROSE_KEYS.get(section, ())
+    rows: list[Any] = []
+    applied: list[dict[str, str]] = []
+    for i, row in enumerate(content):
+        if not isinstance(row, dict):
+            rows.append(row)
+            continue
+        nr = dict(row)
+        for k in keys:
+            if isinstance(nr.get(k), str):
+                nr[k], a = gate_policy.rewrite_text(nr[k], "notes")
+                applied.extend({**x, "field": f"{section}[{i}].{k}"} for x in a)
+        rows.append(nr)
+    return rows, applied
 # context_notes block limits: finding.v1 `block` (the tools.v1 `context_notes.notes` items) and the
 # report schema `context.notes` (max 8 model blocks).
 _CTX_MAX_BLOCKS, _CTX_P_MAX, _CTX_UL_MAX, _CTX_UL_ITEM_MAX = 8, 900, 8, 300
@@ -261,6 +292,14 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
         out["errors"] = errors[:20]
         if len(errors) > 20:
             out["errors_more"] = len(errors) - 20
+    warnings = [w for _, r in results for w in (r.get("warnings") or [])]
+    out.pop("warnings_more", None)
+    if warnings:
+        out["warnings"] = warnings[:gate_policy.MAX_WARNINGS]
+        if len(warnings) > gate_policy.MAX_WARNINGS:
+            out["warnings_more"] = len(warnings) - gate_policy.MAX_WARNINGS
+    else:
+        out.pop("warnings", None)
     rows = []
     for name, r in results:
         row: dict[str, Any] = {"section": name, "accepted": bool(r.get("accepted"))}
@@ -312,7 +351,9 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
         return {"accepted": False, "errors": [
             ReviewError("E_JOB_TERMINAL", state=state, exit_code=job.get("error_code", "")).envelope()
         ]}
-    if state != "ready":
+    early_ok = state in _EARLY_STATES and section in _EARLY_SECTIONS and not gate_policy.is_blocking(
+        "E_JOB_NOT_READY", section)
+    if state != "ready" and not early_ok:
         return {"accepted": False, "errors": [
             ReviewError("E_JOB_NOT_READY", state=state, eta_s=0).envelope()
         ]}
@@ -352,7 +393,12 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
             return {"accepted": False, "errors": [ReviewError("E_SECTION_INVALID", detail=detail).envelope()]}
 
     # ── V5/V6 on all text fields ──────────────────────────────────────────────
-    violations: list[dict[str, Any]] = []
+    # Gate policy: blocking rules refuse, advisory rules ride on the accepted result as warnings, and
+    # the publication rewrites are applied to the stored content first.
+    gate = GateRouter()
+    content, rewrites = _rewrite_section(section, content)
+    gate.warnings.extend(gate_policy.rewrite_warnings(rewrites))
+    violations = gate.errors
     try:
         nctx = job_number_context(_get_ctx().get_pin_root(), job_id)
     except Exception:  # noqa: BLE001 - the word set is a convenience; the check still runs without it
@@ -367,15 +413,16 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
         else:
             field_vs = check_model_field(text, field=field_path, profile=job_profile)
         for v in field_vs:
-            violations.append(ReviewError(
+            gate.violation(v, field_path, ReviewError(
                 v.code, rule=v.rule_id,
                 match=v.match[:80] if v.match else "",
+                span=v.match[:80] if v.match else "",
                 cp=(v.match[:5] if v.match else ""),
                 pos=v.span[0],
                 token=(v.match[:40] if v.match else ""),
             ).envelope())
         for v in lex_numbers(text, nctx):
-            violations.append(number_error(v, field_path, nctx))
+            gate.violation(v, field_path, number_error(v, field_path, nctx))
 
     # Owner/deployer identity claims against the recorded facts (engine.claims). A roles row is
     # checked as "role: note", so "onlyOwner: Held by the deployer account" (APAD 2026-10-27) is
@@ -386,7 +433,7 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
             violations.append(claim_error(v, field_path, job_facts))
 
     if violations:
-        return {"accepted": False, "errors": violations}
+        return {"accepted": False, "errors": violations[:20], **gate.result_fields()}
 
     # ── Coverage section: strict N/A-only schema (04 §13, 03 §4.13) ─────────
     if section == "coverage":
@@ -422,6 +469,10 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
             raise ReviewError("E_INTERNAL", incident=f"enums.yaml unavailable: {exc}") from exc
         computed_index = cov_rows_index(computed_rows)
 
+        # Each row is checked on its own. A row in the old shape is a storage problem (blocking); a
+        # row the server cannot confirm is dropped with a warning and prints as not covered
+        # (gate_policy.yaml E_COVERAGE_NA_UNCONFIRMED, E_SECTION_INVALID rule row).
+        kept: list[Any] = []
         for i, row in enumerate(content):
             area_id = row.get("area_id") or f"row_{i}"
             reason = row.get("reason") or ""
@@ -433,49 +484,36 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
                     ReviewError("E_SECTION_INVALID",
                                 detail=f"coverage row {i}: 'state' field is not accepted; "
                                        "use {area_id, reason, note} only").envelope()
-                ]}
+                ], **gate.result_fields()}
 
-            # area_id must be a valid family category
-            if area_id not in valid_cats:
-                return {"accepted": False, "errors": [
-                    ReviewError("E_SECTION_INVALID",
-                                detail=f"coverage row {i}: area_id '{area_id}' is not a "
-                                       f"valid {family} category").envelope()
-                ]}
-
-            # reason must be allowed for this specific category (04 §13; derived from checklist na:[])
-            cat_allowed = category_allowed_na_reasons(family, area_id)
-            if not reason or reason not in cat_allowed:
-                return {"accepted": False, "errors": [
-                    ReviewError("E_COVERAGE_NA_UNCONFIRMED",
-                                detail=f"coverage row {i}: reason '{reason}' is not allowed "
-                                       f"for category '{area_id}' in family '{family}'").envelope()
-                ]}
-
-            # note must be 10..300 chars
-            if len(note) < 10 or len(note) > 300:
-                return {"accepted": False, "errors": [
-                    ReviewError("E_SECTION_INVALID",
-                                detail=f"coverage row {i}: note must be 10–300 characters "
-                                       f"(got {len(note)})").envelope()
-                ]}
-
-            # N/A can only replace not_covered or no_candidates (not read/partially_read)
+            problem: tuple[str, str] | None = None
             computed_status = computed_index.get(area_id, "not_covered")
-            if computed_status in ("read", "partially_read"):
-                return {"accepted": False, "errors": [
-                    ReviewError("E_COVERAGE_NA_UNCONFIRMED",
-                                detail=f"{area_id}: computed status is '{computed_status}'; "
-                                       "N/A cannot override a covered category").envelope()
-                ]}
-
-            # Predicate must be confirmable as true
-            predicate_result = _check_na_predicate_for_section(reason, family, map_doc)
-            if predicate_result != "true":
-                return {"accepted": False, "errors": [
-                    ReviewError("E_COVERAGE_NA_UNCONFIRMED",
-                                detail=f"{area_id}: predicate {reason}={predicate_result}").envelope()
-                ]}
+            cat_allowed = category_allowed_na_reasons(family, area_id) if area_id in valid_cats else []
+            if area_id not in valid_cats:
+                # area_id must be a valid family category
+                problem = ("E_SECTION_INVALID", f"coverage row {i}: area_id '{area_id}' is not a valid {family} category")
+            elif not reason or reason not in cat_allowed:
+                # reason must be allowed for this specific category (04 §13; derived from checklist na:[])
+                problem = ("E_COVERAGE_NA_UNCONFIRMED",
+                           f"coverage row {i}: reason '{reason}' is not allowed for category '{area_id}' in family '{family}'")
+            elif len(note) < 10 or len(note) > 300:
+                problem = ("E_SECTION_INVALID", f"coverage row {i}: note must be 10 to 300 characters (got {len(note)})")
+            elif computed_status in ("read", "partially_read"):
+                # N/A can only replace not_covered or no_candidates (not read/partially_read)
+                problem = ("E_COVERAGE_NA_UNCONFIRMED",
+                           f"{area_id}: computed status is '{computed_status}'; N/A cannot override a covered category")
+            else:
+                predicate_result = _check_na_predicate_for_section(reason, family, map_doc)
+                if predicate_result != "true":
+                    problem = ("E_COVERAGE_NA_UNCONFIRMED", f"{area_id}: predicate {reason}={predicate_result}")
+            if problem is None:
+                kept.append(row)
+                continue
+            code, detail = problem
+            rule = "row" if code == "E_SECTION_INVALID" else None
+            if gate.add(ReviewError(code, detail=detail).envelope(), code, rule, f"coverage[{i}]", area_id):
+                return {"accepted": False, "errors": gate.errors[:20], **gate.result_fields()}
+        content = kept
 
     # ── Invariant walks: coverage-checked answers, merged by walk_id ──────────
     walks_open: list[str] = []
@@ -490,17 +528,28 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
             reads = await load_reads(wc, job_id)
             drafts = await load_drafts(wc, job_id)
             previous = await latest_rows(wc, job_id)
-        errors = []
-        for row in content:
+        # One answer at a time: an answer the server cannot accept is dropped with a warning and the
+        # walk stays open (it prints as not answered); the valid answers are stored.
+        valid_rows = []
+        for i, row in enumerate(content):
             detail = validate_row(row, index.get(str((row or {}).get("walk_id"))) if isinstance(row, dict) else None,
                                   reads, drafts)
-            if detail is not None:
-                errors.append(ReviewError("E_SECTION_INVALID", detail=detail, example=_walk_example()).envelope())
-        if errors:
-            return {"accepted": False, "errors": errors[:20]}
+            if detail is None:
+                valid_rows.append(row)
+                continue
+            env = ReviewError("E_SECTION_INVALID", detail=detail, example=_walk_example()).envelope()
+            walk = str((row or {}).get("walk_id", "")) if isinstance(row, dict) else ""
+            if gate.add(env, "E_SECTION_INVALID", "row", f"invariant_walks[{i}]", walk):
+                return {"accepted": False, "errors": gate.errors[:20], **gate.result_fields()}
+        content = valid_rows
         clean = [{k: row[k] for k in ("walk_id", "outcome", "refs", "note", "draft_key") if k in row} for row in content]
         content = merge_rows(previous, clean)
         walks_open = open_walks(lc, content, drafts)
+
+    # Every row was dropped: nothing to store, the call still succeeds with the warnings.
+    if not content:
+        return {"accepted": True, "section": section, "stored": False,
+                **({"walks_open": walks_open} if section == "invariant_walks" else {}), **gate.result_fields()}
 
     # ── Compute content hash and check idempotency ────────────────────────────
     content_hash = hashlib.sha256(
@@ -519,7 +568,7 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
         locked_state = locked_job["state"]
         if locked_state in _FROZEN_STATES:
             return {"accepted": False, "errors": [ReviewError("E_JOB_FROZEN").envelope()]}
-        if locked_state not in ("ready",):
+        if locked_state not in ("ready",) and not (early_ok and locked_state in _EARLY_STATES):
             return {"accepted": False, "errors": [
                 ReviewError("E_JOB_NOT_READY", state=locked_state, eta_s=0).envelope()
             ]}
@@ -543,6 +592,7 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
                     "revision": existing["revision"],
                     "idempotent": True,
                     **({"walks_open": walks_open} if section == "invariant_walks" else {}),
+                    **gate.result_fields(),
                 }
             # New content: next revision
             next_revision = existing["revision"] + 1
@@ -560,6 +610,7 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
         await conn.execute(
             "update jobs set last_call_at = now() where job_id = %s", (job_id,)
         )
+        await store_warnings(conn, job_id, "review_set_section", section, next_revision, gate.warnings)
 
     return {
         "accepted": True,
@@ -567,4 +618,5 @@ async def _set_one_section(args: dict[str, Any]) -> dict[str, Any]:
         "revision": next_revision,
         "idempotent": False,
         **({"walks_open": walks_open} if section == "invariant_walks" else {}),
+        **gate.result_fields(),
     }

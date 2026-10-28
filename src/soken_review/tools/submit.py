@@ -26,6 +26,7 @@ Ambiguities resolved: docs/w0/submit-finalize-ambiguities.md.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 from functools import cache
@@ -39,16 +40,18 @@ from psycopg.rows import dict_row
 
 from ..context.store import ContextStore, is_context_path
 from ..db.pool import get_pool
+from ..engine import gate_policy
+from ..engine.artifacts import a1_literals
 from ..engine.claims import check_owner_deployer
 from ..engine.injection import check_echo
-from ..engine.numbers import lex_numbers
+from ..engine.numbers import NumberContext, lex_numbers
 from ..engine.severity import SeverityContext, compute_severity, k_caps_only
-from ..engine.text_gate import check_model_field
+from ..engine.text_gate import check_model_field, rule_help
 from ..errors import ReviewError
 from ..mapping.build import load_map
 from ..mapping.facts import load_facts
 from ..mapping.semantic_evm import detect_token_review, units_holding
-from ..mapping.step import job_number_context, load_flags
+from ..mapping.step import job_number_context, load_artifacts, load_flags
 from ..pinning.quote_match import QuoteMatchError, quote_match
 from ..pinning.store import PinnedSource
 from ..server import handler
@@ -135,11 +138,13 @@ def _violation_to_error(v: Any, field: str | None = None) -> dict[str, Any]:
 
     Bug 6c fix (2026-10-25): pass field= so E_ABSENCE_UNRESOLVED (and any V5 violation)
     names the prose field where the violation occurred.  The ReviewError envelope already
-    surfaces ``field`` as a top-level key when present.
+    surfaces ``field`` as a top-level key when present. ``span`` fills the E_CODESPAN_NOT_IN_SOURCE
+    template, which printed "Code span  not found" with an empty span on every blind run.
     """
     kwargs: dict[str, Any] = {
         "rule": v.rule_id,
         "match": v.match[:80] if v.match else "",
+        "span": v.match[:80] if v.match else "",
         "cp": (v.match[:5] if v.match else ""),
         "pos": v.span[0],
         "token": (v.match[:40] if v.match else ""),
@@ -147,6 +152,87 @@ def _violation_to_error(v: Any, field: str | None = None) -> dict[str, Any]:
     if field is not None:
         kwargs["field"] = field
     return ReviewError(v.code, **kwargs).envelope()
+
+
+class GateRouter:
+    """Splits one write call's rejections into blocking errors and advisory warnings
+    (contract/rubric/gate_policy.yaml). Blocking items refuse the call; advisory items ride on an
+    accepted result and are stored in gate_warnings."""
+
+    def __init__(self) -> None:
+        self.errors: list[dict[str, Any]] = []
+        self.warnings: list[dict[str, Any]] = []
+
+    def add(self, envelope: dict[str, Any], code: str, rule: str | None = None, field: str | None = None,
+            match: str | None = None) -> bool:
+        """Route one rejection; True when it blocks."""
+        if gate_policy.is_exempt(code, rule, field):
+            return False
+        if gate_policy.is_blocking(code, rule):
+            self.errors.append(envelope)
+            return True
+        suggest = None
+        if rule and (rule.startswith(("T", "P")) or rule == "step0"):
+            suggest = rule_help(rule)[1]
+        self.warnings.append(gate_policy.warning(envelope, code=code, rule=rule, field=field, match=match,
+                                                 suggest=suggest))
+        return False
+
+    def violation(self, v: Any, field: str | None, envelope: dict[str, Any] | None = None) -> bool:
+        env = envelope if envelope is not None else _violation_to_error(v, field=field)
+        return self.add(env, v.code, v.rule_id, field, v.match)
+
+    def result_fields(self) -> dict[str, Any]:
+        """`warnings` (capped) and `warnings_more` for a tool result; empty when there are none."""
+        if not self.warnings:
+            return {}
+        out: dict[str, Any] = {"warnings": self.warnings[:gate_policy.MAX_WARNINGS]}
+        if len(self.warnings) > gate_policy.MAX_WARNINGS:
+            out["warnings_more"] = len(self.warnings) - gate_policy.MAX_WARNINGS
+        return out
+
+
+async def store_warnings(conn: psycopg.AsyncConnection, job_id: str, tool: str, owner_key: str,
+                         revision: int | None, warnings: list[dict[str, Any]]) -> None:
+    """Keep the advisory warnings of an accepted write (gate_warnings, migration 017). The learning
+    loop reads them as rule statistics; they never reach the report text."""
+    if not warnings:
+        return
+    await conn.execute(
+        """insert into gate_warnings (job_id, tool, owner_key, revision, warnings)
+           values (%s, %s, %s, %s, %s)""",
+        (job_id, tool, owner_key[:80], revision, psycopg.types.json.Jsonb(warnings[:200])),
+    )
+
+
+def finding_number_context(pin_root: Path, job_id: str, quotes: list[dict[str, Any]],
+                           draft_keys: frozenset[str] = frozenset()) -> NumberContext:
+    """NumberContext for one finding at submit: the job word set plus the finding's own evidence, so a
+    literal on a quoted line (A1), a line reference inside the quotes (A3) and a recorded fact (A4)
+    are sourced at write time exactly as the report reads them (Pump Science run 2026-10-27: "150"
+    on the quoted line was rejected because submit passed no quotes to the number check). The fact
+    meaning rule (amount_at_risk) stays a render-time projection, as before."""
+    base = job_number_context(pin_root, job_id)
+    try:
+        paths = sorted({str(q["file"]) for q in quotes if q.get("file")})
+        arts = load_artifacts(pin_root, job_id, paths)
+    except (OSError, ValueError, KeyError):
+        return dataclasses.replace(
+            base, quoted_line_ranges=[(q["file"], int(q["start"]), int(q["end"])) for q in quotes
+                                      if q.get("file") and isinstance(q.get("start"), int) and isinstance(q.get("end"), int)],
+            draft_keys=draft_keys)
+    code_quotes = [q for q in quotes if q.get("file") and isinstance(q.get("start"), int) and isinstance(q.get("end"), int)]
+    literals, units = a1_literals(arts, code_quotes)
+    facts = {f["key"]: f["value"] for f in (arts.facts or []) if "key" in f and "value" in f}
+    return dataclasses.replace(
+        base,
+        allowed_literals=literals,
+        include_solidity_units=units,
+        facts=facts,
+        quoted_line_ranges=[(q["file"], int(q["start"]), int(q["end"])) for q in code_quotes],
+        draft_keys=draft_keys,
+        known_fact_keys=frozenset(facts) if arts.facts is not None else None,
+    )
 
 
 # ── Enums cache ────────────────────────────────────────────────────────────────
@@ -216,8 +302,11 @@ async def _validate_leads(
     lead_ids: list[str],
     category: str,
     location_quotes: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], bool, set[str]]:
-    """Validate leads and return (errors, linked_lead_same_cat, carried_lead_ids).
+) -> tuple[list[tuple[str, dict[str, Any]]], bool, set[str]]:
+    """Validate leads and return ([(lead_id, error)], linked_lead_same_cat, carried_lead_ids).
+
+    Each error names its lead so the caller can drop that link and keep the finding (gate policy:
+    a bad lead link is advisory, the finding stays without the analyzer evidence level).
 
     Checks:
     - Lead exists and belongs to this job (E_LEAD_NOT_FOUND)
@@ -244,7 +333,7 @@ async def _validate_leads(
         )
         rows = {r["lead_id"]: r for r in await cur.fetchall()}
 
-    errors: list[dict[str, Any]] = []
+    errors: list[tuple[str, dict[str, Any]]] = []
     linked_same_cat = False
     carried_lead_ids: set[str] = set()
 
@@ -258,11 +347,11 @@ async def _validate_leads(
     for lid in lead_ids:
         row = rows.get(lid)
         if row is None:
-            errors.append(ReviewError("E_LEAD_NOT_FOUND", lead=lid).envelope())
+            errors.append((lid, ReviewError("E_LEAD_NOT_FOUND", lead=lid).envelope()))
             continue
         # Category mismatch
         if row["category"] != category:
-            errors.append(ReviewError("E_CATEGORY_MISMATCH", lead=lid, category=row["category"]).envelope())
+            errors.append((lid, ReviewError("E_CATEGORY_MISMATCH", lead=lid, category=row["category"]).envelope()))
             continue
         # Overlap check: lead's (path, start_line, end_line) overlaps a location quote
         path = row["path"]
@@ -270,8 +359,8 @@ async def _validate_leads(
         ranges = loc_ranges.get(path, [])
         overlaps = any(not (le < qs or ls > qe) for qs, qe in ranges)
         if not overlaps:
-            errors.append(ReviewError("E_LEAD_NO_OVERLAP", lead=lid,
-                                      range=f"{path}:{ls}-{le}").envelope())
+            errors.append((lid, ReviewError("E_LEAD_NO_OVERLAP", lead=lid,
+                                            range=f"{path}:{ls}-{le}").envelope()))
             continue
         # Lead state check: only 'open' or previously-promoted-by-THIS-draft is linkable.
         # A dismissed lead or a lead promoted by ANOTHER draft must be rejected.
@@ -283,7 +372,7 @@ async def _validate_leads(
             lead_state == "promoted" and lead_state_ref == draft_key
         )
         if not lead_linkable:
-            errors.append(ReviewError("E_LEAD_NOT_FOUND", lead=lid).envelope())
+            errors.append((lid, ReviewError("E_LEAD_NOT_FOUND", lead=lid).envelope()))
             continue
 
         # Security (04 §4.10): only analyzer-origin leads grant E3 evidence level.
@@ -513,7 +602,7 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             challenge = None
         if challenge and challenge.get("accepted"):
             result["challenge"] = {k: v for k, v in challenge.items() if k != "accepted"}
-            result["next_tools"] = ["review_answer_challenge"]
+            result["next_tools"] = ["review_finalize", "review_answer_challenge"]
     return result
 
 
@@ -634,44 +723,57 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             ], "retries_left": 0}
 
         # ── Collect all validation errors (V2-V10) ────────────────────
-        violations: list[dict[str, Any]] = []
+        # Gate policy (contract/rubric/gate_policy.yaml): evidence integrity and publication safety
+        # block; wording, link and checklist rules become warnings on an accepted result. Text the
+        # server rewrites for publication (dashes, arrows, audit words) is rewritten first, so every
+        # check below and the stored revision see the printed form.
+        gate = GateRouter()
+        text_args, rewrites = gate_policy.rewrite_finding(args)
+        gate.warnings.extend(gate_policy.rewrite_warnings(rewrites))
+        violations = gate.errors
+        effective_lead_ids: list[str] = list(args.get("lead_ids") or [])
 
         if is_server_draft:
             # Server drafts: only title+body, merged onto revision 0.
             # V5: use check_model_field (canonical early-gate, matches render-time check_strings).
             # The model cannot change category/quotes/matrix/lead links on server drafts
             # (_SERVER_DRAFT_ALLOWED guard already enforces this above).
-            title: str = args.get("title", "")
-            body_sd = args.get("body") or {}
+            title: str = text_args.get("title", "")
+            body_sd = text_args.get("body") or {}
             sd_text_args: dict[str, Any] = {"title": title, "body": body_sd}
             for field_name, field_text in _iter_text_fields(sd_text_args):
                 for v in check_model_field(field_text, field=field_name, profile=job_profile):
-                    violations.append(_violation_to_error(v, field=field_name))
+                    gate.violation(v, field_name)
             try:
                 sd_facts = _job_facts(_get_ctx().get_pin_root(), job_id)
             except ReviewError:  # no job context wired (unit tests): no facts to compare against
                 sd_facts = []
             for field_name, field_text in _iter_text_fields(sd_text_args):
                 for v in check_owner_deployer(field_text, sd_facts):
-                    violations.append(claim_error(v, field_name, sd_facts))
+                    gate.violation(v, field_name, claim_error(v, field_name, sd_facts))
         else:
             # Model draft: full field requirements
             category: str = args.get("category", "")
             quotes: list[dict[str, Any]] = args.get("quotes", [])
             matrix: dict[str, Any] = args.get("matrix", {})
             lead_ids: list[str] = args.get("lead_ids", [])
-            title = args.get("title", "")
+            title = text_args.get("title", "")
 
             # V7: category validation
             cat_errors = _validate_category(category, family)
             violations.extend(cat_errors)
 
-            # V10: lead validation (category match, overlap)
+            # V10: lead validation (category match, overlap). A bad link is advisory: the lead is
+            # dropped from this revision and the finding keeps reasoning evidence only.
             location_quotes = [q for q in quotes if q.get("role", "location") == "location"]
             lead_errors, linked_same_cat, carried_lead_ids = await _validate_leads(
                 conn, job_id, draft_key, lead_ids, category, location_quotes
             )
-            violations.extend(lead_errors)
+            dropped: set[str] = set()
+            for lid, env in lead_errors:
+                if gate.add(env, env["code"], None, "lead_ids", lid) is False:
+                    dropped.add(lid)
+            effective_lead_ids = [lid for lid in lead_ids if lid not in dropped]
 
             # V2/V3: quote-match against pin store (reject if pin missing — never skip)
             pin_root = _get_ctx().get_pin_root()
@@ -727,34 +829,44 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             except (OSError, ValueError) as exc:
                 raise ReviewError("E_INTERNAL", incident=f"flags.json unreadable: {exc!s:.80}") from exc
             j1_flags = [f for f in _raw_flags if f.get("rule") == "J1"]
-            combined_text = "\n".join(t for _, t in _iter_text_fields(args))
-            for v in check_echo(combined_text, j1_flags):
-                violations.append(_violation_to_error(v))
+            # Both forms: a publication rewrite (audit -> review, dashes) must never turn an echoed
+            # injected span into one the 6-word match misses (security review 2026-10-28).
+            seen_echo: set[str] = set()
+            for src_args in (args, text_args):
+                combined_text = "\n".join(t for _, t in _iter_text_fields(src_args))
+                for v in check_echo(combined_text, j1_flags):
+                    if v.match not in seen_echo:
+                        seen_echo.add(v.match)
+                        gate.violation(v, None)
 
             # V5: text gate (FULL model scope) on every prose field.  check_model_field
             # enforces all rules including T24/T29/T31 (no LATE_GATE_SKIP at write time,
             # 04 §11.4 write-time parity).  Pass absence_claims so T24 can bind them.
             finding_absence_claims: list[dict[str, str]] = args.get("absence_claims") or []
-            for field_name, field_text in _iter_text_fields(args):
+            for field_name, field_text in _iter_text_fields(text_args):
                 for v in check_model_field(
                     field_text, field=field_name, profile=job_profile,
                     absence_claims=finding_absence_claims,
                 ):
-                    violations.append(_violation_to_error(v, field=field_name))
+                    gate.violation(v, field_name)
 
             # V6: number check on every prose field, with the job's word set so identifiers that
-            # carry a digit are not read as numbers (04 6.2 L7)
-            nctx = job_number_context(pin_root, job_id)
-            for field_name, field_text in _iter_text_fields(args):
+            # carry a digit are not read as numbers (04 6.2 L7), the finding's quoted lines (A1, A3)
+            # and the recorded facts (A4)
+            async with conn.cursor() as cur:
+                await cur.execute("select draft_key from finding_drafts where job_id = %s", (job_id,))
+                job_draft_keys = frozenset([r[0] for r in await cur.fetchall()] + [draft_key])
+            nctx = finding_number_context(pin_root, job_id, quotes, job_draft_keys)
+            for field_name, field_text in _iter_text_fields(text_args):
                 for v in lex_numbers(field_text, nctx):
-                    violations.append(number_error(v, field_name, nctx))
+                    gate.violation(v, field_name, number_error(v, field_name, nctx))
 
             # V6b: owner/deployer identity claims against the recorded facts (engine.claims; APAD
             # PDF 2026-10-27 stated twice that the owner is the deployer, false on chain).
             job_facts = _job_facts(pin_root, job_id)
-            for field_name, field_text in _iter_text_fields(args):
+            for field_name, field_text in _iter_text_fields(text_args):
                 for v in check_owner_deployer(field_text, job_facts):
-                    violations.append(claim_error(v, field_name, job_facts))
+                    gate.violation(v, field_name, claim_error(v, field_name, job_facts))
 
             # V7.5: trigger check against semantic map.
             # FileNotFoundError = map worker not run; degrade to map_unavailable=True (K10
@@ -883,24 +995,15 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                                 ).envelope()
                             )
 
-        # ── Reviewer-first (RV1): a claimed_severity the matrix cannot carry silently ─────
-        # The reviewer confirms the computed value, keeps theirs with a reason (one step), or
-        # reclassifies. A confirmation is a round trip, not a gate failure: nothing is stored and
-        # rejected_count does not move (blind run 2026-10-26, judgement section 9 item 1).
-        if not violations and not is_server_draft and sev_result is not None and sev_result.confirm_needed:
-            return {
-                "accepted": False,
-                "errors": [ReviewError(
-                    "E_SEVERITY_CONFIRM", computed=sev_result.computed,
-                    rule=sev_result.severity_rule, why=sev_result.confirm_why,
-                ).envelope()],
-                "computed_severity": sev_result.computed,
-                "matrix_cell": sev_result.base,
-                "severity_rule": sev_result.severity_rule,
-                "caps_applied": k_caps_only(sev_result.caps_applied),
-                "rules_applied": sev_result.caps_applied,
-                "retries_left": max(0, max_rejections - rejected_count),
-            }
+        # ── Reviewer-first (RV1): a claimed_severity the matrix cannot carry as given ─────
+        # Advisory since 2026-10-27 (never-worse): the reviewer's value stands within one step with a
+        # reason; further away it moves to the nearest value within one step (engine RV1), and the
+        # warning names the computed cell. The finding is accepted either way.
+        if not is_server_draft and sev_result is not None and sev_result.confirm_needed:
+            gate.add(ReviewError(
+                "E_SEVERITY_CONFIRM", computed=sev_result.computed,
+                rule=sev_result.severity_rule, why=sev_result.confirm_why,
+            ).envelope(), "E_SEVERITY_CONFIRM", None, "claimed_severity", args.get("claimed_severity"))
 
         # ── On validation errors: increment rejected_count, return ────
         if violations:
@@ -933,6 +1036,8 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             if len(violations) > 20:
                 result["errors_more"] = len(violations) - 20
             result["retries_left"] = retries_left
+            # The advisory items of the same call, so one revision can fix everything at once.
+            result.update(gate.result_fields())
             return result
 
         # ── Accept: insert revision and update draft ──────────────────
@@ -951,8 +1056,8 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
 
             # Merge title+body onto the stored content
             stored_content = dict(rev0["content"])
-            stored_content["title"] = args["title"]
-            stored_content["body"] = args["body"]
+            stored_content["title"] = text_args["title"]
+            stored_content["body"] = text_args["body"]
 
             await conn.execute(
                 "update finding_revisions set content = %s, content_hash = %s where job_id = %s and draft_key = %s and revision = 0",
@@ -966,6 +1071,7 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                 (job_id, draft_key),
             )
             await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
+            await store_warnings(conn, job_id, "review_submit_finding", draft_key, 0, gate.warnings)
 
             return {
                 "accepted": True,
@@ -979,6 +1085,7 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                 "evidence_level": "reasoning_only",
                 "leads_reopened": [],
                 "next_tools": [],
+                **gate.result_fields(),
             }
 
         # ── Model draft acceptance ────────────────────────────────────
@@ -1031,10 +1138,15 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             )
 
         # Insert revision
+        # The stored revision is the printed form: publication rewrites applied, and the lead links
+        # the gate dropped left out (content_hash stays the hash of the call, for replay detection).
         content_for_revision: dict[str, Any] = {
-            k: args[k] for k in args
+            k: text_args[k] for k in text_args
             if k not in ("job_id", "draft_key", "expected_revision")
         }
+        if "lead_ids" in content_for_revision:
+            content_for_revision["lead_ids"] = effective_lead_ids
+        lead_ids = effective_lead_ids
         await _insert_revision(
             conn, job_id, draft_key, new_revision,
             content_for_revision, content_hash,
@@ -1085,13 +1197,18 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             "evidence_level": evidence_level,
             "leads_reopened": leads_reopened,
             "next_tools": _next_tools(new_status),
+            **gate.result_fields(),
         }
+        await store_warnings(conn, job_id, "review_submit_finding", draft_key, new_revision, gate.warnings)
         return result
 
 
 def _next_tools(status: str) -> list[str]:
+    """Recommended next calls, never required (never-worse): the shortest legal path is
+    start, read, submit, finalize, report. A needs_challenge draft may take its optional challenge
+    (an evidence upgrade), so finalize comes first and the challenge second."""
     if status == "needs_challenge":
-        return ["review_challenge"]
+        return ["review_finalize", "review_challenge"]
     if status == "needs_text":
         return ["review_submit_finding"]
     return ["review_finalize"]
