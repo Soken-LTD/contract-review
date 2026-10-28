@@ -163,6 +163,10 @@ async def _load(job_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | No
         await cur.execute("""select provenance from job_steps where job_id = %s and step = 'render' and status = 'done'
                                  order by id desc limit 1""", (job_id,))
         step = await cur.fetchone()
+        # fetch and build provenance: whether the reviewed code is the deployed code (publication)
+        await cur.execute("""select step, status, provenance from job_steps where job_id = %s
+                                 and step in ('fetch', 'build') order by id""", (job_id,))
+        job["_pub_steps"] = await cur.fetchall()
     return job, rep, step
 
 
@@ -192,7 +196,7 @@ def _status_only(status: str, job: dict[str, Any], code: str | None = None,
     t = kit_texts()
     profile = "owner" if job["ownership_proven"] else "public_review"
     line = t["card_status"].get("render_pending" if status == "render_pending" else status, "")
-    pub = publication_outcome(job, profile)
+    pub = publication_outcome(job, profile, job.get("_pub_steps"))
     return {"accepted": True, "status": status, "code": code, "report_id": job.get("report_id"), "url": None,
             "pdf_url": None, "manage_url": None, "expires": None, "subject": None, "chain": None, "network": None,
             "provenance": None, "profile": profile, "counts": None, "top": None, "eta_s": None, "pages": None,
@@ -254,7 +258,7 @@ async def handle_review_report(args: dict[str, Any]) -> dict[str, Any]:
         "counts": c, "top": top, "eta_s": None, "pages": (step or {}).get("provenance", {}).get("pages") if step else None,
         "summary_text": summary_text(projected, c, lk, expires),
         "publish_status": pub_status, "public_url": pub_url,
-        "publication": publication_outcome(job, profile),
+        "publication": publication_outcome(job, profile, job.get("_pub_steps")),
     }
     if page >= 1:
         out["rows"] = rows[(page - 1) * ROWS_PER_PAGE: page * ROWS_PER_PAGE]

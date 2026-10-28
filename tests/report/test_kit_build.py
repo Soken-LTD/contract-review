@@ -122,9 +122,18 @@ def test_print_has_exactly_one_site_link(tmp_path):
     assert body.count("http://") == body.count("http://www.w3.org/2000/svg")
 
 
-def test_late_gate_on_model_em_dash(tmp_path):
+def test_model_em_dash_is_rewritten_not_a_late_gate(tmp_path):
+    """gate_policy.yaml T1 rewrite: an em dash in reviewer text prints as a comma (never-worse)."""
     r = report(severities=["Low"])
     r["findings"][0]["impact"] = [{"p": "Funds move " + chr(0x2014) + " twice."}]
+    build(r, tmp_path)
+    assert r["findings"][0]["impact"][0]["p"] == "Funds move, twice."
+
+
+def test_late_gate_on_model_certainty_claim(tmp_path):
+    """A blocking publication rule (T14 certainty claim) still fails the render."""
+    r = report(severities=["Low"])
+    r["findings"][0]["impact"] = [{"p": "The vault is fully secure after the fix."}]
     with pytest.raises(BuildError) as e:
         build(r, tmp_path)
     assert e.value.code == "late_gate" and "impact" in e.value.path

@@ -635,15 +635,21 @@ async def test_finalize_blocked_by_f3_needs_challenge(db_pool):
         f"Expected needs_challenge; got {submit_result['status']!r}"
     )
 
+    # never-worse (gate_policy.yaml F3): the challenge is optional, finalize is not refused; F3 is
+    # reported as a coverage gap and the draft is accepted as filed.
     fin_result = await fin_mod.handle_review_finalize({"job_id": job_id})
-    assert fin_result.get("accepted") is False, (
-        f"Finalize must be blocked with needs_challenge draft; got: {fin_result}"
-    )
-    items = fin_result.get("items") or []
-    open_ids = {c["id"] for c in items if c.get("open")}
-    assert "F3" in open_ids, (
-        f"F3 must be open when a draft is in needs_challenge; open checks: {open_ids}"
-    )
+    assert fin_result.get("accepted") is True, fin_result
+    gaps = {g["check"]: g for g in fin_result.get("coverage_gaps") or []}
+    assert gaps["F3"]["kind"] == "challenge_not_answered" and gaps["F3"]["count"] == 1
+    async with db_pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute("select status, severity from finding_drafts where job_id = %s", (job_id,))
+        status, severity = await cur.fetchone()
+        await cur.execute("select coverage_gaps from jobs where job_id = %s", (job_id,))
+        stored = (await cur.fetchone())[0]
+    # K4 no longer caps an unchallenged draft: the submit severity stands (K8 caps a Critical at High)
+    want = "High" if submit_result["computed_severity"] == "Critical" else submit_result["computed_severity"]
+    assert status == "accepted" and severity == want, (status, severity)
+    assert any(g["check"] == "F3" for g in stored)
 
 
 @ASYNC
@@ -673,9 +679,16 @@ async def test_lead_promoted_by_other_draft_rejected(db_pool):
     args["lead_ids"] = ["LEAD-0010"]
 
     result = await submit_mod.handle_review_submit_finding(args)
-    assert result.get("accepted") is False, f"Expected rejection; got: {result}"
-    codes = [e["code"] for e in result.get("errors", [])]
-    assert "E_LEAD_NOT_FOUND" in codes, f"Expected E_LEAD_NOT_FOUND; codes: {codes}"
+    # never-worse: the bad link is dropped with a warning, the finding is kept without the
+    # analyzer evidence level and the lead is not taken
+    assert result.get("accepted") is True, result
+    codes = [w["code"] for w in result.get("warnings", [])]
+    assert "E_LEAD_NOT_FOUND" in codes, f"Expected E_LEAD_NOT_FOUND warning; codes: {codes}"
+    assert result["evidence_level"] == "reasoning_only"
+    async with db_pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute("select count(*) from finding_leads where job_id = %s and draft_key = %s",
+                          (job_id, args["draft_key"]))
+        assert (await cur.fetchone())[0] == 0
 
 
 @ASYNC
@@ -704,9 +717,16 @@ async def test_dismissed_lead_rejected(db_pool):
     args["lead_ids"] = ["LEAD-0020"]
 
     result = await submit_mod.handle_review_submit_finding(args)
-    assert result.get("accepted") is False, f"Expected rejection; got: {result}"
-    codes = [e["code"] for e in result.get("errors", [])]
-    assert "E_LEAD_NOT_FOUND" in codes, f"Expected E_LEAD_NOT_FOUND; codes: {codes}"
+    # never-worse: the bad link is dropped with a warning, the finding is kept without the
+    # analyzer evidence level and the lead is not taken
+    assert result.get("accepted") is True, result
+    codes = [w["code"] for w in result.get("warnings", [])]
+    assert "E_LEAD_NOT_FOUND" in codes, f"Expected E_LEAD_NOT_FOUND warning; codes: {codes}"
+    assert result["evidence_level"] == "reasoning_only"
+    async with db_pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute("select count(*) from finding_leads where job_id = %s and draft_key = %s",
+                          (job_id, args["draft_key"]))
+        assert (await cur.fetchone())[0] == 0
 
 
 @ASYNC

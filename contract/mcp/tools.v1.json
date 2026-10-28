@@ -3,6 +3,7 @@
  "$id": "urn:soken:contract:mcp:tools.v1",
  "description": "Plan copy of the part 03 tool wrappers. contract/build.py inlines every $ref into each tool schema at release. Enum values in angle brackets are generated at startup. Server checks not expressible without root combinators are listed in part 03 section 4.",
  "$defs": {
+  "warning": {"type": "object", "additionalProperties": false, "required": ["code", "class", "what", "suggest"], "properties": {"code": {"type": "string", "pattern": "^E_[A-Z_]+$"}, "class": {"enum": ["advisory", "rewrite"]}, "rule": {"type": "string", "maxLength": 40}, "field": {"type": "string", "maxLength": 80}, "match": {"type": "string", "maxLength": 120}, "what": {"type": "string", "maxLength": 300}, "suggest": {"type": "string", "maxLength": 300}}},
   "job_id": {
    "type": "string",
    "pattern": "^job_[0-9A-HJKMNP-TV-Z]{26}$"
@@ -272,6 +273,10 @@
          "subdir": {
           "type": "string",
           "maxLength": 200
+         },
+         "chain": {
+          "$ref": "#/$defs/chain",
+          "description": "Optional, repo mode: the chain the code is written for (for example ton for FunC, Tact or Tolk, solana for an Anchor or native program). Overrides detection from the repository tree. With deployment set, it must name the same chain family as deployment.chain."
          },
          "doc_paths": {
           "type": "array",
@@ -1005,7 +1010,7 @@
       "items": {
        "type": "object",
        "additionalProperties": false,
-       "properties": {
+       "properties": {"blocking": {"type": "boolean", "description": "true when this check refuses review_finalize (F1, F4, F6); the other checks are recommendations"}, "count": {"type": "integer", "minimum": 0}, 
         "id": {
          "type": "string",
          "enum": [
@@ -1667,7 +1672,7 @@
   {
    "name": "review_submit_finding",
    "title": "Submit or revise finding",
-   "description": "Submits a new finding or a revision of an existing one, keyed by a draft key. The server validates quotes against the pinned code, computes severity from the impact and likelihood matrix, and links the named leads. Each revision is kept. Returns the computed severity and the draft status. When the draft needs a challenge, the result also carries the disproof checklist in challenge (the same object review_challenge returns), so it can be answered with review_answer_challenge right away.",
+   "description": "Submits a new finding or a revision of an existing one, keyed by a draft key. The server validates quotes against the pinned code, computes severity from the impact and likelihood matrix, and links the named leads. Each revision is kept. Wording and checklist rules return warnings on an accepted finding. Returns the computed severity and the draft status. When the draft needs a challenge, the result also carries the disproof checklist in challenge (the same object review_challenge returns), so it can be answered with review_answer_challenge right away.",
    "annotations": {
     "title": "Submit or revise finding",
     "readOnlyHint": false,
@@ -1683,7 +1688,7 @@
     "required": [
      "accepted"
     ],
-    "properties": {
+    "properties": {"warnings": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/warning"}, "description": "Advisory items of an accepted call (contract/rubric/gate_policy.yaml): the rule, the matched text and a suggested rewording. They never block; class rewrite means the server already rewrote the text for publication."}, "warnings_more": {"type": "integer", "minimum": 0}, 
      "accepted": {
       "type": "boolean"
      },
@@ -1872,7 +1877,7 @@
   {
    "name": "review_challenge",
    "title": "Get disproof checklist",
-   "description": "Returns the disproof checklist for the current revision of a finding: questions to answer from the code before the finding can be accepted. Computed on each call, not stored.",
+   "description": "Returns the disproof checklist for the current revision of a finding: questions to answer from the code. Optional: answering it upgrades the evidence level (and lets a Critical stand); an unanswered checklist never blocks finalize. Computed on each call, not stored.",
    "annotations": {
     "title": "Get disproof checklist",
     "readOnlyHint": true,
@@ -2020,7 +2025,7 @@
   {
    "name": "review_answer_challenge",
    "title": "Answer disproof checklist",
-   "description": "Records answers to the disproof checklist of a finding, with quotes or read ranges as evidence. The server checks the answers and sets the verdict: passed, downgraded or withdrawn. Changes the finding's effective severity.",
+   "description": "Records answers to the disproof checklist of a finding, with quotes or read ranges as evidence. The server checks the answers and sets the verdict: passed, downgraded or withdrawn. A quote that does not match the pinned source is refused; an item the server cannot verify is recorded, named in warnings and has no effect. Changes the finding's effective severity.",
    "annotations": {
     "title": "Answer disproof checklist",
     "readOnlyHint": false,
@@ -2109,7 +2114,7 @@
     "required": [
      "accepted"
     ],
-    "properties": {
+    "properties": {"warnings": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/warning"}, "description": "Advisory items of an accepted call (contract/rubric/gate_policy.yaml): the rule, the matched text and a suggested rewording. They never block; class rewrite means the server already rewrote the text for publication."}, "warnings_more": {"type": "integer", "minimum": 0}, "complete": {"type": "boolean", "description": "Every checklist item was answered and verified and upgrades the evidence level to reasoning_challenged"}, "items_unverified": {"type": "array", "items": {"type": "string"}, "description": "Items unanswered or not verified: recorded, no effect on severity or evidence"}, 
      "accepted": {
       "type": "boolean"
      },
@@ -2430,7 +2435,7 @@
     "required": [
      "accepted"
     ],
-    "properties": {
+    "properties": {"warnings": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/warning"}, "description": "Advisory items of an accepted call (contract/rubric/gate_policy.yaml): the rule, the matched text and a suggested rewording. They never block; class rewrite means the server already rewrote the text for publication."}, "warnings_more": {"type": "integer", "minimum": 0}, "stored": {"type": "boolean", "description": "false when every row was dropped with a warning and nothing was stored"}, 
      "accepted": {
       "type": "boolean"
      },
@@ -2658,7 +2663,7 @@
   {
    "name": "review_finalize",
    "title": "Finalize and render",
-   "description": "Runs the finalize checks of a job. If any check is open, returns the open items. On pass, freezes the job, closes remaining Low and Info leads as not reviewed, assigns final finding ids and queues the report render.",
+   "description": "Runs the finalize checks of a job. Evidence checks refuse (no source, an unresolved placeholder); every other open item is listed in coverage_gaps and printed as a coverage note. Freezes the job, closes remaining leads as not reviewed, assigns final finding ids and queues the report render. The shortest path is review_start, review_read_code, review_submit_finding, review_finalize, review_report.",
    "annotations": {
     "title": "Finalize and render",
     "readOnlyHint": false,
@@ -2683,7 +2688,7 @@
     "required": [
      "accepted"
     ],
-    "properties": {
+    "properties": {"warnings": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/warning"}, "description": "Advisory items of an accepted call (contract/rubric/gate_policy.yaml): the rule, the matched text and a suggested rewording. They never block; class rewrite means the server already rewrote the text for publication."}, "warnings_more": {"type": "integer", "minimum": 0}, "coverage_gaps": {"type": "array", "description": "Advisory finalize checks open at finalize; they never refuse it and the report prints a coverage note for each", "items": {"type": "object", "additionalProperties": false, "required": ["check", "kind", "count"], "properties": {"check": {"type": "string", "pattern": "^F[0-9]$"}, "kind": {"type": "string"}, "count": {"type": "integer", "minimum": 0}}}}, 
      "accepted": {
       "type": "boolean"
      },

@@ -218,6 +218,8 @@ def _report_chain(job: dict[str, Any]) -> str:
 # Cover line for a job started without a deployment: a scope statement, not a finding about the
 # code (matrix run 2026-10-27, 1inch repo job: "Chain and network: Not deployed" read as a defect).
 NO_DEPLOYMENT_LABEL = "No deployment given; source review only"
+SOLANA_CONFIG_CLUSTER_LABEL = "Program id for {cluster} in Anchor.toml; not mainnet"
+SOLANA_NOT_ON_MAINNET_LABEL = "Program id not deployed on Solana mainnet"
 
 
 def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
@@ -232,6 +234,17 @@ def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
     if chain_id:
         return str(chain_id)[:60]
     chain = str((deployment or {}).get("chain") or job.get("chain") or "")
+    if job.get("address") and chain == "solana":
+        # Pump Science blind run 2026-10-27: a declare_id! / [programs.localnet] id printed as
+        # "Solana mainnet". Mainnet only when the repository config does not tie the id to another
+        # cluster and the mainnet read found a program at it.
+        cs = chain_state or {}
+        clusters = [str(c) for c in cs.get("config_clusters") or []]
+        if clusters and "mainnet" not in clusters:
+            return SOLANA_CONFIG_CLUSTER_LABEL.format(cluster=clusters[0])[:60]
+        if cs.get("kind", "program") == "program" and not cs.get("deployed_program_hash") \
+                and cs.get("why") == "no_code":
+            return SOLANA_NOT_ON_MAINNET_LABEL
     if job.get("address") and chain in _CHAIN_NETWORK:
         return _CHAIN_NETWORK[chain]
     return NO_DEPLOYMENT_LABEL
@@ -486,7 +499,11 @@ def provenance(
     # Tier B (default): the label names the real source kind. Deployed address with explorer or
     # Sourcify source: third party; deployed address with other source: not checked; repository
     # at a resolved commit: commit; anything else (upload, inline files): supplied by the requester.
-    if address:
+    if address and (deployment or {}).get("unlinked_reason"):
+        # TON SOURCE_UNLINKED: the requester's source was reviewed, the deployment was not matched
+        # to it; the cover says so in words (security review 2026-10-27), not only the method row.
+        key = "tier_b_unmatched"
+    elif address:
         third = bool(cand.get("explorer_verified") or cand.get("sourcify_match"))
         key = "tier_b_third_party" if third else "tier_b_not_checked"
     elif repo and job.get("resolved_commit"):
@@ -737,6 +754,10 @@ def context_documents(entries: list[dict[str, Any]], today: date) -> list[dict[s
     return rows
 
 
+_NOT_TAKEN_KINDS = frozenset({"leads_not_triaged", "challenge_not_answered", "coverage_na_unconfirmed",
+                              "roles_notes_missing", "drafts_not_accepted", "walks_not_answered"})
+
+
 def context_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Declared-vs-observed rows (spec 6) in report shape. The claim is server text from the fixed
     claim set; a row with an unknown status or an empty claim is a compare bug and fails assembly."""
@@ -901,6 +922,10 @@ def _deployment_method_detail(job: dict[str, Any], deployment: dict[str, Any] | 
         n = cmp_.get("differing_bytes")
         diff = f" ({int(n):,} differing bytes)" if isinstance(n, int) else ""
         return f"The pinned source was rebuilt and compared with the deployed runtime code{where}: it does not match{diff}"
+    unlinked = (deployment or {}).get("unlinked_reason")
+    if tier == "B" and isinstance(unlinked, str) and unlinked:
+        # TON SOURCE_UNLINKED: the requester's source was reviewed; the deployment is not matched
+        return f"The reviewed source could not be matched to the deployed code{where}: {unlinked}"
     return "Not run: the deployed code was not compared with a rebuild of the source"
 
 
@@ -1219,6 +1244,12 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
                             "leads": [{"analyzer": n[:40], "version": v[:40], **r} for (n, v), r in sorted(per_tool.items())],
                             "withdrawn": withdrawn[:60], "injection_flags": []},
     }
+    # Coverage note (never-worse, gate_policy.yaml finalize_checks): the advisory steps the requester's
+    # session did not take, as finalize recorded them. Server data, printed from kit text.
+    not_taken = [{"kind": str(g["kind"]), "count": max(1, int(g.get("count") or 1))}
+                 for g in (job.get("coverage_gaps") or []) if isinstance(g, dict) and g.get("kind") in _NOT_TAKEN_KINDS]
+    if not_taken:
+        report["review_coverage"]["not_taken"] = not_taken[:9]
     walk_rows = invariant_walk_rows(load_lifecycle(pin_root, job_id), sections.get("invariant_walks"), keymap)
     if walk_rows:
         report["review_coverage"]["invariant_walks"] = walk_rows

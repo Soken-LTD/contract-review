@@ -245,6 +245,10 @@ class SeverityContext:
     # rejected by the answer checker instead, because nothing can verify it.
     scope_not_covered: bool = False
     map_unavailable: bool = False               # for K10: no contract map for the job
+    # never-worse (2026-10-27): the draft reached finalize without its optional challenge. K4 does not
+    # cap it (the reviewer's severity stands, printed with evidence reasoning_only and a coverage note);
+    # K8 still caps an unchallenged Critical at High.
+    challenge_skipped: bool = False
     token_review: bool = False                   # retail-token/scam profile: owner IS the threat
     has_location_quote: bool = False             # finding quotes reviewed source (its own evidence)
     # Reviewer-first (RV1): the reviewer's proposal and its recorded reason (claimed_severity,
@@ -397,7 +401,8 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
         cap("K10", "High")
 
     # --- K4: finalize: evidence reasoning_only -> cap Low ---
-    if phase == "finalize" and ctx.evidence_level == "reasoning_only" and not code_evidenced:
+    if (phase == "finalize" and ctx.evidence_level == "reasoning_only" and not code_evidenced
+            and not ctx.challenge_skipped):
         cap("K4", "Low")
 
     # --- category max_severity cap ---
@@ -432,17 +437,22 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
                 set_by = "reviewer"
                 reason = ctx.claimed_reason.strip()  # type: ignore[union-attr]
                 rules.append(f"RV1:reviewer={claimed}")
-        elif phase == "submit":
-            confirm_needed = True
-            if abs(d) <= REVIEWER_STEP:
-                confirm_why = (f"claimed_severity {claimed} is one step from the computed {computed};"
-                               f" a severity_reason of at least {REASON_MIN_CHARS} characters is needed")
-            else:
-                confirm_why = (f"claimed_severity {claimed} is {abs(d)} steps from the computed {computed};"
-                               " one step at most stands with a severity_reason")
         else:
-            # later phases: the matrix moved under the reviewer (basis fallbacks); the proposal
-            # follows it to the nearest value within one step when a reason was recorded.
+            if phase == "submit":
+                # Advisory since 2026-10-27 (never-worse, gate_policy.yaml E_SEVERITY_CONFIRM): the
+                # submit is accepted; confirm_needed only tells the caller to return the warning. With
+                # a reason the proposal moves to the nearest value within one step (below), without one
+                # the computed value prints.
+                confirm_needed = True
+                if abs(d) <= REVIEWER_STEP:
+                    confirm_why = (f"claimed_severity {claimed} is one step from the computed {computed};"
+                                   f" a severity_reason of at least {REASON_MIN_CHARS} characters is needed")
+                else:
+                    confirm_why = (f"claimed_severity {claimed} is {abs(d)} steps from the computed {computed};"
+                                   " one step at most stands with a severity_reason")
+            # The matrix and the proposal differ by more than RV1 carries (or, after a challenge, the
+            # matrix moved under the reviewer): the proposal follows the matrix to the nearest value
+            # within one step when a reason was recorded.
             if has_reason:
                 target_rank = max(_SEV_RANK[computed] - REVIEWER_STEP,
                                   min(_SEV_RANK[computed] + REVIEWER_STEP, _SEV_RANK[claimed]))

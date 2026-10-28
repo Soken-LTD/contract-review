@@ -64,7 +64,7 @@ from ..pinning.quote_match import QuoteMatchError, normalize_lines, quote_match
 from ..pinning.store import PinnedSource
 from ..server import handler
 from .context import JobContext
-from .submit import _category_info, _family_from_chain
+from .submit import GateRouter, _category_info, _family_from_chain, store_warnings
 
 
 def _load_map_with_status(pin_root: Path, job_id: str) -> dict | None:
@@ -1370,13 +1370,17 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
     # Build answers index by item_id
     answers_by_id: dict[str, dict[str, Any]] = {a["item_id"]: a for a in answers}
 
-    # Check all items are answered
+    # Gate policy (never-worse): the challenge is an optional evidence upgrade. Only evidence integrity
+    # blocks (a quote that does not match the pinned source, a malformed argument, control characters
+    # in a note). Every other problem leaves that item unverified: it is recorded, named in a warning
+    # and has no effect on severity or evidence. A missing item is unanswered, the same way.
+    gate = GateRouter()
+    violations = gate.errors
     all_item_ids = [item["id"] for item in items]
     missing_ids = [iid for iid in all_item_ids if iid not in answers_by_id]
     if missing_ids:
-        return {"accepted": False, "errors": [
-            ReviewError("E_CHALLENGE_INCOMPLETE", ids=", ".join(missing_ids)).envelope()
-        ]}
+        gate.add(ReviewError("E_CHALLENGE_INCOMPLETE", ids=", ".join(missing_ids)).envelope(),
+                 "E_CHALLENGE_INCOMPLETE", None, "answers", ", ".join(missing_ids))
 
     # Load job_reads for absent scope coverage check
     async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -1391,11 +1395,12 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         job_reads_index.setdefault(r["path"], []).append((r["start_line"], r["end_line"]))
 
     # Validate each answer
-    violations: list[dict[str, Any]] = []
     kill_present: str | None = None       # item_id of the first kill answered present
     downgrade_count = 0
     basis_fallbacks: list[dict[str, Any]] = []  # for matrix_effective updates
     scope_not_covered = False             # reported to the severity engine; no cap since 2026-10-27
+    unverified: list[str] = list(missing_ids)
+    verified_ids: set[str] = set()
 
     # Build internal items map for looking up fallback info
     raw_items_by_id: dict[str, dict[str, Any]] = {}
@@ -1404,16 +1409,24 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
 
     for output_item in items:
         item_id = output_item["id"]
-        answer = answers_by_id[item_id]
+        answer = answers_by_id.get(item_id)
+        if answer is None:
+            continue
         value = answer.get("value") or ""
         note = answer.get("note") or ""
+        item_ok = True
+
+        def advise(code: str, _item: str = item_id, **fields: Any) -> None:
+            nonlocal item_ok
+            item_ok = False
+            gate.add(ReviewError(code, **fields).envelope(), code, None, f"answers.{_item}", _item)
 
         # Note gate: the answer note is stored with the challenge record and never rendered, so
         # only the `note` scope (control characters, scripts) applies. The prose rules T1-T31
         # and the number provenance check are report-text rules; on notes they only cost
         # attempts ("Number two in note has no source", 2026-10-22).
         for v in check_text(note, "note", CheckContext(field=f"answer.{item_id}.note")):
-            violations.append(ReviewError(
+            gate.violation(v, f"answer.{item_id}.note", ReviewError(
                 v.code, rule=v.rule_id,
                 match=v.match[:80] if v.match else "",
                 cp=(v.match[:5] if v.match else ""),
@@ -1426,9 +1439,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         if auto_id:
             auto_result = _run_auto(auto_id, category, map_doc, location_quotes)
             if auto_result != "unknown" and value != auto_result:
-                violations.append(ReviewError(
-                    "E_CHALLENGE_CONTRADICTS_AUTO", auto=f"{auto_id}={auto_result}"
-                ).envelope())
+                advise("E_CHALLENGE_CONTRADICTS_AUTO", auto=f"{auto_id}={auto_result}")
 
         scope_obj = output_item.get("scope", {})
         scope_not_covered_item = scope_obj.get("not_covered", False)
@@ -1437,27 +1448,17 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             scope_not_covered = True
 
         quote_verified = False               # one quote of this answer matched the pinned source
+        item_kind = output_item.get("kind", "")
         if value == "present":
-            item_kind = output_item.get("kind", "")
-
             # When scope is not_covered, kill/downgrade items cannot be verified: the resolver
             # could not produce scope ranges (e.g. no semantic layer), so we have no bounds to
-            # check the quote against.  Reject with E_CHALLENGE_SCOPE — only context/basis items
-            # may carry unverified 'present' claims (and basis fallback is applied conservatively
-            # below regardless).  (04 §8.3/§8.4: kill+downgrade require evidence bound to scope.)
+            # check the quote against (04 §8.3/§8.4: kill+downgrade require evidence bound to scope).
             if scope_not_covered_item and item_kind in ("kill", "downgrade"):
-                violations.append(ReviewError(
-                    "E_CHALLENGE_SCOPE", item=item_id,
-                    ranges="scope_not_covered",
-                ).envelope())
+                advise("E_CHALLENGE_SCOPE", item=item_id, ranges="scope_not_covered")
 
-            # Quote-match check
             quotes = answer.get("quotes") or []
             if not quotes:
-                violations.append(ReviewError(
-                    "E_CHALLENGE_INCOMPLETE", ids=item_id
-                ).envelope())
-                continue
+                advise("E_CHALLENGE_INCOMPLETE", ids=item_id)
             for q in quotes:
                 qt = q.get("text") or ""
                 q_file = q.get("file") or ""
@@ -1465,12 +1466,9 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 q_end_raw = q.get("end")
                 # A project document is never evidence for a scope-bound claim: kill and downgrade
                 # items take code quotes inside their scope only (security review 2026-10-23,
-                # context ingestion spec 4). Context and basis items may cite a document when their
-                # scope leaves them unbound (the containment check below still applies otherwise).
+                # context ingestion spec 4).
                 if is_context_path(q_file) and item_kind in ("kill", "downgrade"):
-                    violations.append(ReviewError(
-                        "E_CHALLENGE_SCOPE", item=item_id, ranges="code scope only; a context/ quote is not evidence",
-                    ).envelope())
+                    advise("E_CHALLENGE_SCOPE", item=item_id, ranges="code scope only; a context/ quote is not evidence")
                     continue
                 if not isinstance(q_start_raw, int) or not isinstance(q_end_raw, int):
                     violations.append(ReviewError(
@@ -1484,37 +1482,21 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 q_end = q_end_raw
                 # Comment-only check (code only: a document line is prose, never a comment)
                 if not is_context_path(q_file) and _is_comment_only(qt, pin, q_file, q_start, q_end):
-                    violations.append(ReviewError("E_CHALLENGE_COMMENT_ONLY").envelope())
+                    advise("E_CHALLENGE_COMMENT_ONLY")
                     continue
                 try:
                     quote_match(pin, q_file, q_start, q_end, qt, context=context_store)
                 except QuoteMatchError as e:
-                    violations.append(ReviewError(e.code, **e.detail).envelope())
+                    violations.append(ReviewError(e.code, **e.detail).envelope())   # evidence integrity
                     continue
                 if not is_context_path(q_file):
                     quote_verified = True
                 # Scope containment: quote must lie within the item's scope ranges (04 §8.3).
-                # Evidence must be bound to the claim's scope; an unrelated line anywhere in
-                # the codebase does not prove the item condition holds in the stated scope.
-                # Skip when scope is not_covered — kill/downgrade already rejected above;
-                # context/basis items allow unbound quotes (fallback applied conservatively).
                 if (not scope_not_covered_item and scope_ranges
                         and not _quote_in_scope_ranges(q_file, q_start, q_end, scope_ranges)):
-                    # Bug 6b fix (2026-10-25): name the offending quote and the allowed scope so
-                    # the model can identify which quote is out of range without guessing.
                     _allowed = ", ".join(scope_ranges[:5])
-                    violations.append(ReviewError(
-                        "E_CHALLENGE_SCOPE", item=item_id,
-                        ranges=f"quote {q_file}:{q_start}-{q_end} is outside the scope [{_allowed}]",
-                    ).envelope())
-
-            # Record kill/downgrade only when no violations raised yet
-            if not violations:
-                if item_kind == "kill":
-                    if kill_present is None:
-                        kill_present = item_id
-                elif item_kind == "downgrade":
-                    downgrade_count += 1
+                    advise("E_CHALLENGE_SCOPE", item=item_id,
+                           ranges=f"quote {q_file}:{q_start}-{q_end} is outside the scope [{_allowed}]")
 
         elif value == "absent":
             # Scope coverage check against job_reads
@@ -1523,38 +1505,36 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 refs = [r for r in (answer.get("refs") or []) if not is_context_path(str(r))]
                 missing = _ranges_cover(scope_ranges, refs, job_reads_index)
                 if missing:
-                    # Names the item: a basis item with one ref fails while the kill items pass,
-                    # and without the id the reviewer re-filed the wrong answers five times
-                    # (c2 re-run, 2026-10-23).
-                    # Every missing range at once (TON run 2026-10-26: a partial list cost a
-                    # second rejection for the one range it left out).
-                    violations.append(ReviewError(
-                        "E_CHALLENGE_SCOPE", item=item_id,
-                        ranges=", ".join(missing[:SCOPE_RANGES_MAX]),
-                    ).envelope())
+                    advise("E_CHALLENGE_SCOPE", item=item_id, ranges=", ".join(missing[:SCOPE_RANGES_MAX]))
             # A not_covered scope has no ranges to cover: the absent answer stands on the reviewer's
             # word, and the item applies no cap (K10 is the no-contract-map cap only).
 
         elif value == "not_applicable":
             reason = answer.get("reason", "")
             allowed_reasons = output_item.get("allowed_na_reasons", [])
-            if reason not in allowed_reasons:
-                violations.append(ReviewError("E_CHALLENGE_NA_REASON", reasons=", ".join(allowed_reasons)).envelope())
-                continue
-            # Check predicate — at W0, predicates requiring map return unknown → reject (fail closed)
-            predicate_result = _check_na_predicate(reason, map_doc, family)
-            if predicate_result != "true":
-                violations.append(ReviewError("E_CHALLENGE_NA_REASON", reasons=", ".join(allowed_reasons)).envelope())
+            if reason not in allowed_reasons or _check_na_predicate(reason, map_doc, family) != "true":
+                advise("E_CHALLENGE_NA_REASON", reasons=", ".join(allowed_reasons))
 
         else:
             violations.append(ReviewError(
                 "E_INVALID_ARGUMENT", field=f"answers.{item_id}.value",
                 rule="must be present, absent, or not_applicable", value80=str(value)[:80],
             ).envelope())
+            continue
+
+        if not item_ok:
+            unverified.append(item_id)
+            continue
+        verified_ids.add(item_id)
+        if value == "present":
+            if item_kind == "kill" and kill_present is None:
+                kill_present = item_id
+            elif item_kind == "downgrade":
+                downgrade_count += 1
 
         # For basis items: track fallbacks based on answer vs expect. On a NOT_COVERED scope a
         # present answer with a verified quote keeps the matrix, a present answer without one
-        # falls back (basis_fallback).
+        # falls back (basis_fallback). Unverified answers have no effect.
         raw_item = raw_items_by_id.get(item_id)
         if raw_item:
             fb = basis_fallback(raw_item, value, scope_not_covered=scope_not_covered_item,
@@ -1567,7 +1547,11 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             "accepted": False,
             "errors": violations[:20],
             **({"errors_more": len(violations) - 20} if len(violations) > 20 else {}),
+            **gate.result_fields(),
         }
+    complete = not unverified
+    open_downgrade = any(it.get("kind") == "downgrade" and it["id"] not in verified_ids for it in items)
+    stored_answers = [{**a, "verified": a.get("item_id") in verified_ids} for a in answers]
 
     # ── All checks passed: compute verdict ────────────────────────────────────
 
@@ -1611,7 +1595,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                        withdraw_evidence = %s
                    where job_id = %s and draft_key = %s""",
                 (kill_present,
-                 psycopg.types.json.Jsonb({"kill_item": kill_present, "items": items, "answers": answers}),
+                 psycopg.types.json.Jsonb({"kill_item": kill_present, "items": items, "answers": stored_answers}),
                  job_id, draft_key),
             )
 
@@ -1686,7 +1670,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 phase="post_challenge",
                 evidence_level=ev_level,
                 has_attack_steps=has_attack_steps,
-                open_downgrade_item=False,  # all answered now
+                open_downgrade_item=open_downgrade,  # unanswered or unverified downgrade items stay open (K8)
                 downgrade_items_present=downgrade_count,
                 scope_not_covered=scope_not_covered,
                 map_unavailable=(map_doc is None or map_doc.get("semantic") is None),
@@ -1710,7 +1694,9 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             severity_after = sev_result.severity
             verdict = "downgraded" if severity_after != severity_before else "passed"
             new_status = "accepted"
-            new_evidence = sev_result.evidence_level
+            # A partial or partly unverified answer records what it verified but does not upgrade the
+            # evidence level: reasoning_challenged needs every item answered and verified.
+            new_evidence = sev_result.evidence_level if complete else ev_level
             # Every cause of the verdict, by name: the K caps compute_severity applied and the
             # basis fallbacks that changed the matrix. A downgrade without a named cause is a
             # server defect and never a verdict (Solana blind run 2026-10-26: Critical -> Low,
@@ -1747,14 +1733,18 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             (job_id, draft_key, revision, checklist_sha256,
              psycopg.types.json.Jsonb(items),
              answers_hash,
-             psycopg.types.json.Jsonb(answers),
+             psycopg.types.json.Jsonb(stored_answers),
              verdict, severity_before, severity_after),
         )
 
         await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
+        await store_warnings(conn, job_id, "review_answer_challenge", draft_key, revision, gate.warnings)
 
     return {
         "accepted": True,
+        "complete": complete,
+        **({"items_unverified": unverified[:60]} if unverified else {}),
+        **gate.result_fields(),
         "draft_key": draft_key,
         "verdict": verdict,
         "severity_before": severity_before,
