@@ -1,4 +1,4 @@
--- Migration 016: advisory gates (never-worse, CEO direction 2026-10-27 section A).
+-- Migration 017: advisory gates (never-worse, CEO direction 2026-10-27 section A).
 --
 -- gate_warnings keeps the advisory items of every accepted write (submit, set_section, answer_challenge,
 -- finalize): rule id, matched text and the suggested rewording, as data for the learning loop. They never

@@ -194,7 +194,7 @@ class GateRouter:
 
 async def store_warnings(conn: psycopg.AsyncConnection, job_id: str, tool: str, owner_key: str,
                          revision: int | None, warnings: list[dict[str, Any]]) -> None:
-    """Keep the advisory warnings of an accepted write (gate_warnings, migration 016). The learning
+    """Keep the advisory warnings of an accepted write (gate_warnings, migration 017). The learning
     loop reads them as rule statistics; they never reach the report text."""
     if not warnings:
         return
