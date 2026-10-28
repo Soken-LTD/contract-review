@@ -1,4 +1,5 @@
--- Migration 016: chain access P0 (chain access design 2026-10-27, sections 2.2 and 4).
+-- Migration 018: chain access P0 (chain access design 2026-10-27, sections 2.2 and 4).
+-- Numbered after 016 (learning ledger, PR #94) and 017 (gate warnings, never-worse branch).
 -- chain_cache: public chain data at a final block, shared across jobs only once two distinct hosts
 --   agreed (or an operator-configured host answered). No job id, no quota key: the key is sha256 of
 --   (family, chain, method, params) and the value is the provider's answer.

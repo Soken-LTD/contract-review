@@ -1,4 +1,4 @@
-"""Read budget and cache of the chain tools (chain access design 2.2 and 4; migration 016).
+"""Read budget and cache of the chain tools (chain access design 2.2 and 4; migration 018).
 
 Budget: read units (RU) are charged to the job (`chain_job_ru`) and to the quota key of the
 caller (`chain_key_ru`, rolling 24 hours, the hashed key of `quota.limit_key`). A call reserves
