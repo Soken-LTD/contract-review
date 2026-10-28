@@ -35,7 +35,7 @@ from ..contract import schema_version
 from ..db.job_repo import JobRepo, new_job_id
 from ..db.pool import get_pool
 from ..errors import ReviewError
-from ..families import require_enabled
+from ..families import FAMILY_OF_CHAIN, require_enabled
 from ..mapping.project_url import load_suggested_context
 from ..mapping.related import load_related_contracts
 from ..networks import publication_outcome
@@ -271,6 +271,13 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             has_deployment = True
 
         elif kind in ("repo", "upload"):
+            # Repo mode `source.chain` (Hipo blind run 2026-10-27): the chain the code is written
+            # for, so a third party can review a public FunC or Rust repository with no deployment.
+            # The worker runs that family on the fetched tree (supervisor `_fetch_repo`); without
+            # it the family is detected from the tree.
+            hint = source.get("chain") if kind == "repo" else None
+            if hint:
+                require_enabled(chain=hint)
             dep = source.get("deployment")
             if dep:
                 dep_chain = dep["chain"]
@@ -280,10 +287,16 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
                 require_enabled(chain=dep_chain)
                 _validate_address(dep_address, dep_chain)
                 _require_rpc_chain(dep_chain, dep_chain_id)
+                if hint and FAMILY_OF_CHAIN.get(hint) != FAMILY_OF_CHAIN.get(dep_chain):
+                    raise ReviewError("E_INVALID_ARGUMENT", field="source.chain",
+                                      rule="same chain family as source.deployment.chain",
+                                      value80=str(hint)[:80], example=dep_chain)
                 chain = dep_chain
                 chain_id = dep_chain_id
                 address = dep_address
                 has_deployment = True
+            elif hint:
+                detected_chain = hint
 
         elif kind == "files":
             detected_lang = source["language"]
@@ -475,7 +488,7 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
         # No documents were supplied: surface a plain-language hint so the model
         # knows to ask the user.  Describe what is possible; never command the model
         # to call a tool (directory prompt-injection rule).
-        result["next_action"] = NO_DOCUMENTS_HINT
+        result["next_action"] = no_documents_hint(initial_state)
 
     # Optional settle-wait (2026-10-26): the first review_status calls of every blind run only waited for
     # a pipeline of 10 to 70 s; with wait_seconds the status at the end of the wait comes back here.
@@ -503,6 +516,28 @@ NO_DOCUMENTS_HINT = (
     "context_notes {\"notes\": [{\"p\": \"No project documents were supplied by the requester.\"}]} "
     "(the stored text is report prose: no second person, no questions)."
 )
+# Before `ready` review_set_section answers E_JOB_NOT_READY (Hipo blind run 2026-10-27: the start
+# hint asked for it and the call failed), so the hint says when it is accepted. review_add_context
+# is accepted in every pipeline state.
+NO_DOCUMENTS_HINT_PENDING = (
+    "No project documents were supplied (none in review_start.context, none via review_add_context). "
+    "Project documents (website, whitepaper, documentation, terms of use, privacy policy) are needed "
+    "to detect spec-vs-code mismatches, so ask the user for their URLs and pass them to "
+    "review_add_context as {kind, url}; that is accepted now. This hint repeats on every status until "
+    "documents are added or the absence is recorded; the absence is recorded once the job is ready "
+    "(review_set_section is accepted only in the ready state), with section \"context_notes\" and "
+    "context_notes {\"notes\": [{\"p\": \"No project documents were supplied by the requester.\"}]} "
+    "(the stored text is report prose: no second person, no questions)."
+)
+_HINT_STATES = frozenset({"awaiting_upload", "queued", "fetching", "building", "analyzing", "ready"})
+
+
+def no_documents_hint(state: str) -> str | None:
+    """The documents hint for a job in `state`, naming only calls that state accepts; None where
+    neither review_add_context nor review_set_section is accepted (finalized, rendering, stopped)."""
+    if state not in _HINT_STATES:
+        return None
+    return NO_DOCUMENTS_HINT if state == "ready" else NO_DOCUMENTS_HINT_PENDING
 
 
 def _context_status(job: dict[str, Any]) -> dict[str, int] | None:
@@ -814,34 +849,49 @@ def _error_detail_text(detail: Any) -> str:
     return text[:_ERROR_DETAIL_MAX_CHARS]
 
 
-def _error_texts(code: str, detail: Any) -> dict[str, str]:
+# Start kind -> errors.yaml text mode when the stored detail names none: a repo or upload job that
+# stops must not be told to "start again with repo and commit" (Hipo blind run 2026-10-27, the fix
+# repeated the input that had just failed).
+_KIND_MODE = {"repo": "repo", "upload": "repo", "files": "files"}
+
+
+def _error_texts(code: str, detail: Any, source_kind: str | None = None) -> dict[str, str]:
     """`what` and `fix` of a status error from contract/errors.yaml (03 section 7), so a stopped
     job always tells the client what to do next. A template is used only when every placeholder
     it names is present in the stored detail; otherwise that text is left out rather than sent
-    with a blank hole."""
+    with a blank hole.
+
+    Mode texts, most specific first: the detail's `mode`, then `<kind mode>_<repo_family>` (why
+    the repository was not recognised), then the start kind's mode (`repo`, `files`), then the
+    plain text. `{enabled}` is the list of chains this deployment reviews."""
     import string
 
     from ..contract import load_errors
+    from ..families import enabled_chains
 
     row = load_errors().get(code)
     if not row:
         return {}
-    fields: dict[str, str] = {}
+    fields: dict[str, str] = {"enabled": ", ".join(enabled_chains())}
     if isinstance(detail, dict):
         for key, value in detail.items():
             if isinstance(value, (list, tuple)):
                 value = ", ".join(str(v) for v in value[:10] if isinstance(v, (str, int)))
             if isinstance(value, (str, int)) and str(value):
                 fields[str(key)] = str(value)[:300]
-    # A start mode with its own text (pasted files have no repository or lockfile): errors.yaml
-    # `what_files` / `fix_files` when the stored detail says `mode: files`.
-    mode = fields.get("mode")
+    base = _KIND_MODE.get(source_kind or "")
+    modes = [m for m in (fields.get("mode"),
+                         f"{base}_{fields['repo_family']}" if base and fields.get("repo_family") else None,
+                         base) if m]
     out: dict[str, str] = {}
     for key in ("what", "fix"):
-        template = (row.get(f"{key}_{mode}") if mode else None) or row.get(key) or ""
-        names = {n for _, n, _, _ in string.Formatter().parse(template) if n}
-        if template and names <= fields.keys():
-            out[key] = template.format(**{n: fields[n] for n in names})
+        for template in [*(row.get(f"{key}_{m}") for m in modes), row.get(key)]:
+            if not template:
+                continue
+            names = {n for _, n, _, _ in string.Formatter().parse(template) if n}
+            if names <= fields.keys():
+                out[key] = template.format(**{n: fields[n] for n in names})
+                break
     return out
 
 
@@ -914,7 +964,7 @@ def _build_status_response(
     # a validating MCP client rejects the whole status response.
     if job.get("error_code"):
         err = {"code": job["error_code"]}
-        err.update(_error_texts(job["error_code"], job.get("error_detail")))
+        err.update(_error_texts(job["error_code"], job.get("error_detail"), job.get("source_kind")))
         if job.get("error_detail") is not None:
             err["detail"] = _error_detail_text(job["error_detail"])
         if job["error_code"] == "E_RENDER_FAILED" and state == "render_failed":
@@ -943,9 +993,9 @@ def _build_status_response(
         # for project documents.  This is server text, not model output; it describes
         # what is available and why, without commanding the model to call anything
         # (directory prompt-injection rule).
-        open_states = {"awaiting_upload", "queued", "fetching", "building", "analyzing", "ready", "finalized"}
-        if state in open_states:
-            out["next_action"] = NO_DOCUMENTS_HINT
+        hint = no_documents_hint(state)
+        if hint:
+            out["next_action"] = hint
 
     # Detailed response: related contracts and server-discovered project URLs
     if response_format == "detailed":
@@ -972,7 +1022,7 @@ def _build_status_response(
 
     # Publication outcome: what automatic-publish will do for this job (CEO 2026-10-24).
     _profile = (out.get("provenance") or {}).get("profile") or ("owner" if job.get("ownership_proven") else None)
-    out["publication"] = publication_outcome(job, _profile)
+    out["publication"] = publication_outcome(job, _profile, _steps)
 
     return out
 

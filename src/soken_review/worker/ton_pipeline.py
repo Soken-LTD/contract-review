@@ -10,7 +10,13 @@ the supervisor routes a job here when `is_ton_job` is true.
   analyze        soken-ton-rules (+ Misti for Tact) on Out.src -> leads.json (lead.v1)
 
 Outcomes (06 2.1, 2.4, 2.5): account read failure -> failed E_INTERNAL; tier D after builds ->
-insufficient_source; verifier unavailable and no exact match -> failed E_INTERNAL.
+insufficient_source; verifier unavailable and no exact match -> failed E_INTERNAL. A repo or files
+source the requester named is always reviewed: with a deployment it cannot be tied to, tier B
+SOURCE_UNLINKED (provenance.py), never insufficient_source.
+
+Repo-only TON jobs arrive here from the generic repo fetch (supervisor `_hand_repo_to_family`, family
+detected from the tree or named by review_start `source.chain`) with the materialised tree in
+`_repo_src_dir`; a repo job with a deployment fetches the commit archive itself.
 
 Files under the job dir:
   chain_state.json      06 2.2 TON document (supervisor-written)
@@ -35,7 +41,16 @@ from ..adapters.ton import analyze as _analyze_mod
 from ..adapters.ton import build as _build_mod
 from ..adapters.ton.detect import parse_ton_address
 from ..adapters.ton.fetch import TonReadError, fetch_ton_sources, read_ton_chain_state
-from ..adapters.ton.provenance import Attempt, Dep, Out, deployment_doc, resolve_provenance
+from ..adapters.ton.provenance import (
+    SOURCE_TOOLCHAIN_GAP,
+    SOURCE_UNLINKED,
+    Attempt,
+    Dep,
+    Out,
+    deployment_doc,
+    resolve_provenance,
+    unlinked_reason,
+)
 from ..adapters.ton.units import count_nsloc_ton
 from ..db.job_repo import JobRepo
 from ..db.leads_repo import persist_leads_from_pin
@@ -117,9 +132,46 @@ def _user_inputs(job: dict[str, Any]) -> dict[str, Any]:
         out["compiler_version"] = src.get("compiler_version")
     elif src.get("kind") == "repo":
         out["repo_url"] = src.get("repo_url")
-        out["repo_commit"] = src.get("commit") or src.get("ref")
+        out["repo_commit"] = job.get("resolved_commit") or src.get("commit") or src.get("ref")
         out["repo_subdir"] = src.get("subdir") or ""
+        tree = job.get("_repo_src_dir")
+        if tree:
+            from ..adapters.evm.repo_candidate import safe_read_repo_tree
+
+            out["repo_files"], _refused = safe_read_repo_tree(tree)
     return out
+
+
+async def _pin_repo_commit(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> dict[str, Any] | None:
+    """The 40-hex commit of a repo job: the supervisor-resolved one, the requested one, or the ref
+    (or the default branch) resolved with `ls-remote` here, so the pin and the report name a real
+    commit. Returns the job with `resolved_commit` set, or None after ending the job on a bad ref."""
+    src = job.get("source_args") or {}
+    if src.get("kind") != "repo" or job.get("resolved_commit"):
+        return job
+    from ..errors import ReviewError
+    from ..tools.git_probe import _SHA1_RE, ls_remote, resolve_ref
+
+    commit = str(src.get("commit") or "").lower()
+    sha: str | None = commit if _SHA1_RE.match(commit) else None
+    if sha is None and not commit:
+        try:
+            if src.get("ref"):
+                sha = await resolve_ref(str(src.get("repo_url") or ""), str(src["ref"]))
+            else:
+                code, out = await ls_remote(str(src.get("repo_url") or ""), ["HEAD"])
+                if code != 0:
+                    raise ReviewError("E_REPO_UNREACHABLE", url=str(src.get("repo_url") or "")[:200])
+                heads = [ln.split("\t", 1)[0].strip() for ln in out.splitlines() if ln.endswith("\tHEAD")]
+                sha = heads[0] if heads and _SHA1_RE.match(heads[0]) else None
+        except ReviewError as exc:
+            await _terminal(sup, step, "failed", exc.code, detail={"stage": "repo_ref", "ref": str(src.get("ref") or "HEAD")[:80]})
+            return None
+    if sha is None:
+        return job          # a short commit: the archive fetch takes it as given
+    async with sup._pool.connection() as conn:
+        await JobRepo(conn).update_job_fields(job["job_id"], resolved_commit=sha)
+    return {**job, "resolved_commit": sha}
 
 
 _CANDIDATE_RUNTIME_ONLY_FIELDS = frozenset({"src_tree_dir", "_full_tree", "build_paths"})
@@ -198,18 +250,24 @@ async def _fetch(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
 
     cs = json.loads((out_dir / "chain_state.json").read_text())
     acct = next(iter(cs["accounts"].values()), None)
-    if acct is not None and acct["status"] != "active":
+    named_source = (job.get("source_args") or {}).get("kind") in ("repo", "files")
+    if acct is not None and acct["status"] != "active" and not named_source:
         _write_json(out_dir / "provenance.json", {"reason": "NO_DEPLOYED_CODE", "tier": "D", "why": acct["status"],
                                                   "mc_seqno": cs["mc_seqno"]})
         await _terminal(sup, step, "insufficient_source", "E_SOURCE_NOT_FOUND", tier="D",
                         detail={"reason": "NO_DEPLOYED_CODE", "status": acct["status"]})
         return
 
+    pinned = await _pin_repo_commit(sup, step, job)
+    if pinned is None:
+        return
+    job = pinned
     read_status: dict[str, str] = {}
     inputs = _user_inputs(job)
+    active = acct is not None and acct["status"] == "active"
     cands = await fetch_ton_sources(
         raw_address=next(iter(cs["accounts"]), None),
-        code_hash=acct.get("dep_hash") if acct else None,
+        code_hash=acct.get("dep_hash") if active else None,
         read_status=read_status,
         **inputs,
     )
@@ -233,11 +291,20 @@ async def _fetch(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
             await _terminal(sup, step, "failed", "E_INTERNAL", detail={"reason": "ton_verifier unavailable"})
             return
         _write_json(out_dir / "provenance.json", {"reason": "NO_SOURCE_FOUND", "tier": "D", "mc_seqno": cs["mc_seqno"]})
-        await _terminal(sup, step, "insufficient_source", "E_SOURCE_NOT_FOUND", tier="D",
-                        detail={"reason": "NO_SOURCE_FOUND"})
+        detail: dict[str, Any] = {"reason": "NO_SOURCE_FOUND"}
+        if inputs.get("repo_url"):
+            # the repository at this commit (and subdir) holds no FunC, Tact or Tolk file
+            detail.update(reason="REPO_NO_TON_SOURCES", repo_family="no_ton_sources", chain="ton")
+            if inputs.get("repo_subdir"):
+                detail["subdir"] = str(inputs["repo_subdir"])[:200]
+        await _terminal(sup, step, "insufficient_source", "E_SOURCE_NOT_FOUND", tier="D", detail=detail)
         return
 
-    await sup._mark_step(step["id"], "done", provenance={"candidates": [c.provider for c in cands], **read_status})
+    # `provider` is the source the review is of (review_status provenance.source): the requester's
+    # repo or files when given, else the first automatic source.
+    provider = next((c.provider for c in cands if c.provider in ("user", "repo")), cands[0].provider)
+    await sup._mark_step(step["id"], "done", provenance={"provider": provider,
+                                                         "candidates": [c.provider for c in cands], **read_status})
     await sup._after_fetch(step, job)
 
 
@@ -314,8 +381,18 @@ async def _build(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
     _write_json(build_path, result)
     async with sup._pool.connection() as conn:
         await JobRepo(conn).update_job_fields(job["job_id"], source_pin=pin.source_pin)
-    await sup._mark_step(step["id"], "done", provenance={"reason": out.reason, "tier": out.tier,
-                                                         "dep_hash": out.dep_hash, "build_hash": out.build_hash})
+    build_prov: dict[str, Any] = {"reason": out.reason, "tier": out.tier,
+                                  "dep_hash": out.dep_hash, "build_hash": out.build_hash}
+    if cs["accounts"]:
+        # review_status build.deployment (start_status._deployment_status): the match outcome as
+        # soon as it is known, in the dep_match vocabulary.
+        if out.match == "exact":
+            build_prov.update(dep_match="exact", dep_reason="match_rebuild")
+        elif out.reason == SOURCE_TOOLCHAIN_GAP:
+            build_prov.update(dep_match="third_party_verified_only", dep_reason="verifier_hash_attested")
+        elif out.reason == SOURCE_UNLINKED:
+            build_prov.update(dep_match="not_checkable", dep_reason=unlinked_reason(out.why))
+    await sup._mark_step(step["id"], "done", provenance=build_prov)
     await sup._after_build(step, result)
 
 

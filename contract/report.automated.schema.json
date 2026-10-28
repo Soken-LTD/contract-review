@@ -511,7 +511,8 @@
             "tier_b_proxy_unmatched",
             "tier_c",
             "tier_b_not_checked",
-            "tier_b_deployer_source"
+            "tier_b_deployer_source",
+            "tier_b_unmatched"
           ]
         },
         "source_hash": {
