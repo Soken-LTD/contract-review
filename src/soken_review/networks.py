@@ -127,9 +127,60 @@ def is_mainnet(job: dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# ── Is the reviewed code the deployed code? (CEO rule, security review 2026-10-27) ─────────────
+# Reference data for the publication rule. A deployment publishes automatically only when one of
+# these holds; anything else (TON SOURCE_UNLINKED, dep.match not_checkable or mismatch on a repo,
+# no build record yet) keeps the PDF private.
+#
+# dep.match values (contract/rubric/dep_match.yaml) that mean the reviewed source IS the deployed
+# code: an own rebuild equal (exact, metadata_only), or a third party that verified this source for
+# this deployment (Etherscan/TronScan/eth-bytecode-db, an OtterSec entry signed by the upgrade
+# authority, a TON verifier source hash-attested with a toolchain gap).
+PUBLISH_DEP_MATCHES = frozenset({"exact", "metadata_only", "third_party_verified_only"})
+# Fetch providers whose source was verified against the deployed address by an explorer or a
+# registry. They count for a `deployed` start (the source came from the address itself) unless the
+# own rebuild proved a mismatch.
+PUBLISH_VERIFIED_PROVIDERS = frozenset({"sourcify", "etherscan", "tronscan", "eth_bytecode_db", "ton_verifier"})
+# Provenance reasons that never publish, whatever else was recorded.
+NO_PUBLISH_REASONS = frozenset({"SOURCE_UNLINKED", "SOURCE_NOT_OWNER_LINKED"})
+
+
+def _last_done(steps: list[dict[str, Any]] | None, name: str) -> dict[str, Any]:
+    rows = [s for s in steps or [] if s.get("step") == name and s.get("status") == "done"]
+    prov = rows[-1].get("provenance") if rows else None
+    if isinstance(prov, str):
+        try:
+            prov = json.loads(prov)
+        except (ValueError, TypeError):
+            prov = None
+    return prov if isinstance(prov, dict) else {}
+
+
+def deployed_code_reviewed(job: dict[str, Any], steps: list[dict[str, Any]] | None) -> tuple[bool, str]:
+    """(True, "") when the reviewed source is the code at the job's deployment, else (False, why).
+
+    Read from the done build step (dep_match / reason, every family records them) and the done
+    fetch step (provider). Tier A is a recorded match by definition."""
+    build = _last_done(steps, "build")
+    match = build.get("dep_match")
+    reason = build.get("reason") or build.get("dep_reason")
+    if isinstance(reason, str) and reason.upper() in NO_PUBLISH_REASONS:
+        return False, "the reviewed source is not matched to the deployed code"
+    if job.get("tier") == "A" or match in PUBLISH_DEP_MATCHES:
+        return True, ""
+    provider = _last_done(steps, "fetch").get("provider")
+    if job.get("source_kind") == "deployed" and provider in PUBLISH_VERIFIED_PROVIDERS and match != "mismatch" \
+            and job.get("tier") in ("A", "B"):
+        return True, ""
+    if not build:
+        return False, "publishes automatically only once the reviewed source is matched to the deployed code"
+    return False, "the reviewed source is not matched to the deployed code"
+
+
 def publication_outcome(
     job: dict[str, Any],
     profile: str | None = None,
+    steps: list[dict[str, Any]] | None = None,
 ) -> dict[str, str]:
     """Return ``{"outcome": "automatic"|"private", "reason": str}`` for the job.
 
@@ -144,6 +195,9 @@ def publication_outcome(
         ``source_args``, ``context_items``.
     profile:
         The report profile (``"owner"`` suppresses auto-publication).
+    steps:
+        The job's job_steps rows (build and fetch provenance decide whether the reviewed code is
+        the deployed code, ``deployed_code_reviewed``).
     """
     # Global kill switch (blind-test matrix, live contracts with unfixed findings, etc.)
     if not auto_publish_enabled():
@@ -161,6 +215,12 @@ def publication_outcome(
 
     if not is_mainnet(job):
         return {"outcome": "private", "reason": "not deployed on a mainnet"}
+
+    # CEO rule: automatic publication only when the reviewed code is the code deployed on a mainnet
+    # (PUBLISH_DEP_MATCHES / PUBLISH_VERIFIED_PROVIDERS below, decided from the build and fetch steps).
+    matched, why = deployed_code_reviewed(job, steps)
+    if not matched:
+        return {"outcome": "private", "reason": why}
 
     # Inline context items: url==None means the requester pasted private content that
     # may be quoted verbatim in the report's context section.

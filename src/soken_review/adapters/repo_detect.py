@@ -1,4 +1,4 @@
-"""Family of a repository that holds no Solidity: Scarb (Starknet) or Move (Sui / Aptos).
+"""Family of a repository that holds no Solidity: Scarb (Starknet), Move (Sui / Aptos), Solana, TON.
 
 A repo-only job carries no chain (`review_start` sets `chain` from `deployment` only), so the
 supervisor materialises it on the EVM path and asks `repo_candidate_from_manifest` for a Foundry
@@ -16,6 +16,17 @@ Rules (reference data, not heuristics on code):
     Sui; `AptosFramework` / `AptosStdlib` / `AptosToken*` / `MoveStdlib` from aptos-core is Aptos.
     A manifest that names neither (or both) is `unknown_move_flavour`; several packages without a
     `subdir` to choose from is `ambiguous_package`. Both end the job with that detail.
+  * `Anchor.toml`, or a `Cargo.toml` whose dependencies name a Solana program crate
+    (`anchor-lang`, `solana-program`, `pinocchio`, ...): Solana. The package dir is the requested
+    `subdir`, else the one program crate, else the Anchor workspace root.
+  * TON sources (`*.fc`, `*.func`, `*.tolk`, `*.tact`) or a `tact.config.json`: TON (a Blueprint
+    project keeps them under contracts/). The package dir is the requested `subdir` (it must hold
+    TON sources), else the tree root.
+  * Solidity or Vyper sources, `foundry.toml`, `hardhat.config.*`: EVM (the supervisor reaches
+    detection only after the EVM candidate failed, so this answer names the family for the client).
+
+`family` (review_start `source.chain` in repo mode, mapped to its family) overrides detection: only
+that family's rule runs, and a tree without its sources is `no_<family>_sources`.
 """
 
 from __future__ import annotations
@@ -33,16 +44,28 @@ _APTOS_REPO_MARKERS = ("aptos-labs/aptos-core", "aptos-labs/aptos-framework")
 _MAX_MANIFEST_BYTES = 64 * 1024
 
 
+_SOLANA_DEP_NAMES = frozenset({"anchor-lang", "anchor_lang", "solana-program", "solana_program", "pinocchio",
+                               "solana-sdk", "solana_sdk", "steel", "nitrogen"})
+_TON_SOURCE_EXTS = (".fc", ".func", ".tolk", ".tact")
+_TON_CONFIGS = frozenset({"tact.config.json"})
+_EVM_SOURCE_EXTS = (".sol", ".vy")
+_EVM_CONFIGS = frozenset({"foundry.toml", "hardhat.config.js", "hardhat.config.ts", "hardhat.config.cjs",
+                          "hardhat.config.mjs", "truffle-config.js"})
+# review_start `source.chain` -> the family whose rule runs (repo mode)
+FAMILY_OF_HINT = {"ton": "ton", "solana": "solana", "sui": "sui", "aptos": "aptos", "starknet": "starknet",
+                  "evm": "evm", "hyperevm": "evm", "tron": "evm"}
+
+
 @dataclass(frozen=True)
 class RepoFamily:
-    chain: str              # "starknet" | "sui" | "aptos"
+    chain: str              # "starknet" | "sui" | "aptos" | "solana" | "ton" | "evm"
     package_dir: str        # store path of the package ("" = tree root)
     manifest: str           # store path of the manifest the decision came from
 
 
 @dataclass(frozen=True)
 class Undetected:
-    reason: str             # "no_manifest" | "unknown_move_flavour" | "ambiguous_package"
+    reason: str             # "no_manifest" | "unknown_move_flavour" | "ambiguous_package" | "no_<family>_sources"
     manifests: tuple[str, ...] = ()
 
 
@@ -113,25 +136,116 @@ def _move_flavour(manifest: dict) -> str | None:
     return None
 
 
-def detect_repo_family(files: dict[str, str], subdir: str | None = None) -> RepoFamily | Undetected:
-    """Decide the family of a fetched tree (`files`: store path -> text, as the materialiser and
-    `safe_read_repo_tree` return it)."""
+def _under(path: str, wanted: str) -> bool:
+    return not wanted or path.startswith(wanted + "/")
+
+
+def _detect_starknet(files: dict[str, str], subdir: str | None) -> RepoFamily | Undetected | None:
     scarb = _manifests(files, "Scarb.toml")
-    if scarb:
-        pkg = _pick_package_dir(files, scarb, subdir, workspace_key="workspace")
-        if pkg is None and (subdir or "").strip("/"):
-            return Undetected("ambiguous_package", tuple(scarb))
-        pkg = pkg or ""
-        manifest = next((m for m in scarb if _dir_of(m) == pkg), scarb[0])
-        return RepoFamily("starknet", pkg, manifest)
+    if not scarb:
+        return None
+    pkg = _pick_package_dir(files, scarb, subdir, workspace_key="workspace")
+    if pkg is None and (subdir or "").strip("/"):
+        return Undetected("ambiguous_package", tuple(scarb))
+    pkg = pkg or ""
+    manifest = next((m for m in scarb if _dir_of(m) == pkg), scarb[0])
+    return RepoFamily("starknet", pkg, manifest)
+
+
+def _detect_move(files: dict[str, str], subdir: str | None, forced: str | None = None) -> RepoFamily | Undetected | None:
     move = _manifests(files, "Move.toml")
     if not move:
-        return Undetected("no_manifest")
+        return None
     pkg = _pick_package_dir(files, move, subdir, workspace_key=None)
     if pkg is None:
         return Undetected("ambiguous_package", tuple(move))
     manifest = next(m for m in move if _dir_of(m) == pkg)
-    flavour = _move_flavour(_toml(files[manifest]))
+    flavour = _move_flavour(_toml(files[manifest])) or forced
     if flavour is None:
         return Undetected("unknown_move_flavour", (manifest,))
     return RepoFamily(flavour, pkg, manifest)
+
+
+def _solana_crate(manifest: dict) -> bool:
+    for key in ("dependencies", "dev-dependencies"):
+        deps = manifest.get(key) or {}
+        if isinstance(deps, dict) and any(str(n).lower() in _SOLANA_DEP_NAMES for n in deps):
+            return True
+    workspace = manifest.get("workspace")
+    deps = workspace.get("dependencies") if isinstance(workspace, dict) else None
+    return isinstance(deps, dict) and any(str(n).lower() in _SOLANA_DEP_NAMES for n in deps)
+
+
+def _crate_types(manifest: dict) -> list[str]:
+    lib = manifest.get("lib")
+    types = lib.get("crate-type") if isinstance(lib, dict) else None
+    return [str(t) for t in types] if isinstance(types, list) else []
+
+
+def _detect_solana(files: dict[str, str], subdir: str | None) -> RepoFamily | None:
+    wanted = (subdir or "").strip("/")
+    anchors = [m for m in _manifests(files, "Anchor.toml") if _under(m, wanted) or _dir_of(m) == wanted]
+    cargo = [m for m in _manifests(files, "Cargo.toml") if _under(m, wanted) or _dir_of(m) == wanted]
+    crates = [m for m in cargo if _solana_crate(_toml(files[m]))]
+    if not anchors and not crates:
+        return None
+    if wanted:
+        manifest = next((m for m in [*anchors, *crates] if _dir_of(m) == wanted), (anchors or crates)[0])
+        return RepoFamily("solana", wanted, manifest)
+    programs = [m for m in crates if "workspace" not in _toml(files[m])]
+    if len(programs) > 1:
+        # a workspace with a program and a client crate (Pump Science: programs/pump-science and
+        # clients/rust): the program is the cdylib, else the crate under programs/
+        cdylib = [m for m in programs if "cdylib" in _crate_types(_toml(files[m]))]
+        programs = cdylib or programs
+    if len(programs) > 1:
+        programs = [m for m in programs if m.startswith("programs/")] or programs
+    if len(programs) == 1:
+        return RepoFamily("solana", _dir_of(programs[0]), programs[0])
+    root = min(anchors or crates, key=_depth)
+    return RepoFamily("solana", _dir_of(root), root)
+
+
+def _detect_ton(files: dict[str, str], subdir: str | None) -> RepoFamily | None:
+    wanted = (subdir or "").strip("/")
+    sources = sorted(p for p in files if not _in_skipped_dir(p) and _under(p, wanted)
+                     and (p.lower().endswith(_TON_SOURCE_EXTS) or PurePosixPath(p).name in _TON_CONFIGS))
+    if not sources:
+        return None
+    return RepoFamily("ton", wanted, sources[0])
+
+
+def _detect_evm(files: dict[str, str], subdir: str | None) -> RepoFamily | None:
+    wanted = (subdir or "").strip("/")
+    hits = sorted(p for p in files if not _in_skipped_dir(p) and _under(p, wanted)
+                  and (p.lower().endswith(_EVM_SOURCE_EXTS) or PurePosixPath(p).name in _EVM_CONFIGS))
+    return RepoFamily("evm", wanted, hits[0]) if hits else None
+
+
+def detect_repo_family(files: dict[str, str], subdir: str | None = None,
+                       family: str | None = None) -> RepoFamily | Undetected:
+    """Decide the family of a fetched tree (`files`: store path -> text, as the materialiser and
+    `safe_read_repo_tree` return it). `family` (a FAMILY_OF_HINT value) runs that rule only."""
+    if family is not None:
+        if family == "starknet":
+            found = _detect_starknet(files, subdir)
+        elif family in ("sui", "aptos"):
+            found = _detect_move(files, subdir, forced=family)
+            if isinstance(found, RepoFamily) and found.chain != family:
+                found = RepoFamily(family, found.package_dir, found.manifest)   # the requester names the chain
+        elif family == "solana":
+            found = _detect_solana(files, subdir)
+        elif family == "ton":
+            found = _detect_ton(files, subdir)
+        else:
+            found = _detect_evm(files, subdir)
+        return found if found is not None else Undetected(f"no_{family}_sources")
+    for rule in (_detect_starknet, _detect_move):
+        found = rule(files, subdir)
+        if found is not None:
+            return found
+    for rule in (_detect_solana, _detect_ton, _detect_evm):
+        found = rule(files, subdir)
+        if found is not None:
+            return found
+    return Undetected("no_manifest")

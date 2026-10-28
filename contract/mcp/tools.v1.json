@@ -354,6 +354,10 @@
           "type": "string",
           "maxLength": 200
          },
+         "chain": {
+          "$ref": "#/$defs/chain",
+          "description": "Optional, repo mode: the chain the code is written for (for example ton for FunC, Tact or Tolk, solana for an Anchor or native program). Overrides detection from the repository tree. With deployment set, it must name the same chain family as deployment.chain."
+         },
          "doc_paths": {
           "type": "array",
           "items": {
