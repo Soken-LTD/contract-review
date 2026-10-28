@@ -263,6 +263,32 @@ def assert_expanded(projected: dict[str, Any]) -> None:
             raise BuildError("schema", f"placeholder not expanded {m.group()!r}", path)
 
 
+_PATH_TOKEN_RE = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]")
+
+
+def apply_publication_rewrites(report: dict[str, Any]) -> list[str]:
+    """Rewrite model-class strings for publication in place (contract/rubric/gate_policy.yaml rewrites:
+    dashes, arrows, audit words; never inside code spans or placeholders). Text written since the gate
+    policy was introduced is already rewritten at write time; this covers older stored text, so the
+    PDF prints the rewritten form instead of failing the render. Returns the paths it changed."""
+    from soken_review.engine import gate_policy
+
+    changed: list[str] = []
+    for path, cls, text in list(iter_strings(report)):
+        if cls != "model" or not text:
+            continue
+        new, applied = gate_policy.rewrite_text(text, _field_of(path))
+        if not applied:
+            continue
+        toks = [m.group(1) if m.group(1) is not None else int(m.group(2)) for m in _PATH_TOKEN_RE.finditer(path[1:])]
+        node: Any = report
+        for t in toks[:-1]:
+            node = node[t]
+        node[toks[-1]] = new
+        changed.append(path)
+    return changed
+
+
 def check_strings(report: dict[str, Any]) -> None:
     """08 1.5: 04 gate by field class on data, never on HTML. A hit is `late_gate`.
 
@@ -275,6 +301,7 @@ def check_strings(report: dict[str, Any]) -> None:
     """
     from soken_review.engine.text_gate import check_model_field, check_text
 
+    apply_publication_rewrites(report)
     profile = report["meta"]["profile"]
     for path, cls, text in iter_strings(report):
         if cls == "src" or not text:
@@ -285,9 +312,15 @@ def check_strings(report: dict[str, Any]) -> None:
                 # A placeholder the projection will not expand is the reviewer's text to fix: the
                 # render fails as a late gate (rule L0) and never prints the token.
                 raise BuildError("late_gate", f"L0 {bad!r}", path, rule="L0")
+            # Blocking rules only (contract/rubric/gate_policy.yaml): advisory wording rules were
+            # warnings when the text was written and never fail the render.
+            from soken_review.engine import gate_policy
+
+            field = _field_of(path)
             hits = [
-                v for v in check_model_field(text, field=_field_of(path), profile=profile, is_list_item=".ul[" in path)
-                if v.rule_id not in LATE_GATE_SKIP
+                v for v in check_model_field(text, field=field, profile=profile, is_list_item=".ul[" in path)
+                if v.rule_id not in LATE_GATE_SKIP and gate_policy.is_blocking(v.code, v.rule_id)
+                and not gate_policy.is_exempt(v.code, v.rule_id, field)
             ]
         elif cls == "server":
             hits = check_text(text, "server")
@@ -1168,6 +1201,12 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
                            tbl(f'<th style="width:38%">{esc(head["walk"])}</th><th style="width:14%">{esc(head["verdict"])}</th>'
                                f'<th>{esc(head["code"])}</th><th style="width:10%">{esc(head["finding"])}</th>', vrows,
                                name="invariant_walks"))
+    if cov.get("not_taken"):
+        cn = t["coverage_note"]
+        nrows = "".join("<li>" + esc(cn["lines"][x["kind"]].format(count=format(x["count"], ","))) + "</li>"
+                        for x in cov["not_taken"] if x["kind"] in cn["lines"])
+        if nrows:
+            cov_html += titled(f'<h3>{esc(cn["heading"])}</h3>', f'<ul class="nofind">{nrows}</ul>')
     if cov["injection_flags"]:
         irows = "".join(f'<tr><td>{esc_src(x["file"], ctx)}</td><td class="num">{x["line"]:,}</td></tr>' for x in cov["injection_flags"])
         cov_html += titled("<h3>Instruction-like comments</h3>",

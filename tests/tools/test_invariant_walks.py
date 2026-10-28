@@ -116,7 +116,9 @@ async def test_set_section_walks_and_f9(db_pool):
     row = {"walk_id": "IW-VS-1", "outcome": "holds", "refs": ["src/Vault.sol:5-8"], "note": NOTE}
     unread = await ss.handle_review_set_section({"job_id": job_id, "section": "invariant_walks",
                                                  "invariant_walks": {"rows": [row]}})
-    assert unread["accepted"] is False and "not read in full" in json.dumps(unread["errors"][0])
+    # never-worse: an answer whose refs were not read is dropped with a warning; the walk stays open
+    assert unread["accepted"] is True and unread["stored"] is False, unread
+    assert "not read in full" in json.dumps(unread["warnings"][0]) and unread["walks_open"] == ["IW-VS-1", "IW-VS-4"]
 
     async with db_pool.connection() as conn:
         await conn.execute("insert into job_reads (job_id, path, start_line, end_line) values (%s, 'src/Vault.sol', 1, 9)",
@@ -163,8 +165,8 @@ async def test_batch_call_carries_invariant_walks(db_pool):
     assert list(Draft202012Validator(schema).iter_errors(args)) == []
     unread = await ss.handle_review_set_section(args)
     by = {r["section"]: r for r in unread["sections"]}
-    assert unread["accepted"] is False and by["context_notes"]["accepted"] and not by["invariant_walks"]["accepted"]
-    assert "not read in full" in json.dumps(by["invariant_walks"]["errors"])
+    assert unread["accepted"] is True and by["context_notes"]["accepted"] and by["invariant_walks"]["accepted"]
+    assert "not read in full" in json.dumps(unread["warnings"])
     async with db_pool.connection() as conn:
         await conn.execute("insert into job_reads (job_id, path, start_line, end_line) values (%s, 'src/Vault.sol', 1, 9)",
                            (job_id,))

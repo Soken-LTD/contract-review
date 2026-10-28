@@ -192,7 +192,7 @@ async def test_late_gate_at_assembly(db_pool, tmp_path, monkeypatch):
     monkeypatch.setenv("SOKEN_REPORT_STORE", str(tmp_path / "store"))
     fake, calls = _fake(["ok"])
     monkeypatch.setattr(render, "run_container", fake)
-    jid = await _job(db_pool, tmp_path, {"High": SECRET_TITLE, "Low": "Balance written " + chr(0x2014) + " after the call"})
+    jid = await _job(db_pool, tmp_path, {"High": SECRET_TITLE, "Low": "Balance written later, the vault is fully secure"})
     await render.run_render_step(db_pool, await _claim(db_pool), tmp_path / "pins", image="img")
     state, detail = await _state(db_pool, jid)
     assert state == "render_failed" and detail["detail"] == "late_gate" and calls == []

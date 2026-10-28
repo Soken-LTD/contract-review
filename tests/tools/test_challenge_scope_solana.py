@@ -267,7 +267,8 @@ async def test_absent_answer_that_skips_the_struct_range_is_rejected_by_name(db_
     answers = [{"item_id": i["id"], "value": "absent", "refs": sorted(set(handler_only)), "note": "n"} for i in ch["items"]]
     res = await challenge_mod.handle_review_answer_challenge(
         {"job_id": job_id, "draft_key": sub["draft_key"], "revision": sub["revision"], "answers": answers})
-    assert res["accepted"] is False
-    scope_errors = [e for e in res["errors"] if e["code"] == "E_CHALLENGE_SCOPE"]
+    # never-worse: recorded as unverified with a warning that names the range
+    assert res["accepted"] is True and res["complete"] is False, res
+    scope_errors = [w for w in res["warnings"] if w["code"] == "E_CHALLENGE_SCOPE"]
     assert scope_errors, res
     assert any("src/lib.rs" in json.dumps(e) for e in scope_errors), scope_errors

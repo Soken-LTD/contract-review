@@ -416,13 +416,15 @@ async def test_kill_item_present_with_a_document_quote_is_scope_rejected(db_pool
                             "note": "No evidence of this condition found in the reviewed scope."})
     res = await challenge_mod.handle_review_answer_challenge({"job_id": job_id, "draft_key": "draft-ctx-kill",
                                                                "revision": ch["revision"], "answers": answers})
-    assert res["accepted"] is False, res
-    scope_errs = [e for e in res["errors"] if e["code"] == "E_CHALLENGE_SCOPE"]
+    # never-worse: the document quote is a warning and leaves the kill item unverified, so the
+    # finding is not withdrawn by it
+    assert res["accepted"] is True and res["verdict"] != "withdrawn", res
+    scope_errs = [w for w in res["warnings"] if w["code"] == "E_CHALLENGE_SCOPE"]
     assert scope_errs and any("context/" in json.dumps(e) for e in scope_errs)
     async with wired.connection() as conn:
         row = await (await conn.execute("select status from finding_drafts where job_id = %s and draft_key = %s",
                                         (job_id, "draft-ctx-kill"))).fetchone()
-    assert row[0] == "needs_challenge"                     # nothing was withdrawn by a document quote
+    assert row[0] == "accepted"                            # nothing was withdrawn by a document quote
 
 
 @pytest.mark.asyncio

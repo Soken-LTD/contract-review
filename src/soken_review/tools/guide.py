@@ -139,8 +139,12 @@ def _topic_severity_inputs() -> list[str]:
 
 def _topic_challenge_rules() -> list[str]:
     enums = _enums()
-    out = [("review_challenge returns checklist items for the current revision; review_answer_challenge"
-            " records one answer per item.")]
+    out = [("Shortest path: review_start, review_read_code, review_submit_finding, review_finalize, review_report."
+            " Every other tool is optional. Only evidence integrity and publication safety refuse a call; every"
+            " other rule returns a warning on an accepted result (gate policy below)."),
+           ("review_challenge returns checklist items for the current revision; review_answer_challenge"
+            " records one answer per item. The challenge is optional: it upgrades the evidence level, and"
+            " an item the server cannot verify is recorded with a warning and has no effect.")]
     out.append("Item kinds: " + ", ".join(enums.get("checklist_kind", [])) + ". kill: present disproves the finding"
                " (it is withdrawn); downgrade: present lowers severity one level (K5); context and basis: recorded."
                " A challenge lowers at most one step below the accepted severity (DG1); a second step needs a"
@@ -158,7 +162,8 @@ def _topic_challenge_rules() -> list[str]:
     out.append("Revision: pass the revision review_challenge reports; a stale revision is rejected.")
     out.append("Lead dismissal (review_dismiss_lead, arguments job_id and items: a list of {lead_id, reason, quotes, note}) reasons: "
                + ", ".join(enums.get("dismissal_reason", {}).get("model", []))
-               + "; every open High or Medium analyzer lead must be promoted or dismissed before review_finalize (F2)."
+               + "; open High or Medium analyzer leads are recommended to be promoted or dismissed; at finalize they"
+               " are closed as not reviewed and counted in the report's coverage note (F2)."
                " fp_guarded: reentrancy and access-control leads, quote the guard line inside the entry function."
                " fp_unreachable: the map must prove no entry reaches the location."
                " not_a_vulnerability: analyzer leads only; quote a code line inside the function that holds the"
@@ -174,6 +179,10 @@ def _topic_challenge_rules() -> list[str]:
 
     out.append("Text rule word lists (E_TEXT_GATE names the rule id, the matched words and this rewording):")
     out.extend(rule_word_lists())
+    from ..engine.gate_policy import policy_lines
+
+    out.append("Gate policy (blocking refuses the call; advisory and rewrite return warnings on an accepted call):")
+    out.extend(policy_lines())
     return out
 
 

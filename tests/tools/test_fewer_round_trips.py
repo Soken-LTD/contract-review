@@ -240,12 +240,16 @@ async def test_read_single_range_unchanged_and_missing_fields_named(read_ctx):
 
 @pytest.mark.parametrize(("state", "drafts", "checks", "expected"), [
     ("fetching", [], [], ["review_status"]),
-    ("ready", [], [], ["review_contract_map", "review_leads", "review_read_code"]),
+    # never-worse: recommendations only; the shortest path is read, submit, finalize
+    ("ready", [], [], ["review_read_code", "review_submit_finding", "review_finalize"]),
     ("ready", [{"status": "needs_challenge"}], [{"id": "F3", "open": 1, "tool": "review_answer_challenge"}],
-     ["review_challenge", "review_answer_challenge"]),
+     ["review_finalize", "review_challenge", "review_answer_challenge"]),
     ("ready", [{"status": "accepted"}], [{"id": "F2", "open": 0}], ["review_finalize"]),
     ("ready", [{"status": "accepted"}], [{"id": "F5", "open": 1, "tool": "review_set_section"}],
-     ["review_set_section"]),
+     ["review_finalize", "review_set_section"]),
+    # a blocking check (F6 unresolved placeholder) names its tool first
+    ("ready", [{"status": "accepted"}], [{"id": "F6", "open": 1, "tool": "review_submit_finding"}],
+     ["review_submit_finding", "review_finalize"]),
     ("render_queued", [], [], ["review_report"]),
     ("failed", [], [], []),
 ])
@@ -289,7 +293,7 @@ async def test_status_settled_waits_through_intermediate_states(client, db_pool)
     await task
     body = json.loads(s.content[0].text)
     assert body["state"] == "ready" and time.monotonic() - t0 < 10.0
-    assert body["next_tools"] == ["review_contract_map", "review_leads", "review_read_code"]
+    assert body["next_tools"] == ["review_read_code", "review_submit_finding", "review_finalize"]
     assert list(Draft202012Validator(TOOLS["review_status"]["outputSchema"]).iter_errors(body)) == []
 
 
@@ -403,7 +407,7 @@ async def test_submit_returns_challenge_inline_matching_review_challenge(db_pool
     r = await _submit_finding(db_pool, job_id, pin_root, draft_key="draft-inline-001")
     if r.get("status") != "needs_challenge":
         pytest.skip(f"status {r.get('status')}")
-    assert r["next_tools"] == ["review_answer_challenge"]
+    assert r["next_tools"] == ["review_finalize", "review_answer_challenge"]
     separate = await challenge_mod.handle_review_challenge({"job_id": job_id, "draft_key": "draft-inline-001"})
     assert r["challenge"] == {k: v for k, v in separate.items() if k != "accepted"}
     assert r["challenge"]["revision"] == r["revision"]
@@ -424,4 +428,4 @@ async def test_submit_without_challenge_context_still_names_review_challenge(db_
     r = await _submit_finding(db_pool, job_id, pin_root, draft_key="draft-inline-002")
     if r.get("status") != "needs_challenge":
         pytest.skip(f"status {r.get('status')}")
-    assert "challenge" not in r and r["next_tools"] == ["review_challenge"]
+    assert "challenge" not in r and r["next_tools"] == ["review_finalize", "review_challenge"]
