@@ -220,7 +220,7 @@ def test_run_capped_kills_at_the_wall_and_at_the_output_cap(tmp_path):
 def test_foundry_toml_closes_every_way_out():
     toml = fv.foundry_toml(["@oz/=pinned/lib/oz/"])
     for line in ("ffi = false", "fs_permissions = []", "offline = true", "auto_detect_solc = false",
-                 "no_storage_caching = true", 'src = "test"', 'out = "/work/out"'):
+                 "no_storage_caching = true", 'src = "test"', 'out = "/tmp/forge-out"'):
         assert line in toml, line
     assert "eth_rpc_url" not in toml and "rpc_endpoints" not in toml
     assert '"forge-std/=/opt/forge-std/src/"' in toml and '"@oz/=pinned/lib/oz/"' in toml
@@ -321,10 +321,15 @@ def _trace(name: str) -> dict:
 
 
 def _counter_artifacts(tmp_path: Path) -> list[dict]:
-    out = tmp_path / "out" / "Counter.sol"
+    """The Counter artifact of the real run, read the way the in-container collector reads it."""
+    from soken_review.sandbox import fork_collect
+
+    out = tmp_path / "forge-out" / "Counter.sol"
     out.mkdir(parents=True)
     (out / "Counter.json").write_bytes((FIX.parent / "counter.artifact.json").read_bytes())
-    return fv.load_artifacts(tmp_path / "out")
+    arts, dropped = fork_collect.collect(str(tmp_path / "forge-out"), ["src/Counter.sol"])
+    assert dropped == 0
+    return fv.validate_artifacts(arts)
 
 
 WETH9 = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
@@ -356,3 +361,64 @@ def test_immutables_are_masked_on_both_sides():
     assert fv.called_pinned({"0x" + "1" * 40}, {"0x" + "1" * 40: deployed}, [art])[0]["contract"] == "V"
     assert fv.called_pinned({"0x" + "1" * 40}, {"0x" + "1" * 40: "6001" + "ab" * 32 + "f3"}, [art]) == []
     assert fv.called_pinned(set(), {"0x" + "1" * 40: deployed}, [art]) == []   # created, never called
+
+
+# ── the in-container collector: build output never leaves the tmpfs, caps hold ──────────────
+
+
+def _artifact(path: str, name: str, code: str = "6000f3") -> bytes:
+    return json.dumps({"metadata": {"settings": {"compilationTarget": {f"pinned/{path}": name}}},
+                       "deployedBytecode": {"object": "0x" + code, "immutableReferences": {}}}).encode()
+
+
+def test_collector_keeps_only_cited_artifacts_within_caps(tmp_path):
+    from soken_review.sandbox import fork_collect
+
+    out = tmp_path / "forge-out"
+    (out / "build-info").mkdir(parents=True)
+    (out / "build-info" / "x.json").write_bytes(_artifact("src/V.sol", "V"))          # build-info: skipped
+    (out / "V.sol").mkdir()
+    (out / "V.sol" / "V.json").write_bytes(_artifact("src/V.sol", "V"))
+    (out / "O.sol").mkdir()
+    (out / "O.sol" / "O.json").write_bytes(_artifact("src/O.sol", "O"))                # not cited: skipped
+    (out / "V.sol" / "Big.json").write_bytes(b"{" + b" " * (fork_collect.FILE_CAP + 10) + b"}")   # oversized: dropped
+    (out / "V.sol" / "link.json").symlink_to(out / "V.sol" / "V.json")                 # symlink: skipped
+    for i in range(fork_collect.MAX_FILES + 5):                                         # too many: capped
+        (out / "V.sol" / f"V{i}.json").write_bytes(_artifact("src/V.sol", f"V{i}"))
+    arts, dropped = fork_collect.collect(str(out), ["src/V.sol"])
+    assert len(arts) == fork_collect.MAX_FILES and all(a["path"] == "src/V.sol" for a in arts)
+    assert dropped >= 6
+    assert fork_collect.collect(str(out), []) == ([], 0)                                # no cited file, nothing read
+
+
+def test_collector_caps_forge_output_and_wraps_the_result(tmp_path, capsys):
+    from soken_review.sandbox import fork_collect
+
+    out = tmp_path / "forge-out"
+    out.mkdir()
+    big = [sys.executable, "-c", "import sys\nfor _ in range(200): sys.stdout.write('x' * 65536)"]
+    rc = fork_collect.main(["c", "--out", str(out), "--cited", "[]", "--", *big])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["output_cap"] is True and doc["forge"] == ""
+    small = [sys.executable, "-c", "print('{}')"]
+    rc = fork_collect.main(["c", "--out", str(out), "--cited", "[]", "--", *small])
+    doc = json.loads(capsys.readouterr().out)
+    assert rc == 0 and doc["forge"].strip() == "{}" and doc["output_cap"] is False
+    raw, arts, cap = fv.unwrap(json.dumps(doc).encode())
+    assert raw.strip() == b"{}" and arts == [] and cap is False
+
+
+def test_supervisor_revalidates_collected_artifacts():
+    good = {"path": "src/V.sol", "contract": "V", "code": "0x6000f3", "ranges": [[1, 1]]}
+    bad = [{"path": "src/V.sol", "contract": "V", "code": "zz"}, "x", {"code": "60"},
+           {"path": "src/V.sol", "contract": "V", "code": "60", "ranges": [[-1, 2], [1, "a"]]}]
+    arts = fv.validate_artifacts([good, *bad] + [good] * 30)
+    assert arts[0] == {"path": "src/V.sol", "contract": "V", "code": "6000f3", "ranges": [(1, 1)]}
+    assert arts[1]["ranges"] == [] and len(arts) == 16
+
+
+def test_the_fork_container_writes_no_host_directory(tmp_path, monkeypatch):
+    argv = _fork_argv(tmp_path, monkeypatch)
+    binds = [a for a in argv if a.startswith("type=bind,")]
+    assert binds and all(b.endswith(",readonly") for b in binds)
+    assert 'out = "/tmp/forge-out"' in fv.foundry_toml([])

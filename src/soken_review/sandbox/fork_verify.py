@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 _LIMITS = Path(__file__).resolve().parents[3] / "contract" / "ops" / "limits.yaml"
 RELAY_SCRIPT = Path(__file__).resolve().parent / "rpc_relay.py"
+COLLECT_SCRIPT = Path(__file__).resolve().parent / "fork_collect.py"
+COLLECT_PATH = "/work/tools/fork_collect.py"
 RELAY_PORT = 8545
 FORGE_STD_ROOT = "/opt/forge-std"
 PROJECT_DIR = "/work/project"
@@ -183,7 +185,7 @@ def foundry_toml(remappings: list[str], *, gas_limit: int = 1_000_000_000) -> st
     lines = [
         "[profile.default]",
         'src = "test"', 'test = "test"', 'script = "test"', "libs = []",
-        'out = "/work/out"', 'cache_path = "/tmp/forge-cache"', 'broadcast = "/tmp/forge-broadcast"',
+        'out = "/tmp/forge-out"', 'cache_path = "/tmp/forge-cache"', 'broadcast = "/tmp/forge-broadcast"',
         "remappings = [" + ", ".join(json.dumps(r) for r in remaps) + "]",
         f"allow_paths = [{json.dumps(FORGE_STD_ROOT)}]",
         "ffi = false", "fs_permissions = []", "offline = true", "auto_detect_solc = false",
@@ -289,34 +291,36 @@ def _masked(code_hex: str, ranges: list[tuple[int, int]]) -> bytes:
     return bytes(b)
 
 
-def load_artifacts(out_dir: Path) -> list[dict[str, Any]]:
-    """Runtime code of every contract compiled from the pinned tree in this run (forge artifacts,
-    read without following anything the container planted), with its immutable ranges."""
-    from .output import UnsafeOutput, read_output_files
-
-    try:
-        files = read_output_files(out_dir, "*.json", 4000, 16 * 1024 * 1024)
-    except (FileNotFoundError, UnsafeOutput):
-        return []
+def validate_artifacts(items: Any) -> list[dict[str, Any]]:
+    """The artifacts the in-container collector (fork_collect.py) printed, re-checked: at most 16, hex
+    code, total 32 MiB, bounded immutable ranges. Anything malformed is dropped."""
     arts: list[dict[str, Any]] = []
-    for raw in files.values():
-        try:
-            a = json.loads(raw)
-        except ValueError:
+    total = 0
+    for a in items if isinstance(items, list) else []:
+        if not isinstance(a, dict) or len(arts) >= 16:
             continue
-        meta = a.get("metadata") if isinstance(a, dict) else None
-        target = ((meta or {}).get("settings") or {}).get("compilationTarget") if isinstance(meta, dict) else None
-        dep = a.get("deployedBytecode") if isinstance(a, dict) else None
-        if not isinstance(target, dict) or len(target) != 1 or not isinstance(dep, dict):
+        code = str(a.get("code") or "").removeprefix("0x").lower()
+        path, name = a.get("path"), a.get("contract")
+        if not code or not _HEX.match(code) or not isinstance(path, str) or not isinstance(name, str):
             continue
-        (path, name), = target.items()
-        code = str(dep.get("object") or "").removeprefix("0x").lower()
-        if not str(path).startswith("pinned/") or not code or not _HEX.match(code):
-            continue
-        ranges = [(int(x["start"]), int(x["length"])) for refs in (dep.get("immutableReferences") or {}).values()
-                  for x in refs if isinstance(x, dict)]
-        arts.append({"path": str(path).removeprefix("pinned/"), "contract": str(name)[:80], "code": code, "ranges": ranges})
+        total += len(code)
+        if total > 32 * 1024 * 1024:
+            break
+        ranges = [(int(r[0]), int(r[1])) for r in (a.get("ranges") or [])[:256]
+                  if isinstance(r, list) and len(r) == 2 and all(isinstance(x, int) and 0 <= x < 1 << 25 for x in r)]
+        arts.append({"path": path[:300], "contract": name[:80], "code": code, "ranges": ranges})
     return arts
+
+
+def unwrap(stdout: bytes) -> tuple[bytes, list[dict[str, Any]], bool]:
+    """(forge --json stdout, validated artifacts, output cap hit) from the collector's object."""
+    try:
+        doc = json.loads(stdout.decode("utf-8", "replace"))
+    except ValueError:
+        return stdout, [], False
+    if not isinstance(doc, dict) or "forge" not in doc:
+        return stdout, [], False
+    return str(doc.get("forge") or "").encode(), validate_artifacts(doc.get("artifacts")), bool(doc.get("output_cap"))
 
 
 def called_pinned(called: set[str], created: dict[str, str], artifacts: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -475,7 +479,7 @@ async def execute(run: dict[str, Any], pin_root: Path, *, image: str | None = No
     from ..chain.fork_rpc import ForkStats, fork_app, serve
     from ..chain.proxy import Meter
     from ..pinning.store import PinnedSource
-    from .profile import CHAINSIM_NETWORK, StepLimits, docker_argv, locked_image, locked_tools, sandbox_writable_dir
+    from .profile import CHAINSIM_NETWORK, StepLimits, docker_argv, locked_image, locked_tools
 
     lim = fork_limits()
     image = image or locked_image("evm-analyze")
@@ -535,12 +539,13 @@ async def execute(run: dict[str, Any], pin_root: Path, *, image: str | None = No
                        "--fork-retries", "2", "--fork-retry-backoff", "1000", "--no-storage-caching",
                        "--use", f"/cache/{solc_bin.parent.name}/{solc_bin.name}", "--no-auto-detect",
                        "--offline", "--match-path", run["test_path"]]
-            out_dir = sandbox_writable_dir(work / "out")
+            command = ["python3", "-I", COLLECT_PATH, "--out", "/tmp/forge-out",
+                       "--cited", json.dumps(sorted(run.get("cited") or [])[:20]), "--", *command]
             argv = docker_argv(step="fork", image=image, work_dir=project, cache_dir=cache._root, limits=limits,
                                env={"HOME": "/tmp", "NO_COLOR": "1"}, command=command,
                                family_network=CHAINSIM_NETWORK, runtime=runtime or os.environ.get("SOKEN_SANDBOX_RUNTIME"),
                                workdir=PROJECT_DIR, name=forge,
-                               mounts=[(project.resolve(), PROJECT_DIR, True), (out_dir.resolve(), "/work/out", False)])
+                               mounts=[(project.resolve(), PROJECT_DIR, True), (COLLECT_SCRIPT, COLLECT_PATH, True)])
 
             def kill() -> None:
                 _docker("rm", "-f", forge, timeout=30)
@@ -554,7 +559,7 @@ async def execute(run: dict[str, Any], pin_root: Path, *, image: str | None = No
     cap = int(lim.get("stdout_bytes", 1024 * 1024))
     stdout = _read_capped(out_path, cap)
     stderr = _read_capped(err_path, cap).decode("utf-8", "replace")
-    artifacts = load_artifacts(work / "out") if killed_by is None else []
+    stdout, artifacts, collector_cap = unwrap(stdout)
     shutil.rmtree(work, ignore_errors=True)
     base: dict[str, Any] = {"wall_s": wall_s, "rpc": stats.as_dict(meter), "exit_code": code,
                             "engine": {"tool": "forge", "version": locked_tools("evm-analyze").get("forge"),
@@ -563,7 +568,7 @@ async def execute(run: dict[str, Any], pin_root: Path, *, image: str | None = No
                             "pinned_files": n_pinned}
     if killed_by == "wall":
         return {**base, "status": "timeout", "reason": f"wall clock {int(wall)} s"}
-    if killed_by == "output":
+    if killed_by == "output" or collector_cap:
         return {**base, "status": "error", "reason": "output_cap"}
     try:
         tests = parse_forge_json(stdout)
@@ -640,15 +645,24 @@ async def run_step(pool: Any, pin_root: Path, step: dict[str, Any]) -> None:
         await cur.execute(
             """update fork_runs set status = 'running', started_at = now()
                    where step_id = %s and status = 'queued'
-                   returning run_id, job_id, chain_id, network, block, test_path, test_source, expect""",
+                   returning run_id, job_id, chain_id, network, block, test_path, test_source, expect,
+                             draft_key, draft_revision""",
             (step["id"],))
         row = await cur.fetchone()
     if row is None:
         async with pool.connection() as conn:
             await JobRepo(conn).complete_step(step["id"], "done", provenance={"fork_run": None})
         return
-    keys = ("run_id", "job_id", "chain_id", "network", "block", "test_path", "test_source", "expect")
+    keys = ("run_id", "job_id", "chain_id", "network", "block", "test_path", "test_source", "expect",
+            "draft_key", "draft_revision")
     run = dict(zip(keys, row, strict=True))
+    run["cited"] = []
+    if run["draft_key"]:   # the collector keeps only the artifacts of the files this finding quotes
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("""select distinct path from finding_quote_ranges
+                                 where job_id = %s and draft_key = %s and revision = %s""",
+                              (run["job_id"], run["draft_key"], run["draft_revision"]))
+            run["cited"] = [r[0] for r in await cur.fetchall()]
     try:
         result = await execute(run, pin_root)
     except RunError as exc:
