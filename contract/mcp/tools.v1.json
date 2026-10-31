@@ -165,7 +165,8 @@
    "enum": [
     "analyzer_and_reasoning",
     "reasoning_challenged",
-    "reasoning_only"
+    "reasoning_only",
+    "test_verified"
    ]
   },
   "profile": {
@@ -3686,6 +3687,174 @@
    },
    "outputSchema": {
     "$ref": "#/$defs/chain_output"
+   }
+  },
+  {
+   "name": "review_verify_on_fork",
+   "title": "Verify a finding with a test on a local fork",
+   "annotations": {
+    "title": "Verify a finding with a test on a local fork",
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true
+   },
+   "description": "Runs one Foundry test with assertions (balances, state, reverts) against a local in-memory fork of the job's EVM chain at its pinned block; reads go through the chain proxy, which refuses every send method, and nothing is sent to any network. Imports: forge-std/... and pinned/<path of a pinned file>. A passing run bound to draft_key raises that finding's evidence to test_verified. Optional; review and finalize never depend on it.",
+   "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "job_id"
+    ],
+    "properties": {
+     "job_id": {
+      "$ref": "#/$defs/job_id"
+     },
+     "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "content"
+      ],
+      "description": "one Solidity test file; required unless run_id polls an earlier run",
+      "properties": {
+       "path": {
+        "type": "string",
+        "pattern": "^test/[A-Za-z][A-Za-z0-9_]{0,63}\\.t\\.sol$",
+        "description": "default test/Verify.t.sol"
+       },
+       "content": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 65536
+       }
+      }
+     },
+     "draft_key": {
+      "$ref": "#/$defs/draft_key"
+     },
+     "expect": {
+      "type": "string",
+      "enum": [
+       "pass",
+       "fail"
+      ],
+      "description": "what the reviewer claims; default pass"
+     },
+     "block": {
+      "description": "pinned (default), latest, or a block number",
+      "type": [
+       "string",
+       "integer"
+      ],
+      "pattern": "^(pinned|latest)$",
+      "minimum": 0
+     },
+     "chain_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "EVM chain id, only for a job without a deployment"
+     },
+     "run_id": {
+      "type": "string",
+      "pattern": "^fork-[0-9a-f]{12}$",
+      "description": "poll an earlier run of this job"
+     },
+     "wait_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 45,
+      "description": "default 25"
+     }
+    }
+   },
+   "outputSchema": {
+    "type": "object",
+    "required": [
+     "accepted"
+    ],
+    "additionalProperties": true,
+    "properties": {
+     "accepted": {
+      "type": "boolean"
+     },
+     "errors": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/error"
+      },
+      "maxItems": 20
+     },
+     "errors_more": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "job_id": {
+      "$ref": "#/$defs/job_id"
+     },
+     "run_id": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "queued",
+       "running",
+       "passed",
+       "failed",
+       "error",
+       "timeout"
+      ]
+     },
+     "expect": {
+      "type": "string"
+     },
+     "matches_expectation": {
+      "type": "boolean"
+     },
+     "chain": {
+      "type": "object",
+      "description": "family, chain_id, network, block of the fork"
+     },
+     "test": {
+      "type": "object",
+      "description": "path and sha256 of the test file"
+     },
+     "tests": {
+      "type": "array",
+      "maxItems": 21,
+      "items": {
+       "type": "object"
+      },
+      "description": "name, status, gas, reason and logs as untrusted_text, events"
+     },
+     "rpc": {
+      "type": "object",
+      "description": "requests, upstream calls, bytes, denied methods"
+     },
+     "wall_s": {
+      "type": "number"
+     },
+     "reason": {
+      "type": "string"
+     },
+     "diagnostics": {
+      "type": "object"
+     },
+     "engine": {
+      "type": "object"
+     },
+     "evidence": {
+      "type": "object",
+      "description": "draft_key, level (test_verified, exercised or unchanged), why, report_line"
+     },
+     "poll": {
+      "type": "object"
+     },
+     "untrusted_text_note": {
+      "type": "string"
+     }
+    }
    }
   }
  ]

@@ -796,6 +796,26 @@ def figures_table(figs: list[dict[str, Any]], ctx: BuildContext, meta: dict[str,
                   "".join(rows), name="figures"))
 
 
+def fork_test_block(ft: dict[str, Any], ctx: BuildContext) -> str:
+    """The fork verification line of a card (review_verify_on_fork) and, for the owner profile only,
+    the test source as code (the same visibility rule as attack steps)."""
+    t, lab = ctx.texts, ctx.texts["labels"]
+    key = "fork_verified_line" if ft.get("kind") == "verified" else "fork_exercised_line"
+    head, _, _ = t[key].partition("{tests}")
+    line = esc(head.format(network=ft["network"], block=f'{int(ft["block"]):,}'))
+    names = ", ".join(esc_src(n, ctx) for n in ft["tests"])
+    out = f'<div class="fl">{esc(lab["fork_test"])}</div><p>{line}{names}</p>'
+    if ctx.profile == "owner" and ft.get("source"):
+        ctx.uses_mono = True
+        lines = "".join(f'<span class="cl"><span class="ln">{n}</span>{esc(show_hidden(x))}</span>'
+                        for n, x in enumerate(ft["source"].splitlines()[:400], 1))
+        out += (f'<div class="codegrp"><div class="codehead src mono">{esc(show_hidden(ft["test_path"]))}</div>'
+                f'<pre class="code src">{lines}</pre></div>')
+    elif ft.get("source"):
+        out += f'<p class="nofind">{esc(t["fork_test_owner_only"])}</p>'
+    return out
+
+
 def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status: bool) -> str:
     t, lab = ctx.texts, ctx.texts["labels"]
     chips = f'<span class="chips">{chip(f["severity"])}{ev_chip(f["evidence_level"], ctx)}</span>'
@@ -834,9 +854,11 @@ def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status:
     body += f'<div class="fl">{esc(lab["severity_basis"])}</div>' + table(ev["basis"], "server", ctx, meta, name="basis")
     if ev.get("challenge"):
         body += f'<div class="fl">{esc(lab["challenge"])}</div>' + table(ev["challenge"], "server", ctx, meta, name="challenge")
-    if f["evidence_level"] == "analyzer_and_reasoning" and ev.get("lead"):
+    if ev.get("lead") and f["evidence_level"] in ("analyzer_and_reasoning", "test_verified"):
         body += "<p>" + esc(lab["analyzer_lead"].format(analyzer=ev["lead"]["analyzer"], rule_id="")).rstrip() + " " \
             + esc_src(ev["lead"]["rule_id"], ctx) + "</p>"
+    if ev.get("fork_test"):
+        body += fork_test_block(ev["fork_test"], ctx)
     if f.get("documented_intent"):
         line = t["documented_intent_line"].split("{path_lines}")[0]
         body += f"<p>{esc(line)}{esc_src(ref_text(f['documented_intent']), ctx)}</p>"

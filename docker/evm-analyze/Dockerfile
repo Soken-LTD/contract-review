@@ -78,6 +78,22 @@ RUN set -e; \
     rm -f /tmp/forge.tar.gz /tmp/forge; \
     forge --version
 
+# forge-std v1.16.2 (review_verify_on_fork: reviewer tests import forge-std/Test.sol). The archive of
+# the release commit is verified against its sha256 (measured twice, 2026-10-31); /opt/forge-std is
+# read-only for the sandbox user and remapped by the server-written foundry.toml.
+ARG FORGE_STD_COMMIT=bf647bd6046f2f7da30d0c2bf435e5c76a780c1b
+ARG FORGE_STD_SHA256=bcea26d86e1f5955c5914959bf34ae6f4c5897fbc9b390ff4b25232cadb859a2
+RUN set -e; \
+    curl -fsSL -o /tmp/forge-std.tar.gz \
+      "https://github.com/foundry-rs/forge-std/archive/${FORGE_STD_COMMIT}.tar.gz"; \
+    echo "${FORGE_STD_SHA256}  /tmp/forge-std.tar.gz" | sha256sum -c -; \
+    mkdir -p /opt/forge-std; \
+    tar -xzf /tmp/forge-std.tar.gz -C /opt/forge-std --strip-components=1 \
+      "forge-std-${FORGE_STD_COMMIT}/src" "forge-std-${FORGE_STD_COMMIT}/LICENSE-MIT" "forge-std-${FORGE_STD_COMMIT}/LICENSE-APACHE"; \
+    rm -f /tmp/forge-std.tar.gz; \
+    test -f /opt/forge-std/src/Test.sol; \
+    chmod -R a+rX,go-w /opt/forge-std
+
 # /cache is a read-only mount for solc binaries (09 4.4).
 # /work is a bind mount for the job directory.
 RUN mkdir -p /cache /work && chown soken:soken /work
