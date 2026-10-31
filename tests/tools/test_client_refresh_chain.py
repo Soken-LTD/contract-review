@@ -153,3 +153,33 @@ def test_target_alias_is_reserved_for_the_snapshot():
         chain_mod.check_alias("target", "items[0].alias")
     assert exc.value.code == "E_INVALID_ARGUMENT"
     assert chain_mod.check_alias("ve", "items[0].alias") == "ve"
+
+
+# ── TON (blind round 5b, 2026-10-31) ──────────────────────────────────────
+
+
+@ASYNC
+async def test_ton_multisig_snapshot_fills_chain_state(db_pool, monkeypatch):
+    """chain_state was "none / no values" for multisig v2: the snapshot now reads the standard get
+    methods the pinned source declares (get_multisig_data) and the balance under chain.target.*."""
+    from pathlib import Path
+
+    from soken_review.pinning.store import PinnedSource
+    from tests.chain.test_ton_auto_state import ADDR, MSIG_SRC, REC, SIGNERS
+
+    jid, pin_root = await _bsc_job(db_pool, state="analyzing")
+    async with db_pool.connection() as conn:
+        await conn.execute("update jobs set chain = 'ton', chain_id = null, address = %s where job_id = %s", (ADDR, jid))
+    files = {p.relative_to(MSIG_SRC).as_posix(): p.read_bytes() for p in Path(MSIG_SRC).rglob("*") if p.is_file()}
+    PinnedSource.from_files(files, in_scope={"imports/stdlib.fc": False},
+                            roles={"imports/stdlib.fc": "dependency"}).persist(pin_root, jid)
+    replay = _use(monkeypatch, REC)
+    await chain_mod.auto_snapshot(jid, wait=True)
+    assert replay.missing == []
+    cs = chain_mod.chain_state({"job_id": jid, "address": ADDR})
+    assert cs["state"] == "done", cs
+    v = cs["values"]
+    assert v["threshold"] == "2" and v["allow_arbitrary_order_seqno"] == "true"
+    assert v["signers.count"] == "7" and v["signers.0"] == SIGNERS[0]
+    assert v["balance.native"] == "75975802681" and v["interface"] == "multisig_v2"
+    assert cs["block"] == 102481952

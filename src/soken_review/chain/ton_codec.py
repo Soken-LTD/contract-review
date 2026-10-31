@@ -135,3 +135,101 @@ def num_arg(v: Any) -> dict[str, Any]:
         return {"@type": "tvm.stackEntrySlice", "slice": {"@type": "tvm.slice", "bytes": address_slice_boc(wc, h)}}
     n = int(v, 0) if isinstance(v, str) else v
     return {"@type": "tvm.stackEntryNumber", "number": {"@type": "tvm.numberDecimal", "number": str(n)}}
+
+
+# ── dictionaries (HashmapE) ────────────────────────────────────────────────
+# A FunC `cell` dictionary on the stack is the root of `Hashmap n X` (TL-B in crypto/block/block.tlb):
+#   hm_edge label:(HmLabel ~l n) node:(HashmapNode m X); fork = two refs, leaf = the value bits.
+#   hml_short$0 len:(Unary ~n) s:(n * Bit) | hml_long$10 n:(#<= m) s:(n * Bit) | hml_same$11 v:Bit n:(#<= m)
+# Multisig v2 keeps its signers and proposers as `uint8 -> MsgAddressInt` dictionaries
+# (get_multisig_data stack[2], stack[3]); without decoding, the snapshot only had a BoC hash.
+MAX_DICT_ITEMS = 64
+
+
+class _Bits:
+    def __init__(self, data: bytes, d2: int) -> None:
+        self.n, self.bits = _cell_bits(data, d2)
+        self.pos = 0
+
+    def read(self, k: int) -> int:
+        if k < 0 or self.pos + k > self.bits:
+            raise ValueError("cell underflow")
+        v = (self.n >> (self.bits - self.pos - k)) & ((1 << k) - 1) if k else 0
+        self.pos += k
+        return v
+
+
+def _label(b: _Bits, m: int) -> tuple[int, int]:
+    """(label value, label length) of an HmLabel with at most `m` bits."""
+    width = m.bit_length()          # #<= m
+    if b.read(1) == 0:              # hml_short: unary length
+        n = 0
+        while b.read(1):
+            n += 1
+        if n > m:
+            raise ValueError("label longer than the key")
+        return b.read(n), n
+    if b.read(1) == 0:              # hml_long
+        n = b.read(width)
+        if n > m:
+            raise ValueError("label longer than the key")
+        return b.read(n), n
+    v = b.read(1)                   # hml_same
+    n = b.read(width)
+    if n > m:
+        raise ValueError("label longer than the key")
+    return ((1 << n) - 1) if v else 0, n
+
+
+def dict_entries(boc_b64: str, key_bits: int) -> list[tuple[int, _Bits]]:
+    """(key, value bit reader) per entry of a `Hashmap key_bits X` root cell BoC, key order; at most
+    MAX_DICT_ITEMS. Raises ValueError on a malformed dictionary."""
+    try:
+        cells, roots = parse_boc(base64.b64decode(boc_b64))
+    except (BocError, ValueError) as exc:
+        raise ValueError("not a BoC") from exc
+    out: list[tuple[int, _Bits]] = []
+    stack: list[tuple[int, int, int]] = [(roots[0], 0, key_bits)]   # cell, key prefix, bits left
+    while stack and len(out) < MAX_DICT_ITEMS:
+        idx, prefix, m = stack.pop()
+        cell = cells[idx]
+        b = _Bits(cell.data, cell.d2)
+        lab, ln = _label(b, m)
+        prefix, m = (prefix << ln) | lab, m - ln
+        if m == 0:
+            out.append((prefix, b))
+            continue
+        if len(cell.refs) < 2:
+            raise ValueError("fork without two refs")
+        # right first so the left (bit 0) branch pops first: entries come out in key order
+        stack.append((cell.refs[1], (prefix << 1) | 1, m - 1))
+        stack.append((cell.refs[0], prefix << 1, m - 1))
+    return out
+
+
+def read_addr_std(b: _Bits) -> tuple[int, bytes] | None:
+    """addr_std$10 anycast:0 workchain:int8 address:bits256 from a bit reader, else None."""
+    try:
+        if b.read(2) != 0b10 or b.read(1) != 0:
+            return None
+        wc = b.read(8)
+        h = b.read(256)
+    except ValueError:
+        return None
+    return (wc - 256 if wc >= 128 else wc), h.to_bytes(32, "big")
+
+
+def dict_addresses(boc_b64: str, key_bits: int = 8) -> list[tuple[int, str]] | None:
+    """`(key, friendly address)` per entry of a `uint<key_bits> -> MsgAddressInt` dictionary, or None
+    when the cell is not one (a value that is not addr_std)."""
+    try:
+        entries = dict_entries(boc_b64, key_bits)
+    except ValueError:
+        return None
+    rows: list[tuple[int, str]] = []
+    for k, b in entries:
+        a = read_addr_std(b)
+        if a is None:
+            return None
+        rows.append((k, friendly(*a)))
+    return rows

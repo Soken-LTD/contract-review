@@ -40,7 +40,12 @@ from ..adapters.base import BuildResult, Candidate, Compiler
 from ..adapters.ton import analyze as _analyze_mod
 from ..adapters.ton import build as _build_mod
 from ..adapters.ton.detect import parse_ton_address
-from ..adapters.ton.fetch import TonReadError, fetch_ton_sources, read_ton_chain_state
+from ..adapters.ton.fetch import (
+    TonReadError,
+    fetch_ton_sources,
+    library_candidate_from_json,
+    read_ton_chain_state,
+)
 from ..adapters.ton.provenance import (
     SOURCE_TOOLCHAIN_GAP,
     SOURCE_UNLINKED,
@@ -51,7 +56,7 @@ from ..adapters.ton.provenance import (
     resolve_provenance,
     unlinked_reason,
 )
-from ..adapters.ton.units import count_nsloc_ton
+from ..adapters.ton.units import count_nsloc_ton, stdlib_paths
 from ..db.job_repo import JobRepo
 from ..db.leads_repo import persist_leads_from_pin
 from ..mapping import step as _map_step
@@ -310,6 +315,81 @@ async def _fetch(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
 
 # ── build + resolve_provenance ────────────────────────────────────────────
 
+# Library sources (masterchain libraries the reviewed code references by hash) are pinned beside the
+# main source under _related/, the prefix the EVM related contracts use: readable, searchable and
+# quotable in the same job, never compiled with the main code.
+RELATED_PREFIX = "_related/"
+MAX_LIBRARY_FILES = 200
+
+
+def _library_name(lib_hash: str) -> str:
+    return f"library_{lib_hash[:12]}"
+
+
+def _resolve_libraries(out_dir: Path, cand: Candidate
+                       ) -> tuple[dict[str, str], dict[str, str], dict[str, bool], list[dict[str, Any]]]:
+    """Rebuild each library source fetched for `cand` (fetch.resolve_library_refs), compare its hash
+    with the library body read from the chain, and return `(files, langs, in_scope, records)`.
+
+    Blind round 5b (2026-10-31): the multisig v2 order contract is the library 0x6305a806..., whose
+    source is verified on its own; the job pinned only the multisig bundle, so `order.func` could
+    not be read. A library source enters the pin only at tier A (rebuild equals the library hash) or
+    tier B (verifier-attested, compiler not installed); its standard library and the files equal to a
+    reviewed main file are pinned out of scope (readable, no leads, not counted twice).
+    """
+    settings = cand.settings or {}
+    sources = settings.get("library_sources") or {}
+    refs = {r.get("hash"): r for r in (settings.get("library_refs") or []) if isinstance(r, dict)}
+    main_texts = set(cand.files.values())
+    files: dict[str, str] = {}
+    langs: dict[str, str] = {}
+    in_scope: dict[str, bool] = {}
+    records: list[dict[str, Any]] = []
+    for lib_hash, doc in list(sources.items())[:4]:
+        row = refs.get(lib_hash)
+        if not isinstance(doc, dict) or not isinstance(row, dict) or row.get("status") != "ok":
+            continue                      # the library body must have been read and hashed here
+        lc = library_candidate_from_json(doc)
+        name = _library_name(lib_hash)
+        work = out_dir / "attempts" / name
+
+        def attempt(i: int, c: Candidate, work: Path = work) -> Attempt:
+            br = _build_mod.build(c, work_dir=work)
+            hashes = {a.contract: a.runtime for a in br.artifacts} if br.status == "ok" else {}
+            return Attempt(i, c.provider, "ok" if br.status == "ok" else (br.reason or "compile_error"), hashes,
+                           untrusted_inputs=c.untrusted_inputs)
+
+        lo = resolve_provenance(Dep(address=f"library:{lib_hash}", status="active", hash=lib_hash), [lc], attempt)
+        rec: dict[str, Any] = {"name": name, "role": "library", "hash": lib_hash, "provider": lc.provider,
+                               "tier": lo.tier, "reason": lo.reason}
+        if lo.tier not in ("A", "B"):
+            rec.update(status="source_not_matched",
+                       note=(f"The verified source of library {lib_hash[:12]} does not rebuild to the library "
+                             f"code read from the chain ({lo.why or 'no match'}), so it is not part of this review."))
+            row.update(source_tier=lo.tier, source_reason=lo.reason)
+            records.append(rec)
+            continue
+        prefix = f"{RELATED_PREFIX}{name}/"
+        std = stdlib_paths(lc.files, (lc.settings or {}).get("stdlib_files") or [])
+        n_scope = 0
+        for path, text in sorted(lc.files.items())[:MAX_LIBRARY_FILES]:
+            pinned = prefix + path.lstrip("/")
+            files[pinned] = text
+            langs[pinned] = lc.language
+            in_scope[pinned] = path not in std and text not in main_texts
+            n_scope += in_scope[pinned]
+        rec.update(status="pinned", match=lo.match or "third_party_verified_only", path=prefix.rstrip("/"),
+                   files=min(len(lc.files), MAX_LIBRARY_FILES), files_in_scope=n_scope,
+                   build_hash=lo.build_hash,
+                   note=(f"Library {lib_hash[:12]} (code the reviewed contract deploys by hash): its verified "
+                         f"source is pinned under {prefix.rstrip('/')}, tier {lo.tier}"
+                         + (", rebuilt to the library hash read from the chain." if lo.tier == "A"
+                            else ", attested by the verifier; the compiler is not installed, so it was not rebuilt.")))
+        row.update(source_tier=lo.tier, source_reason=lo.reason, source_path=prefix.rstrip("/"))
+        records.append(rec)
+    return files, langs, in_scope, records
+
+
 
 def _resolve(out_dir: Path, cs: dict[str, Any], cands: list[Candidate]) -> tuple[Out, dict[int, BuildResult]]:
     results: dict[int, BuildResult] = {}
@@ -344,6 +424,14 @@ async def _build(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
 
     out, results = await asyncio.get_event_loop().run_in_executor(None, _resolve, out_dir, cs, cands)
     prov = {**out.to_json(), "mc_seqno": cs.get("mc_seqno"), "address": next(iter(cs["accounts"]), None)}
+    lib_files: dict[str, str] = {}
+    lib_langs: dict[str, str] = {}
+    lib_scope: dict[str, bool] = {}
+    lib_records: list[dict[str, Any]] = []
+    if out.src is not None and 0 <= out.src < len(cands) and out.tier != "D":
+        # the library sources, rebuilt and matched to the library hashes (written into library_refs)
+        lib_files, lib_langs, lib_scope, lib_records = await asyncio.get_event_loop().run_in_executor(
+            None, _resolve_libraries, out_dir, cands[out.src])
     if out.src is not None and 0 <= out.src < len(cands):
         # masterchain libraries the reviewed source references by hash (fetch.resolve_library_refs)
         libs = (cands[out.src].settings or {}).get("library_refs")
@@ -372,9 +460,14 @@ async def _build(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
     assert out.src is not None
     src = cands[out.src]
     br = results[out.src]
+    # the FunC standard library is a dependency: readable, out of scope, no leads (units.stdlib_paths)
+    std = stdlib_paths(src.files, (src.settings or {}).get("stdlib_files") or [])
     pin = PinnedSource.from_files(
-        {p: c.encode("utf-8") for p, c in src.files.items()},
-        langs={p: src.language for p in src.files},
+        {p: c.encode("utf-8") for p, c in {**lib_files, **src.files}.items()},
+        langs={**lib_langs, **{p: src.language for p in src.files}},
+        in_scope={**lib_scope, **{p: False for p in std}},
+        roles={**{p: ("source" if ok else "dependency") for p, ok in lib_scope.items()},
+               **{p: "dependency" for p in std}},
     )
     pin.persist(sup._pin_root, job["job_id"])
     # nsloc of the pinned sources whether or not the build ran (a refused build reported 0)
@@ -397,11 +490,26 @@ async def _build(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
             build_prov.update(dep_match="third_party_verified_only", dep_reason="verifier_hash_attested")
         elif out.reason == SOURCE_UNLINKED:
             build_prov.update(dep_match="not_checkable", dep_reason=unlinked_reason(out.why))
+    if lib_records:
+        # review_status `related`: one line per library source, with its own match tier
+        build_prov["related"] = lib_records
+    if std:
+        build_prov["stdlib"] = sorted(std)[:8]
     await sup._mark_step(step["id"], "done", provenance=build_prov)
     await sup._after_build(step, result)
 
 
 # ── analyze ───────────────────────────────────────────────────────────────
+
+
+def _pinned_related_sources(pin_root: Path, job_id: str) -> dict[str, str]:
+    """In-scope source files of the pin under _related/ (library sources), path -> text."""
+    try:
+        pin = PinnedSource.load(pin_root, job_id)
+    except (OSError, ValueError, KeyError):
+        return {}
+    return {p: pin.read_text(p) for p, e in pin.entries.items()
+            if p.startswith(RELATED_PREFIX) and e.in_scope and e.role == "source"}
 
 
 async def _analyze(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> None:
@@ -414,6 +522,8 @@ async def _analyze(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -
 
     result = json.loads((out_dir / "build_result.json").read_text())
     cand = _cand_from_json(json.loads((out_dir / "cands" / f"{result['src']}.json").read_text()))
+    # the library sources pinned in scope (_resolve_libraries) are analysed with the main source
+    cand.files = {**_pinned_related_sources(sup._pin_root, job["job_id"]), **cand.files}
     if result["status"] == "ok" and result.get("work_dir"):
         br = BuildResult(candidate=cand, status="ok", nsloc=result.get("nsloc", 0), work_dir=result["work_dir"])
         source_dir = None
