@@ -3,13 +3,19 @@
 # (the cause, cargo-audit without its RustSec snapshot, sat only in the worker's static_map.json).
 #
 # A reason code is matched by its first segment (before the first colon); the rest of the code
-# (host paths, provider text) is never printed. Unknown codes print as words.
+# (host paths, provider text) is never printed. Unknown codes print as words. A static_map `detail`
+# (BakerFi 2026-10-31: the first solc error of the Slither compilation, path-free) is printed after
+# the sentence with `detail_sentence`.
 
 reasons:
   rustsec_db_not_found: the RustSec advisory snapshot was not available on the server, so dependency advisories were not checked
   rustsec_db_stale: the RustSec advisory snapshot is older than the freshness limit, so recent advisories may be missing
   build_failed: the build failed, so there was no compiled code to analyze
   analyzer_failed: it stopped with an internal error
+  compile_failed: the compiler run it drives over the reviewed files failed, so it produced no detector leads; read the reviewed files without static-analysis leads
+  internal_error: it stopped with an internal error, so it produced no detector leads
+  no_entry: no reviewed source file could be given to it, so it produced no detector leads
+  sandbox_unavailable: the analysis sandbox was not available on the server
   no_output: it produced no output
   not_available: it is not available for this language
   step_deadline: the analysis step ran out of time
@@ -17,4 +23,5 @@ reasons:
   not_run: it did not run
 build_prefix: "the build did not finish ({detail}), so there was no compiled code to analyze"
 sentence: "{tool} did not run fully: {reason}."
+detail_sentence: "Cause: {detail}."
 unknown: An analyzer did not run fully, and the run did not record why.

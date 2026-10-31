@@ -22,7 +22,9 @@ def test_aggregate_entry_imports_the_scope(tmp_path):
     src = _tree(tmp_path, ["contracts/Vault.sol", "lib/X.sol", "node_modules/@oz/c/A.sol"])
     name = analyze._write_aggregate_entry(src, {"contracts/Vault.sol", "lib/X.sol"})
     body = (src / name).read_text()
-    assert 'import "./contracts/Vault.sol";' in body and 'import "./lib/X.sol";' in body
+    # each file into its own namespace (BakerFi 2026-10-31: two reviewed `IVault` declarations)
+    assert 'import "./contracts/Vault.sol" as soken_review_unit_0;' in body
+    assert 'import "./lib/X.sol" as soken_review_unit_1;' in body
     assert "node_modules" not in body
 
 
