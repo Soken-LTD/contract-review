@@ -156,6 +156,7 @@ class TargetSpec:
     render_timeout_s: float = 600.0
     address_in_cover: str | None = None
     chain_read: dict[str, Any] | None = None   # review_chain_read step: {items, cite}; the finding cites `cite`
+    fork_test: dict[str, Any] | None = None    # review_verify_on_fork step: {content, test}; bound to the finding
 
 
 @dataclass
@@ -393,6 +394,40 @@ def chain_read_step(sess: Session, spec: dict[str, Any]) -> str | None:
     return cite
 
 
+def verify_on_fork_step(sess: Session, spec: dict[str, Any], draft_key: str, timeout_s: float = 600.0) -> bool:
+    """review_verify_on_fork with a small assertion test, bound to the filed finding; polls the run to
+    its end. A run the free pool could not serve is a gap (upstream), any other non-pass a failure.
+    Returns True when the run passed (the report check then looks for the verified line)."""
+    out = sess.c.call("review_verify_on_fork", job_id=sess.job_id, draft_key=draft_key, wait_seconds=45,
+                      test={"path": "test/Verify.t.sol", "content": spec["content"]})
+    sess.res.check("review_verify_on_fork queued the run", bool(out.get("accepted")) and bool(out.get("run_id")),
+                   json.dumps({k: out.get(k) for k in ("status", "run_id", "chain", "errors")})[:380])
+    if not out.get("accepted"):
+        return False
+    deadline = time.monotonic() + timeout_s
+    while out.get("status") in ("queued", "running") and time.monotonic() < deadline:
+        out = sess.c.call("review_verify_on_fork", job_id=sess.job_id, run_id=out["run_id"], wait_seconds=45)
+    status, reason = out.get("status"), out.get("reason")
+    detail = json.dumps({"status": status, "reason": reason, "tests": out.get("tests"), "rpc": out.get("rpc"),
+                         "diagnostics": out.get("diagnostics"), "wall_s": out.get("wall_s")})[:380]
+    if status == "error" and reason == "chain_unavailable":
+        sess.res.gap("the free pool served the fork at the pinned block", False, detail)
+        return False
+    sess.res.check("the fork test passed on a local fork through the read-only proxy", status == "passed", detail)
+    if status != "passed":
+        return False
+    rpc = out.get("rpc") or {}
+    sess.res.check("the run read chain state through the proxy", int(rpc.get("upstream_calls") or 0) > 0
+                   and int(rpc.get("bad_path") or 0) == 0, json.dumps(rpc)[:300])
+    ev = out.get("evidence") or {}
+    block = (out.get("chain") or {}).get("block")
+    sess.res.check("a passing run raises the finding to test_verified with the report line",
+                   ev.get("level") == "test_verified" and f"at block {block:,}" in str(ev.get("report_line")),
+                   json.dumps(ev)[:300])
+    spec["_block"], spec["_line"] = block, ev.get("report_line")
+    return True
+
+
 def submit_finding(sess: Session, spec: FindingSpec, units: list[dict[str, Any]],
                    prefer_key: str | None = None) -> dict[str, Any]:
     path = next((u["file"] for u in units if spec.file_hint in u["file"]), None)
@@ -618,6 +653,12 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
                     for op in g.get("operands") or [] if "fact" in op.get("source", {})]
             res.check("finding Figures used row names the chain read and its block",
                       any(src.get("fact") == key and src.get("block_or_slot") == block for src in figs), json.dumps(figs)[:300])
+        if spec.fork_test and spec.fork_test.get("_block"):
+            verified = [f for f in report.get("findings") or [] if f.get("evidence_level") == "test_verified"]
+            ft = ((verified[0].get("evidence") or {}).get("fork_test") or {}) if verified else {}
+            res.check("report.json prints the finding as verified on the fork at its block",
+                      bool(verified) and ft.get("block") == spec.fork_test["_block"] and bool(ft.get("tests")),
+                      json.dumps(ft)[:300] if ft else f"levels {[f.get('evidence_level') for f in report.get('findings') or []]}")
         if spec.finding:
             sevs = [f.get("severity") for f in report.get("findings") or []]
             res.check(f"a {spec.finding.expect_severity} finding is printed", spec.finding.expect_severity in sevs,
@@ -693,6 +734,8 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
                 answer_challenge(sess, draft_key, sub["_quote"])
             else:
                 res.check("challenge", True, f"draft status {sub.get('status')}, no challenge due")
+            if spec.fork_test:
+                verify_on_fork_step(sess, spec.fork_test, draft_key)
         close_leads(sess, leads)
         set_sections(sess, spec, draft_key)
         rep = finalize_and_render(sess, spec)
@@ -743,12 +786,36 @@ WETH9_FINDING = FindingSpec(
     expect_severity="Medium",
 )
 
+# review_verify_on_fork on the WETH9 target: deposit then balanceOf equals the deposit, on a local fork at
+# the pinned block. WETH9 is solc 0.4, so the test talks to the deployed contract through an interface.
+WETH9_FORK_TEST = """// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import {Test} from "forge-std/Test.sol";
+
+interface IWETH9 {
+    function deposit() external payable;
+    function balanceOf(address) external view returns (uint256);
+}
+
+contract WethDepositTest is Test {
+    IWETH9 constant WETH = IWETH9(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+
+    function test_depositCreditsTheCaller() public {
+        vm.deal(address(this), 1 ether);
+        uint256 before = WETH.balanceOf(address(this));
+        WETH.deposit{value: 1 ether}();
+        assertEq(WETH.balanceOf(address(this)), before + 1 ether, "balance after deposit");
+    }
+}
+"""
+
 TARGETS: dict[str, TargetSpec] = {
     "evm": TargetSpec(
         name="evm", start={"source": {"kind": "deployed", "chain": "evm", "chain_id": 1, "address": WETH9}},
         probe_url=f"https://sourcify.dev/server/v2/contract/1/{WETH9}",
         chain="evm", network="Ethereum Mainnet (1)", tiers=("A", "B"), finding=WETH9_FINDING, stale_walks=True,
-        address_in_cover=WETH9, ready_timeout_s=900,
+        address_in_cover=WETH9, ready_timeout_s=900, fork_test={"content": WETH9_FORK_TEST},
         chain_read={"cite": "chain.weth.total_supply",
                     "items": [{"alias": "weth", "address": WETH9, "kind": "call", "fn": "totalSupply()",
                                "returns": "uint256", "unit": "wei", "field": "total_supply"}]}),
