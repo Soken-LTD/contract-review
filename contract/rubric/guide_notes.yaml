@@ -1,0 +1,18 @@
+# rubric/guide_notes.yaml: guide prose that states how to fill a matrix field (reference data, printed by
+# review_get_guide). Each note must agree with the matrix in engine/severity.py; tests/tools/
+# test_guide_matrix_agreement.py computes every example below and fails when a note and the matrix drift.
+freeze_classes:
+  text: >-
+    Freezes, by who ends them. A freeze that clears by itself (a timer, an epoch, a price update) is
+    temporary_freeze with reversibility self_recovering. A freeze that lasts until an admin takes a routine
+    action the code already provides (remove a strategy, unpause, reset a parameter) is temporary_freeze with
+    reversibility admin_reversible: unbounded and reachable by anyone, it prints Medium. A freeze that only an
+    upgrade or a rescue path outside the normal flow can end is permanent_freeze with reversibility
+    admin_reversible (High when unbounded and reachable by anyone); with no undo at all it is permanent_freeze,
+    irreversible. dos_core_function is a core function that reverts while the funds stay reachable another way.
+  # (matrix, severity printed) pairs the text promises; trigger anyone, precondition normal_operation.
+  examples:
+    - {impact_class: temporary_freeze, reversibility: self_recovering, magnitude: unbounded, severity: Medium}
+    - {impact_class: temporary_freeze, reversibility: admin_reversible, magnitude: unbounded, severity: Medium}
+    - {impact_class: permanent_freeze, reversibility: admin_reversible, magnitude: unbounded, severity: High}
+    - {impact_class: permanent_freeze, reversibility: irreversible, magnitude: unbounded, severity: Critical}

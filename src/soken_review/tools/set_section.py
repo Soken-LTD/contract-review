@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -265,6 +266,48 @@ def _job_facts(job_id: str) -> list[dict[str, Any]]:
 _SECTION_KEYS = ("roles_notes", "out_of_scope_reasons", "coverage", "context_notes", "invariant_walks")
 
 
+_WALK_ID = re.compile(r"^IW-[A-Z0-9]{1,12}-[0-9]{1,3}$")
+_WALK_REASON = {"nr_holds": "holds", "nr_violated": "violated", "nr_not_applicable": "not_applicable"}
+_REF = re.compile(r"[A-Za-z0-9_./-]{1,200}:[0-9]{1,6}-[0-9]{1,6}")
+_DRAFT = re.compile(r"\bdraft(?:_key)?\s*[:=]?\s*([a-z0-9][a-z0-9-]{2,47})\b")
+
+
+def route_walk_rows(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Coverage rows whose area_id is a walk id become invariant_walks answers.
+
+    A client whose tool list predates section invariant_walks (blind round 5: every MCP arm) cannot
+    send the section, so finalize check F9 stayed open. The coverage row shape every list has carries
+    the same answer: area_id = walk id, reason nr_holds | nr_violated | nr_not_applicable, and the note
+    holding the refs (path:start-end) and, for violated, "draft <key>". The rows are validated by the
+    same walk rules (walks.validate_row); the other coverage rows stay coverage."""
+    cov = args.get("coverage")
+    rows = cov.get("rows") if isinstance(cov, dict) else None
+    if not isinstance(rows, list) or args.get("section") not in ("coverage", "invariant_walks"):
+        return args, []
+    walk_rows, keep, ids = [], [], []
+    for row in rows:
+        aid = str(row.get("area_id") or "") if isinstance(row, dict) else ""
+        if not _WALK_ID.match(aid):
+            keep.append(row)
+            continue
+        note = str(row.get("note") or "")
+        answer: dict[str, Any] = {"walk_id": aid, "outcome": _WALK_REASON.get(str(row.get("reason")), str(row.get("reason"))),
+                                  "refs": list(dict.fromkeys(_REF.findall(note)))[:16], "note": note}
+        if (m := _DRAFT.search(note)) is not None:
+            answer["draft_key"] = m.group(1)
+        walk_rows.append(answer)
+        ids.append(aid)
+    if not walk_rows:
+        return args, []
+    out = {k: v for k, v in args.items() if k != "coverage"}
+    prev = out.get("invariant_walks") if isinstance(out.get("invariant_walks"), dict) else {}
+    out["invariant_walks"] = {**prev, "rows": [*(prev.get("rows") or []), *walk_rows]}
+    if keep:
+        out["coverage"] = {**cov, "rows": keep}
+    out["section"] = "coverage" if keep and args["section"] == "coverage" else "invariant_walks"
+    return out, ids
+
+
 @handler("review_set_section")
 async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
     """One section, or every section whose object is in the call (03 §4.13).
@@ -275,6 +318,11 @@ async def handle_review_set_section(args: dict[str, Any]) -> dict[str, Any]:
     Sections are independent: one rejected section does not undo another. The result is the first
     section's result, `accepted` only when every section was accepted, every error, and `sections`.
     """
+    args, routed = route_walk_rows(args)
+    if routed:
+        res = await handle_review_set_section(args)
+        res["routed_to_invariant_walks"] = routed
+        return res
     named = args["section"]
     present = [k for k in _SECTION_KEYS if isinstance(args.get(k), dict)]
     others = [k for k in present if k != named]

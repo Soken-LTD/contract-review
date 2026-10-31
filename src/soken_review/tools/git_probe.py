@@ -60,13 +60,18 @@ def _git_env(home: str) -> dict[str, str]:
     }
 
 
-async def ls_remote(url: str, patterns: list[str], timeout: float = PROBE_TIMEOUT_S) -> tuple[int, str]:
-    """Run `git ls-remote` on a validated public https URL. Returns (exit code, stdout); 124 on timeout."""
-    if not safe_repo_url(url):
+_LS_OPTIONS = frozenset({"--symref"})
+
+
+async def ls_remote(url: str, patterns: list[str], timeout: float = PROBE_TIMEOUT_S,
+                    options: tuple[str, ...] = ()) -> tuple[int, str]:
+    """Run `git ls-remote` on a validated public https URL. Returns (exit code, stdout); 124 on timeout.
+    `options`: ls-remote flags from a fixed allowlist (`--symref`), placed before `--`."""
+    if not safe_repo_url(url) or not set(options) <= _LS_OPTIONS:
         return 2, ""
     argv = ["git", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
             "-c", "credential.helper=", "-c", "core.askPass=/bin/echo",
-            "ls-remote", "--", url, *patterns]
+            "ls-remote", *options, "--", url, *patterns]
     async with _slots():
         return await _ls_remote(argv, timeout)
 
@@ -112,11 +117,49 @@ def pick_ref(ls_output: str, ref: str) -> str:
     return sha
 
 
+def pick_default_branch(ls_output: str) -> str | None:
+    """Branch name from `git ls-remote --symref <url> HEAD` (`ref: refs/heads/<name>\tHEAD`). Pure."""
+    for line in ls_output.splitlines():
+        head, _, name = line.partition("\t")
+        if name.strip() == "HEAD" and head.startswith("ref: refs/heads/"):
+            branch = head[len("ref: refs/heads/"):].strip()
+            return branch if safe_ref(branch) else None
+    return None
+
+
+async def default_branch(url: str) -> str | None:
+    """The repository's default branch (its HEAD symref), or None when it cannot be read."""
+    code, out = await ls_remote(url, ["HEAD"], options=("--symref",))
+    return pick_default_branch(out) if code == 0 else None
+
+
 async def resolve_ref(url: str, ref: str) -> str:
-    """Resolve a branch or tag to a 40-hex commit with one `ls-remote` call."""
+    """Resolve a branch or tag to a 40-hex commit with one `ls-remote` call.
+
+    A ref that names no branch or tag is E_UNPINNED_REF with `default_branch` set when the
+    repository's HEAD can be read, so the client is told the branch to use (matrix r5
+    2026-10-31: `ref: main` on a repository whose default branch is `master`)."""
     if not safe_ref(ref):
         raise ReviewError("E_UNPINNED_REF", ref=ref[:80])
     code, out = await ls_remote(url, [f"refs/heads/{ref}", f"refs/tags/{ref}", f"refs/tags/{ref}^{{}}"])
     if code != 0:
         raise ReviewError("E_REPO_UNREACHABLE", url=url)
-    return pick_ref(out, ref)
+    try:
+        return pick_ref(out, ref)
+    except ReviewError as err:
+        if err.code != "E_UNPINNED_REF":
+            raise
+        branch = await default_branch(url)
+        if branch and branch != ref:
+            raise ReviewError("E_UNPINNED_REF", ref=ref, default_branch=branch) from None
+        raise
+
+
+def unpinned_ref_detail(err: ReviewError, ref: str) -> dict[str, str]:
+    """`error_detail` of a job stopped on a ref: the ref, and the default branch when known (the
+    status `what_default_branch` / `fix_default_branch` texts read it)."""
+    detail = {"stage": "repo_ref", "ref": ref[:80]}
+    branch = err.fields.get("default_branch") if err.code == "E_UNPINNED_REF" else None
+    if isinstance(branch, str) and branch:
+        detail.update(default_branch=branch[:100], mode="default_branch")
+    return detail

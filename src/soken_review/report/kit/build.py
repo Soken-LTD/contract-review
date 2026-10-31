@@ -913,6 +913,10 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     banner = (f'<div class="banner">{esc(t["public_review_banner"])}</div>' if m["profile"] == "public_review" else "")
     tierc = (f'<div class="banner tierc">{esc(t["tier_c_warning"].format(address=prov.get("address", ""), noun=m["deployed_noun"]))}</div>'
              if prov["tier"] == "C" else "")
+    if prov.get("implementation") and prov.get("proxy_verified") is False:
+        # the address is a proxy whose own code is not verified (security review 2026-10-31)
+        tierc += (f'<div class="banner tierc" data-block="proxy_unverified">'
+                  f'{esc(t["proxy_unverified_warning"].format(address=prov.get("address", "")))}</div>')
     # A failed build is stated on the cover and in the summary in the same sentence (meta.build_failure,
     # server text), not only in the per-card "Checked without a contract map" line.
     if m.get("build_failure"):
@@ -924,7 +928,11 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     if prov.get("repo"):
         src_parts.append(esc_src(prov["repo"], ctx) + (f", {esc_src(prov['commit'], ctx)}" if prov.get("commit") else ""))
     if prov.get("address"):
-        src_parts.append(addr_html(prov["address"], ctx, addr_url=m.get("addr_url")))
+        addr = addr_html(prov["address"], ctx, addr_url=m.get("addr_url"))
+        # a proxy: the address the client named holds the state, the implementation is the code
+        src_parts.append(f"Proxy {addr}" if prov.get("implementation") else addr)
+    if prov.get("implementation"):
+        src_parts.append(f'Implementation {addr_html(prov["implementation"], ctx, addr_url=m.get("addr_url"))}')
     src_parts.append(f'{esc(m["source_id_label"])} {esc_src(prov["code_hash"] if prov.get("code_hash") else prov["source_hash"], ctx)}')
     if prov.get("source_attribution"):
         src_parts.append(esc(prov["source_attribution"]))
@@ -932,6 +940,12 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
             ("Chain and network", esc(m["network"])), ("Provenance", esc(prov["label"])),
             ("Source", "<br>".join(src_parts)), ("Scope", f"{len(files):,} file{"s" if len(files) != 1 else ""}, {nsloc:,} source lines"),
             ("Findings", esc(_counts_line(c))), ("Date", esc(m["date"]))]
+    if prov.get("related"):
+        # one line per related contract pinned in the same job (source.related)
+        status_text = t["related_status"]
+        lines = [f'{esc_src(r["name"], ctx)} {addr_html(r["address"], ctx, short=True, addr_url=m.get("addr_url"))}, '
+                 f'{esc(status_text.get(r["status"], r["status"]))}' for r in prov["related"]]
+        grid.insert(5, ("Related contracts", "<br>".join(lines)))
     if prov["tier"] == "A":
         ua = prov.get("upgrade_authority")
         if ua is None or ua == "NotChecked":

@@ -9,20 +9,26 @@ validated against the bundled input schema before a handler runs; a failure is t
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Awaitable, Callable
+from importlib import metadata
 from typing import Any
 
 from jsonschema import Draft202012Validator
 from mcp.server import MCPServer
+from mcp.server.caching import CacheHint
 from mcp.server.mcpserver.context import Context
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from mcp.types import Tool as MCPTool
 
+from . import client_refresh
 from .contract import Release, bundle_tools, load_release, schema_version
 from .errors import ReviewError
 from .http import ProtocolRules
+
+logger = logging.getLogger(__name__)
 
 Handler = Callable[[dict[str, Any]], Awaitable[dict[str, Any] | str]]
 
@@ -37,9 +43,25 @@ def handler(name: str) -> Callable[[Handler], Handler]:
     return register
 
 
+def server_version() -> str:
+    """`<package version>+schema.<schema_version>`: changes on every tool-list change, so a client that
+    compares serverInfo across connects sees a new server."""
+    try:
+        pkg = metadata.version("soken-review")
+    except metadata.PackageNotFoundError:
+        pkg = "0"
+    return f"{pkg}+schema.{schema_version()}"
+
+
 class SokenServer(MCPServer):
     def __init__(self, release: Release | None = None) -> None:
-        super().__init__(name="soken-contract-review", title="Soken Contract Review")
+        # serverInfo.version carries the schema version, and instructions name the newest tools and how
+        # to refresh a cached list: both reach a client on every connect (initialize, server/discover),
+        # even when its tool list is cached elsewhere (client_refresh). tools/list is marked immediately
+        # stale (ttlMs 0, SEP-2549) so a 2026-07-28 client refetches it instead of trusting a cache.
+        super().__init__(name="soken-contract-review", title="Soken Contract Review",
+                         version=server_version(), instructions=client_refresh.instructions(),
+                         cache_hints={"tools/list": CacheHint(ttl_ms=0, scope="public")})
         self.contract = {tool["name"]: tool for tool in bundle_tools(release or load_release())}
         self.validators = {
             name: Draft202012Validator(tool["inputSchema"]) for name, tool in self.contract.items()
@@ -80,7 +102,7 @@ class SokenServer(MCPServer):
                     example=example,
                 )
             )
-            return _with_schema_hint(res) if stale_client else res
+            return await _finish(name, arguments, res, stale_client)
         fn = HANDLERS.get(name)
         if fn is None:
             raise NotImplementedError(f"{name} handler lands in W1 to W4 (part 03)")
@@ -88,7 +110,7 @@ class SokenServer(MCPServer):
             result = await fn(arguments)
         except ReviewError as err:
             res = _error_result(err, structured="outputSchema" in tool)
-            return _with_schema_hint(res) if stale_client else res
+            return await _finish(name, arguments, res, stale_client)
         if "outputSchema" in tool:
             if not isinstance(result, dict):
                 raise TypeError(f"{name} is a control tool and must return an object")
@@ -96,21 +118,30 @@ class SokenServer(MCPServer):
             res = CallToolResult(content=[TextContent(type="text", text=text)], structured_content=result)
         else:
             res = CallToolResult(content=[TextContent(type="text", text=str(result))])
-        return _with_schema_hint(res) if stale_client else res
+        return await _finish(name, arguments, res, stale_client)
+
+
+async def _finish(name: str, arguments: dict[str, Any], res: CallToolResult, stale_client: bool) -> CallToolResult:
+    """Attach the stale-tool-list notice when the call shows an old list (client_refresh.decide).
+    A notice never fails a call: any error in deciding leaves the result as it was."""
+    try:
+        text = await client_refresh.decide(name, arguments, _result_body(res), stale_client)
+    except Exception:
+        logger.warning("client notice failed for %s", name, exc_info=True)
+        text = None
+    if text is None:
+        return res
+    res = _with_key(res, "client_notice", text)
+    return _with_key(res, "schema_hint", text) if stale_client else res
 
 
 def _stale_schema_hint() -> str:
-    """One line for a client whose tool list predates the served schema. The JSON-string shape is
-    the one signal the server can see (03 section 13: the list is a snapshot the client caches)."""
-    return (f"Your tool list predates the current schema (schema_version {schema_version()}). In claude.ai,"
-            " remove this connector and add it again, or start a new chat; other clients reload the tool list."
-            " The current schema carries the fields, sections and guide topics this server expects.")
+    """The notice for a client whose tool list certainly predates the served schema (an object
+    argument arrived as a JSON string, 03 section 13: the list is a snapshot the client caches)."""
+    return client_refresh.notice(True)
 
 
-def _with_schema_hint(res: CallToolResult) -> CallToolResult:
-    """Add `schema_hint` to a result (structured object, or a last line of a text result). Additive:
-    no output schema closes its root object, so the key passes every client-side check."""
-    hint = _stale_schema_hint()
+def _result_body(res: CallToolResult) -> Any:
     content = list(res.content)
     body: Any = res.structured_content
     if body is None and content and isinstance(content[-1], TextContent) and content[-1].text[:1] == "{":
@@ -118,14 +149,26 @@ def _with_schema_hint(res: CallToolResult) -> CallToolResult:
             body = json.loads(content[-1].text)   # an error envelope (channel `error`): JSON text, no structured
         except ValueError:
             body = None
+    return body
+
+
+def _with_schema_hint(res: CallToolResult) -> CallToolResult:
+    return _with_key(res, "schema_hint", _stale_schema_hint())
+
+
+def _with_key(res: CallToolResult, key: str, hint: str) -> CallToolResult:
+    """Add `key` to a result (structured object, or a last line of a text result). Additive:
+    no output schema closes its root object, so the key passes every client-side check."""
+    content = list(res.content)
+    body: Any = _result_body(res)
     if isinstance(body, dict):
-        body = {**body, "schema_hint": hint}
+        body = {**body, key: hint}
         text = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
         structured = body if res.structured_content is not None else None
         return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=structured,
                               is_error=res.is_error)
     if content and isinstance(content[-1], TextContent):
-        content[-1] = TextContent(type="text", text=content[-1].text + "\nschema_hint " + hint)
+        content[-1] = TextContent(type="text", text=content[-1].text + f"\n{key} " + hint)
     return CallToolResult(content=content, structured_content=res.structured_content, is_error=res.is_error)
 
 

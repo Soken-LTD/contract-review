@@ -174,6 +174,9 @@ class _LifespanWrapper:
         for mod in _CTX_MODULES:
             if hasattr(mod, "set_context"):
                 mod.set_context(ctx)
+        from .. import client_refresh
+
+        client_refresh.set_pool(self._async_pool)   # per-job stale-tool-list state: jobs.client_shape
 
     async def _shutdown(self) -> None:
         if self._async_pool:

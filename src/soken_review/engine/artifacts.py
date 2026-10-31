@@ -62,6 +62,7 @@ def a1_literals(a: Artifacts, quotes: list[dict[str, Any]]) -> tuple[frozenset[s
     suffix sits on a quoted line."""
     lines = _quoted_lines(quotes)
     consts = {c["name"]: c["folded_value"] for c in (a.map or {}).get("constants") or []}
+    decl_literals: dict[str, set[str]] | None = None
     values: set[str] = set()
     units = False
     for path, ls in lines.items():
@@ -73,9 +74,71 @@ def a1_literals(a: Artifacts, quotes: list[dict[str, Any]]) -> tuple[frozenset[s
                 values.add(t["text"].strip())
             elif kind == "identifier" and t["text"] in consts:
                 values.add(consts[t["text"]])
+                values.update(_scaled_percents(consts[t["text"]]))
             elif kind in ("keyword", "identifier") and t["text"] in _SOL_UNIT_WORDS:
                 units = True
+            if kind == "identifier":
+                # A named constant used on a quoted line: the literals of its own initializer are
+                # code values too (r5 2026-10-31: `MAX_LIQUIDATION_PENALTY_X32 = uint32(Q32 / 10)`
+                # quoted at its use site, "10 percent" was rejected as unsourced).
+                if decl_literals is None:
+                    decl_literals = _constant_initializer_literals(a)
+                values.update(decl_literals.get(t["text"], ()))
     return frozenset(values), units
+
+
+_CONST_KEYWORDS = frozenset({"constant", "immutable", "const"})
+# Fixed-point scales a constant is commonly expressed in; a folded value over one of them, times
+# a hundred, is the percent a reviewer writes ("Q32 / 10" is "10 percent").
+_PERCENT_SCALES = (10_000, 10**18, 2**32, 2**64, 2**96, 2**128)
+
+
+def _scaled_percents(folded: str) -> set[str]:
+    from decimal import Decimal, InvalidOperation
+    try:
+        v = Decimal(folded)
+    except InvalidOperation:
+        return set()
+    out: set[str] = set()
+    for scale in _PERCENT_SCALES:
+        if v <= 0 or v > scale * 10:
+            continue
+        pct = (v * 100 / Decimal(scale)).quantize(Decimal("0.01"))
+        exact = v * 100 / Decimal(scale)
+        # within a rounding step of the integer-division initializer (Q32 / 10 floors)
+        if pct > 0 and abs(exact - pct) * Decimal(scale) <= 100:
+            out.add(format(pct.normalize(), "f"))
+    return out
+
+
+def _constant_initializer_literals(a: Artifacts) -> dict[str, set[str]]:
+    """name -> literal_num texts of its initializer, for `constant` / `immutable` / `const`
+    declarations in the stored token streams (declaration up to the closing `;`)."""
+    out: dict[str, set[str]] = {}
+    for toks in a.tokens.values():
+        i, n = 0, len(toks)
+        while i < n:
+            t = toks[i]
+            if t.get("kind") == "keyword" and t["text"] in _CONST_KEYWORDS:
+                j = i + 1
+                name = None
+                while j < n and j < i + 8 and toks[j]["text"] not in ("=", ";"):
+                    if toks[j].get("kind") == "identifier":
+                        name = toks[j]["text"]
+                    j += 1
+                if name and j < n and toks[j]["text"] == "=":
+                    k = j + 1
+                    lits: set[str] = set()
+                    while k < n and k < j + 64 and toks[k]["text"] != ";":
+                        if toks[k].get("kind") == "literal_num":
+                            lits.add(toks[k]["text"].strip())
+                        k += 1
+                    if lits:
+                        out.setdefault(name, set()).update(lits)
+                    i = k
+                    continue
+            i += 1
+    return out
 
 
 def fact_meaning_filter(a: Artifacts, *, is_finding: bool, component: str | None,

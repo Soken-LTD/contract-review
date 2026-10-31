@@ -220,8 +220,10 @@ async def handle_review_report(args: dict[str, Any]) -> dict[str, Any]:
     if state in ("failed", "insufficient_source"):
         raise ReviewError("E_JOB_TERMINAL")
     if state in ("awaiting_upload", "queued", "fetching", "building", "analyzing", "ready"):
-        # The catalogued text is "Job is {state}, eta {eta_s} s." (contract/errors.yaml); the
-        # report exists only after review_finalize, so there is no pipeline ETA to quote.
+        # The catalogued text is "Job is {state}; {eta_text}." (contract/errors.yaml); the report
+        # exists only after review_finalize, so there is no pipeline ETA to quote.
+        if state == "ready":
+            raise ReviewError("E_JOB_NOT_READY", state=state, eta_text="the report exists after review_finalize")
         raise ReviewError("E_JOB_NOT_READY", state=state, eta_s=0)
     # Publish info: loaded once, injected into all response branches for rendered jobs.
     report_id_for_pub = rep["report_id"] if rep else job.get("report_id")

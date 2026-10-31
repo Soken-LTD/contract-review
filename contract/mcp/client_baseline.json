@@ -1,0 +1,260 @@
+{
+ "date": "2026-10-23",
+ "rev": "df83adadb36c",
+ "tools": {
+  "review_answer_challenge": {
+   "enums": {},
+   "props": [
+    "answers",
+    "draft_key",
+    "job_id",
+    "revision"
+   ]
+  },
+  "review_challenge": {
+   "enums": {},
+   "props": [
+    "draft_key",
+    "job_id"
+   ]
+  },
+  "review_contract_map": {
+   "enums": {
+    "response_format": [
+     "concise",
+     "detailed"
+    ]
+   },
+   "props": [
+    "contract",
+    "cursor",
+    "job_id",
+    "page_size",
+    "response_format"
+   ]
+  },
+  "review_delete_job": {
+   "enums": {},
+   "props": [
+    "confirm",
+    "job_id"
+   ]
+  },
+  "review_dismiss_lead": {
+   "enums": {},
+   "props": [
+    "items",
+    "job_id"
+   ]
+  },
+  "review_facts": {
+   "enums": {},
+   "props": [
+    "cursor",
+    "filter",
+    "job_id",
+    "page_size"
+   ]
+  },
+  "review_finalize": {
+   "enums": {},
+   "props": [
+    "job_id"
+   ]
+  },
+  "review_get_guide": {
+   "enums": {
+    "chain": [
+     "aptos",
+     "evm",
+     "hyperevm",
+     "solana",
+     "starknet",
+     "sui",
+     "ton",
+     "tron"
+    ],
+    "topic": [
+     "categories",
+     "challenge_rules",
+     "checklist",
+     "severity_inputs"
+    ]
+   },
+   "props": [
+    "chain",
+    "job_id",
+    "topic"
+   ]
+  },
+  "review_leads": {
+   "enums": {
+    "origin": [
+     "all",
+     "analyzer",
+     "previous_report"
+    ],
+    "response_format": [
+     "concise",
+     "detailed"
+    ],
+    "status": [
+     "all",
+     "dismissed",
+     "merged",
+     "not_reviewed",
+     "open",
+     "promoted"
+    ]
+   },
+   "props": [
+    "cursor",
+    "detector",
+    "job_id",
+    "origin",
+    "page_size",
+    "path_glob",
+    "response_format",
+    "status"
+   ]
+  },
+  "review_publish": {
+   "enums": {},
+   "props": [
+    "consent",
+    "job_id",
+    "manage_key"
+   ]
+  },
+  "review_read_code": {
+   "enums": {
+    "response_format": [
+     "concise",
+     "detailed"
+    ]
+   },
+   "props": [
+    "end_line",
+    "job_id",
+    "path",
+    "response_format",
+    "start_line"
+   ]
+  },
+  "review_report": {
+   "enums": {},
+   "props": [
+    "job_id",
+    "page",
+    "wait_seconds"
+   ]
+  },
+  "review_search_code": {
+   "enums": {
+    "mode": [
+     "literal",
+     "regex"
+    ]
+   },
+   "props": [
+    "context_lines",
+    "cursor",
+    "job_id",
+    "max_hits",
+    "mode",
+    "path_glob",
+    "pattern"
+   ]
+  },
+  "review_set_section": {
+   "enums": {
+    "section": [
+     "context_notes",
+     "coverage",
+     "out_of_scope_reasons",
+     "roles_notes"
+    ]
+   },
+   "props": [
+    "context_notes",
+    "coverage",
+    "job_id",
+    "out_of_scope_reasons",
+    "roles_notes",
+    "section"
+   ]
+  },
+  "review_start": {
+   "enums": {
+    "requester_role": [
+     "authorized",
+     "owner",
+     "third_party_public_code"
+    ]
+   },
+   "props": [
+    "previous_manage_key",
+    "previous_report_id",
+    "requester_role",
+    "scope",
+    "source"
+   ]
+  },
+  "review_status": {
+   "enums": {
+    "response_format": [
+     "concise",
+     "detailed"
+    ]
+   },
+   "props": [
+    "job_id",
+    "response_format",
+    "wait_seconds"
+   ]
+  },
+  "review_submit_finding": {
+   "enums": {
+    "claimed_severity": [
+     "Critical",
+     "High",
+     "Informational",
+     "Low",
+     "Medium"
+    ]
+   },
+   "props": [
+    "absence_claims",
+    "attack_steps",
+    "body",
+    "category",
+    "claimed_severity",
+    "distinct_from",
+    "documented_intent_ref",
+    "draft_key",
+    "expected_revision",
+    "job_id",
+    "lead_ids",
+    "matrix",
+    "quotes",
+    "title"
+   ]
+  },
+  "review_withdraw_finding": {
+   "enums": {
+    "reason": [
+     "disproved",
+     "merged_into"
+    ]
+   },
+   "props": [
+    "draft_key",
+    "job_id",
+    "merged_into",
+    "note",
+    "quotes",
+    "reason"
+   ]
+  }
+ }
+}

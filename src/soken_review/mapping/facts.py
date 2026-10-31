@@ -92,11 +92,27 @@ def static_facts(
         out.append(fact("chain.block", block, unit="block", source="eth_blockNumber at pin, minus one"))
     if address:
         out.append(fact("deploy.address", address, source="job input"))
+    proxy = (chain_state or {}).get("proxy") or {}
     code = (chain_state or {}).get("bytecode")
     if code and code not in ("0x", "0x0") and block is not None:
         raw = bytes.fromhex(code.removeprefix("0x"))
-        out.append(fact("deploy.code_hash", "0x" + keccak256(raw).hex(), source=f"keccak256 of eth_getCode at block {block}"))
-        out.append(fact("deploy.code_bytes", len(raw), unit="bytes", source=f"eth_getCode at block {block}"))
+        # behind a followed proxy `bytecode` is the implementation runtime (worker chain_state 0)
+        of = f" of the implementation {proxy['implementation']}" if proxy.get("implementation") else ""
+        out.append(fact("deploy.code_hash", "0x" + keccak256(raw).hex(),
+                        source=f"keccak256 of eth_getCode{of} at block {block}"))
+        out.append(fact("deploy.code_bytes", len(raw), unit="bytes", source=f"eth_getCode{of} at block {block}"))
+    if proxy.get("implementation") and block is not None:
+        out.append(fact("deploy.proxy.pattern", proxy.get("pattern_name") or "proxy",
+                        source=f"proxy slots of {address} at block {block}"))
+        out.append(fact("deploy.proxy.implementation", proxy["implementation"],
+                        source=f"proxy slots of {address} at block {block}"))
+        for key in ("admin", "beacon"):
+            if proxy.get(key):
+                out.append(fact(f"deploy.proxy.{key}", proxy[key], source=f"proxy slots of {address} at block {block}"))
+        pcode = proxy.get("proxy_bytecode")
+        if pcode and pcode not in ("0x", "0x0"):
+            out.append(fact("deploy.proxy.code_hash", "0x" + keccak256(bytes.fromhex(pcode.removeprefix("0x"))).hex(),
+                            source=f"keccak256 of eth_getCode of the proxy {address} at block {block}"))
     if candidate:
         version = ((candidate.get("compiler") or {}).get("version") or "").split("+")[0]
         if re.fullmatch(r"\d+\.\d+\.\d+", version):

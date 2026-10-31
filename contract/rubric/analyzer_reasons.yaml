@@ -1,0 +1,20 @@
+# Plain sentences for an analyzer that did not run, or ran degraded (review_status `analyzer_note`,
+# report method table). MetaDAO blind run 2026-10-31: analyzer_degraded true with no reason anywhere
+# (the cause, cargo-audit without its RustSec snapshot, sat only in the worker's static_map.json).
+#
+# A reason code is matched by its first segment (before the first colon); the rest of the code
+# (host paths, provider text) is never printed. Unknown codes print as words.
+
+reasons:
+  rustsec_db_not_found: the RustSec advisory snapshot was not available on the server, so dependency advisories were not checked
+  rustsec_db_stale: the RustSec advisory snapshot is older than the freshness limit, so recent advisories may be missing
+  build_failed: the build failed, so there was no compiled code to analyze
+  analyzer_failed: it stopped with an internal error
+  no_output: it produced no output
+  not_available: it is not available for this language
+  step_deadline: the analysis step ran out of time
+  timeout: it ran out of time
+  not_run: it did not run
+build_prefix: "the build did not finish ({detail}), so there was no compiled code to analyze"
+sentence: "{tool} did not run fully: {reason}."
+unknown: An analyzer did not run fully, and the run did not record why.

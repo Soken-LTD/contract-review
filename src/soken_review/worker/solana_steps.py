@@ -227,10 +227,19 @@ async def _fetch_program(sup: Any, step: dict[str, Any], job: dict[str, Any], ou
         await _terminal(sup, step, "insufficient_source", error_code="E_SOURCE_NOT_FOUND", error_detail=detail)
         return
     cand = bundles[0].candidates[0]
-    pin = PinnedSource.from_files({p: t.encode("utf-8") for p, t in cand.files.items()},
-                                  langs={p: cand.language for p in cand.files})
+    pinned = {p: t.encode("utf-8") for p, t in cand.files.items()}
+    extra = workspace_manifests(cand._full_tree, (cand.settings or {}).get("subdir"), cand.files)
+    pin = PinnedSource.from_files({**pinned, **{p: t.encode("utf-8") for p, t in extra.items()}},
+                                  langs={p: cand.language for p in cand.files},
+                                  in_scope={p: False for p in extra}, roles=dict.fromkeys(extra, "dependency"))
     pin.persist(sup._pin_root, job["job_id"])
     meta = {k: v for k, v in asdict(cand).items() if k not in _RUNTIME_ONLY}
+    clash = reserved_prefix_collisions(cand.files) if cand._full_tree and (cand.settings or {}).get("subdir") else []
+    if clash:
+        meta["workspace_manifests"] = {
+            "pinned": False, "paths": clash[:20],
+            "note": "The workspace root manifests were not added to the pin because the repository has its "
+                    f"own files under {WORKSPACE_PIN_PREFIX}; those files are reviewed as they are."}
     (out_dir / "candidates.json").write_text(json.dumps([meta], indent=1, default=str), encoding="utf-8")
     if cand._full_tree and (cand.settings or {}).get("subdir"):
         (out_dir / _WORKSPACE_FILE).write_text(json.dumps({"subdir": cand.settings["subdir"],
@@ -287,7 +296,8 @@ async def _build_program(sup: Any, step: dict[str, Any], job: dict[str, Any], ou
 
     raw = json.loads((out_dir / "candidates.json").read_text())[0]
     pin = PinnedSource.load(sup._pin_root, job["job_id"])
-    files = {p: "\n".join(pin.read_all(p)) for p in pin.entries}
+    synthetic = synthetic_workspace_paths(pin)
+    files = {p: "\n".join(pin.read_all(p)) for p in pin.entries if p not in synthetic}
     comp = raw.get("compiler")
     settings = dict(raw.get("settings") or {})
     cand = Candidate(provider=raw["provider"], files=build_files(files, out_dir / _WORKSPACE_FILE, settings),
@@ -407,6 +417,42 @@ async def backfill_tiers(sup: Any) -> int:
     return done
 
 
+WORKSPACE_PIN_PREFIX = "_workspace/"
+_WORKSPACE_MANIFESTS = ("Cargo.toml", "Anchor.toml", ".cargo/config.toml", ".cargo/config")
+_MANIFEST_MAX = 200_000
+
+
+def workspace_manifests(tree: dict[str, str] | None, subdir: str | None,
+                        scope: dict[str, str]) -> dict[str, str]:
+    """Workspace root manifests of a subdir review, as read-only pin entries under `_workspace/`.
+
+    MetaDAO blind run 2026-10-31: `overflow-checks` and the release profile live in the workspace
+    root Cargo.toml, outside the pinned subdir, so the reviewer could not read or quote them. They
+    are pinned out of scope (role dependency): review_read_code reads them and quotes match them;
+    the build already has them from the workspace tree, and build_files leaves the copies out."""
+    if not tree or not subdir or reserved_prefix_collisions(scope):
+        return {}       # repo files under the reserved prefix win: nothing synthetic is pinned
+    out = {}
+    for name in _WORKSPACE_MANIFESTS:
+        text = tree.get(name)
+        if isinstance(text, str) and len(text) <= _MANIFEST_MAX:
+            out[WORKSPACE_PIN_PREFIX + name] = text
+    return out
+
+
+def reserved_prefix_collisions(scope: dict[str, str]) -> list[str]:
+    """Repo paths of the reviewed scope under the reserved `_workspace/` prefix. With any of them the
+    workspace manifests are not pinned, so a real file is never shadowed or dropped."""
+    return sorted(p for p in scope if p.startswith(WORKSPACE_PIN_PREFIX))
+
+
+def synthetic_workspace_paths(pin: PinnedSource) -> set[str]:
+    """The pin entries workspace_manifests added: exact names, out of scope, role dependency. Only
+    these leave the build and analyzer inputs; a repo file is never filtered by its path alone."""
+    names = {WORKSPACE_PIN_PREFIX + n for n in _WORKSPACE_MANIFESTS}
+    return {p for p, e in pin.entries.items() if p in names and not e.in_scope and e.role == "dependency"}
+
+
 def build_files(pinned: dict[str, str], workspace_path: Path, settings: dict[str, Any]) -> dict[str, str]:
     """Files the build gets: the pinned scope, inside its repo workspace when the fetch kept one.
 
@@ -468,7 +514,8 @@ async def _analyze_program(sup: Any, step: dict[str, Any], job: dict[str, Any],
     res = json.loads((out_dir / "build_result.json").read_text())
     raw = json.loads((out_dir / "candidates.json").read_text())[0]
     pin = PinnedSource.load(sup._pin_root, job["job_id"])
-    files = {p: "\n".join(pin.read_all(p)) for p in pin.entries}
+    synthetic = synthetic_workspace_paths(pin)
+    files = {p: "\n".join(pin.read_all(p)) for p in pin.entries if p not in synthetic}
     if res["status"] != "ok" or not res.get("work_dir"):
         # No build: clippy and cargo-audit cannot run; the source rules still do (degraded, named).
         from ..adapters.solana.analyze import analyze_source_only

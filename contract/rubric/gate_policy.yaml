@@ -32,6 +32,8 @@ codes:
   E_FIELD_FIXED: {class: blocking, why: "Server drafts carry analyzer evidence that the reviewer may not change."}
   E_DISPROVED_LOCKED: {class: blocking, why: "The reviewer's own answered kill item disproved this range; printing it again contradicts the record."}
   E_REVISION_CONFLICT: {class: blocking, why: "A stale revision would overwrite a newer one."}
+  E_SEVERITY_JUMP: {class: advisory, why: "A notice on an accepted revision: the computed severity moved more than one step and the inputs that moved it are named."}
+  E_REVISION_ANSWERED: {class: blocking, why: "An answered checklist is the record of that revision; a new answer needs a new revision."}
   E_RETRY_BUDGET: {class: blocking, why: "Rate limit on rejected calls per draft; advisory warnings never count against it."}
   E_DRAFT_STATUS: {class: blocking, why: "The draft has no open checklist to answer."}
   E_FINDING_NOT_FOUND: {class: blocking, why: "The draft does not exist."}
@@ -212,6 +214,9 @@ codes:
   E_CHALLENGE_NA_REASON:
     class: advisory
     why: "A not_applicable answer the map cannot confirm is recorded as unverified and has no effect."
+  E_CHALLENGE_PARTIAL:
+    class: advisory
+    why: "A partly unverified answer is recorded; the notice says the revision is frozen and how to answer again."
   E_CHALLENGE_CONTRADICTS_AUTO:
     class: advisory
     why: "An answer that contradicts the server's own check is recorded as unverified and has no effect; the server value is kept."

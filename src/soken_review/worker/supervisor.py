@@ -43,6 +43,8 @@ from ..adapters.evm import build as _build_mod
 from ..adapters.evm import build_scope as _build_scope
 from ..adapters.evm import fetch as _fetch_mod
 from ..adapters.evm import files as _files_mod
+from ..adapters.evm import proxy as _proxy_mod
+from ..adapters.evm import related_sources as _related_mod
 from ..adapters.evm import solc_select as _solc_select
 from ..adapters.evm.repo_candidate import repo_candidate_from_manifest, safe_read_repo_tree
 from ..adapters.evm.rpc import RpcAllEndpointsFailed, RpcClientPool
@@ -61,6 +63,7 @@ from ..sandbox.output import UnsafeOutput, read_output_files
 from ..sandbox.profile import HostCapacityError, configure_host_capacity
 from ..tools.git_probe import _SHA1_RE as _COMMIT_SHA1_RE
 from ..tools.git_probe import resolve_ref as _resolve_ref
+from ..tools.git_probe import unpinned_ref_detail as _unpinned_ref_detail
 from . import move_steps as _move
 from . import solana_steps as _solana_steps
 from . import ton_pipeline
@@ -624,10 +627,18 @@ class Supervisor:
         bytecode = await pool_pinned.get_code(addr_lower)
         is_eoa = not bytecode or bytecode in ("0x", "0x0", "")
 
-        cs_path.write_text(
-            json.dumps({"chain_id": chain_id, "address": addr_lower, "bytecode": bytecode, "block": pin_block}),
-            encoding="utf-8",
-        )
+        cs_doc: dict[str, Any] = {"chain_id": chain_id, "address": addr_lower, "bytecode": bytecode, "block": pin_block}
+        proxy = None if is_eoa else await _proxy_mod.resolve_proxy(pool_pinned, addr_lower, bytecode)
+        if proxy is not None:
+            # One job for a proxy (matrix run 2026-10-31, Venus): the implementation source is the
+            # code under review, so `bytecode` (fetch, the 13.1 comparison, the code hash) is the
+            # implementation runtime; `address` stays the proxy, where chain_state 1 reads the
+            # state (owner, paused, roles, config). The proxy runtime is kept beside it.
+            cs_doc.update(bytecode=proxy.pop("implementation_bytecode"), self_address=proxy["implementation"],
+                          proxy=proxy)
+            logger.info("job %s: proxy %s, implementation %s", job_id[-8:], proxy["pattern_name"],
+                        proxy["implementation"][:10])
+        cs_path.write_text(json.dumps(cs_doc), encoding="utf-8")
 
         if is_eoa:
             # Terminal: no source possible for an EOA (09 3.6)
@@ -644,9 +655,11 @@ class Supervisor:
             return
 
         # Code present: proceed to fetch
-        await self._mark_step(step_id, "done",
-                              provenance={"block": pin_block, "chain_id": chain_id,
-                                          "rpc": pool_pinned.answered_by or pool.answered_by})
+        cs_prov: dict[str, Any] = {"block": pin_block, "chain_id": chain_id,
+                                   "rpc": pool_pinned.answered_by or pool.answered_by}
+        if proxy is not None:
+            cs_prov["proxy"] = _proxy_mod.proxy_summary(proxy)
+        await self._mark_step(step_id, "done", provenance=cs_prov)
         await self._after_chain_state(step, job)
 
     async def _after_chain_state(self, step: dict[str, Any], job: dict[str, Any]) -> None:
@@ -697,6 +710,7 @@ class Supervisor:
         chain_id: int | None = job.get("chain_id")
         address: str | None = job.get("address")
         bytecode: str | None = None
+        cs: dict[str, Any] = {}
 
         if cs_path.exists():
             cs = json.loads(cs_path.read_text())
@@ -753,9 +767,11 @@ class Supervisor:
             await self._after_fetch(step, job)
             return
         else:
+            # A followed proxy (chain_state 0): the implementation is the code under review.
+            impl = (cs.get("proxy") or {}).get("implementation")
             candidates = await _fetch_mod.fetch_source(
                 chain_id=chain_id,
-                address=address,
+                address=impl or address,
                 runtime_bytecode=bytecode or "",
             )
 
@@ -784,9 +800,10 @@ class Supervisor:
             # review_search_code, never a location, never in the map or the nSLOC (1inch run
             # 2026-10-27: the ERC20Pods gas stipend behind L-003 could not be quoted).
             deps = _dependency_closure(best)
+            rel_files, rel_langs, rel_records = await self._fetch_related(job, cs_path, source_args)
             pin = PinnedSource.from_files(
-                {path: content.encode("utf-8") for path, content in {**deps, **best.files}.items()},
-                langs={path: best.language for path in [*deps, *best.files]},
+                {path: content.encode("utf-8") for path, content in {**deps, **rel_files, **best.files}.items()},
+                langs={**{path: best.language for path in [*deps, *best.files]}, **rel_langs},
                 in_scope={path: False for path in deps},
                 roles={path: "dependency" for path in deps},
             )
@@ -795,6 +812,11 @@ class Supervisor:
             logger.exception("pin failed for job %s", job_id[-8:])
             await self._mark_step(step_id, "failed", error_code="E_INTERNAL")
             return
+
+        if rel_records:
+            # read by the report (cover lines, scope addresses); written before candidates.json so a
+            # restarted fetch that finds candidates.json also finds it
+            (out_dir / "related_sources.json").write_text(json.dumps(rel_records, indent=2), encoding="utf-8")
 
         # Write candidates.json (RULES.md hand-off format)
         cands_out = [
@@ -830,6 +852,17 @@ class Supervisor:
             await repo.update_job_fields(job_id, source_pin=pin.source_pin)
 
         fetch_prov: dict[str, Any] = {"provider": best.provider, "sha256": best.sha256}
+        if cs.get("proxy"):
+            # Is the proxy runtime itself known code? Only then can the implementation review be
+            # tier A for this address (security review 2026-10-31); _resolve_provenance reads it.
+            check = _proxy_mod.verify_proxy(cs["proxy"], next(
+                (r for r in rel_records if r.get("role") == "proxy"), None))
+            cs["proxy"].update(verified=check["verified"], verified_by=check["by"])
+            cs_path.write_text(json.dumps(cs), encoding="utf-8")
+            fetch_prov["proxy_check"] = check
+        if rel_records:
+            # one provenance line per related contract (review_status `related`, report verification)
+            fetch_prov["related"] = rel_records
         if best.scope_excluded:
             # files the scope rules kept out of the review (review_status.scope_excluded)
             fetch_prov["scope_excluded"] = {"count": len(best.scope_excluded),
@@ -840,6 +873,25 @@ class Supervisor:
             fetch_prov["dependencies"] = json.loads(deps_path.read_text(encoding="utf-8"))
         await self._mark_step(step_id, "done", provenance=fetch_prov)
         await self._after_fetch(step, job)
+
+    async def _fetch_related(self, job: dict[str, Any], cs_path: Path, source_args: dict[str, Any]
+                             ) -> tuple[dict[str, str], dict[str, str], list[dict[str, Any]]]:
+        """Source of the related contracts of an EVM job (adapters/evm/related_sources): the proxy
+        in front of a followed implementation, and the contracts the client named. Read at the
+        pinned block; nothing here fails the job."""
+        if job.get("chain") == "tron" or not job.get("chain_id") or not cs_path.exists():
+            return {}, {}, []
+        cs = json.loads(cs_path.read_text())
+        entries: list[dict[str, str]] = []
+        proxy = cs.get("proxy") or {}
+        if proxy.get("proxy"):
+            entries.append({"name": "proxy", "address": proxy["proxy"], "role": "proxy"})
+        entries.extend(r for r in (source_args.get("related") or []) if isinstance(r, dict) and r.get("address"))
+        rpc_urls = _rpc_urls(int(job["chain_id"]))
+        if not entries or not rpc_urls or cs.get("block") is None:
+            return {}, {}, []
+        rpc = RpcClientPool(rpc_urls, block=int(cs["block"]))
+        return await _related_mod.fetch_related(int(job["chain_id"]), entries, rpc)
 
     async def _fetch_repo(
         self,
@@ -895,7 +947,16 @@ class Supervisor:
                 expected_sha = await _resolve_ref(repo_url, ref)
             except ReviewError as exc:
                 ec = exc.code if hasattr(exc, "code") else "E_COMMIT_NOT_FOUND"
-                await self._mark_step(step_id, "failed", error_code=ec)
+                if ec == "E_UNPINNED_REF":
+                    # a ref that names nothing never resolves on retry: stop the job and say
+                    # which branch exists (the default branch) instead of leaving the step failed
+                    async with self._pool.connection() as conn:
+                        repo = JobRepo(conn)
+                        async with conn.transaction():
+                            await repo.complete_step(step_id, "done", error_code=ec)
+                            await _fail_job(repo, job_id, ec, _unpinned_ref_detail(exc, ref))
+                else:
+                    await self._mark_step(step_id, "failed", error_code=ec)
                 logger.info("job %s: ref resolution failed for %r: %s", job_id[-8:], ref, exc)
                 return None
         # If neither commit nor ref, expected_sha remains None (plain HEAD fetch).
@@ -1252,7 +1313,9 @@ class Supervisor:
             pin = PinnedSource.load(self._pin_root, job_id)
             # the reviewed sources only; pinned dependency files (out of scope) reach the build
             # through the import closure of the materialised tree, as before
-            files_str = {path: "\n".join(pin.read_all(path)) for path, e in pin.entries.items() if e.in_scope}
+            # related contracts (_related/) are read and quoted, never compiled with the main code
+            files_str = {path: "\n".join(pin.read_all(path)) for path, e in pin.entries.items()
+                         if e.in_scope and not _related_mod.is_related_path(path)}
         except Exception:
             logger.exception("failed to load pin for job %s", job_id[-8:])
             result = {"status": "failed", "reason": "pin_load_error", "nsloc": 0, "stderr_head": None}
@@ -1503,7 +1566,13 @@ class Supervisor:
                                                            onchain_runtime=cs.get("bytecode"),
                                                            address=self_address)
                     )
-            prov = resolve_provenance(candidate=build.candidate if build else None, address=address, dep=dep)
+            # A followed proxy whose own runtime is not verified caps the unit at tier B
+            # (04 3 unit_tier, label proxy_unmatched): the implementation may match, the code
+            # that runs at the address is not known (security review 2026-10-31).
+            proxy_unit = ({"runtime_matches_standard_proxy": bool(cs["proxy"].get("verified"))}
+                          if cs.get("proxy") else None)
+            prov = resolve_provenance(candidate=build.candidate if build else None, address=address, dep=dep,
+                                      proxy=proxy_unit)
             prov["block"] = cs.get("block")
             prov_path.write_text(json.dumps(prov, indent=2), encoding="utf-8")
         async with self._pool.connection() as conn:
@@ -2019,7 +2088,8 @@ def _scope_retry_applies(result: BuildResult) -> bool:
 
 def _reviewed_files(pin_root: Path, job_id: str) -> dict[str, str]:
     pin = PinnedSource.load(pin_root, job_id)
-    return {p: "\n".join(pin.read_all(p)) for p, e in pin.entries.items() if e.in_scope}
+    return {p: "\n".join(pin.read_all(p)) for p, e in pin.entries.items()
+            if e.in_scope and not _related_mod.is_related_path(p)}
 
 
 def _subset_compiler(candidate: Candidate, files: dict[str, str]) -> Compiler | None:

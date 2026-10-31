@@ -324,6 +324,29 @@
           "type": "string",
           "minLength": 3,
           "maxLength": 128
+         },
+         "related": {
+          "type": "array",
+          "maxItems": 5,
+          "description": "EVM only: up to five other deployed contracts on the same chain that this one calls (price feed, NFT, vault). Their verified source is pinned in the same job, readable and quotable. Older tool lists can send the same as scope.include entries related:0xADDR or related:Name=0xADDR.",
+          "items": {
+           "type": "object",
+           "additionalProperties": false,
+           "properties": {
+            "address": {
+             "type": "string",
+             "pattern": "^0x[0-9a-fA-F]{40}$"
+            },
+            "name": {
+             "type": "string",
+             "pattern": "^[A-Za-z0-9_-]{1,40}$",
+             "description": "short name, used as the folder _related/<name>/ of its files"
+            }
+           },
+           "required": [
+            "address"
+           ]
+          }
          }
         },
         "required": [
@@ -538,7 +561,7 @@
      "wait_seconds": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 45,
+      "maximum": 55,
       "default": 0,
       "description": "Seconds to wait for the job to become ready or stop, as review_status with wait_for settled; that status is returned in status and replaces the polling calls after start."
      }
@@ -667,6 +690,13 @@
       "type": "string",
       "maxLength": 80
      },
+     "related": {
+      "type": "array",
+      "description": "Related contracts this job pins beside the main one (name and address).",
+      "items": {
+       "type": "object"
+      }
+     },
      "limits": {
       "type": "object",
       "additionalProperties": false,
@@ -689,7 +719,7 @@
   {
    "name": "review_status",
    "title": "Review job status",
-   "description": "Returns the state of a review job: current step, progress, source provenance, build and analyzer results, excluded files, finding drafts, open finalize checks and next_tools, the tools that move the job forward. Can wait up to 45 seconds: wait_for change (default) returns on any state change, wait_for settled returns when the job is ready, stopped or rendered, so one call replaces a polling loop.",
+   "description": "Returns the state of a review job: current step, progress, source provenance, build and analyzer results, excluded files, finding drafts, open finalize checks and next_tools, the tools that move the job forward. Can wait up to 55 seconds: wait_for change (default) returns on any state change, wait_for settled returns when the job is ready, stopped or rendered, so one call replaces a polling loop.",
    "annotations": {
     "title": "Review job status",
     "readOnlyHint": true,
@@ -707,7 +737,7 @@
      "wait_seconds": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 45,
+      "maximum": 55,
       "default": 0
      },
      "response_format": {
@@ -864,6 +894,12 @@
        }
       }
      },
+     "proxy": {
+      "type": "object"
+     },
+     "related": {
+      "type": "array"
+     },
      "map_status": {
       "type": "string",
       "enum": [
@@ -875,6 +911,10 @@
      },
      "analyzer_degraded": {
       "type": "boolean"
+     },
+     "analyzer_note": {
+      "type": "string",
+      "description": "Present when analyzer_degraded is true: which analyzer did not run fully and why, in plain words."
      },
      "build": {
       "type": "object",
@@ -913,7 +953,7 @@
        },
        "attempts": {
         "type": "array",
-        "description": "every compile attempt of the build step in order; a parse error at the chosen version is retried once with the newest release that satisfies every pragma; a repo build that still fails is retried with the files the deployable contracts need (scope closure), then without the files that do not compile when nothing reviewed imports them (scope exclude; they are out of scope in the report)",
+        "description": "every compile attempt of the build step in order: newest release satisfying every pragma after a parse error, then the scope closure of the deployable contracts, then without unimported files that fail (out of scope in the report)",
         "items": {
          "type": "object",
          "additionalProperties": false,
@@ -1839,6 +1879,11 @@
       "maxLength": 200,
       "description": "The reviewer's reason when set by the reviewer, else the one-line text of the binding rules"
      },
+     "checklist_notice": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "Which checklist the finding category uses and what it fits, or after a kill item the category whose checklist fits a near-miss issue"
+     },
      "matrix_cell": {
       "$ref": "#/$defs/severity"
      },
@@ -2106,6 +2151,11 @@
      "note": {
       "type": "string",
       "maxLength": 400
+     },
+     "checklist_notice": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "Which checklist the finding category uses, its kill items and what the category fits"
      }
     }
    }
@@ -2295,6 +2345,11 @@
      "severity_reason": {
       "type": "string",
       "maxLength": 200
+     },
+     "checklist_notice": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "Which checklist the finding category uses and what it fits, or after a kill item the category whose checklist fits a near-miss issue"
      },
      "matrix_cell": {
       "type": [

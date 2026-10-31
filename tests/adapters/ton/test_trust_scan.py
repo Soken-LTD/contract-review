@@ -233,7 +233,7 @@ def test_asm_tokens_exact(body: str) -> None:
 @pytest.mark.parametrize("src", [
     "const int K = 1_000_000_000_000_000_000_000;\n",       # 22 digits with separators
     "const K = 0x1234_5678_9abc_def0_1;\n",                 # 17 hex digits
-    "const K = 0b" + "1" * 65 + ";\n",
+    "const K = 0b10" + "1" * 64 + ";\n",                    # 66 binary digits, not a mask (2**n - 1 is allowed)
 ])
 def test_numeric_forms_over_cap(src: str) -> None:
     assert any("digit cap" in r for r in scan_files({"a.tolk": src}))

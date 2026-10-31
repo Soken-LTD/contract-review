@@ -29,6 +29,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -583,6 +584,88 @@ async def _demote_leads_to_open(
 
 # ── Main handler ──────────────────────────────────────────────────────────────
 
+_SEVERITY_LINE = re.compile(
+    r"^\s*severity\s*(?::|-)\s*(critical|high|medium|low|informational)\b[.;,]?\s*"
+    r"(?:(?:severity\s+)?reason\s*(?::|-)\s*(?P<reason>.+?))?\s*$", re.IGNORECASE | re.DOTALL)
+_REASON_LINE = re.compile(r"^\s*severity\s+reason\s*(?::|-)\s*(?P<reason>.+?)\s*$", re.IGNORECASE | re.DOTALL)
+_REASON_MAX = 200
+
+
+def lift_severity_line(args: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Read the reviewer's severity from a body paragraph when the arguments do not carry it.
+
+    A client whose tool list predates `severity_reason` (or `claimed_severity`) cannot send them, and
+    the matrix then replaced the reviewer's severity without a word (blind round 5, BakerFi: five
+    findings). A `p` block "Severity: High. Reason: ..." (or "Severity reason: ...") in description,
+    impact or recommendation is the same claim through a field every schema has: it fills the missing
+    argument, the same RV1 rules apply, and the block leaves the printed body when its section keeps
+    another block. Explicit arguments always win; nothing is lifted when both are present."""
+    if args.get("claimed_severity") and args.get("severity_reason"):
+        return args, None
+    body = args.get("body")
+    if not isinstance(body, dict):
+        return args, None
+    for section in ("impact", "description", "recommendation"):
+        blocks = body.get(section)
+        if not isinstance(blocks, list):
+            continue
+        for i, block in enumerate(blocks):
+            text = block.get("p") if isinstance(block, dict) else None
+            if not isinstance(text, str):
+                continue
+            m = _SEVERITY_LINE.match(text)
+            sev, reason = (m.group(1).capitalize(), m.group("reason")) if m else (None, None)
+            if m is None:
+                r = _REASON_LINE.match(text)
+                if r is None:
+                    continue
+                reason = r.group("reason")
+            out = dict(args)
+            lifted: dict[str, Any] = {"field": f"body.{section}[{i}]"}
+            if sev and not args.get("claimed_severity"):
+                out["claimed_severity"] = sev
+                lifted["claimed_severity"] = sev
+            if reason and not args.get("severity_reason"):
+                reason = " ".join(reason.split())
+                if len(reason) > _REASON_MAX:
+                    reason = reason[:_REASON_MAX].rsplit(" ", 1)[0]
+                    lifted["note"] = f"reason cut to {_REASON_MAX} characters"
+                out["severity_reason"] = reason
+                lifted["severity_reason"] = reason
+            if len(lifted) == 1:
+                return args, None
+            if len(blocks) > 1:
+                out["body"] = {**body, section: [b for j, b in enumerate(blocks) if j != i]}
+            else:
+                lifted["note"] = (lifted.get("note", "") + "; " if lifted.get("note") else "") + \
+                    "the paragraph stays in the body because the section has no other block"
+            return out, lifted
+    return args, None
+
+
+async def _severity_jump(conn: psycopg.AsyncConnection, job_id: str, draft_key: str, prev_revision: int,
+                         category: str | None, matrix: dict[str, Any], severity: str) -> dict[str, Any] | None:
+    """E_SEVERITY_JUMP envelope when the computed severity moved more than one step from the previous
+    revision, naming the inputs that changed (BakerFi r5: a reclassification jumped Low to High and the
+    client only saw the new value)."""
+    cur = await conn.execute(
+        """select computed_severity, category, content->'matrix' from finding_revisions
+            where job_id = %s and draft_key = %s and revision = %s""",
+        (job_id, draft_key, prev_revision))
+    row = await cur.fetchone()
+    if row is None or row[0] not in _SEV_RANK or severity not in _SEV_RANK:
+        return None
+    before, prev_cat, prev_matrix = row[0], row[1], row[2] if isinstance(row[2], dict) else {}
+    if abs(_SEV_RANK[severity] - _SEV_RANK[before]) <= 1:
+        return None
+    moved = [f"category {prev_cat} to {category}"] if prev_cat != category else []
+    moved += [f"{k} {prev_matrix.get(k)} to {matrix.get(k)}" for k in
+              ("impact_class", "magnitude", "trigger", "precondition", "reversibility")
+              if prev_matrix.get(k) != matrix.get(k)]
+    return ReviewError("E_SEVERITY_JUMP", before=before, after=severity, prev=prev_revision,
+                       rev=prev_revision + 1, inputs="; ".join(moved) or "the linked leads or the map").envelope()
+
+
 @handler("review_submit_finding")
 async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
     """Submit or revise a finding, then attach the disproof checklist when the draft needs it.
@@ -593,7 +676,10 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
     checks). Any failure to compute it leaves the result as before: next_tools still names
     review_challenge.
     """
+    args, lifted = lift_severity_line(args)
     result = await _submit_finding(args)
+    if lifted:
+        result["severity_from_body"] = lifted
     if result.get("accepted") and result.get("status") == "needs_challenge":
         from .challenge import handle_review_challenge
 
@@ -604,6 +690,8 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
         if challenge and challenge.get("accepted"):
             result["challenge"] = {k: v for k, v in challenge.items() if k != "accepted"}
             result["next_tools"] = ["review_finalize", "review_answer_challenge"]
+            if challenge.get("checklist_notice"):
+                result["checklist_notice"] = challenge["checklist_notice"]
     return result
 
 
@@ -1107,6 +1195,12 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
 
         computed_severity = sev_result.severity
         evidence_level = sev_result.evidence_level
+        if draft is not None and current_revision >= 0:
+            jump = await _severity_jump(conn, job_id, draft_key, current_revision, category, matrix,
+                                        computed_severity)
+            if jump is not None:
+                gate.warnings.insert(0, gate_policy.warning(jump, code="E_SEVERITY_JUMP", rule=None,
+                                                            field="matrix", match=None, suggest=None))
         # Issue 4a: >= 2 so Medium also goes to needs_challenge (was >= 3, a severity-laundering bug)
         new_status = "needs_challenge" if _SEV_RANK[computed_severity] >= 2 else "accepted"
 

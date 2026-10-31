@@ -188,5 +188,5 @@ def test_stale_schema_hint_tells_a_claude_ai_user_how_to_refresh():
 
     hint = _stale_schema_hint()
     assert hint.startswith("Your tool list predates the current schema")
-    assert "remove this connector and add it again" in hint and "start a new chat" in hint
+    assert "remove this connector" in hint and "add it again" in hint
     assert "reload the tool list" in hint
