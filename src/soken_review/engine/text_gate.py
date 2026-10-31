@@ -391,14 +391,10 @@ _T28_NUM_RE = re.compile(
 _T29_RE = re.compile(r"\b[CHMLIF]-\d{2,3}\b|\bLEAD-\d{4}\b")
 
 # T30: exploit sequence (04 §11.2 T30)
-_T30_STEP_RE = re.compile(r"(?i)\b(?:step\s*\d|stage\s*\d)\b")
-_T30_LIST_ACTOR_RE = re.compile(r"(?i)^(?:the )?(?:attacker|exploiter|malicious (?:user|contract|account))\b")
-_T30_ACTOR_RE = re.compile(
-    r"(?i)\b(?:attacker|exploiter|malicious (?:user|contract|account)|re-?enter(?:ant)?(?:\s+call)?)\b"
-)
-_T30_SEQ_RE = re.compile(
-    r"(?i)\b(?:then|next|after\s+that|afterwards|finally|again|repeat(?:s|ed|edly)?|loop(?:s|ed)?)\b"
-)
+_T30_STEP_RE = re.compile(_load_gate_yaml()["rules"]["T30"]["step_marker"], re.IGNORECASE)
+_T30_LIST_ACTOR_RE = re.compile(_load_gate_yaml()["rules"]["T30"]["list_actor_start"], re.IGNORECASE)
+_T30_ACTOR_RE = re.compile(_load_gate_yaml()["rules"]["T30"]["actor"], re.IGNORECASE)
+_T30_SEQ_RE = re.compile(_load_gate_yaml()["rules"]["T30"]["sequencing"], re.IGNORECASE)
 _T30_LINEREF_RE = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
 
 # T31: call syntax (04 §11.2, §11.3 control 2)

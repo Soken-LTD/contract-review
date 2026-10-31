@@ -69,7 +69,8 @@ rules:
     applies_to: [description, impact]
     step_marker: '\b(step\s*\d|stage\s*\d)\b'
     list_actor_start: '^(the )?(attacker|exploiter|malicious (user|contract|account))\b'
-    actor: '\b(attacker|exploiter|malicious (user|contract|account)|reenter|re-enter|reentrant call)\b'
+    # single source: text_gate.py compiles these four patterns (case-insensitive)
+    actor: '\b(attacker|exploiter|malicious (user|contract|account)|re-?enter|re-?entr(ant|ancy)(\s+call)?)\b'
     sequencing: '\b(then|next|after that|afterwards|finally|again|repeat(s|ed|edly)?|loop(s|ed)?)\b'
     reject_when: 'step_marker; or ul whose items start with list_actor_start; or a sentence with actor plus 2+ sequencing terms or 2+ line references'
   T31:  # control 2 (04 11.2): call syntax outside a valid code span or placeholder -> E_CODESPAN_NOT_IN_SOURCE, every model field

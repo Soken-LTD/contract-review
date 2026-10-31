@@ -4,7 +4,7 @@ Reads the pin store, the job work dir (candidates, chain state, build result), `
 the finding, challenge, section and read tables. Every printed number is recomputed from rows
 here (08 3.1 step 5). Model strings stay in placeholder form; `{{finding:key}}` is replaced by
 the final id because report.json has no draft-key map (W0 finding). `project()` at build is the
-only place facts expand and withholding happens (08 2.4).
+only place facts expand (08 2.4); every finding prints as is under every profile.
 """
 
 from __future__ import annotations

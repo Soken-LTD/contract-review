@@ -605,6 +605,17 @@ class TestT30ExploitSequence:
         vs = check_text("Attacker calls the function with forged data.", "model", ctx)
         assert any(v.rule_id == "T30" for v in vs)
 
+    @pytest.mark.parametrize("actor", ["reentrant call", "re-entrant call", "reentrancy", "re-enter", "reenter"])
+    def test_reentry_actor_with_two_seq_terms_rejected(self, actor):
+        ctx = CheckContext(field="description", profile="public_review")
+        text = f"The {actor} reaches the function, then loops, then drains."
+        assert any(v.rule_id == "T30" for v in check_text(text, "model", ctx))
+
+    def test_actor_regex_is_the_yaml_pattern(self):
+        from soken_review.engine import text_gate as tg
+
+        assert tg._T30_ACTOR_RE.pattern == tg._load_gate_yaml()["rules"]["T30"]["actor"]
+
     def test_no_exploit_sequence_passes(self):
         ctx = CheckContext(field="description", profile="public_review")
         text = "The function sets the fee to any value the owner provides."
