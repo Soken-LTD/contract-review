@@ -156,6 +156,10 @@ class TargetSpec:
     render_timeout_s: float = 600.0
     address_in_cover: str | None = None
     chain_read: dict[str, Any] | None = None   # review_chain_read step: {items, cite}; the finding cites `cite`
+    # the start address is a proxy: one job reviews the implementation, reads state at the proxy,
+    # pins the proxy source as related `proxy`, and the cover names both (matrix run 2026-10-31, Venus)
+    expect_proxy: bool = False
+    expect_facts: tuple[str, ...] = ()        # fact keys the job must hold (read at the start address)
 
 
 @dataclass
@@ -604,6 +608,11 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
             addr = str(prov.get("address") or "")
             res.check("cover provenance line names the start address", addr.lower() == spec.address_in_cover.lower(),
                       f"provenance.address {addr!r}")
+        impl = getattr(spec, "_implementation", "")
+        if spec.expect_proxy:
+            res.check("cover names the implementation beside the proxy",
+                      bool(impl) and str(prov.get("implementation") or "").lower() == impl.lower(),
+                      f"provenance.implementation {prov.get('implementation')!r} pattern {prov.get('proxy_pattern')!r}")
         raw_facts = report.get("facts") or {}
         facts = set(raw_facts) if isinstance(raw_facts, dict) else {str(f.get("key")) for f in raw_facts}
         res.check("report.facts carries the fact set, not context.* only",
@@ -627,6 +636,34 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
                 res.check("printed finding carries its severity basis (rule, set by, reason)",
                           '"Set by"' in blob and '"Rule"' in blob, blob[:200])
                 break
+
+
+def check_proxy_job(sess: Session, spec: TargetSpec, status: dict[str, Any]) -> None:
+    """One job for a proxy: the implementation is the reviewed code, the state facts come from the
+    proxy (a job on the implementation read owner 0x0 there), the proxy source is pinned beside it."""
+    res = sess.res
+    start_addr = str(spec.start["source"]["address"]).lower()
+    proxy = status.get("proxy") or {}
+    impl = str(proxy.get("implementation") or "")
+    res.check("status names the proxy and its implementation",
+              str(proxy.get("proxy") or "").lower() == start_addr and impl.startswith("0x") and impl.lower() != start_addr,
+              json.dumps(proxy)[:300])
+    spec._implementation = impl  # type: ignore[attr-defined]  # read by check_report
+    related = status.get("related") or []
+    res.check("proxy source pinned as related `proxy`",
+              any(r.get("role") == "proxy" and r.get("status") == "pinned" for r in related), json.dumps(related)[:300])
+    facts = dict(sess.facts())
+    res.check("deploy.address is the proxy", facts.get("deploy.address", "").lower() == start_addr,
+              f"deploy.address {facts.get('deploy.address')!r}")
+    res.check("deploy.proxy.implementation recorded", facts.get("deploy.proxy.implementation", "").lower() == impl.lower(),
+              f"deploy.proxy.implementation {facts.get('deploy.proxy.implementation')!r}")
+    for key in spec.expect_facts:
+        val = facts.get(key, "")
+        res.check(f"{key} read at the proxy (non-zero)", bool(val) and int(val, 16) != 0 if val.startswith("0x") else bool(val),
+                  f"{key} {val!r}")
+    if "onchain.eip1967.implementation" in facts:
+        res.check("the implementation slot read at the proxy is the reviewed implementation",
+                  facts["onchain.eip1967.implementation"].lower() == impl.lower(), facts["onchain.eip1967.implementation"])
 
 
 def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path) -> TargetResult:
@@ -661,6 +698,8 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
                       f"manager {deps.get('manager')} count {deps.get('count')} pinned_by {deps.get('pinned_by')} "
                       f"packages {[p.get('name') for p in deps.get('packages') or []][:5]}")
         sess = Session(client, res.job_id, res)
+        if spec.expect_proxy:
+            check_proxy_job(sess, spec, status)
         cmap = client.call("review_contract_map", job_id=res.job_id, page_size=30, response_format="detailed")
         units = parse_units(cmap["text"])
         head = cmap["text"].splitlines()[0]
@@ -719,6 +758,7 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
 # ── Fixture targets ────────────────────────────────────────────────────────
 
 WETH9 = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+EIGEN_STETH = "0x93c4b944D05dfe6df7645A86cd2206016c51564D"
 FORTON = "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ"
 CRS = "TRegosVaS1o3DHG85nnW8xYzczPm3xL76K"
 APYEE_COMMIT = "ffc81631af65010c8afe66e1bee09f94d2d1ea79"
@@ -752,6 +792,17 @@ TARGETS: dict[str, TargetSpec] = {
         chain_read={"cite": "chain.weth.total_supply",
                     "items": [{"alias": "weth", "address": WETH9, "kind": "call", "fn": "totalSupply()",
                                "returns": "uint256", "unit": "wei", "field": "total_supply"}]}),
+    "evm-proxy": TargetSpec(
+        # Venus blind run 2026-10-31: a proxy address gave a review of the proxy source only, and a
+        # second job on the implementation read owner 0x0. The EigenLayer stETH strategy is an
+        # EIP-1967 transparent proxy with a StrategyBase implementation, both Sourcify-verified with
+        # relative source paths: one job, one PDF, the EIP-1967 slots read at the proxy. (USDC is a
+        # ZeppelinOS-slot proxy and is followed too, but its implementation's Sourcify sources carry
+        # absolute paths that the fetch path filter drops, so it cannot build today.)
+        name="evm-proxy", start={"source": {"kind": "deployed", "chain": "evm", "chain_id": 1, "address": EIGEN_STETH}},
+        probe_url=f"https://sourcify.dev/server/v2/contract/1/{EIGEN_STETH}",
+        chain="evm", network="Ethereum Mainnet (1)", tiers=("A", "B"), address_in_cover=EIGEN_STETH, ready_timeout_s=900,
+        expect_proxy=True, expect_facts=("onchain.eip1967.implementation", "onchain.eip1967.admin")),
     "evm-repo": TargetSpec(
         name="evm-repo",
         start={"source": {"kind": "repo", "repo_url": "https://github.com/apyee-finance/apyee-protocol",
