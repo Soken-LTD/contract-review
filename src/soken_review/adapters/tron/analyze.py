@@ -51,6 +51,7 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
         _materialize_sources,
         _run_aderyn,
         _run_slither,
+        reviewer_cause,
     )
 
     if result.status != "ok" or not result.work_dir:
@@ -85,10 +86,17 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
     if _DIRECT_TOOLS:
         shim_applied = _apply_shim_direct()
 
-    slither_raw = _run_slither(proj_dir, out_dir, solc_path, settings, entry, image=tron_img)
+    diag: dict[str, Any] = {}
+    slither_raw = _run_slither(proj_dir, out_dir, solc_path, settings, entry, image=tron_img, diag=diag)
     if slither_raw is None:
-        reason = "sandbox_unavailable" if tron_img is None else "analyzer_failed"
-        return [], {"status": "not_run", "reason": reason}, {}
+        if tron_img is None:
+            return [], {"status": "not_run", "reason": "sandbox_unavailable"}, {}
+        failed: dict[str, Any] = {"status": "not_run", "tool": "slither",
+                                  "reason": diag.get("reason") or "analyzer_failed"}
+        cause = reviewer_cause(diag.get("cause"), set(result.candidate.files or ()))
+        if cause:
+            failed["cause"] = cause
+        return [], failed, {}
 
     # Aderyn resolves solc by bare semver: only an upstream release can be seeded offline.
     if solc.kind == "upstream_solc":

@@ -81,8 +81,13 @@ def test_nested_config_is_not_the_project_pin():
 def test_pick_config_version_prefers_one_that_satisfies_the_pragmas():
     config = [("0.8.19", "hardhat.config.ts"), ("0.7.6", "hardhat.config.ts")]
     assert sel.pick_config_version(config, ["^0.8.0"]) == ("0.8.19", "hardhat.config.ts")
-    # none fits: the newest pin still wins (the build retry then finds a satisfying release)
-    assert sel.pick_config_version([("0.7.6", "truffle-config.js")], ["^0.8.4"]) == ("0.7.6", "truffle-config.js")
+    # no pin satisfies any pragma: not the compiler of these files, the pragma rule chooses
+    assert sel.pick_config_version([("0.7.6", "truffle-config.js")], ["^0.8.4"]) is None
+    # pins conflict with one vendored pragma: the pin satisfying the most pragmas
+    config = [("0.4.21", "hardhat.config.ts"), ("0.8.24", "hardhat.config.ts"), ("0.8.15", "hardhat.config.ts")]
+    assert sel.pick_config_version(config, ["^0.8.24", "^0.8.24", "=0.8.19"]) == ("0.8.24", "hardhat.config.ts")
+    # without pragmas: the newest pin
+    assert sel.pick_config_version(config, []) == ("0.8.24", "hardhat.config.ts")
 
 
 # ── pragma rule ──────────────────────────────────────────────────────────────

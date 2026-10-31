@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -176,10 +177,20 @@ def analyze(result: BuildResult, *, scope_files: set[str] | None = None,
         # Repo and files candidates name no entry contract: Slither's solc mode takes one file, so
         # a host-written entry that imports every reviewed source compiles them all in one run.
         entry = aggregate = _write_aggregate_entry(proj_dir / "src", scope_files)
-    slither_raw = _run_slither(proj_dir, out_dir, solc_path, settings, entry)
+    diag: dict[str, Any] = {}
+    slither_raw = _run_slither(proj_dir, out_dir, solc_path, settings, entry, diag=diag)
     if slither_raw is None:
-        reason = "sandbox_unavailable" if _ANALYZE_IMAGE is None and not _DIRECT_TOOLS else "analyzer_failed"
-        return [], {"status": "not_run", "reason": reason}, {}
+        if _ANALYZE_IMAGE is None and not _DIRECT_TOOLS:
+            return [], {"status": "not_run", "reason": "sandbox_unavailable", "tool": "slither"}, {}
+        # Never a silent zero-leads run (BakerFi 2026-10-31): the reviewer reads why Slither gave
+        # nothing (review_status analyzer_note, report method table).
+        failed: dict[str, Any] = {"status": "not_run", "tool": "slither",
+                                  "reason": diag.get("reason") or "analyzer_failed"}
+        cause = reviewer_cause(diag.get("cause"), set(scope_files or ()) | ({aggregate} if aggregate else set()))
+        if cause:
+            failed["cause"] = cause
+        logger.warning("slither not run: %s %s", failed["reason"], cause or "")
+        return [], failed, {}
     all_raw.extend(slither_raw)
 
     solc_version = result.candidate.compiler.version if result.candidate.compiler else None
@@ -425,6 +436,7 @@ def _materialize_sources(work_dir: Path, proj_dir: Path) -> bool:
 
 
 _AGGREGATE_ENTRY = "soken_review_entry"
+_AGGREGATE_ALIAS = "soken_review_unit_"
 
 
 def _write_aggregate_entry(src_dir: Path, scope_files: set[str] | None = None) -> str | None:
@@ -453,7 +465,12 @@ def _write_aggregate_entry(src_dir: Path, scope_files: set[str] | None = None) -
             fd = os.open(entry, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
         except FileExistsError:
             continue
-        body = "// SPDX-License-Identifier: UNLICENSED\n" + "".join(f'import "./{p}";\n' for p in paths)
+        # Each import into its own namespace: a plain `import "./p";` pulls every top-level name of
+        # every reviewed file into this one unit, so two reviewed files declaring the same name in
+        # different places (BakerFi: interfaces/core/IVault.sol and interfaces/balancer/IVault.sol)
+        # fail with "Identifier already declared" and Slither produced nothing.
+        body = "// SPDX-License-Identifier: UNLICENSED\n" + "".join(
+            f'import "./{p}" as {_AGGREGATE_ALIAS}{i};\n' for i, p in enumerate(paths))
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(body)
         return name
@@ -485,15 +502,23 @@ def _solc_cache_root() -> Path:
 def _run_sandboxed(
     work_dir: Path, command: list[str], timeout: int = 180, workdir: str | None = None,
     image: str | None = None, extra_env: dict[str, str] | None = None,
+    diag: dict[str, Any] | None = None,
 ) -> bool:
-    """Run *command* in the analyze sandbox.  Returns True if completed."""
+    """Run *command* in the analyze sandbox.  Returns True if completed.
+
+    `diag`, when given, receives `returncode` and `stderr` (capped) of the run, or `timeout`."""
     if _DIRECT_TOOLS:
         try:
             env = {**os.environ, **extra_env} if extra_env else None
-            subprocess.run(command, capture_output=True, timeout=timeout, check=False, env=env)
-            return True
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+            proc = subprocess.run(command, capture_output=True, timeout=timeout, check=False, env=env)
+        except subprocess.TimeoutExpired:
+            if diag is not None:
+                diag["timeout"] = True
             return False
+        except FileNotFoundError:
+            return False
+        _record_diag(diag, proc)
+        return True
 
     image = image or _ANALYZE_IMAGE
     if not shutil.which("docker") or image is None:
@@ -517,7 +542,10 @@ def _run_sandboxed(
     try:
         proc = subprocess.run(argv, capture_output=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
+        if diag is not None:
+            diag["timeout"] = True
         return False
+    _record_diag(diag, proc)
     if proc.returncode != 0:
         lines = proc.stderr.decode(errors="replace").strip().splitlines()
         tail = [ln for ln in lines if "rror" in ln][:3] + lines[-2:]
@@ -525,9 +553,95 @@ def _run_sandboxed(
     return True
 
 
+_DIAG_STDERR_CAP = 64_000
+
+
+def _record_diag(diag: dict[str, Any] | None, proc: subprocess.CompletedProcess) -> None:
+    if diag is None:
+        return
+    diag["returncode"] = proc.returncode
+    raw = proc.stderr or b""
+    diag["stderr"] = (raw.decode(errors="replace") if isinstance(raw, bytes) else str(raw))[-_DIAG_STDERR_CAP:]
+
+
 # ---------------------------------------------------------------------------
 # Slither
 # ---------------------------------------------------------------------------
+
+# solc diagnostics as crytic-compile relays them: "Error: Identifier already declared." (0.8) or
+# "ParserError: Expected ..." / "DeclarationError: ..." with the location on the next line.
+_SOLC_ERROR = re.compile(r"^((?:[A-Z][A-Za-z]*)?Error): (.{1,200})$")
+_SOLC_LOCATION = re.compile(r"^\s*-->\s*(\S+?):(\d+):\d+:?\s*$")
+_PY_EXCEPTION = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Compilation)): ?(.*)$")
+# Reviewer-facing cause classes (closed set; texts in contract/rubric/analyzer_reasons.yaml). solc
+# messages quote identifiers and literals of the client's code, so the message itself is never
+# relayed: it is only matched against these fixed patterns (first match wins).
+_SOLC_CLASS_BY_MESSAGE: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("identifier_already_declared", re.compile(r"^Identifier already declared\b")),
+    ("version_mismatch", re.compile(r"^Source file requires different compiler version\b")),
+    ("source_not_found", re.compile(r"^(Source \S.* not found|File not found|File outside of allowed directories)")),
+)
+_SOLC_CLASS_BY_KIND = {"ParserError": "parser_error", "SyntaxError": "parser_error", "TypeError": "type_error",
+                       "DeclarationError": "declaration_error"}
+_INTERNAL_CLASSES = {"JSONDecodeError": "json_decode_error", "InvalidCompilation": "invalid_compilation",
+                     "SlitherError": "slither_error"}
+CAUSE_CLASSES = frozenset({*(c for c, _ in _SOLC_CLASS_BY_MESSAGE), *_SOLC_CLASS_BY_KIND.values(),
+                           *_INTERNAL_CLASSES.values(), "other"})
+
+
+def _solc_class(kind: str, message: str) -> str:
+    for cls, pat in _SOLC_CLASS_BY_MESSAGE:
+        if pat.match(message):
+            return cls
+    return _SOLC_CLASS_BY_KIND.get(kind, "other")
+
+
+def slither_failure(stderr: str | None, returncode: int | None, timed_out: bool = False,
+                    produced_json: bool = False) -> tuple[str, dict[str, Any] | None]:
+    """(reason code, cause) of a Slither run that gave no result, from its stderr.
+
+    compile_failed: solc rejected the compilation Slither drove; internal_error: Slither or
+    crytic-compile raised; timeout; no_output: it exited without writing its JSON; analyzer_failed:
+    nothing recognisable. `cause` is {"class": one of CAUSE_CLASSES, "file": raw location path,
+    "line": int} for a solc error, {"class": ...} for an internal error; no message text ever (the
+    caller validates `file` against the reviewed files, reviewer_cause)."""
+    if timed_out:
+        return "timeout", None
+    lines = (stderr or "").splitlines()
+    for i, line in enumerate(lines):
+        m = _SOLC_ERROR.match(line)
+        if not m:
+            continue
+        # A solc diagnostic names its source location on the next lines; a Python exception line
+        # ("TypeError: ..." at the end of a traceback) does not.
+        loc = next((lm for lm in map(_SOLC_LOCATION.match, lines[i + 1:i + 3]) if lm), None)
+        if loc is None:
+            continue
+        return "compile_failed", {"class": _solc_class(m.group(1), m.group(2)),
+                                  "file": loc.group(1), "line": int(loc.group(2))}
+    for line in reversed(lines):
+        m = _PY_EXCEPTION.match(line.strip())
+        if m:
+            return "internal_error", {"class": _INTERNAL_CLASSES.get(m.group(1).rsplit(".", 1)[-1], "other")}
+    if returncode not in (None, 0):
+        return "analyzer_failed", None
+    if not produced_json:
+        return "no_output", None
+    return "analyzer_failed", None
+
+
+def reviewer_cause(cause: dict[str, Any] | None, reviewed: set[str]) -> dict[str, Any] | None:
+    """The reviewer-facing cause: the class (closed set), and the file and line only when the file
+    is one of `reviewed` (the reviewed sources and the host-written entry)."""
+    if not isinstance(cause, dict) or cause.get("class") not in CAUSE_CLASSES:
+        return None
+    out: dict[str, Any] = {"class": cause["class"]}
+    path = str(cause.get("file") or "").removeprefix("./")
+    line = cause.get("line")
+    if path and path in reviewed and isinstance(line, int) and 0 < line < 10_000_000:
+        out["file"], out["line"] = path, line
+    return out
+
 
 def _run_slither(
     proj_dir: Path,
@@ -536,12 +650,29 @@ def _run_slither(
     settings: dict,
     entry_file: str | None,
     image: str | None = None,
+    diag: dict[str, Any] | None = None,
 ) -> list[dict] | None:
     """Run Slither on the entry file with the exact solc and settings (05 8.1) inside the sandbox.
 
     Returns raw detector rows, or None when Slither did not produce a result: an analyzer that
-    did not run is never reported as "no leads" (03 3.1 analyzer_degraded).
+    did not run is never reported as "no leads" (03 3.1 analyzer_degraded). `diag`, when given,
+    receives `reason` and the unvalidated `cause` of a failed run (slither_failure); stderr stays in
+    the internal log only.
     """
+    run: dict[str, Any] = {}
+
+    def failed(reason: str | None = None) -> None:
+        if diag is None:
+            return
+        cause = None
+        if reason is None:
+            reason, cause = slither_failure(run.get("stderr"), run.get("returncode"),
+                                            bool(run.get("timeout")), produced_json)
+        diag["reason"] = reason
+        if cause:
+            diag["cause"] = cause
+
+    produced_json = False
     out_json = out_dir / "sbx" / "slither_out.json"
     src_dir = proj_dir / "src"
     work_dir = out_dir.parent
@@ -553,10 +684,10 @@ def _run_slither(
         or not _safe_relative_path(entry_file)
         or Path(entry_file).suffix.lower() not in _ALLOWED_SOURCE_EXTS
     ):
-        return None
+        return failed("no_entry")
     target = (src_dir / entry_file).resolve()
     if not target.is_relative_to(src_dir.resolve()) or not target.is_file():
-        return None
+        return failed("no_entry")
 
     solc_args = []
     if settings.get("via_ir"):
@@ -586,15 +717,21 @@ def _run_slither(
 
     try:
         if _DIRECT_TOOLS:
-            subprocess.run(cmd, capture_output=True, timeout=600, check=False, cwd=cwd)
-        elif not _run_sandboxed(work_dir, cmd, timeout=600, workdir=cwd, image=image):
-            return None
+            try:
+                _record_diag(run, subprocess.run(cmd, capture_output=True, timeout=600, check=False, cwd=cwd))
+            except subprocess.TimeoutExpired:
+                return failed("timeout")
+        elif not _run_sandboxed(work_dir, cmd, timeout=600, workdir=cwd, image=image, diag=run):
+            return failed("timeout" if run.get("timeout") else "analyzer_failed")
     except RuntimeError:
-        return None  # sandbox_unavailable
+        return failed("sandbox_unavailable")
 
     data = read_sandbox_json(out_dir / "sbx", out_json.name)
+    produced_json = isinstance(data, dict)
     if not isinstance(data, dict) or not data.get("success"):
-        return None
+        if isinstance(data, dict) and data.get("error"):
+            run["stderr"] = (run.get("stderr") or "") + "\n" + str(data["error"])[:_DIAG_STDERR_CAP]
+        return failed()
 
     raw: list[dict] = []
     for det in data.get("results", {}).get("detectors", []):
