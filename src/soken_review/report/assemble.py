@@ -366,13 +366,24 @@ def _build_verification_blocks(
 
     # Table 1: Deployment — address, chain/network, block, on-chain code hash, entry contract
     dep_rows: list[list[Any]] = []
+    proxy = (chain_state or {}).get("proxy") or {}
+    impl = str(proxy.get("implementation") or "")
     if address:
-        dep_rows.append(["Address", {"addr": address}])
+        dep_rows.append(["Proxy address" if impl else "Address", {"addr": address}])
+    if impl and _ADDR_OK.match(impl):
+        # one job for a proxy: the implementation source was rebuilt and compared; state was read
+        # at the proxy address above
+        if re.fullmatch(r"[a-z0-9_]{1,40}", str(proxy.get("pattern_name") or "")):
+            dep_rows.append(["Proxy pattern", str(proxy["pattern_name"])])
+        dep_rows.append(["Implementation", {"addr": impl}])
+        for label, key in (("Proxy admin", "admin"), ("Beacon", "beacon")):
+            if proxy.get(key) and _ADDR_OK.match(str(proxy[key])):
+                dep_rows.append([label, {"addr": str(proxy[key])}])
     dep_rows.append(["Chain / network", network])
     if block is not None:
         dep_rows.append([unit_label, int(block)])
     if code_hash:
-        dep_rows.append(["On-chain code hash", code_hash])
+        dep_rows.append(["Implementation code hash" if impl else "On-chain code hash", code_hash])
     if entry_contract:
         # Contract names come from the source tree: a `src` cell, never server text (text classes).
         dep_rows.append(["Entry contract", {"src": entry_contract[:300]}])
@@ -424,7 +435,45 @@ def _build_verification_blocks(
 
 
 # ------------------------------------------------------------------ provenance (08 1.4 label_key)
+_ADDR_OK = re.compile(r"^[0-9A-Za-z:_.-]{20,130}$")
+
+
 def provenance(
+    job: dict[str, Any],
+    cands: list[dict[str, Any]],
+    chain_state: dict[str, Any] | None,
+    deployment: dict[str, Any] | None = None,
+    *,
+    today: date | None = None,
+    related: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """`_provenance_tier` plus the proxy and related-contract lines of the cover: the deployed
+    address is a proxy (implementation reviewed, state read at the proxy) and the related
+    contracts pinned in the same job (adapters/evm/related_sources)."""
+    prov = _provenance_tier(job, cands, chain_state, deployment, today=today)
+    proxy = (chain_state or {}).get("proxy") or {}
+    impl = str(proxy.get("implementation") or "")
+    if impl and _ADDR_OK.match(impl):
+        prov["implementation"] = impl
+        prov["upgradeable"] = True
+        pattern = str(proxy.get("pattern_name") or "")
+        if re.fullmatch(r"[a-z0-9_]{1,40}", pattern):
+            prov["proxy_pattern"] = pattern
+        admin = str(proxy.get("admin") or "")
+        if prov["tier"] == "A" and admin and _ADDR_OK.match(admin):
+            # the EIP-1967 admin slot read at the pinned block: on-chain evidence of who upgrades
+            prov["upgrade_authority"] = {"addr": admin}
+    rows = [{"name": str(r["name"]), "address": str(r["address"]), "status": str(r["status"])}
+            for r in (related or []) if isinstance(r, dict) and r.get("role") != "proxy"
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,40}", str(r.get("name") or ""))
+            and _ADDR_OK.match(str(r.get("address") or ""))
+            and r.get("status") in ("pinned", "no_code", "no_verified_source", "fetch_failed")]
+    if rows:
+        prov["related"] = rows[:6]
+    return prov
+
+
+def _provenance_tier(
     job: dict[str, Any],
     cands: list[dict[str, Any]],
     chain_state: dict[str, Any] | None,
@@ -1128,14 +1177,21 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     scope_files, oos = [], []
     dep_groups: dict[str, int] = {}
     entry_file = (cands[0].get("entry_contract") or "").rsplit(":", 1)[0] if cands else ""
+    # Address column: behind a followed proxy the reviewed entry file is the implementation's; a
+    # related contract's entry file carries its own address (adapters/evm/related_sources).
+    related = _json(work / "related_sources.json", [])
+    entry_addr = {entry_file: ((chain_state or {}).get("proxy") or {}).get("implementation") or job.get("address")}
+    for r in related if isinstance(related, list) else []:
+        if isinstance(r, dict) and r.get("status") == "pinned" and r.get("path") and r.get("entry_contract"):
+            entry_addr[f"{r['path']}/{str(r['entry_contract']).rsplit(':', 1)[0]}"] = r.get("address")
     # files the scope rules or the build left out are listed once, with their reason (below)
     excluded_paths = {str(r.get("path")) for r in ((cands[0].get("scope_excluded") if cands else None) or [])
                       if isinstance(r, dict)}
     for path, e in sorted(pin.entries.items()):
         if e.in_scope and e.role == "source":
             row: dict[str, Any] = {"name": _unit_of(path), "file": path, "nsloc": count_nsloc("\n".join(pin.read_all(path)))}
-            if job.get("address") and path == entry_file:
-                row["addr"] = job["address"]
+            if job.get("address") and entry_addr.get(path):
+                row["addr"] = entry_addr[path]
             scope_files.append(row)
         elif not e.in_scope and e.role == "dependency":
             dep_groups[_dependency_package(path)] = dep_groups.get(_dependency_package(path), 0) + 1
@@ -1260,7 +1316,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     subj_cands = subject_candidates(job, cands, pin)
     subj = pick_subject(subj_cands)
     days = int(_limits()["report"]["default_days"])
-    prov = provenance(job, cands, chain_state, deployment, today=today)
+    prov = provenance(job, cands, chain_state, deployment, today=today, related=related)
     meta: dict[str, Any] = {
         "report_type": "automated", "kind": texts["sub_line"], "subject": subj["value"], "subject_source": subj["source"],
         "chain": chain, "network": network[:60], "chain_id": chain_id, "explorer": None,

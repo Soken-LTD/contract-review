@@ -266,8 +266,10 @@ def detect_proxy(code: str, storage_reader: dict[str, str], calls: dict[str, str
     if impl_addr is not None:
         admin_raw = storage_reader.get(EIP1967_ADMIN_SLOT, "0x" + "0" * 64)
         admin_addr = _slot_to_address(admin_raw)
-        # Distinguish UUPS: check for upgradeTo (0x3659cfe6) or upgradeToAndCall (0x4f1ef286) in code
-        is_uups = "3659cfe6" in raw or "4f1ef286" in raw
+        # Distinguish UUPS: check for upgradeTo (0x3659cfe6) or upgradeToAndCall (0x4f1ef286) in code.
+        # A transparent proxy holds the same selectors in its admin path and sets the admin slot
+        # (EigenLayer stETH strategy, 2026-10-31: read as UUPS), so an admin means transparent.
+        is_uups = admin_addr is None and ("3659cfe6" in raw or "4f1ef286" in raw)
         return ProxyResult(
             pattern=2,
             pattern_name="eip1967_uups" if is_uups else "eip1967_transparent",
@@ -402,3 +404,66 @@ async def read_proxy_authority(rpc_client: Any, address: str, result: ProxyResul
     except ValueError as exc:
         out.setdefault("errors", []).append(f"abi: {exc}")
     return out
+
+
+# ---------------------------------------------------------------------------
+# One job for a proxy: review the implementation, read state at the proxy
+# ---------------------------------------------------------------------------
+
+BEACON_IMPLEMENTATION_SELECTOR = "0x5c60da1b"   # implementation() on an EIP-1967 beacon
+
+# Patterns whose logic lives at one implementation address and whose state lives at the proxy:
+# EIP-1167 clone, EIP-1967 transparent / UUPS, EIP-1967 beacon, EIP-1822, ZeppelinOS. Not followed:
+# EIP-7702 (an EOA), Safe (its authority is the owners, read by read_proxy_authority) and the
+# diamond (many facets, 04 2.1). Matrix run 2026-10-31 (Venus ResilientOracle): a job on a proxy
+# reviewed only the proxy source, and a second job on the implementation read owner 0x0 there.
+FOLLOWED_PATTERNS = frozenset({1, 2, 3, 4, 5})
+
+
+def _empty_code(code: str | None) -> bool:
+    return not code or code in ("0x", "0x0")
+
+
+async def resolve_proxy(rpc_client: Any, address: str, code: str) -> dict[str, Any] | None:
+    """Follow one proxy hop at the pinned block. Returns the chain_state `proxy` record
+    ({pattern, pattern_name, proxy, implementation, admin, beacon, proxy_bytecode,
+    implementation_bytecode}) or None when the address is not a followed proxy, the implementation
+    cannot be read, or it holds no code. Never raises: a failed read means "review the address
+    as it is", which is what the job did before."""
+    try:
+        slots = await read_proxy_slots(rpc_client, address)
+        calls = await read_proxy_calls(rpc_client, address)
+        res = detect_proxy(code, slots, calls)
+        if res.pattern not in FOLLOWED_PATTERNS:
+            return None
+        impl = res.implementation
+        if res.pattern == 3 and res.beacon:
+            raw = await rpc_client.eth_call(to=res.beacon, data=BEACON_IMPLEMENTATION_SELECTOR)
+            impl = _word_address(bytes.fromhex(_strip0x(raw)), 0) if raw else None
+        if not impl or impl == _ZERO_ADDRESS or impl.lower() == address.lower():
+            return None
+        impl_code = await rpc_client.get_code(impl)
+        if _empty_code(impl_code):
+            return None
+    except Exception as exc:  # noqa: BLE001  # detection is additive; the job goes on as before
+        logger.info("proxy resolution for %s skipped: %s", address[:10], str(exc)[:120])
+        return None
+    return {
+        "pattern": res.pattern,
+        "pattern_name": res.pattern_name,
+        "proxy": address.lower(),
+        "implementation": impl.lower(),
+        "admin": res.admin,
+        "beacon": res.beacon,
+        "proxy_bytecode": code,
+        "implementation_bytecode": impl_code,
+    }
+
+
+def proxy_summary(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The addresses of a chain_state `proxy` record, without the runtimes (step provenance,
+    review_status, report)."""
+    if not isinstance(record, dict) or not record.get("implementation"):
+        return None
+    return {k: record.get(k) for k in ("pattern_name", "proxy", "implementation", "admin", "beacon")
+            if record.get(k) is not None}
