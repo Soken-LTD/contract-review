@@ -4,8 +4,9 @@ A run counts for a draft only when all of these hold (security review 2026-10-31
 
 - it is bound to the draft and to the revision that is current now (a revised finding loses the
   mark until a new run against the new revision passes);
-- the reviewer claimed a pass (`expect` pass) and every test that ran passed;
-- it finished before the job was finalized (the report evidence cannot change after finalize;
+- the reviewer claimed a pass (`expect` pass), the run has at least one test and every test passed
+  (a skipped or unreported test fails closed);
+- it finished before the job was finalized (no end time after finalize fails closed) (the report evidence cannot change after finalize;
   finalize also refuses while a run of the job is queued or running);
 - the test exercised the cited contract: the run read the job's deployment address through the
   proxy, or the test imports a pinned file the finding quotes.
@@ -48,13 +49,14 @@ def why_not(run: dict[str, Any], current_revision: int | None, address: str | No
         return "the run was filed with expect fail"
     if current_revision is None or run.get("draft_revision") != current_revision:
         return "the finding was revised after the run; run the test again against the current revision"
-    if finalized_at is not None and run.get("finished_at") is not None and run["finished_at"] > finalized_at:
-        return "the run ended after finalize"
+    if finalized_at is not None and (run.get("finished_at") is None or run["finished_at"] > finalized_at):
+        return "the run had not ended when the job was finalized"
     result = run.get("result") or {}
     if isinstance(result, str):
         result = json.loads(result)
-    if not any(t.get("status") == "passed" for t in result.get("tests") or []):
-        return "no test passed"
+    tests = result.get("tests") or []
+    if not tests or not all(isinstance(t, dict) and t.get("status") == "passed" for t in tests):
+        return "every test of the run must pass (at least one test)"
     if exercised(result, run.get("test_source") or "", address, cited) is None:
         return ("the test neither read the deployment address on the fork nor imports a pinned file the "
                 "finding quotes")

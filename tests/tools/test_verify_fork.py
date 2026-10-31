@@ -364,3 +364,29 @@ def test_test_verified_alone_never_passes_k8():
     r = compute_severity(matrix, "finalize", SeverityContext(phase="finalize", evidence_level="test_verified",
                                                               has_attack_steps=True, open_downgrade_item=False))
     assert "K8" in r.caps_applied and r.severity == "High"
+
+
+def test_evidence_fails_closed_on_mixed_results_and_unfinished_runs():
+    from datetime import UTC, datetime, timedelta
+
+    from soken_review.engine.fork_evidence import why_not
+
+    fin = datetime(2026, 10, 31, 8, 0, tzinfo=UTC)
+    base = {"draft_key": "d", "status": "passed", "expect": "pass", "draft_revision": 1, "test_source": TEST,
+            "finished_at": fin - timedelta(minutes=5),
+            "result": {"rpc": {"addresses": [WETH9.lower()]},
+                       "tests": [{"name": "A.test_a()", "status": "passed"}]}}
+    assert why_not(base, 1, WETH9, set(), fin) is None
+    mixed = {**base, "result": {**base["result"], "tests": [{"name": "A.test_a()", "status": "passed"},
+                                                             {"name": "A.test_b()", "status": "failed"}]}}
+    assert "every test" in why_not(mixed, 1, WETH9, set(), fin)
+    skipped = {**base, "result": {**base["result"], "tests": [{"name": "A.test_a()", "status": "passed"},
+                                                               {"name": "A.test_c()", "status": "skipped"}]}}
+    assert "every test" in why_not(skipped, 1, WETH9, set(), fin)
+    empty = {**base, "result": {**base["result"], "tests": []}}
+    assert "every test" in why_not(empty, 1, WETH9, set(), fin)
+    unfinished = {**base, "finished_at": None}
+    assert "finalized" in why_not(unfinished, 1, WETH9, set(), fin)
+    late = {**base, "finished_at": fin + timedelta(seconds=1)}
+    assert "finalized" in why_not(late, 1, WETH9, set(), fin)
+    assert why_not(unfinished, 1, WETH9, set(), None) is None     # not finalized yet: the run's own status decides
