@@ -800,7 +800,8 @@ def fork_test_block(ft: dict[str, Any], ctx: BuildContext) -> str:
     """The fork verification line of a card (review_verify_on_fork) and, for the owner profile only,
     the test source as code (the same visibility rule as attack steps)."""
     t, lab = ctx.texts, ctx.texts["labels"]
-    head, _, _ = t["fork_verified_line"].partition("{tests}")
+    key = "fork_verified_line" if ft.get("kind") == "verified" else "fork_exercised_line"
+    head, _, _ = t[key].partition("{tests}")
     line = esc(head.format(network=ft["network"], block=f'{int(ft["block"]):,}'))
     names = ", ".join(esc_src(n, ctx) for n in ft["tests"])
     out = f'<div class="fl">{esc(lab["fork_test"])}</div><p>{line}{names}</p>'

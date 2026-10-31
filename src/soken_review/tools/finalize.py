@@ -990,6 +990,9 @@ async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], jo
     # ── Fork runs still pending (review_verify_on_fork) ─────────────
     # Evidence never changes after finalize: a queued or running run must end first (a run is at most
     # fork_verify.wall_s once it starts). A run that failed or errored never blocks.
+    from ..sandbox.fork_verify import reap_dead_runs
+
+    await reap_dead_runs(conn, job_id)   # a run whose step died, or that outlived its wall cap, has ended
     async with conn.cursor() as cur:
         await cur.execute("select run_id, status from fork_runs where job_id = %s and status in ('queued','running') "
                           "order by created_at limit 1", (job_id,))

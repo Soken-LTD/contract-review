@@ -8,8 +8,9 @@ A run counts for a draft only when all of these hold (security review 2026-10-31
   (a skipped or unreported test fails closed);
 - it finished before the job was finalized (no end time after finalize fails closed) (the report evidence cannot change after finalize;
   finalize also refuses while a run of the job is queued or running);
-- the test exercised the cited contract: the run read the job's deployment address through the
-  proxy, or the test imports a pinned file the finding quotes.
+- the cited contract executed: the EVM loaded the deployment's code or storage (or called it) through
+  the proxy, or the test deploys or calls a contract of a pinned file the finding quotes. A run that
+  meets everything else but this is printed as "Exercised by a test" and raises nothing.
 
 The raise is printed only. The stored evidence level, the severity caps (K8) and finalize use the
 base level; a run never changes a severity.
@@ -25,22 +26,27 @@ _IMPORT_PREFIX = "pinned/"
 
 
 def exercised(result: dict[str, Any], test_source: str, address: str | None, cited: set[str]) -> str | None:
-    """`address` when the run read the deployment address, `import` when the test imports a cited
-    pinned file, else None."""
-    from ..sandbox.fork_verify import test_imports
-
-    touched = {str(a).lower() for a in ((result.get("rpc") or {}).get("addresses") or [])}
-    if address and address.lower() in touched:
+    """How the run shows that the cited contract executed: `address` when the EVM loaded the deployment's
+    code or storage (or called it) through the proxy, `import` when the test deploys or calls a contract
+    declared in a pinned file the finding quotes; else None. A balance or nonce read alone, or an
+    import the test never uses, is not execution."""
+    executed = {str(a).lower() for a in ((result.get("rpc") or {}).get("executed") or [])}
+    if address and address.lower() in executed:
         return "address"
-    imported = {i[len(_IMPORT_PREFIX):] for i in test_imports(test_source or "") if i.startswith(_IMPORT_PREFIX)}
-    if imported & cited:
-        return "import"
+    for imp in result.get("imports") or []:
+        if isinstance(imp, dict) and imp.get("path") in cited and imp.get("used"):
+            return "import"
     return None
+
+
+NOT_EXERCISED = ("the test did not execute the cited contract (no code or storage load of the deployment, and"
+                 " no deployment of or call into a contract of a pinned file the finding quotes)")
 
 
 def why_not(run: dict[str, Any], current_revision: int | None, address: str | None, cited: set[str],
             finalized_at: datetime | None = None) -> str | None:
-    """None when the run raises the draft's evidence, else the reason it does not (tool output)."""
+    """None when the run raises the draft's evidence, else the reason it does not (tool output).
+    NOT_EXERCISED is the one reason that still prints the run, as exercised (`classify`)."""
     if not run.get("draft_key"):
         return "the run is not bound to a finding (draft_key)"
     if run.get("status") != "passed":
@@ -58,9 +64,20 @@ def why_not(run: dict[str, Any], current_revision: int | None, address: str | No
     if not tests or not all(isinstance(t, dict) and t.get("status") == "passed" for t in tests):
         return "every test of the run must pass (at least one test)"
     if exercised(result, run.get("test_source") or "", address, cited) is None:
-        return ("the test neither read the deployment address on the fork nor imports a pinned file the "
-                "finding quotes")
+        return NOT_EXERCISED
     return None
+
+
+def classify(run: dict[str, Any], current_revision: int | None, address: str | None, cited: set[str],
+             finalized_at: datetime | None = None) -> tuple[str | None, str | None]:
+    """("verified", None): raises to test_verified; ("touched", why): printed as "Exercised by a
+    test" without a raise; (None, why): not printed."""
+    why = why_not(run, current_revision, address, cited, finalized_at)
+    if why is None:
+        return "verified", None
+    if why == NOT_EXERCISED:
+        return "touched", why
+    return None, why
 
 
 async def _rows(conn: Any, sql: str, params: tuple) -> list[dict[str, Any]]:
@@ -86,7 +103,8 @@ async def context(conn: Any, job_id: str) -> tuple[str | None, datetime | None, 
 
 
 async def verified_runs(conn: Any, job_id: str) -> dict[str, dict[str, Any]]:
-    """{draft_key: the latest run that raises it}."""
+    """{draft_key: run} for the report: the latest verified run of each draft, else its latest touched
+    run; each row carries `kind` (verified or touched)."""
     address, finalized_at, revs, cited = await context(conn, job_id)
     runs = await _rows(conn, """select run_id, draft_key, draft_revision, status, expect, network, block, test_path,
                test_sha256, test_source, result, finished_at
@@ -95,8 +113,9 @@ async def verified_runs(conn: Any, job_id: str) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for r in runs:
         key = r["draft_key"]
-        if key in out:
+        if key in out and out[key]["kind"] == "verified":
             continue
-        if why_not(r, revs.get(key), address, cited.get(key, set()), finalized_at) is None:
-            out[key] = r
+        kind, _why = classify(r, revs.get(key), address, cited.get(key, set()), finalized_at)
+        if kind == "verified" or (kind == "touched" and key not in out):
+            out[key] = {**r, "kind": kind}
     return out

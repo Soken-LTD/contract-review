@@ -7,6 +7,7 @@
  "requested_by_line": "Role declared by the requester, not verified by SOKEN LTD: {label}",
  "attack_steps_owner_only": "Step-by-step exploit sequence available to the code owner.",
  "fork_verified_line": "Verified by a test on a local fork of {network} at block {block}: {tests}",
+ "fork_exercised_line": "Exercised by a test on a local fork of {network} at block {block}: {tests}",
  "fork_test_owner_only": "The test source is available to the code owner.",
  "public_review_banner": "Ownership of this code is not proven. Automated output, not confirmed by SOKEN LTD.",
  "authorship_box": "Findings were written by the requester's language model session and checked by automated rules only. SOKEN LTD has not confirmed them.",

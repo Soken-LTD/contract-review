@@ -846,7 +846,8 @@ def chain_figures(content: dict[str, Any], facts: list[dict[str, Any]], printabl
 
 
 def fork_evidence(row: dict[str, Any] | None, base_level: str) -> dict[str, Any] | None:
-    """evidence.fork_test of a finding with a passing fork run, or None. The passed test names are the
+    """evidence.fork_test of a finding with a passing fork run, or None; `kind` verified raises the level,
+    touched (the cited contract did not execute) is printed as exercised only. The passed test names are the
     reviewer's identifiers (src class); the source is kept whole and printed for the owner only."""
     if not row:
         return None
@@ -856,7 +857,8 @@ def fork_evidence(row: dict[str, Any] | None, base_level: str) -> dict[str, Any]
     names = [str(t.get("name"))[:200] for t in result.get("tests") or [] if t.get("status") == "passed"][:3]
     if not names:
         return None
-    return {"run_id": row["run_id"], "network": str(row["network"])[:120], "block": int(row["block"]),
+    return {"run_id": row["run_id"], "kind": row.get("kind") or "touched",
+            "network": str(row["network"])[:120], "block": int(row["block"]),
             "tests": names, "test_path": str(row["test_path"])[:100], "test_sha256": row["test_sha256"],
             "base_level": base_level, "source": str(row.get("test_source") or "")[:65536]}
 
@@ -1134,7 +1136,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         fork = fork_evidence(fork_of.get(d["draft_key"]), level)
         if fork is not None:
             f["evidence"]["fork_test"] = fork
-            f["evidence_level"] = "test_verified"
+            if fork["kind"] == "verified":
+                f["evidence_level"] = "test_verified"
         if c.get("attack_steps"):
             f["attack_steps"] = [{"text": _sub_findings(s["text"], keymap), "ref": _parse_ref(s["ref"])}
                                  for s in c["attack_steps"]][:10]

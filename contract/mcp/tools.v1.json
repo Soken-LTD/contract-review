@@ -3791,7 +3791,7 @@
      },
      "evidence": {
       "type": "object",
-      "description": "draft_key, level (test_verified or unchanged), report_line"
+      "description": "draft_key, level (test_verified, exercised or unchanged), why, report_line"
      },
      "poll": {
       "type": "object"

@@ -113,7 +113,8 @@ async def test_fork_endpoint_pins_tags_and_refuses_later_blocks():
         assert r.json()["result"] == "0x0"
         r = await c.post(f"/{TOKEN}", json=_rpc("eth_getStorageAt", [addr, "0x0", {"blockHash": "0x" + "cd" * 32}]))
         assert r.json()["error"]["code"] == -32601                                 # any other hash stays refused
-    assert stats.as_dict(_meter)["addresses"] == [addr]   # the accounts the run read, for the evidence rule
+    d = stats.as_dict(_meter)                             # the accounts the run read, for the evidence rule
+    assert d["addresses"] == [addr] and d["executed"] == [addr]   # getCode and getStorageAt are execution loads
     reads = [s for s in up.seen if s["method"] != "eth_getBlockByNumber"]
     assert [s["params"][-1] for s in reads] == [hex(BLOCK), hex(BLOCK), hex(BLOCK)]
     assert stats.denied == 2
@@ -123,6 +124,21 @@ def test_pin_tags_leaves_methods_without_a_block_alone():
     item = _rpc("eth_chainId", [])
     assert pin_tags(item, BLOCK) is item
     assert pin_tags(_rpc("eth_call", [{"to": "0x" + "1" * 40}, "pending"]), BLOCK)["params"][1] == hex(BLOCK)
+
+
+@pytest.mark.asyncio
+async def test_a_balance_or_nonce_read_is_not_recorded_as_execution():
+    up = _Upstream()
+    app, meter, stats = _app(up)
+    addr = "0x" + "3" * 40
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://relay") as c:
+        await c.post(f"/{TOKEN}", json=_rpc("eth_getBalance", [addr, hex(BLOCK)]))
+        await c.post(f"/{TOKEN}", json=_rpc("eth_getTransactionCount", [addr, hex(BLOCK)]))
+    d = stats.as_dict(meter)
+    assert d["addresses"] == [addr] and d["executed"] == []
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://relay") as c:
+        await c.post(f"/{TOKEN}", json=_rpc("eth_call", [{"to": addr, "data": "0x"}, hex(BLOCK)]))
+    assert stats.as_dict(meter)["executed"] == [addr]
 
 
 @pytest.mark.asyncio

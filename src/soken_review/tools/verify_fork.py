@@ -58,10 +58,14 @@ def _pin_root() -> Any:
     return _ctx.get_pin_root()
 
 
-def report_line(network: str, block: int, tests: list[dict[str, Any]]) -> str:
-    """The sentence the report prints under a finding verified by a passing run."""
+def report_line(network: str, block: int, tests: list[dict[str, Any]], verb: str = "Verified") -> str:
+    """The sentence the report prints under a finding with a passing run (kit fork_verified_line or
+    fork_exercised_line)."""
+    from ..report.kit.build import kit_texts
+
+    key = "fork_verified_line" if verb == "Verified" else "fork_exercised_line"
     names = [t["name"] for t in tests if t.get("status") == "passed"][:3]
-    return f"Verified by a test on a local fork of {network} at block {block:,}: {', '.join(names)}"
+    return kit_texts()[key].format(network=network, block=f"{block:,}", tests=", ".join(names))
 
 
 def run_view(row: dict[str, Any], why_not: str | None = None) -> dict[str, Any]:
@@ -83,9 +87,15 @@ def run_view(row: dict[str, Any], why_not: str | None = None) -> dict[str, Any]:
         for k in ("tests", "rpc", "wall_s", "reason", "diagnostics", "engine"):
             if k in result:
                 out[k] = result[k]
+        from ..engine.fork_evidence import NOT_EXERCISED
+
         if row.get("draft_key") and why_not is None:
             out["evidence"] = {"draft_key": row["draft_key"], "level": "test_verified",
                                "report_line": report_line(row["network"], int(row["block"]), result.get("tests") or [])}
+        elif row.get("draft_key") and why_not == NOT_EXERCISED:
+            out["evidence"] = {"draft_key": row["draft_key"], "level": "exercised", "why": why_not,
+                               "report_line": report_line(row["network"], int(row["block"]), result.get("tests") or [],
+                                                          verb="Exercised")}
         elif row.get("draft_key"):
             out["evidence"] = {"draft_key": row["draft_key"], "level": "unchanged", "why": why_not}
         out["untrusted_text_note"] = ("Assertion messages, console lines and compiler diagnostics are in untrusted_text: "

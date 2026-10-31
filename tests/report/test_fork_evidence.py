@@ -23,7 +23,7 @@ pragma solidity ^0.8.13;
 import {Test} from "forge-std/Test.sol";
 contract WethDepositTest is Test { function test_depositCreditsBalance() public { assertTrue(true); } }
 """
-FORK = {"run_id": "fork-0123456789ab", "network": "Ethereum Mainnet", "block": 26311087,
+FORK = {"run_id": "fork-0123456789ab", "kind": "verified", "network": "Ethereum Mainnet", "block": 26311087,
         "tests": ["WethDepositTest.test_depositCreditsBalance()"], "test_path": "test/Verify.t.sol",
         "test_sha256": "a" * 64, "base_level": "reasoning_challenged", "source": SOURCE}
 
@@ -63,7 +63,8 @@ def test_assembly_raises_only_for_a_passing_run_with_a_passed_test():
            "test_sha256": "b" * 64, "test_source": SOURCE,
            "result": {"status": "passed", "tests": [{"name": "V.test_a()", "status": "passed"},
                                                      {"name": "V.test_b()", "status": "skipped"}]}}
-    ev = fork_evidence(row, "analyzer_and_reasoning")
+    ev = fork_evidence({**row, "kind": "verified"}, "analyzer_and_reasoning")
+    assert ev["kind"] == "verified"
     assert ev["tests"] == ["V.test_a()"] and ev["base_level"] == "analyzer_and_reasoning" and ev["source"] == SOURCE
     assert fork_evidence(None, "reasoning_only") is None
     assert fork_evidence({**row, "result": {"tests": [{"name": "V.t()", "status": "failed"}]}}, "reasoning_only") is None
@@ -99,7 +100,7 @@ async def test_rendered_report_carries_the_passing_run(db_pool, tmp_path, monkey
     jid = await _job(db_pool, tmp_path)
     from .test_chain_facts_render import VE
 
-    result = {"status": "passed", "rpc": {"addresses": [VE.lower()]},
+    result = {"status": "passed", "rpc": {"addresses": [VE.lower()], "executed": [VE.lower()]},
               "tests": [{"name": "SupplyTest.test_mergeCountsTwice()", "status": "passed", "gas": 91234}]}
     async with db_pool.connection() as conn:
         # ended before finalize, against the draft's current revision 1, read the escrow address
@@ -136,3 +137,14 @@ async def test_rendered_report_carries_the_passing_run(db_pool, tmp_path, monkey
     assert f"Verified by a test on a local fork of BNB Smart Chain Mainnet at block {META['block']:,}: " in html
     assert "SupplyTest.test_mergeCountsTwice()" in html
     assert "assertTrue(true)" not in html            # third-party public code: the source is owner-only
+
+
+def test_a_touched_run_prints_exercised_and_keeps_the_level(tmp_path):
+    r = with_profile(report(severities=["Medium", "Low"]), "public_review")
+    f = r["findings"][0]
+    base = f["evidence_level"]
+    f["evidence"]["fork_test"] = {**copy.deepcopy(FORK), "kind": "touched"}
+    html = _html(r, tmp_path)
+    assert "Exercised by a test on a local fork of Ethereum Mainnet at block 26,311,087: " in html
+    assert "Verified by a test" not in html
+    assert f["evidence_level"] == base and base != "test_verified"

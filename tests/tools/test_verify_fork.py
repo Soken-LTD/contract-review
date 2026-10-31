@@ -185,7 +185,7 @@ async def test_worker_step_records_the_result_and_a_crash_never_fails_the_job(db
                                               "wait_seconds": 0})
     passed = {"status": "passed", "wall_s": 9.5, "rpc": {"requests": 30, "upstream_calls": 28, "denied": 1,
                                                           "denied_methods": ["anvil_nodeInfo"],
-                                                          "addresses": [WETH9.lower()]},
+                                                          "addresses": [WETH9.lower()], "executed": [WETH9.lower()]},
               "tests": [{"name": "VerifyTest.test_depositCredits()", "status": "passed", "gas": 253747, "events": 2}]}
 
     async def fake_execute(run, root, **kw):
@@ -245,11 +245,15 @@ async def test_poll_waits_for_the_result(db_pool):
 
 
 async def _passed_run(db_pool, jid: str, key: str, *, revision: int = 1, expect: str = "pass",
-                      addresses: list[str] | None = None, source: str = TEST, finished: str = "now() - interval '1 minute'") -> str:
+                      addresses: list[str] | None = None, executed: list[str] | None = None,
+                      imports: list[dict] | None = None, source: str = TEST,
+                      finished: str = "now() - interval '1 minute'") -> str:
+    """A passing run; `addresses` are executed too unless `executed` is given."""
     import secrets
 
     run_id = "fork-" + secrets.token_hex(6)
-    result = {"status": "passed", "rpc": {"addresses": addresses or []},
+    result = {"status": "passed", "imports": imports or [],
+              "rpc": {"addresses": addresses or [], "executed": addresses or [] if executed is None else executed},
               "tests": [{"name": "VerifyTest.test_depositCredits()", "status": "passed", "gas": 1}]}
     async with db_pool.connection() as conn:
         await conn.execute(f"""insert into fork_runs (run_id, job_id, draft_key, draft_revision, status, chain_id, network,
@@ -260,10 +264,18 @@ async def _passed_run(db_pool, jid: str, key: str, *, revision: int = 1, expect:
 
 
 async def _verified(db_pool, jid: str) -> dict:
+    """{draft_key: run} of the runs that raise (kind verified)."""
     from soken_review.engine.fork_evidence import verified_runs
 
     async with db_pool.connection() as conn:
-        return await verified_runs(conn, jid)
+        return {k: v for k, v in (await verified_runs(conn, jid)).items() if v["kind"] == "verified"}
+
+
+async def _kinds(db_pool, jid: str) -> dict:
+    from soken_review.engine.fork_evidence import verified_runs
+
+    async with db_pool.connection() as conn:
+        return {k: v["kind"] for k, v in (await verified_runs(conn, jid)).items()}
 
 
 async def _poll(jid: str, run_id: str) -> dict:
@@ -300,10 +312,25 @@ async def test_expect_fail_and_unexercised_runs_do_not_raise(db_pool):
     jid, _ = await _job(db_pool)
     key = await _draft(db_pool, jid)
     fail_claim = await _passed_run(db_pool, jid, key, expect="fail", addresses=[WETH9.lower()])
-    other = await _passed_run(db_pool, jid, key, addresses=["0x" + "9" * 40])     # read another contract only
+    other = await _passed_run(db_pool, jid, key, addresses=["0x" + "9" * 40])     # executed another contract only
     assert await _verified(db_pool, jid) == {}
     assert "expect fail" in (await _poll(jid, fail_claim))["evidence"]["why"]
-    assert "deployment address" in (await _poll(jid, other))["evidence"]["why"]
+    polled = await _poll(jid, other)
+    assert polled["evidence"]["level"] == "exercised" and "did not execute" in polled["evidence"]["why"]
+    assert polled["evidence"]["report_line"].startswith("Exercised by a test on a local fork")
+    assert await _kinds(db_pool, jid) == {key: "touched"}
+
+
+@ASYNC
+async def test_an_incidental_balance_read_of_the_deployment_is_not_execution(db_pool):
+    jid, _ = await _job(db_pool)
+    key = await _draft(db_pool, jid)
+    run = await _passed_run(db_pool, jid, key, addresses=[WETH9.lower()], executed=[])   # balance or nonce read only
+    assert await _kinds(db_pool, jid) == {key: "touched"}
+    assert (await _poll(jid, run))["evidence"]["level"] == "exercised"
+    later = await _passed_run(db_pool, jid, key, addresses=[WETH9.lower()], executed=[WETH9.lower()],
+                              finished="now() - interval '30 seconds'")
+    assert (await _verified(db_pool, jid))[key]["run_id"] == later
 
 
 @ASYNC
@@ -312,7 +339,9 @@ async def test_importing_a_cited_pinned_file_counts_as_exercised(db_pool):
     async with db_pool.connection() as conn:
         await conn.execute("update jobs set address = null where job_id = %s", (jid,))   # a repository review
     key = await _draft(db_pool, jid)
-    run = await _passed_run(db_pool, jid, key)          # TEST imports pinned/src/Vault.sol, nothing read
+    unused = await _passed_run(db_pool, jid, key, imports=[{"path": "src/Vault.sol", "contracts": ["Vault"], "used": []}],
+                               finished="now() - interval '2 minutes'")
+    run = await _passed_run(db_pool, jid, key, imports=[{"path": "src/Vault.sol", "contracts": ["Vault"], "used": ["Vault"]}])
     assert await _verified(db_pool, jid) == {}           # the finding quotes no file yet
     async with db_pool.connection() as conn:
         await conn.execute("""insert into finding_revisions (job_id, draft_key, revision, content, content_hash, category,
@@ -321,6 +350,7 @@ async def test_importing_a_cited_pinned_file_counts_as_exercised(db_pool):
         await conn.execute("insert into finding_quote_ranges values (%s, %s, 1, 0, 'location', 'src/Vault.sol', 1, 3)",
                            (jid, key))
     assert (await _verified(db_pool, jid))[key]["run_id"] == run
+    assert (await _poll(jid, unused))["evidence"]["level"] == "exercised"   # imported, never deployed or called
 
 
 @ASYNC
@@ -374,7 +404,7 @@ def test_evidence_fails_closed_on_mixed_results_and_unfinished_runs():
     fin = datetime(2026, 10, 31, 8, 0, tzinfo=UTC)
     base = {"draft_key": "d", "status": "passed", "expect": "pass", "draft_revision": 1, "test_source": TEST,
             "finished_at": fin - timedelta(minutes=5),
-            "result": {"rpc": {"addresses": [WETH9.lower()]},
+            "result": {"rpc": {"addresses": [WETH9.lower()], "executed": [WETH9.lower()]},
                        "tests": [{"name": "A.test_a()", "status": "passed"}]}}
     assert why_not(base, 1, WETH9, set(), fin) is None
     mixed = {**base, "result": {**base["result"], "tests": [{"name": "A.test_a()", "status": "passed"},
@@ -390,3 +420,70 @@ def test_evidence_fails_closed_on_mixed_results_and_unfinished_runs():
     late = {**base, "finished_at": fin + timedelta(seconds=1)}
     assert "finalized" in why_not(late, 1, WETH9, set(), fin)
     assert why_not(unfinished, 1, WETH9, set(), None) is None     # not finalized yet: the run's own status decides
+
+
+def test_import_usage_needs_a_deployment_or_a_call():
+    from soken_review.pinning.store import PinnedSource
+
+    pin = PinnedSource.from_files({"src/Vault.sol": b"pragma solidity ^0.8.13;\ncontract Vault { function f() external {} }\n"
+                                                     b"library VaultMath {}\n"})
+    head = 'pragma solidity ^0.8.13;\nimport {Test} from "forge-std/Test.sol";\nimport {Vault} from "pinned/src/Vault.sol";\n'
+    idle = head + "contract T is Test { function test_x() public { assertTrue(true); } }"
+    assert fv.import_usage(idle, pin) == [{"path": "src/Vault.sol", "contracts": ["Vault", "VaultMath"], "used": []}]
+    deploy = head + "contract T is Test { function test_x() public { Vault v = new Vault(); v.f(); } }"
+    assert fv.import_usage(deploy, pin)[0]["used"] == ["Vault"]
+    cast = head + "contract T is Test { function test_x() public { Vault(address(1)).f(); } }"
+    assert fv.import_usage(cast, pin)[0]["used"] == ["Vault"]
+    commented = head + "contract T is Test { function test_x() public { /* new Vault() */ } }"
+    assert fv.import_usage(commented, pin)[0]["used"] == []
+
+
+@ASYNC
+async def test_a_dead_step_never_blocks_finalize(db_pool):
+    from soken_review.tools import finalize as fin_mod
+
+    jid, pin_root = await _job(db_pool)
+    fin_mod.set_pool(db_pool)
+    fin_mod.set_context(MemoryJobContext(pin_root))
+    res = await vf_mod.handle_verify_on_fork({"job_id": jid, "test": {"content": TEST}, "wait_seconds": 0})
+    async with db_pool.connection() as conn:   # the worker died mid-run: running step, lease long expired
+        await conn.execute("update fork_runs set status = 'running', started_at = now() - interval '1 minute' where run_id = %s",
+                           (res["run_id"],))
+        await conn.execute("""update job_steps set status = 'running', lease_until = now() - interval '1 minute'
+                              where job_id = %s and step = 'verify_fork'""", (jid,))
+    out = await fin_mod.handle_review_finalize({"job_id": jid})
+    assert not any(e["code"] == "E_FORK_PENDING" for e in out.get("errors") or []), out
+    polled = await _poll(jid, res["run_id"])
+    assert polled["status"] == "error" and polled["reason"] == "step_lost"
+    async with db_pool.connection() as conn:
+        await conn.execute("update job_steps set status = 'cancelled', cancel_reason = 'budget' "
+                           "where job_id = %s and status = 'queued'", (jid,))
+
+
+@ASYNC
+async def test_reaper_ends_cancelled_and_overdue_runs_and_keeps_live_ones(db_pool):
+    jid, _ = await _job(db_pool)
+    live = await vf_mod.handle_verify_on_fork({"job_id": jid, "test": {"content": TEST}, "wait_seconds": 0})
+    async with db_pool.connection() as conn:
+        assert await fv.reap_dead_runs(conn, jid) == []                     # queued step: live
+        await conn.execute("update job_steps set status = 'running', lease_until = now() + interval '5 minutes' "
+                           "where job_id = %s and step = 'verify_fork'", (jid,))
+        await conn.execute("update fork_runs set status = 'running', started_at = now() - interval '1 hour' where run_id = %s",
+                           (live["run_id"],))
+        assert await fv.reap_dead_runs(conn, jid) == [live["run_id"]]       # far past the wall cap
+        await conn.execute("update job_steps set status = 'done' where job_id = %s and step = 'verify_fork'", (jid,))
+    second = await vf_mod.handle_verify_on_fork({"job_id": jid, "test": {"content": TEST}, "wait_seconds": 0})
+    async with db_pool.connection() as conn:
+        await conn.execute("update job_steps set status = 'cancelled', cancel_reason = 'user_delete' "
+                           "where job_id = %s and status = 'queued'", (jid,))
+        assert await fv.reap_dead_runs(conn, jid) == [second["run_id"]]     # cancelled step
+
+
+@ASYNC
+async def test_a_failing_step_marks_its_run_error(db_pool):
+    jid, _ = await _job(db_pool)
+    res = await vf_mod.handle_verify_on_fork({"job_id": jid, "test": {"content": TEST}, "wait_seconds": 0})
+    step_id = (await _rows(db_pool, "select step_id from fork_runs where run_id = %s", res["run_id"]))[0][0]
+    await fv.fail_runs_of_step(db_pool, step_id)
+    polled = await _poll(jid, res["run_id"])
+    assert polled["status"] == "error" and polled["reason"] == "step_failed"

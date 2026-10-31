@@ -1270,10 +1270,11 @@
             "fork_test": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["run_id", "network", "block", "tests", "test_path", "test_sha256"],
+              "required": ["run_id", "kind", "network", "block", "tests", "test_path", "test_sha256"],
               "description": "A passing review_verify_on_fork run bound to this finding (evidence_level test_verified). The card prints the kit line fork_verified_line; the test source prints only when meta.profile is owner (same rule as attack_steps)",
               "properties": {
                 "run_id": {"type": "string", "pattern": "^fork-[0-9a-f]{12}$", "x-text-class": "server"},
+                "kind": {"enum": ["verified", "touched"], "x-text-class": "kit", "description": "verified: evidence_level is test_verified; touched: the cited contract did not execute, printed as exercised only"},
                 "network": {"type": "string", "maxLength": 120, "x-text-class": "server"},
                 "block": {"type": "integer", "minimum": 0},
                 "tests": {"type": "array", "minItems": 1, "maxItems": 3,

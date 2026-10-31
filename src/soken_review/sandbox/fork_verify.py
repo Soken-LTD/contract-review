@@ -120,6 +120,29 @@ def check_test_source(content: str, pin_paths: set[str], *, max_bytes: int | Non
     return imports
 
 
+_DECL_RE = re.compile(r"\b(?:abstract\s+)?(?:contract|library)\s+([A-Za-z_][A-Za-z0-9_]{0,63})\b")
+
+
+def import_usage(content: str, pin: Any) -> list[dict[str, Any]]:
+    """For each `pinned/<path>` import: the contracts and libraries that file declares and whether the
+    test deploys one (`new X`, `deployCode("X`) or calls into one (`X(addr)`, `X.f(`). Only such an
+    import is evidence that the cited code ran; importing a file without using it is not."""
+    body = _COMMENT_RE.sub(" ", content)
+    code = _IMPORT_RE.sub(" ", body)
+    out: list[dict[str, Any]] = []
+    for imp in test_imports(content):
+        if not imp.startswith("pinned/"):
+            continue
+        path = imp.removeprefix("pinned/")
+        try:
+            names = sorted(set(_DECL_RE.findall(_COMMENT_RE.sub(" ", pin.read_text(path)))))[:40]
+        except (KeyError, OSError, ValueError):
+            names = []
+        used = [n for n in names if re.search(rf"\bnew\s+{n}\b|deployCode\(\s*\"{n}\b|\b{n}\s*\(|\b{n}\s*\.", code)]
+        out.append({"path": path[:300], "contracts": names, "used": used})
+    return out[:20]
+
+
 def test_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8", "surrogatepass")).hexdigest()
 
@@ -471,7 +494,7 @@ async def execute(run: dict[str, Any], pin_root: Path, *, image: str | None = No
                             "engine": {"tool": "forge", "version": locked_tools("evm-analyze").get("forge"),
                                        "forge_std": locked_tools("evm-analyze").get("forge-std"),
                                        "image": image.rsplit("@", 1)[-1][:80], "solc": solc_version},
-                            "pinned_files": n_pinned}
+                            "pinned_files": n_pinned, "imports": import_usage(run["test_source"], pin)}
     if killed_by == "wall":
         return {**base, "status": "timeout", "reason": f"wall clock {int(wall)} s"}
     if killed_by == "output":
@@ -506,6 +529,38 @@ def _load_json(path: Path, default: Any) -> Any:
 
 
 # ── worker step ────────────────────────────────────────────────────────────
+
+
+REAP_MARGIN_S = 120
+
+
+async def reap_dead_runs(conn: Any, job_id: str | None = None) -> list[str]:
+    """Mark as `error` (reason step_lost) every queued or running run whose step is no longer live: no
+    step, a step that ended or was cancelled, a running step whose lease expired, or a run running for
+    longer than the wall cap plus a margin. A dead run never blocks finalize."""
+    wall = int(fork_limits().get("wall_s", 180)) + REAP_MARGIN_S
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """update fork_runs fr set status = 'error', finished_at = now(),
+                   result = coalesce(fr.result, '{}'::jsonb) || '{"status": "error", "reason": "step_lost"}'::jsonb
+               where fr.status in ('queued', 'running') and (%(job)s::text is null or fr.job_id = %(job)s)
+                 and (fr.step_id is null
+                      or not exists (select 1 from job_steps s where s.id = fr.step_id
+                                     and (s.status = 'queued'
+                                          or (s.status = 'running' and (s.lease_until is null or s.lease_until > now()))))
+                      or (fr.status = 'running' and fr.started_at < now() - make_interval(secs => %(wall)s)))
+               returning fr.run_id""",
+            {"job": job_id, "wall": wall})
+        return [r[0] for r in await cur.fetchall()]
+
+
+async def fail_runs_of_step(pool: Any, step_id: int, reason: str = "step_failed") -> None:
+    """The supervisor's failure path of a verify_fork step: its bound run ends `error`."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            """update fork_runs set status = 'error', finished_at = now(),
+                   result = coalesce(result, '{}'::jsonb) || jsonb_build_object('status', 'error', 'reason', %s::text)
+               where step_id = %s and status in ('queued', 'running')""", (reason, step_id))
 
 
 async def run_step(pool: Any, pin_root: Path, step: dict[str, Any]) -> None:
