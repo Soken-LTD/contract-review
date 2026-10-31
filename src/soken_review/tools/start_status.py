@@ -953,6 +953,8 @@ def _build_status_response(
     # Build status (03 §4.2)
     out["map_status"] = job.get("map_status", "none")
     out["analyzer_degraded"] = job.get("analyzer_degraded", False)
+    if out["analyzer_degraded"]:
+        out["analyzer_note"] = _analyzer_note(job)
     # A failed build in one sentence (compiler, error class, consequence): the same sentence the
     # report prints on its cover and in its summary, so the reviewer reads it before submitting.
     build_failure = _build_failure_note(job)
@@ -1208,6 +1210,20 @@ def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[di
         if check.get("open") and tool and tool not in out:
             out.append(tool)
     return out[:3]
+
+
+def _analyzer_note(job: dict[str, Any]) -> str:
+    """`analyzer_note` of review_status: why an analyzer did not run fully (mapping.analyzer_note).
+    Always a sentence: without a pin root or a work record it says the cause was not recorded."""
+    from ..mapping.analyzer_note import job_analyzer_note, note_from
+
+    try:
+        from .read import _get_ctx
+
+        return job_analyzer_note(_get_ctx().get_pin_root(), job["job_id"])
+    except Exception as exc:  # noqa: BLE001  # the sentence is an aid; status never fails on it
+        logger.debug("_analyzer_note: %s", type(exc).__name__)
+        return note_from(None)
 
 
 def _build_failure_note(job: dict[str, Any]) -> str | None:

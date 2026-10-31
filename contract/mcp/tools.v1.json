@@ -876,6 +876,10 @@
      "analyzer_degraded": {
       "type": "boolean"
      },
+     "analyzer_note": {
+      "type": "string",
+      "description": "Present when analyzer_degraded is true: which analyzer did not run fully and why, in plain words."
+     },
      "build": {
       "type": "object",
       "additionalProperties": false,

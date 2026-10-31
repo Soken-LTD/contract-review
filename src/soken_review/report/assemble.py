@@ -1247,7 +1247,11 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
 
     m = texts["method_steps"]
     tools_line = ", ".join(f"{n} {v}: {r['leads']:,} leads" for (n, v), r in sorted(per_tool.items())) or "No analyzer leads"
-    degraded = " One analyzer did not run." if job.get("analyzer_degraded") else ""
+    degraded = ""
+    if job.get("analyzer_degraded"):
+        from ..mapping.analyzer_note import job_analyzer_note
+
+        degraded = " " + job_analyzer_note(pin_root, job_id)
     # A failed build is one sentence (compiler, error class, consequence) on the cover, in the
     # summary and in the method table; review_status carries the same sentence before submitting.
     build_failure = job_build_failure(pin_root, job_id, map_status=job.get("map_status"), family=family)
