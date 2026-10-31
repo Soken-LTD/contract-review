@@ -87,6 +87,7 @@ async def test_rendered_report_carries_the_passing_run(db_pool, tmp_path, monkey
     with a passing fork run bound to its draft, prints test_verified and the fork line."""
     import hashlib
     import json
+    import secrets
 
     from soken_review.db.job_repo import JobRepo
     from soken_review.report import render
@@ -100,9 +101,9 @@ async def test_rendered_report_carries_the_passing_run(db_pool, tmp_path, monkey
     async with db_pool.connection() as conn:
         await conn.execute("""insert into fork_runs (run_id, job_id, draft_key, status, chain_id, network, block, test_path,
                                 test_sha256, test_source, result, finished_at)
-                              values ('fork-00000000beef', %s, 'thena-t5', 'passed', 56, 'BNB Smart Chain Mainnet', %s,
+                              values (%s, %s, 'thena-t5', 'passed', 56, 'BNB Smart Chain Mainnet', %s,
                                       'test/Verify.t.sol', %s, %s, %s, now())""",
-                           (jid, META["block"], "c" * 64, SOURCE, json.dumps(result)))
+                           ("fork-" + secrets.token_hex(6), jid, META["block"], "c" * 64, SOURCE, json.dumps(result)))
     monkeypatch.setenv("SOKEN_REPORT_STORE", str(tmp_path / "store"))
     monkeypatch.setenv("SOKEN_RENDER_ROOT", str(tmp_path / "render-root"))
 
