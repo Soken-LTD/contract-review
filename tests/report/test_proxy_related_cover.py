@@ -14,10 +14,10 @@ ADMIN = "0x807a96288a1a408dbc13de2b1d087d10356395d2"
 PF = "0x7366388273111e035bbc555cd0f44a5bb3067c32"
 
 
-def _proxy_cs() -> dict:
+def _proxy_cs(verified: bool = True, pattern: int = 2) -> dict:
     cs = _chain_state()
-    cs["proxy"] = {"pattern_name": "eip1967_transparent", "proxy": cs["address"].lower(), "implementation": IMPL,
-                   "admin": ADMIN, "proxy_bytecode": "0x6080"}
+    cs["proxy"] = {"pattern": pattern, "pattern_name": "eip1967_transparent", "proxy": cs["address"].lower(),
+                   "implementation": IMPL, "admin": ADMIN, "proxy_bytecode": "0x6080", "verified": verified}
     return cs
 
 
@@ -32,6 +32,7 @@ def test_provenance_names_implementation_admin_and_related():
     prov = provenance(_job("A"), _cands(), _proxy_cs(), _deployment(), related=RELATED)
     assert prov["address"] == "0xC2181D975c05c8C724b334BcED0764C0b86B1D53"
     assert prov["implementation"] == IMPL and prov["proxy_pattern"] == "eip1967_transparent"
+    assert prov["proxy_verified"] is True
     assert prov["upgradeable"] is True and prov["upgrade_authority"] == {"addr": ADMIN}
     # the proxy line is the cover's Proxy/Implementation pair, not a related row
     assert prov["related"] == [{"name": "PriceFeed", "address": PF, "status": "pinned"},
@@ -57,10 +58,45 @@ def test_cover_prints_proxy_implementation_and_related(tmp_path):
     r["meta"]["provenance"].update({"address": "0xC2181D975c05c8C724b334BcED0764C0b86B1D53",
                                     "implementation": IMPL, "proxy_pattern": "eip1967_transparent",
                                     "related": [{"name": "PriceFeed", "address": PF, "status": "pinned"},
-                                                {"name": "Gone", "address": "0x" + "12" * 20, "status": "no_code"}]})
+                                                {"name": "Gone", "address": "0x" + "12" * 20, "status": "unverified_source"}]})
     validate(r)
     res = build(r, tmp_path)
     html = res.html_path.read_text()
     assert "Implementation" in html and IMPL in html
     assert "Related contracts" in html and "PriceFeed" in html
-    assert "reviewed in this job" in html and "no contract code, not reviewed" in html
+    assert "reviewed in this job" in html and "source not verified on this chain, not reviewed" in html
+
+
+def test_admin_slot_is_upgrade_authority_only_for_a_verified_proxy_that_reads_it():
+    # unverified proxy runtime (supervisor caps tier A away; even a tier A row never prints the slot)
+    prov = provenance(_job("A"), _cands(), _proxy_cs(verified=False), _deployment())
+    assert prov["upgrade_authority"] == "NotChecked" and prov["proxy_verified"] is False
+    # a verified EIP-1822 proxy does not read the EIP-1967 admin slot
+    prov = provenance(_job("A"), _cands(), _proxy_cs(pattern=4), _deployment())
+    assert prov["upgrade_authority"] == "NotChecked"
+    # a chain_state from before the check (no `verified`) is not verified
+    cs = _proxy_cs()
+    del cs["proxy"]["verified"]
+    assert provenance(_job("A"), _cands(), cs, _deployment())["upgrade_authority"] == "NotChecked"
+
+
+def test_unverified_proxy_tier_b_label_and_cover_warning(tmp_path):
+    job = _job("B")
+    prov = provenance(job, _cands(), _proxy_cs(verified=False), _deployment())
+    assert prov["tier"] == "B" and prov["label_key"] == "tier_b_proxy_unmatched"
+    # the implementation did not match either: the usual tier B label, the cover still warns
+    dep = _deployment(match="differs")
+    assert provenance(job, _cands(), _proxy_cs(verified=False), dep)["label_key"] != "tier_b_proxy_unmatched"
+    r = report(tier="B", label_key="tier_b_proxy_unmatched")
+    r["meta"]["provenance"].update({"address": "0xC2181D975c05c8C724b334BcED0764C0b86B1D53",
+                                    "implementation": IMPL, "proxy_verified": False})
+    validate(r)
+    html = build(r, tmp_path).html_path.read_text()
+    assert 'data-block="proxy_unverified"' in html and "is not verified" in html
+
+
+def test_verified_proxy_has_no_warning(tmp_path):
+    r = report(tier="B", label_key="tier_b_third_party")
+    r["meta"]["provenance"].update({"address": "0xC2181D975c05c8C724b334BcED0764C0b86B1D53",
+                                    "implementation": IMPL, "proxy_verified": True})
+    assert 'data-block="proxy_unverified"' not in build(r, tmp_path).html_path.read_text()

@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from ..adapters.evm import proxy as _proxy_mod
 from ..adapters.evm.build_scope import subject_unit
 from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
@@ -470,20 +471,24 @@ def provenance(
     proxy = (chain_state or {}).get("proxy") or {}
     impl = str(proxy.get("implementation") or "")
     if impl and _ADDR_OK.match(impl):
+        verified = proxy.get("verified") is True
         prov["implementation"] = impl
+        prov["proxy_verified"] = verified
         prov["upgradeable"] = True
         pattern = str(proxy.get("pattern_name") or "")
         if re.fullmatch(r"[a-z0-9_]{1,40}", pattern):
             prov["proxy_pattern"] = pattern
         admin = str(proxy.get("admin") or "")
-        if prov["tier"] == "A" and admin and _ADDR_OK.match(admin):
-            # the EIP-1967 admin slot read at the pinned block: on-chain evidence of who upgrades
+        if (prov["tier"] == "A" and verified and proxy.get("pattern") in _proxy_mod.ADMIN_SLOT_PATTERNS
+                and admin and _ADDR_OK.match(admin)):
+            # the admin slot read at the pinned block, printed only for a verified proxy runtime of
+            # a pattern that reads that slot (security review 2026-10-31); else NotChecked stays
             prov["upgrade_authority"] = {"addr": admin}
     rows = [{"name": str(r["name"]), "address": str(r["address"]), "status": str(r["status"])}
             for r in (related or []) if isinstance(r, dict) and r.get("role") != "proxy"
             and re.fullmatch(r"[A-Za-z0-9_-]{1,40}", str(r.get("name") or ""))
             and _ADDR_OK.match(str(r.get("address") or ""))
-            and r.get("status") in ("pinned", "no_code", "no_verified_source", "fetch_failed")]
+            and r.get("status") in ("pinned", "no_code", "unverified_source", "fetch_failed")]
     if rows:
         prov["related"] = rows[:6]
     return prov
@@ -565,7 +570,12 @@ def _provenance_tier(
     # Tier B (default): the label names the real source kind. Deployed address with explorer or
     # Sourcify source: third party; deployed address with other source: not checked; repository
     # at a resolved commit: commit; anything else (upload, inline files): supplied by the requester.
-    if address and (deployment or {}).get("unlinked_reason"):
+    proxy_rec = (chain_state or {}).get("proxy") or {}
+    impl_matched = ((deployment or {}).get("dep") or {}).get("match") in ("exact", "metadata_only")
+    if address and proxy_rec.get("implementation") and proxy_rec.get("verified") is not True and impl_matched:
+        # a followed proxy whose own runtime is not verified (supervisor _resolve_provenance caps it)
+        key = "tier_b_proxy_unmatched"
+    elif address and (deployment or {}).get("unlinked_reason"):
         # TON SOURCE_UNLINKED: the requester's source was reviewed, the deployment was not matched
         # to it; the cover says so in words (security review 2026-10-27), not only the method row.
         key = "tier_b_unmatched"

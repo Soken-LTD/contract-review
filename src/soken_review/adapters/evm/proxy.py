@@ -467,3 +467,33 @@ def proxy_summary(record: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     return {k: record.get(k) for k in ("pattern_name", "proxy", "implementation", "admin", "beacon")
             if record.get(k) is not None}
+
+
+# Patterns whose proxy reads the admin slot this module records (EIP-1967 transparent and beacon,
+# ZeppelinOS): only for these, and only for a verified proxy runtime, is that slot the upgrade
+# authority the report prints.
+ADMIN_SLOT_PATTERNS = frozenset({2, 3, 5})
+
+
+def is_exact_minimal_proxy(code: str) -> bool:
+    """The runtime is exactly the 45-byte EIP-1167 clone: its behaviour is fixed by construction."""
+    raw = _strip0x(code or "").lower()
+    return (len(raw) == len(_EIP1167_PREFIX) + 40 + len(_EIP1167_SUFFIX)
+            and raw.startswith(_EIP1167_PREFIX) and raw.endswith(_EIP1167_SUFFIX))
+
+
+def verify_proxy(record: dict[str, Any], proxy_source: dict[str, Any] | None) -> dict[str, Any]:
+    """Is the proxy runtime itself known code (security review 2026-10-31)? Any contract can put a
+    value in an EIP-1967 slot and run other code; following it to a tier A review of the
+    implementation would vouch for code that is not what runs. Verified when the runtime is an
+    exact EIP-1167 clone, or the proxy's own source is a Sourcify exact or full match on this
+    chain (Sourcify rebuilt it and matched the deployed runtime; related_sources accepts nothing
+    weaker). Returns {verified, by, note}; the note is plain English for the client."""
+    if record.get("pattern") == 1 and is_exact_minimal_proxy(record.get("proxy_bytecode") or ""):
+        return {"verified": True, "by": "eip1167_runtime"}
+    if (proxy_source or {}).get("status") == "pinned":
+        return {"verified": True, "by": "sourcify_match"}
+    return {"verified": False, "by": None,
+            "note": (f"The proxy code at {record.get('proxy')} is not verified (no exact or full Sourcify match "
+                     "on this chain), so this review cannot confirm that it runs the reviewed implementation. "
+                     "The report is not tier A for this reason.")}
