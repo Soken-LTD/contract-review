@@ -139,7 +139,8 @@ chain:
     - >-
       Live state is read for you: at job start the server reads the deployment's owner and admin
       holders, EIP-1967 proxy implementation and admin, AccessControl roles, paused flag and native
-      balance, and review_status returns them in chain_state (the facts are chain.target.<field>).
+      balance, and review_status returns them in chain_state (the facts are chain.target.<field>; the
+      alias target is reserved for it). Chain text there (a name, a revert string) comes as untrusted_text.
     - >-
       Further reads are optional: review_chain_read (getters, storage slots, accounts, TON get
       methods), review_chain_roles (holders of another address, Safe threshold, deployer, TRON

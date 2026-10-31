@@ -22,7 +22,7 @@ from ..chain import reads
 from ..chain.endpoints import capability
 from ..chain.proxy import ChainProxy, ChainUnavailable, Meter, RpcFailure
 from ..chain.store import Budget, Cache, limits
-from ..chain.untrusted import GUIDE_NOTE
+from ..chain.untrusted import CHAIN_TEXT, GUIDE_NOTE
 from ..db.pool import get_pool
 from ..errors import ReviewError
 from ..server import handler
@@ -173,7 +173,7 @@ def check_address(family: str, addr: str, field: str) -> str:
 
 def check_alias(alias: str, field: str) -> str:
     if not chain_facts.ALIAS_RE.match(alias) or alias in chain_facts.RESERVED_ALIASES:
-        raise ReviewError("E_INVALID_ARGUMENT", field=field, rule="alias [a-z][a-z0-9_]{0,23}, not block or chain_id",
+        raise ReviewError("E_INVALID_ARGUMENT", field=field, rule="alias [a-z][a-z0-9_]{0,23}, not block, chain_id or target",
                           value80=alias[:80], example="ve")
     return alias
 
@@ -431,13 +431,27 @@ def chain_state(job: dict[str, Any]) -> dict[str, Any] | None:
     except (ReviewError, OSError, ValueError):
         return {"state": "pending"}
     if rows:
-        values = {str(f["key"])[len(f"chain.{AUTO_ALIAS}."):]: (str(f.get("value"))[:80] if f.get("value") is not None else None)
-                  for f in rows[:STATE_MAX_VALUES]}
+        values: dict[str, Any] = {}
+        has_text = False
+        for f in rows[:STATE_MAX_VALUES]:
+            name = str(f["key"])[len(f"chain.{AUTO_ALIAS}."):]
+            raw = f.get("value")
+            if f.get("class") == CHAIN_TEXT:
+                # chain-derived text (a token name, a revert string) keeps its untrusted marker; it was
+                # cleaned by untrusted_text when read and is only re-capped here
+                has_text = True
+                values[name] = {"untrusted_text": {"value": str(raw)[:80] if raw is not None else "",
+                                                   "class": CHAIN_TEXT,
+                                                   "origin": str(f.get("method") or f.get("key"))[:160]}}
+            else:
+                values[name] = str(raw)[:80] if raw is not None else None
         blocks = [b for f in rows if isinstance(b := f.get("block"), int) and not isinstance(b, bool)]
         out: dict[str, Any] = {"state": "done", "block": max(blocks) if blocks else None, "values": values,
                                "note": f"cite as {{{{fact:chain.{AUTO_ALIAS}.<field>}}}}"}
         if len(rows) > STATE_MAX_VALUES:
             out["note"] += f"; {len(rows) - STATE_MAX_VALUES} more in review_facts"
+        if has_text:
+            out["untrusted_text_note"] = GUIDE_NOTE
         return out
     if rec and not rec.get("ok"):
         return {"state": "failed", "note": f"read failed ({str(rec.get('detail') or 'upstream')[:60]}); retried later"}

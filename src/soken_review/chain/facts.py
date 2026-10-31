@@ -25,7 +25,9 @@ from ..mapping.facts import fact
 
 CHAIN_FACTS_FILE = "chain_facts.json"
 ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
-RESERVED_ALIASES = frozenset({"block", "chain_id"})   # chain.block and chain.chain_id are pipeline facts
+# chain.block and chain.chain_id are pipeline facts; chain.target.* is the automatic snapshot of the deployment
+# (tools/chain.py AUTO_ALIAS), which a reviewer's read must never overwrite.
+RESERVED_ALIASES = frozenset({"block", "chain_id", "target"})
 MAX_CHAIN_FACTS = 2000
 ORIGIN = "chain_tool"   # marks the record so mapping.facts.write_facts never copies it into facts.json
 

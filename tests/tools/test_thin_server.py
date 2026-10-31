@@ -211,6 +211,7 @@ _BLOCKING_ALLOWED = {
     "E_FINDING_NOT_FOUND", "E_SECTION_INVALID", "E_REVISION_ANSWERED",
     # job state and quota
     "E_JOB_NOT_READY", "E_JOB_FROZEN", "E_JOB_TERMINAL", "E_TIER_D", "E_DAILY_REPORT_LIMIT",
+    "E_FORK_PENDING",   # a fork run still running: the evidence would change after finalize
 }
 
 
