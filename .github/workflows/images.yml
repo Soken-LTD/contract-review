@@ -53,8 +53,11 @@ jobs:
           if [ "$EVENT" = "push" ] && [ "$HEAD_AUTHOR" = "soken-ci" ]; then
             # The lock commit itself (pushed with IMAGES_LOCK_TOKEN it starts this workflow):
             # the branch diff vs main still holds the image inputs, so planning from it would
-            # rebuild and lock again without end. A lock push plans nothing.
-            echo '{"level0": [], "level1": []}' > plan.json
+            # rebuild and lock again without end. A lock push plans only the stale images: those whose
+            # inputs changed after the commit they were built from (a newer push whose run was
+            # superseded, PR #99). The lock commit touches no input, so this never loops.
+            python3 scripts/images.py stale
+            python3 scripts/images.py plan --stale > plan.json
           elif [ "$EVENT" = "push" ]; then
             git fetch -q origin main
             base=$(git merge-base origin/main HEAD)
@@ -74,7 +77,8 @@ jobs:
               cp vs_main.txt changed.txt
             fi
             echo "changed vs main since ${last_lock:-$base}:"; cat changed.txt
-            args+=(--changed changed.txt)
+            args+=(--changed changed.txt --stale)
+            python3 scripts/images.py stale
             python3 scripts/images.py plan "${args[@]}" > plan.json
           else
             python3 scripts/images.py plan "${args[@]}" > plan.json

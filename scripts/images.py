@@ -4,6 +4,7 @@
     python scripts/images.py plan [--only name,name] [--changed paths.txt]   # JSON build plan
     python scripts/images.py lock <results_dir>         # write pushed digests into images.lock.json
     python scripts/images.py check                      # lock entries well-formed (CI)
+    python scripts/images.py stale [--check]            # locked images whose inputs changed since built.commit
     python scripts/images.py argv '<plan entry>' [deps]  # build options, one per line
 
 Every `docker/<dir>/Dockerfile` is an image: name `<dir>`, repository `ghcr.io/soken-ltd/<dir>`,
@@ -32,6 +33,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -132,7 +134,7 @@ def discover(lock: dict) -> list[dict]:
     return images
 
 
-def plan(only: set[str] | None, changed: list[str] | None = None) -> dict:
+def plan(only: set[str] | None, changed: list[str] | None = None, extra: set[str] | None = None) -> dict:
     """`only` names images (their dependencies are added); `changed` lists repo paths and keeps
     the images whose inputs they touch plus every dependant of those (a fresh base means a fresh
     dependant). Both given: the intersection, then dependencies."""
@@ -148,6 +150,9 @@ def plan(only: set[str] | None, changed: list[str] | None = None) -> dict:
     if changed is not None:
         paths = [_norm_path(p) for p in changed if p.strip()]
         wanted = {i["name"] for i in images if _touches(i["inputs"], paths)}
+    if extra:
+        wanted = (wanted or set()) | set(extra)   # stale images (`--stale`) are rebuilt whatever changed
+    if wanted is not None:
         wanted |= {i["name"] for i in images if set(i["deps"]) & wanted}
     if only:
         unknown = only - set(by_name)
@@ -220,6 +225,41 @@ def build_argv(image: dict, deps_dir: Path | None) -> list[str]:
     return argv
 
 
+def _git_changed(since: str, head: str = "HEAD") -> list[str] | None:
+    """Paths changed between `since` and `head`, or None when `since` is not in this clone."""
+    try:
+        out = subprocess.run(["git", "diff", "--name-only", since, head], cwd=ROOT, check=True,
+                             capture_output=True, text=True, timeout=60).stdout
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def stale(changed_since=_git_changed) -> list[dict]:
+    """Locked images whose build inputs changed after the commit they were built from.
+
+    PR #99 (2026-10-31): the lock commit of a build from an older branch head landed after a newer
+    push whose images run was superseded, and a lock push plans nothing, so soken-render kept a
+    report schema without `proxy_verified` and every proxy report failed to render. The digest is
+    current only when no input changed between `built.commit` and HEAD. An entry without a built
+    commit (upstream pins) is skipped; a built commit missing from the clone counts as stale."""
+    lock = _load_lock()["images"]
+    by_repo: dict[str, dict] = {}
+    for e in lock.values():
+        by_repo.setdefault(e.get("repository", ""), e)
+    out = []
+    for image in discover(_load_lock()):
+        entry = by_repo.get(image["repository"])
+        commit = ((entry or {}).get("built") or {}).get("commit")
+        if not entry or not commit:
+            continue
+        changed = changed_since(commit)
+        if changed is None or _touches(image["inputs"], changed):
+            out.append({"name": image["name"], "built_commit": commit,
+                        "changed": sorted(p for p in (changed or []) if _touches(image["inputs"], [p]))[:20]})
+    return out
+
+
 def check() -> int:
     data = _load_lock()
     bad = []
@@ -239,8 +279,13 @@ def main(argv: list[str]) -> int:
     if argv[0] == "plan":
         only = None
         changed = None
+        extra = None
         rest = argv[1:]
         while rest:
+            if rest[0] == "--stale":
+                extra = {i["name"] for i in stale()}
+                rest = rest[1:]
+                continue
             flag, value, rest = rest[0], (rest[1] if len(rest) > 1 else ""), rest[2:]
             if flag == "--only":
                 only = {s.strip() for s in value.split(",") if s.strip()} or None
@@ -248,8 +293,17 @@ def main(argv: list[str]) -> int:
                 changed = [line.strip() for line in Path(value).read_text().splitlines() if line.strip()]
             else:
                 raise SystemExit(f"unknown plan option {flag}")
-        print(json.dumps(plan(only, changed)))
+        if extra is not None and changed is None:
+            changed = []   # --stale alone: only the stale images, not every image
+        print(json.dumps(plan(only, changed, extra)))
         return 0
+    if argv[0] == "stale":
+        rows = stale()
+        for r in rows:
+            print(f"{r['name']}: built from {r['built_commit'][:12]}, inputs changed since: {', '.join(r['changed']) or 'built commit not in this clone'}")
+        if not rows:
+            print("ok: every locked image was built from its current inputs")
+        return 1 if rows and "--check" in argv[1:] else 0
     if argv[0] == "lock":
         return lock(Path(argv[1]))
     if argv[0] == "check":

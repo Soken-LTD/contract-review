@@ -124,3 +124,33 @@ def test_cli_reads_changed_paths_from_a_file(tmp_path: Path, capsys: pytest.Capt
     assert m.main(["plan", "--changed", str(listing)]) == 0
     plan = json.loads(capsys.readouterr().out)
     assert _names(plan) == {"soken-render"}
+
+
+def test_stale_lists_images_whose_inputs_changed_after_their_build(monkeypatch):
+    """PR #99: soken-render was locked from a commit before the report schema change, the newer
+    images run was superseded and a lock push planned nothing, so every proxy report failed."""
+    images_mod = load_images()
+
+    lock = {"images": {"soken-render": {"repository": "ghcr.io/soken-ltd/soken-render", "tag": "t",
+                                        "digest": "sha256:" + "a" * 64, "built": {"commit": "old"}},
+                       "git-fetch": {"repository": "ghcr.io/soken-ltd/git-fetch", "tag": "t",
+                                     "digest": "sha256:" + "b" * 64, "built": {"commit": "old"}},
+                       "solana-build": {"repository": "solanafoundation/solana-verifiable-build", "tag": "x",
+                                        "digest": "sha256:" + "c" * 64}}}
+    monkeypatch.setattr(images_mod, "_load_lock", lambda: lock)
+    changed = {"old": ["contract/report.automated.schema.json", "README.md"]}
+    rows = images_mod.stale(lambda since: changed.get(since))
+    names = {r["name"] for r in rows}
+    assert "soken-render" in names and "git-fetch" not in names
+    render = next(r for r in rows if r["name"] == "soken-render")
+    assert render["changed"] == ["contract/report.automated.schema.json"]
+    # a built commit the clone does not have is stale (fail closed), an upstream pin is skipped
+    assert {r["name"] for r in images_mod.stale(lambda since: None)} >= {"soken-render", "git-fetch"}
+
+
+def test_plan_stale_adds_images_whatever_changed():
+    images_mod = load_images()
+
+    p = images_mod.plan(None, [], {"soken-render"})
+    assert [i["name"] for i in p["level0"] + p["level1"]] == ["soken-render"]
+    assert images_mod.plan(None, [], set())["level0"] == []

@@ -100,3 +100,16 @@ def test_verified_proxy_has_no_warning(tmp_path):
     r["meta"]["provenance"].update({"address": "0xC2181D975c05c8C724b334BcED0764C0b86B1D53",
                                     "implementation": IMPL, "proxy_verified": True})
     assert 'data-block="proxy_unverified"' not in build(r, tmp_path).html_path.read_text()
+
+
+def test_assembled_proxy_provenance_validates_against_the_report_schema():
+    """PR #99 e2e (evm-proxy): render_failed, `proxy_verified` was unexpected at $.meta.provenance. The
+    provenance assemble writes for a proxy job, verified or not, with related rows, must validate as
+    the render sandbox validates it (report.automated.schema.json, every key the assembly can emit)."""
+    for verified in (True, False):
+        for tier in ("A", "B"):
+            prov = provenance(_job(tier), _cands(), _proxy_cs(verified=verified), _deployment(), related=RELATED)
+            r = report(tier=prov["tier"], label_key=prov.get("label_key") or "tier_a_verified")
+            r["meta"]["provenance"] = prov
+            validate(r)
+            assert "proxy_verified" in r["meta"]["provenance"]
