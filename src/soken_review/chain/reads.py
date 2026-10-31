@@ -10,6 +10,7 @@ never loses the others, and no failure here ever changes the job.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import re
@@ -537,6 +538,10 @@ async def _tron_account(px: ChainProxy, out: Out, it: dict[str, Any], role_prefi
 _SOL_TYPES = {"u8": 1, "u16": 2, "u32": 4, "u64": 8, "u128": 16, "i64": 8, "bool": 1, "pubkey": 32}
 _B58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 TOKEN_PROGRAMS = {"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"}
+SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
+# review_chain_read classifies at most this many System-owned (wallet-like) accounts per call in full
+# (signer history); the rest get the curve check only.
+SOL_CLASSIFY_PER_CALL = 3
 
 
 async def solana_resolve(px: ChainProxy, job: ChainJob, spec: Any) -> At:
@@ -586,8 +591,19 @@ async def solana_read(px: ChainProxy, out: Out, items: list[dict[str, Any]]) -> 
         return
     if isinstance(slot, int):
         out.at.block = slot
+    full = 0
     for (i, it), acc in zip(acct_items, accs + [None] * (len(acct_items) - len(accs)), strict=False):
-        out.items.append({**_sol_record(out, it, acc), "_i": i})
+        row = _sol_record(out, it, acc)
+        if acc is None or (str(acc.get("owner") or "") == SYSTEM_PROGRAM_ID and row["value"].get("data_len") == "0"):
+            # System-owned with no data is what a keypair, a Squads vault and any PDA all look like
+            full += 1
+            n0 = len(out.facts)
+            kind = await solana_authority(px, out, f"chain.{it['alias']}", it["address"], [it["address"]],
+                                          acc=acc, lookup=full <= SOL_CLASSIFY_PER_CALL)
+            row["authority_kind"] = kind
+            row["value"]["authority_kind"] = kind["kind"]
+            row["fact_keys"] = [*row.get("fact_keys", []), *(f["key"] for f in out.facts[n0:])]
+        out.items.append({**row, "_i": i})
 
 
 def _sol_record(out: Out, it: dict[str, Any], acc: dict[str, Any] | None) -> dict[str, Any]:
@@ -781,6 +797,255 @@ async def _classify_holder(px: ChainProxy, out: Out, pre: str, holder: str) -> d
 
 
 ROLE_GETTERS = ("owner", *HOLDER_GETTERS)
+# hasRole pairs (role x candidate) per call, members read per role (getRoleMember) and holders classified
+AC_MAX_PAIRS = 400
+AC_MAX_ROLES = 24      # roles listed (and written as facts) per contract; the rest are counted
+AC_MAX_MEMBERS = 10
+AC_CLASSIFY = 8
+
+
+def _word_bool(r: Any) -> bool | None:
+    if isinstance(r, tuple) and r[0] and len(r[1]) == 32 and int.from_bytes(r[1], "big") in (0, 1):
+        return bool(int.from_bytes(r[1], "big"))
+    return None
+
+
+async def _creation_block(px: ChainProxy, cid: int, address: str, at: At, max_calls: int = 34) -> int | None:
+    """Lowest block with code at `address` (binary search over eth_getCode, archive hosts first), or None
+    when the pool has no archive host or a probe fails. A contract re-created with CREATE2 reads as its
+    latest creation."""
+    if not any(e.archive for e in px._endpoints("evm", cid)):
+        return None
+    lo, hi, n = 0, at.block, 0
+    while lo < hi:
+        if n >= max_calls:
+            return None
+        mid = (lo + hi) // 2
+        n += 1
+        try:
+            code = await px.evm(cid, "eth_getCode", [address, hex(mid)], durable=True,
+                                depth=(at.head or at.block) - mid)
+        except (ChainUnavailable, RpcFailure):
+            return None
+        if isinstance(code, str) and len(code) > 2:
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+async def evm_access_control(px: ChainProxy, out: Out, address: str, pre: str, named: list[tuple[str, bytes]],
+                             candidates: list[str], creation_block: int | None, creation_tx: str | None,
+                             wall_s: float | None = None, log_calls: int | None = None) -> dict[str, Any] | None:
+    """OpenZeppelin AccessControl members of `address` (see chain.access_control), or None when the
+    contract does not answer as AccessControl. `named` are role constants read on chain."""
+    from . import access_control as acm
+    from .endpoints import logs_chunk
+    from .policy import MAX_LOG_RANGE
+    cid, b = int(out.job.chain_id or 0), out.at.block
+    lim = limits()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + float(wall_s if wall_s is not None else lim.get("role_wall_s", 25))
+    probe = await evm_calls(px, cid, out.at, [
+        (address, abi.selector("supportsInterface(bytes4)") + acm.IACCESS_CONTROL + b"\0" * 28),
+        (address, abi.selector("supportsInterface(bytes4)") + acm.IACCESS_CONTROL_ENUMERABLE + b"\0" * 28),
+        (address, abi.selector("hasRole(bytes32,address)") + acm.DEFAULT_ADMIN + b"\0" * 32),
+        (address, abi.selector("getRoleMemberCount(bytes32)") + acm.DEFAULT_ADMIN),
+        (address, abi.selector("getMinDelay()")),
+        (address, abi.selector("getRoleAdmin(bytes32)") + acm.DEFAULT_ADMIN),
+    ])
+    iface, enum_iface, has0 = _word_bool(probe[0]), _word_bool(probe[1]), _word_bool(probe[2])
+    count0 = probe[3][1] if isinstance(probe[3], tuple) and probe[3][0] and len(probe[3][1]) == 32 else None
+    admin0 = isinstance(probe[5], tuple) and probe[5][0] and len(probe[5][1]) == 32
+    if not (iface or (has0 is not None and admin0)):   # ERC-165, else both AccessControl getters answer
+        return None
+    enumerable = bool(enum_iface) or count0 is not None
+    names: dict[bytes, tuple[str, str]] = {acm.DEFAULT_ADMIN: ("DEFAULT_ADMIN_ROLE", "OpenZeppelin constant")}
+    for rid, n in acm.common_role_ids().items():
+        names.setdefault(rid, (n, "keccak256 of a common role name"))
+    for n, rid in named:
+        names[rid] = (n, "contract constant")
+
+    # ── logs: the creation receipt, then bounded getLogs windows at both ends ──
+    events: list[acm.RoleEvent] = []
+    scanned: list[tuple[int, int]] = []
+    failed: list[tuple[int, int]] = []
+    if creation_tx and re.fullmatch(r"0x[0-9a-fA-F]{64}", creation_tx):
+        try:
+            rcpt = await px.evm(cid, "eth_getTransactionReceipt", [creation_tx], durable=True)
+            for lg in (rcpt.get("logs") or []) if isinstance(rcpt, dict) else []:
+                ev = acm.parse_log(lg, address)
+                if ev:
+                    events.append(ev)
+        except (ChainUnavailable, RpcFailure):
+            pass
+    if creation_block is None:
+        creation_block = await _creation_block(px, cid, address, out.at)
+    chunk = logs_chunk(cid, MAX_LOG_RANGE)
+    plan = acm.ScanPlan(creation_block, b, chunk, log_calls or int(lim.get("role_log_calls", 24)))
+    final = b - int((lim.get("finality_blocks") or {}).get("evm", 64))
+    misses = 0
+    for wi, (lo, hi) in enumerate(plan.windows):
+        if wi == plan.split:
+            misses = 0        # old ranges refused by every free host say nothing about recent ones
+        if loop.time() > deadline or misses >= 3:
+            failed.append((lo, hi))
+            continue
+        flt = {"address": address, "topics": [[acm.ROLE_GRANTED, acm.ROLE_REVOKED]], "fromBlock": hex(lo), "toBlock": hex(hi)}
+        try:
+            logs = await px.evm(cid, "eth_getLogs", [flt], durable=hi <= final, depth=(out.at.head or b) - lo)
+        except (ChainUnavailable, RpcFailure) as exc:
+            failed.append((lo, hi))
+            # no free host holds logs that old: the rest of this end is not tried
+            misses = 3 if getattr(exc, "reason", "") == "archive" else misses + 1
+            continue
+        if not isinstance(logs, list):
+            failed.append((lo, hi))
+            continue
+        misses = 0
+        scanned.append((lo, hi))
+        for lg in logs:
+            ev = acm.parse_log(lg, address)
+            if ev:
+                events.append(ev)
+    logs_complete = acm.covered(scanned, creation_block, b)
+    now, ever = acm.replay(events)
+
+    # ── role ids and candidates ──
+    role_ids: list[bytes] = list(dict.fromkeys([acm.DEFAULT_ADMIN, *(rid for _n, rid in named), *ever]))
+    probe_ids = role_ids + [rid for rid in names if rid not in role_ids]   # common names: kept only with a member
+    base = list(dict.fromkeys([*(c.lower() for c in candidates if c and EVM_ADDR.match(c)), address.lower(), acm.ZERO]))
+    from_logs = sorted({a for accts in ever.values() for a in accts} - set(base))[:24]
+    cand = base + from_logs
+    named_ids = {acm.DEFAULT_ADMIN, *(rid for _n, rid in named)}
+    members: dict[bytes, list[str]] = {}
+    unverified: dict[bytes, set[str]] = {}
+    complete_role: dict[bytes, bool] = {}
+    counts: dict[bytes, int] = {}
+    if enumerable:
+        cres = await evm_calls(px, cid, out.at, [(address, abi.selector("getRoleMemberCount(bytes32)") + rid)
+                                                 for rid in probe_ids])
+        for rid, r in zip(probe_ids, cres, strict=True):
+            if isinstance(r, tuple) and r[0] and len(r[1]) == 32:
+                counts[rid] = int.from_bytes(r[1], "big")
+        want = [(rid, j) for rid in probe_ids if counts.get(rid) for j in range(min(counts[rid], AC_MAX_MEMBERS))]
+        mres = await evm_calls(px, cid, out.at, [
+            (address, abi.selector("getRoleMember(bytes32,uint256)") + abi.encode(["bytes32", "uint256"], ["0x" + rid.hex(), j]))
+            for rid, j in want])
+        for (rid, _j), r in zip(want, mres, strict=True):
+            a = _addr_of(r[1]) if isinstance(r, tuple) and r[0] else None
+            if a:
+                members.setdefault(rid, []).append(a)
+        for rid, n in counts.items():
+            complete_role[rid] = n <= AC_MAX_MEMBERS and len(members.get(rid, [])) == n
+    else:
+        # DEFAULT_ADMIN_ROLE and the contract's own constants: every candidate; a role seen in the logs: the
+        # accounts the logs granted it and the getter holders; a common role name: every candidate (last)
+        pairs = list(dict.fromkeys(
+            [(rid, c) for rid in probe_ids if rid in named_ids for c in cand]
+            + [(rid, c) for rid in probe_ids if rid in ever and rid not in named_ids
+               for c in [*sorted(ever[rid]), *base]]
+            + [(rid, c) for rid in probe_ids if rid not in ever and rid not in named_ids for c in cand]))[:AC_MAX_PAIRS]
+        hres = await evm_calls(px, cid, out.at, [
+            (address, abi.selector("hasRole(bytes32,address)") + rid + bytes.fromhex(c[2:].rjust(64, "0")))
+            for rid, c in pairs])
+        for (rid, c), r in zip(pairs, hres, strict=True):
+            ok = _word_bool(r)
+            if ok or (ok is None and c in now.get(rid, set())):   # hasRole failed: the logs' answer, marked
+                members.setdefault(rid, []).append(c)
+                if ok is None:
+                    unverified.setdefault(rid, set()).add(c)
+        for rid in probe_ids:
+            counts[rid] = len(members.get(rid, []))
+            complete_role[rid] = logs_complete
+    every = [rid for rid in probe_ids if members.get(rid) or rid in ever or rid in named_ids]
+    # named roles first, then by members held now
+    listed = sorted(every, key=lambda r: (0 if r in named_ids else 1 if r in names else 2,
+                                          -len(members.get(r, [])), every.index(r)))[:AC_MAX_ROLES]
+    admins = await evm_calls(px, cid, out.at, [(address, abi.selector("getRoleAdmin(bytes32)") + rid) for rid in listed])
+
+    # ── facts and result ──
+    std = "AccessControlEnumerable" if enumerable else "AccessControl"
+    complete = logs_complete and all(complete_role.get(r, logs_complete) for r in listed)
+    src = ("getRoleMemberCount / getRoleMember" if enumerable
+           else "RoleGranted / RoleRevoked logs, each member confirmed with hasRole")
+    out.fact(f"{pre}.access_control", std, method="eth_call supportsInterface / hasRole",
+             source="supportsInterface(IAccessControl) or a hasRole answer")
+    min_delay = int.from_bytes(probe[4][1], "big") if isinstance(probe[4], tuple) and probe[4][0] \
+        and len(probe[4][1]) == 32 else None
+    if min_delay is not None:
+        out.fact(f"{pre}.access_control.min_delay", str(min_delay), method="eth_call getMinDelay()", unit="seconds",
+                 source="eth_call getMinDelay() (the contract's own answer)")
+    out.fact(f"{pre}.access_control.complete", "true" if complete else "false", method="eth_getLogs",
+             source="every block from creation to the read block was scanned for role logs")
+    total = (b - creation_block + 1) if creation_block is not None else None
+    out.fact(f"{pre}.access_control.log_blocks_scanned", str(acm.blocks_in(scanned)), method="eth_getLogs",
+             source="blocks scanned for RoleGranted / RoleRevoked", unit="blocks")
+    if creation_block is not None:
+        out.fact(f"{pre}.access_control.creation_block", str(creation_block), method="Sourcify or eth_getCode",
+                 source="creation block (Sourcify record, else the lowest block with code)")
+    memo: dict[str, dict[str, Any]] = {}
+    roles_out: list[dict[str, Any]] = []
+    for rid, adm in zip(listed, admins, strict=True):
+        nm, how = names.get(rid, (f"role_{rid.hex()[:8]}", "unnamed: no constant or common name matches the id"))
+        rkey = f"{pre}.role.{field_key(nm)}"
+        mem = members.get(rid, [])
+        out.fact(f"{rkey}.count", str(counts.get(rid, len(mem))), method="eth_call getRoleMemberCount" if enumerable
+                 else "eth_getLogs + eth_call hasRole", source=f"{src} ({nm})")
+        details = []
+        for j, a in enumerate(mem[:AC_MAX_MEMBERS]):
+            out.fact(f"{rkey}.{j}", a, method="eth_call getRoleMember" if enumerable else "eth_call hasRole",
+                     source=f"{nm} member {j} ({src})")
+            d: dict[str, Any] = {"account": a}
+            if a in unverified.get(rid, set()):
+                d["unverified"] = "hasRole did not answer; member per the scanned logs"
+            if a == acm.ZERO:
+                d["kind"] = "zero_address"
+            elif a == address.lower():
+                d["kind"] = "self"
+            elif a in memo:
+                d.update(memo[a])
+            elif len(memo) < AC_CLASSIFY:
+                memo[a] = await _classify_holder(px, out, f"{rkey}.{j}", a)
+                d.update(memo[a])
+            details.append(d)
+        row: dict[str, Any] = {"role": nm, "role_id": "0x" + rid.hex(), "name_from": how,
+                               "count": counts.get(rid, len(mem)), "members": mem[:AC_MAX_MEMBERS],
+                               "member_details": details, "complete": bool(complete_role.get(rid, False))}
+        if acm.ZERO in mem:
+            row["open"] = True
+            out.fact(f"{rkey}.open", "true", method="eth_call hasRole(role, address(0))",
+                     source=f"{nm} is granted to address(0): anyone holds it")
+        if isinstance(adm, tuple) and adm[0] and len(adm[1]) == 32:
+            an = names.get(adm[1], (f"role_{adm[1].hex()[:8]}", ""))[0]
+            row["admin_role"] = an
+            out.fact(f"{rkey}.admin_role", an, method="eth_call getRoleAdmin", source=f"getRoleAdmin({nm})")
+        revoked = sorted(ever.get(rid, set()) - set(mem))
+        if revoked:
+            row["revoked"] = revoked[:AC_MAX_MEMBERS]
+        roles_out.append(row)
+    if logs_complete:
+        note = f"Members from {src}. Every block from creation to the read block was scanned for role logs."
+    else:
+        span = f"{acm.blocks_in(scanned):,} of {total:,} blocks since creation" if total else \
+            f"{acm.blocks_in(scanned):,} blocks (creation block unknown)"
+        note = (f"Members from {src}. Partial: role logs were read for {span}. " + (
+            "Members of each listed role are complete (getRoleMember), but a role whose id is neither a contract "
+            "constant, a common role name nor in the scanned logs is not listed." if enumerable else
+            "A role or member granted only in an unscanned range is missing; every member listed is confirmed by "
+            "hasRole at the read block."))
+    if len(every) > len(listed):
+        note += (f" {len(every) - len(listed)} more roles with members or log entries are not listed (cap "
+                 f"{AC_MAX_ROLES}); read one with review_chain_read hasRole(bytes32,address).")
+    summary = {"standard": std, "enumerable": enumerable, "roles_total": len(every), "roles_listed": len(listed),
+               **({"min_delay_s": min_delay} if min_delay is not None else {}),
+               "complete": bool(complete), "members_source": src, "creation_block": creation_block, "log_blocks_scanned": acm.blocks_in(scanned),
+               "log_blocks_total": total, "log_events": len({(e.block, e.index, e.tx) for e in events}),
+               "scanned": [list(w) for w in acm.merge(scanned)][:10],
+               "not_scanned": [list(w) for w in acm.merge(failed)][:10], "note": note[:700]}
+    if not complete:
+        summary["partial"] = True
+    return {"summary": summary, "roles": roles_out}
 
 
 async def evm_roles(px: ChainProxy, out: Out, address: str, alias: str, extra: list[str]) -> dict[str, Any]:
@@ -811,10 +1076,10 @@ async def evm_roles(px: ChainProxy, out: Out, address: str, alias: str, extra: l
             a = _addr_of(r[1])
             if a is not None:
                 holders.append((g, a))
-    role_ids = [("DEFAULT_ADMIN_ROLE", b"\0" * 32)] if role_consts or "DEFAULT_ADMIN_ROLE" in out.job.unit_functions else []
+    named = []
     for rname, r in zip(role_consts, res[len(getters):], strict=True):
         if isinstance(r, tuple) and r[0] and len(r[1]) == 32:
-            role_ids.append((rname, r[1]))
+            named.append((rname, r[1]))
     for g, a in holders:
         key = f"{pre}.{field_key(g)}"
         out.fact(key, a, method=f"eth_call {g}()", source=f"eth_call {g}()")
@@ -822,25 +1087,6 @@ async def evm_roles(px: ChainProxy, out: Out, address: str, alias: str, extra: l
         if int(a, 16):
             row.update(await _classify_holder(px, out, key, a))
         result["holders"].append(row)
-    # AccessControlEnumerable: members of each role (at most 10 per role)
-    for rname, rid in role_ids[:8]:
-        cnt = await evm_calls(px, cid, out.at, [(address, abi.selector("getRoleMemberCount(bytes32)") + rid)])
-        if not (isinstance(cnt[0], tuple) and cnt[0][0] and len(cnt[0][1]) == 32):
-            continue
-        n = int.from_bytes(cnt[0][1], "big")
-        rkey = f"{pre}.role.{field_key(rname)}"
-        out.fact(f"{rkey}.count", str(n), method="eth_call getRoleMemberCount", source=f"eth_call getRoleMemberCount({rname})")
-        members = await evm_calls(px, cid, out.at, [
-            (address, abi.selector("getRoleMember(bytes32,uint256)") + abi.encode(["bytes32", "uint256"], ["0x" + rid.hex(), j]))
-            for j in range(min(n, 10))])
-        names = []
-        for j, mres in enumerate(members):
-            if isinstance(mres, tuple) and mres[0]:
-                a = _addr_of(mres[1])
-                if a:
-                    out.fact(f"{rkey}.{j}", a, method="eth_call getRoleMember", source=f"eth_call getRoleMember({rname}, {j})")
-                    names.append(a)
-        result["roles"].append({"role": rname, "count": n, "members": names})
     if out.job.chain_id:
         dep = await px.sourcify_deployment(int(out.job.chain_id), address)
         # third-party record: only well-formed values become facts (an address, a tx hash, a number)
@@ -864,6 +1110,29 @@ async def evm_roles(px: ChainProxy, out: Out, address: str, alias: str, extra: l
                 out.fact(f"{pre}.owner_is_deployer", "true" if same else "false", method="eth_call owner()",
                          source="owner() compared with the Sourcify deployer")
                 result["owner_is_deployer"] = same
+    # AccessControl (TimelockController included): role members from getRoleMember, else from the
+    # RoleGranted/RoleRevoked logs confirmed by hasRole (chain.access_control)
+    dep_rec = result.get("deployment") or {}
+    cands = [a for _g, a in holders] + [str(dep_rec.get("deployer") or "").lower()]
+    ac = await evm_access_control(px, out, address, pre, named, cands,
+                                  int(dep_rec["creation_block"]) if dep_rec.get("creation_block") else None,
+                                  str(dep_rec.get("creation_tx") or "") or None)
+    if ac is not None:
+        result["access_control"] = ac.pop("summary")
+        result["roles"] = ac["roles"]
+    # a holder that answers getMinDelay (a TimelockController owner, say): who proposes and executes
+    tl = next((r for r in result["holders"] if r.get("kind") == "contract" and "min_delay_s" in r), None)
+    if tl is not None:
+        tdep = await px.sourcify_deployment(cid, tl["holder"]) if cid else None
+        tblock = str((tdep or {}).get("blockNumber") or "")
+        ttx = str((tdep or {}).get("transactionHash") or "")
+        tac = await evm_access_control(px, out, tl["holder"], tl["fact_key"], [], [address.lower()],
+                                       int(tblock) if re.fullmatch(r"\d{1,12}", tblock) else None,
+                                       ttx if re.fullmatch(r"0x[0-9a-fA-F]{64}", ttx) else None,
+                                       wall_s=12, log_calls=12)
+        if tac is not None:
+            tl["access_control"] = tac.pop("summary")
+            tl["roles"] = tac["roles"]
     return result
 
 
@@ -890,6 +1159,144 @@ async def tron_roles(px: ChainProxy, out: Out, address: str, alias: str, extra: 
     return result
 
 
+_SIG_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{64,90}$")
+
+
+async def solana_authority(px: ChainProxy, out: Out, pre: str, address: str, history: list[str] | None = None,
+                           acc: dict[str, Any] | None | bool = False, lookup: bool = True) -> dict[str, Any]:
+    """Who can sign as `address` (see chain.sol_authority): a Squads vault re-derived from a multisig named
+    in the signer history of `address` or of the accounts it controls (`history`, for example the ProgramData
+    of a program, whose transactions are its deploys and upgrades), a PDA (off curve, no private key), a key
+    on the curve, or unknown. Never "plain keypair" from System ownership: that is what every one of them
+    looks like. `acc` is the account when the caller already read it (None: it does not exist); `lookup`
+    False skips the signer history (curve check only)."""
+    from . import sol_authority as sa
+    try:
+        curve = sa.on_curve(sa.pubkey(address))
+    except ValueError:
+        return {"kind": "unknown", "note": "not a 32-byte base58 public key"}
+    info: dict[str, Any] = {"on_curve": curve}
+    if acc is False:
+        try:
+            _s, accs = await solana_accounts(px, [address])
+            acc = accs[0] if accs else None
+        except ChainUnavailable:
+            acc = False
+    if acc is not False:
+        info["owner_program"] = str(acc.get("owner") or "") if acc else None
+        info["exists"] = acc is not None
+    out.fact(f"{pre}.on_curve", "true" if curve else "false", method="ed25519 decompression",
+             source="address bytes checked against the ed25519 curve (off curve = program-derived, no private key)")
+    if curve:
+        info.update(kind="on_curve_key", private_key_possible=True,
+                    note=("On the ed25519 curve: a private key can exist for this address. Who holds it (one person, "
+                          "an MPC or hardware setup) is not visible on chain; System ownership does not show a "
+                          "single keypair."))
+    else:
+        info.update(kind="pda", private_key_possible=False)
+        found = (await _squads_vault(px, address, [h for h in (history or []) if h != address] + [address])
+                 if lookup else {"why": "The signer history was not read in this call (review_chain_roles on the "
+                                        "address checks it for a Squads vault)."})
+        if found.get("multisig"):
+            info.update(found)
+        else:
+            info["note"] = ("Off the ed25519 curve: a program-derived address with no private key; it signs only "
+                            "through the program that derived it. " + found.get("why", ""))[:300]
+            if found.get("checked_txs") is not None:
+                info["checked_txs"] = found["checked_txs"]
+    out.fact(f"{pre}.authority_kind", info["kind"], method="getMultipleAccounts, getSignaturesForAddress",
+             source="authority classification: curve check, Squads PDA re-derivation from signer history")
+    ms = info.get("multisig")
+    if ms:
+        out.fact(f"{pre}.multisig", ms["address"], method="getMultipleAccounts multisig",
+                 source=f"Squads {ms['version']} multisig whose vault PDA re-derives to the authority")
+        for k, unit in (("threshold", None), ("members", None), ("voters", None), ("time_lock_s", "seconds"),
+                        ("vault_index", None)):
+            if ms.get(k) is not None:
+                out.fact(f"{pre}.multisig_{k.removesuffix('_s')}", str(ms[k]), method="getMultipleAccounts multisig",
+                         source=f"Squads {ms['version']} multisig account {k}", unit=unit)
+        out.fact(f"{pre}.multisig_config_authority", ms.get("config_authority") or "none",
+                 method="getMultipleAccounts multisig",
+                 source="Squads multisig config authority (none = member changes need a multisig vote)")
+        out.fact(f"{pre}.multisig_evidence_tx", ms["evidence_tx"], method="getTransaction",
+                 source="transaction whose Squads instruction names the multisig")
+    return info
+
+
+async def _squads_vault(px: ChainProxy, address: str, history: list[str]) -> dict[str, Any]:
+    from . import sol_authority as sa
+    sigs: list[str] = []
+    read_any = False
+    for h in history[:3]:
+        if len(sigs) >= sa.TX_LIMIT:
+            break
+        try:
+            rows = await px.solana("getSignaturesForAddress", [h, {"limit": sa.SIG_LIMIT, "commitment": "finalized"}])
+        except (ChainUnavailable, RpcFailure):
+            continue
+        read_any = True
+        for r in rows if isinstance(rows, list) else []:
+            sig = str(r.get("signature") or "") if isinstance(r, dict) else ""
+            if _SIG_RE.match(sig) and not r.get("err") and sig not in sigs and len(sigs) < sa.TX_LIMIT:
+                sigs.append(sig)
+    if not read_any:
+        return {"why": "The signer history could not be read, so a Squads vault was not checked."}
+    checked = 0
+    for sig in sigs[:sa.TX_LIMIT]:
+        tx = None
+        for attempt in range(2):   # the public RPC rate limits getTransaction hardest: one paced retry
+            try:
+                tx = await px.solana("getTransaction", [sig, {"encoding": "json", "maxSupportedTransactionVersion": 0,
+                                                              "commitment": "finalized"}])
+                break
+            except ChainUnavailable as exc:
+                if exc.reason != "rate_limited" or attempt:
+                    break
+                await asyncio.sleep(sa.RETRY_S)
+            except RpcFailure:
+                break
+        if not isinstance(tx, dict):
+            continue
+        checked += 1
+        for version, cand in sa.squads_candidates(tx, address):
+            try:
+                idx = next((i for i in sa.VAULT_INDICES if sa.squads_derive(version, cand, i) == address), None)
+            except ValueError:
+                continue
+            if idx is None:
+                continue
+            try:
+                _s, accs = await solana_accounts(px, [cand])
+            except ChainUnavailable:
+                accs = []
+            macc = accs[0] if accs else None
+            prog = sa.SQUADS_V4 if version == "v4" else sa.SQUADS_V3
+            parsed = None
+            if macc and str(macc.get("owner") or "") == prog:
+                data = sa.account_data(macc)
+                parsed = sa.parse_squads_v4(data) if version == "v4" else sa.parse_squads_v3(data)
+            ms = {"version": version, "address": cand, "vault_index": idx, "evidence_tx": sig, "program": prog,
+                  **(parsed or {})}
+            kind = "squads_v4_vault" if version == "v4" else "squads_v3_authority"
+            if parsed:
+                cfg = ms.get("config_authority")
+                note = (f"Squads {version} {'vault' if version == 'v4' else 'authority'} PDA (index {idx}) of multisig "
+                        f"{cand}, re-derived from the multisig named in transaction {sig[:16]}...: threshold "
+                        f"{ms['threshold']} of {ms['members']} members ({ms['voters']} can vote), time lock "
+                        f"{ms['time_lock_s']} s; " + (f"config authority {cfg} can change members and threshold "
+                                                      "without a vote." if cfg else "config authority none: changes "
+                                                      "need a multisig vote."))
+            else:
+                note = (f"Squads {version} PDA (index {idx}) re-derived from {cand}, named in transaction {sig[:16]}...; "
+                        "the multisig account could not be read, so threshold and members are unknown.")
+            return {"kind": kind, "multisig": ms, "note": note[:400], "checked_txs": checked}
+    if not sigs:
+        return {"why": "It has no transaction history to check for a Squads vault.", "checked_txs": 0}
+    return {"why": (f"No Squads instruction in the {checked} recent transaction{'s' if checked != 1 else ''} read "
+                    f"({len(sigs)} listed) re-derives to it, so the deriving program is not identified."),
+            "checked_txs": checked}
+
+
 async def solana_roles(px: ChainProxy, out: Out, address: str, alias: str) -> dict[str, Any]:
     from ..adapters.solana.onchain import BPF_LOADER_UPGRADEABLE, PROGRAMDATA_HEADER, b58encode, parse_programdata
     pre = f"chain.{alias}"
@@ -901,6 +1308,7 @@ async def solana_roles(px: ChainProxy, out: Out, address: str, alias: str) -> di
     if acc is None:
         out.fact(f"{pre}.exists", "false", method="getMultipleAccounts", source="getMultipleAccounts")
         result["exists"] = False
+        result["authority_kind"] = await solana_authority(px, out, pre, address, [], acc=None)
         return result
     owner = str(acc.get("owner") or "")
     data = base64.b64decode((acc.get("data") or [""])[0] or "")
@@ -921,6 +1329,9 @@ async def solana_roles(px: ChainProxy, out: Out, address: str, alias: str) -> di
                      source="ProgramData upgrade authority (none = immutable)")
             result["upgrade_authority"] = auth
             out.fact(f"{pre}.programdata", pd_addr, method="getMultipleAccounts", source="program account data")
+            if auth:   # the ProgramData's own transactions are the deploys and upgrades the authority signed
+                result["upgrade_authority_kind"] = await solana_authority(
+                    px, out, f"{pre}.upgrade_authority", auth, [pd_addr, address])
     elif owner in TOKEN_PROGRAMS and len(data) >= 82:
         mint_auth = b58encode(data[4:36]) if int.from_bytes(data[0:4], "little") == 1 else "none"
         freeze = b58encode(data[50:82]) if int.from_bytes(data[46:50], "little") == 1 else "none"
@@ -929,6 +1340,12 @@ async def solana_roles(px: ChainProxy, out: Out, address: str, alias: str) -> di
                      ("decimals", str(data[44]))):
             out.fact(f"{pre}.{k}", v, method="getMultipleAccounts mint", source=f"SPL mint {k}")
             result[k] = v
+        for k in ("mint_authority", "freeze_authority"):
+            if result[k] != "none":
+                result[f"{k}_kind"] = await solana_authority(px, out, f"{pre}.{k}", result[k], [address])
+    elif owner == SYSTEM_PROGRAM_ID or not data:
+        # a wallet-like account (an authority read on its own): say what can sign for it
+        result["authority_kind"] = await solana_authority(px, out, pre, address, [address], acc=acc)
     return result
 
 

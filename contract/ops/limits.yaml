@@ -83,6 +83,8 @@ chain_access:                  # chain access design 2026-10-27 sections 1 and 4
   max_items: 50                # chain_read items per call
   max_holders: 100             # chain_balances holders per call
   upstream_calls_per_call: 400 # proxy meter per tool call
+  role_log_calls: 24           # review_chain_roles: eth_getLogs windows per AccessControl contract (RoleGranted/RoleRevoked), both ends of the span when it does not fit
+  role_wall_s: 25              # review_chain_roles: seconds for the AccessControl log scan; windows left are reported as not scanned
   latest_cache_s: 12           # in-process cache for reads at a recent block
   finality_blocks: {evm: 64, tron: 19}   # a read at or below head minus this may enter chain_cache
   shared_cache_days: 30        # chain_cache rows other jobs may use: two distinct hosts agreed, or an operator-configured host
