@@ -21,7 +21,6 @@ import contextlib
 import json
 import logging
 import os
-import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,10 +31,6 @@ from .proxy import ChainProxy, Meter, asgi_app
 
 logger = logging.getLogger(__name__)
 
-_ADDR = re.compile(r"^0x[0-9a-fA-F]{40}$")
-# Reads the EVM issues when a call executes an account's code (code and storage loads), or an explicit
-# call. A balance or nonce query alone is incidental and never counts as the contract executing.
-_EXEC_METHODS = frozenset({"eth_getCode", "eth_getStorageAt", "eth_call", "eth_estimateGas"})
 _PIN_TAGS = frozenset({"latest", "pending", "safe", "finalized"})
 _MAX_BODY = 1024 * 1024
 
@@ -46,26 +41,11 @@ class ForkStats:
     denied: int = 0
     denied_methods: list[str] = field(default_factory=list)
     bad_path: int = 0
-    addresses: set[str] = field(default_factory=set)   # every account the run read (incl. balance, nonce)
-    executed: set[str] = field(default_factory=set)    # accounts whose code or storage the EVM loaded
-
-    def note(self, items: list[Any]) -> None:
-        for i in items:
-            if not isinstance(i, dict) or not isinstance(i.get("params"), list) or not i["params"]:
-                continue
-            first = i["params"][0]
-            addr = first.get("to") if isinstance(first, dict) else first
-            if not (isinstance(addr, str) and _ADDR.match(addr)) or len(self.addresses) >= 500:
-                continue
-            self.addresses.add(addr.lower())
-            if i.get("method") in _EXEC_METHODS:
-                self.executed.add(addr.lower())
 
     def as_dict(self, meter: Meter) -> dict[str, Any]:
         return {"requests": self.requests, "upstream_calls": meter.calls, "cached": meter.cached,
                 "bytes": meter.bytes, "denied": self.denied, "denied_methods": sorted(set(self.denied_methods))[:10],
-                "bad_path": self.bad_path, "addresses": sorted(self.addresses)[:200],
-                "executed": sorted(self.executed)[:200]}
+                "bad_path": self.bad_path}
 
 
 def pin_tags(item: Any, block: int, fork_hash: str | None = None) -> Any:
@@ -148,7 +128,6 @@ def fork_app(chain_id: int, block: int, token: str, meter: Meter, stats: ForkSta
             pinned = [pin_tags(i, block, fh) for i in items]
             try:
                 policy.check_evm_payload(pinned, max_block=block)
-                stats.note(pinned)
             except policy.ProxyDenied as exc:
                 stats.denied += 1
                 stats.denied_methods.append(exc.method[:60])

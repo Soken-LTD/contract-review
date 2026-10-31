@@ -8,9 +8,9 @@ A run counts for a draft only when all of these hold (security review 2026-10-31
   (a skipped or unreported test fails closed);
 - it finished before the job was finalized (no end time after finalize fails closed) (the report evidence cannot change after finalize;
   finalize also refuses while a run of the job is queued or running);
-- the cited contract executed: the EVM loaded the deployment's code or storage (or called it) through
-  the proxy, or the test deploys or calls a contract of a pinned file the finding quotes. A run that
-  meets everything else but this is printed as "Exercised by a test" and raises nothing.
+- the forge call trace shows a CALL, STATICCALL or DELEGATECALL into the deployment address, or into a
+  contract whose runtime code equals the artifact compiled from a pinned file the finding quotes. A run
+  that meets everything else but this is printed as "Exercised by a test" and raises nothing.
 
 The raise is printed only. The stored evidence level, the severity caps (K8) and finalize use the
 base level; a run never changes a severity.
@@ -26,21 +26,20 @@ _IMPORT_PREFIX = "pinned/"
 
 
 def exercised(result: dict[str, Any], test_source: str, address: str | None, cited: set[str]) -> str | None:
-    """How the run shows that the cited contract executed: `address` when the EVM loaded the deployment's
-    code or storage (or called it) through the proxy, `import` when the test deploys or calls a contract
-    declared in a pinned file the finding quotes; else None. A balance or nonce read alone, or an
-    import the test never uses, is not execution."""
-    executed = {str(a).lower() for a in ((result.get("rpc") or {}).get("executed") or [])}
-    if address and address.lower() in executed:
+    """`address` when the forge call trace shows a CALL, STATICCALL or DELEGATECALL into the deployment
+    address; `artifact` when it shows one into a contract whose runtime code equals the artifact compiled
+    from a pinned file the finding quotes; else None. Only the trace counts (fork_verify.trace_calls)."""
+    calls = result.get("calls") or {}
+    called = {str(a).lower() for a in calls.get("addresses") or []}
+    if address and address.lower() in called:
         return "address"
-    for imp in result.get("imports") or []:
-        if isinstance(imp, dict) and imp.get("path") in cited and imp.get("used"):
-            return "import"
+    if any(isinstance(p, dict) and p.get("path") in cited for p in calls.get("pinned") or []):
+        return "artifact"
     return None
 
 
-NOT_EXERCISED = ("the test did not execute the cited contract (no code or storage load of the deployment, and"
-                 " no deployment of or call into a contract of a pinned file the finding quotes)")
+NOT_EXERCISED = ("the call trace shows no call into the deployment address nor into a contract whose runtime code"
+                 " equals a pinned file the finding quotes")
 
 
 def why_not(run: dict[str, Any], current_revision: int | None, address: str | None, cited: set[str],

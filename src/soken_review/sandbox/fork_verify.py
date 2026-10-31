@@ -120,29 +120,6 @@ def check_test_source(content: str, pin_paths: set[str], *, max_bytes: int | Non
     return imports
 
 
-_DECL_RE = re.compile(r"\b(?:abstract\s+)?(?:contract|library)\s+([A-Za-z_][A-Za-z0-9_]{0,63})\b")
-
-
-def import_usage(content: str, pin: Any) -> list[dict[str, Any]]:
-    """For each `pinned/<path>` import: the contracts and libraries that file declares and whether the
-    test deploys one (`new X`, `deployCode("X`) or calls into one (`X(addr)`, `X.f(`). Only such an
-    import is evidence that the cited code ran; importing a file without using it is not."""
-    body = _COMMENT_RE.sub(" ", content)
-    code = _IMPORT_RE.sub(" ", body)
-    out: list[dict[str, Any]] = []
-    for imp in test_imports(content):
-        if not imp.startswith("pinned/"):
-            continue
-        path = imp.removeprefix("pinned/")
-        try:
-            names = sorted(set(_DECL_RE.findall(_COMMENT_RE.sub(" ", pin.read_text(path)))))[:40]
-        except (KeyError, OSError, ValueError):
-            names = []
-        used = [n for n in names if re.search(rf"\bnew\s+{n}\b|deployCode\(\s*\"{n}\b|\b{n}\s*\(|\b{n}\s*\.", code)]
-        out.append({"path": path[:300], "contracts": names, "used": used})
-    return out[:20]
-
-
 def test_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8", "surrogatepass")).hexdigest()
 
@@ -206,7 +183,7 @@ def foundry_toml(remappings: list[str], *, gas_limit: int = 1_000_000_000) -> st
     lines = [
         "[profile.default]",
         'src = "test"', 'test = "test"', 'script = "test"', "libs = []",
-        'out = "/tmp/forge-out"', 'cache_path = "/tmp/forge-cache"', 'broadcast = "/tmp/forge-broadcast"',
+        'out = "/work/out"', 'cache_path = "/tmp/forge-cache"', 'broadcast = "/tmp/forge-broadcast"',
         "remappings = [" + ", ".join(json.dumps(r) for r in remaps) + "]",
         f"allow_paths = [{json.dumps(FORGE_STD_ROOT)}]",
         "ffi = false", "fs_permissions = []", "offline = true", "auto_detect_solc = false",
@@ -259,21 +236,107 @@ class RunError(Exception):
 # ── forge output ───────────────────────────────────────────────────────────
 
 
+def forge_doc(raw: bytes) -> dict[str, Any]:
+    """The JSON document `forge test --json` printed (the whole output, else its last JSON line)."""
+    text = raw.decode("utf-8", "replace").strip()
+    for line in [text, *reversed(text.splitlines())]:
+        try:
+            doc = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(doc, dict):
+            return doc
+    raise RunError("no_result", "forge printed no JSON result")
+
+
+_CALL_KINDS = frozenset({"CALL", "STATICCALL", "DELEGATECALL"})
+_HEX = re.compile(r"^(0x)?[0-9a-fA-F]*$")
+
+
+def trace_calls(doc: dict[str, Any]) -> tuple[set[str], dict[str, str]]:
+    """From the forge call traces (-vvvv): the addresses entered by CALL, STATICCALL or DELEGATECALL,
+    and the runtime code of every contract the run created (CREATE, CREATE2 output), by address. The
+    traces are the EVM's own record; no name or RPC method is inferred."""
+    called: set[str] = set()
+    created: dict[str, str] = {}
+    for body in doc.values():
+        for r in ((body or {}).get("test_results") or {}).values() if isinstance(body, dict) else []:
+            for entry in (r or {}).get("traces") or []:
+                arena = entry[1] if isinstance(entry, list) and len(entry) == 2 else None
+                for node in (arena or {}).get("arena") or [] if isinstance(arena, dict) else []:
+                    t = (node or {}).get("trace") or {}
+                    addr = str(t.get("address") or "").lower()
+                    if not re.fullmatch(r"0x[0-9a-f]{40}", addr):
+                        continue
+                    kind = str(t.get("kind") or "")
+                    if kind in _CALL_KINDS:
+                        called.add(addr)
+                    elif kind in ("CREATE", "CREATE2") and t.get("success"):
+                        out = str(t.get("output") or "")
+                        if _HEX.match(out):
+                            created[addr] = out.removeprefix("0x").lower()
+    return called, created
+
+
+def _masked(code_hex: str, ranges: list[tuple[int, int]]) -> bytes:
+    try:
+        b = bytearray(bytes.fromhex(code_hex))
+    except ValueError:
+        return b""
+    for start, length in ranges:
+        if 0 <= start and start + length <= len(b):
+            b[start:start + length] = bytes(length)
+    return bytes(b)
+
+
+def load_artifacts(out_dir: Path) -> list[dict[str, Any]]:
+    """Runtime code of every contract compiled from the pinned tree in this run (forge artifacts,
+    read without following anything the container planted), with its immutable ranges."""
+    from .output import UnsafeOutput, read_output_files
+
+    try:
+        files = read_output_files(out_dir, "*.json", 4000, 16 * 1024 * 1024)
+    except (FileNotFoundError, UnsafeOutput):
+        return []
+    arts: list[dict[str, Any]] = []
+    for raw in files.values():
+        try:
+            a = json.loads(raw)
+        except ValueError:
+            continue
+        meta = a.get("metadata") if isinstance(a, dict) else None
+        target = ((meta or {}).get("settings") or {}).get("compilationTarget") if isinstance(meta, dict) else None
+        dep = a.get("deployedBytecode") if isinstance(a, dict) else None
+        if not isinstance(target, dict) or len(target) != 1 or not isinstance(dep, dict):
+            continue
+        (path, name), = target.items()
+        code = str(dep.get("object") or "").removeprefix("0x").lower()
+        if not str(path).startswith("pinned/") or not code or not _HEX.match(code):
+            continue
+        ranges = [(int(x["start"]), int(x["length"])) for refs in (dep.get("immutableReferences") or {}).values()
+                  for x in refs if isinstance(x, dict)]
+        arts.append({"path": str(path).removeprefix("pinned/"), "contract": str(name)[:80], "code": code, "ranges": ranges})
+    return arts
+
+
+def called_pinned(called: set[str], created: dict[str, str], artifacts: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Pinned contracts the run called: an address entered by a call whose created runtime code equals
+    the artifact compiled from the pinned source (immutable ranges masked on both sides)."""
+    out: list[dict[str, str]] = []
+    for addr in sorted(called & set(created)):
+        for art in artifacts:
+            if len(created[addr]) == len(art["code"]) and \
+                    _masked(created[addr], art["ranges"]) == _masked(art["code"], art["ranges"]):
+                out.append({"path": art["path"], "contract": art["contract"], "address": addr})
+    return out[:50]
+
+
 def parse_forge_json(raw: bytes, *, max_tests: int | None = None, log_lines: int | None = None) -> list[dict[str, Any]]:
     """Per test results of `forge test --json`. Reasons and console lines are untrusted text."""
     lim = fork_limits()
     max_tests = int(max_tests or lim.get("max_tests", 20))
     log_lines = int(log_lines or lim.get("log_lines", 40))
-    text = raw.decode("utf-8", "replace").strip()
-    doc: Any = None
-    for line in [text, *reversed(text.splitlines())]:
-        try:
-            doc = json.loads(line)
-            break
-        except ValueError:
-            continue
-    if not isinstance(doc, dict):
-        raise RunError("no_result", "forge printed no JSON result")
+    doc = forge_doc(raw)
     tests: list[dict[str, Any]] = []
     for suite, body in sorted(doc.items()):
         if not isinstance(body, dict):
@@ -412,7 +475,7 @@ async def execute(run: dict[str, Any], pin_root: Path, *, image: str | None = No
     from ..chain.fork_rpc import ForkStats, fork_app, serve
     from ..chain.proxy import Meter
     from ..pinning.store import PinnedSource
-    from .profile import CHAINSIM_NETWORK, StepLimits, docker_argv, locked_image, locked_tools
+    from .profile import CHAINSIM_NETWORK, StepLimits, docker_argv, locked_image, locked_tools, sandbox_writable_dir
 
     lim = fork_limits()
     image = image or locked_image("evm-analyze")
@@ -468,14 +531,16 @@ async def execute(run: dict[str, Any], pin_root: Path, *, image: str | None = No
                 raise RunError("sandbox_unavailable", "relay has no address on the chainsim network")
             await asyncio.sleep(0.5)   # the relay binds in well under a second; forge retries the fork anyway
             url = f"http://{ip}:{RELAY_PORT}/{token}"
-            command = ["forge", "test", "--json", "-vv", "--fork-url", url, "--fork-block-number", str(int(run["block"])),
+            command = ["forge", "test", "--json", "-vvvv", "--fork-url", url, "--fork-block-number", str(int(run["block"])),
                        "--fork-retries", "2", "--fork-retry-backoff", "1000", "--no-storage-caching",
                        "--use", f"/cache/{solc_bin.parent.name}/{solc_bin.name}", "--no-auto-detect",
                        "--offline", "--match-path", run["test_path"]]
+            out_dir = sandbox_writable_dir(work / "out")
             argv = docker_argv(step="fork", image=image, work_dir=project, cache_dir=cache._root, limits=limits,
                                env={"HOME": "/tmp", "NO_COLOR": "1"}, command=command,
                                family_network=CHAINSIM_NETWORK, runtime=runtime or os.environ.get("SOKEN_SANDBOX_RUNTIME"),
-                               workdir=PROJECT_DIR, name=forge, mounts=[(project.resolve(), PROJECT_DIR, True)])
+                               workdir=PROJECT_DIR, name=forge,
+                               mounts=[(project.resolve(), PROJECT_DIR, True), (out_dir.resolve(), "/work/out", False)])
 
             def kill() -> None:
                 _docker("rm", "-f", forge, timeout=30)
@@ -489,12 +554,13 @@ async def execute(run: dict[str, Any], pin_root: Path, *, image: str | None = No
     cap = int(lim.get("stdout_bytes", 1024 * 1024))
     stdout = _read_capped(out_path, cap)
     stderr = _read_capped(err_path, cap).decode("utf-8", "replace")
+    artifacts = load_artifacts(work / "out") if killed_by is None else []
     shutil.rmtree(work, ignore_errors=True)
     base: dict[str, Any] = {"wall_s": wall_s, "rpc": stats.as_dict(meter), "exit_code": code,
                             "engine": {"tool": "forge", "version": locked_tools("evm-analyze").get("forge"),
                                        "forge_std": locked_tools("evm-analyze").get("forge-std"),
                                        "image": image.rsplit("@", 1)[-1][:80], "solc": solc_version},
-                            "pinned_files": n_pinned, "imports": import_usage(run["test_source"], pin)}
+                            "pinned_files": n_pinned}
     if killed_by == "wall":
         return {**base, "status": "timeout", "reason": f"wall clock {int(wall)} s"}
     if killed_by == "output":
@@ -508,7 +574,9 @@ async def execute(run: dict[str, Any], pin_root: Path, *, image: str | None = No
         elif reason == "no_result" and _fork_error(stderr):
             reason = "chain_unavailable"
         return {**base, "status": "error", "reason": reason, "diagnostics": compile_error(stderr)}
-    return {**base, "status": run_status(tests), "tests": tests}
+    called, created = trace_calls(forge_doc(stdout))
+    calls = {"addresses": sorted(called)[:200], "pinned": called_pinned(called, created, artifacts)}
+    return {**base, "status": run_status(tests), "tests": tests, "calls": calls}
 
 
 def _fork_error(stderr: str) -> bool:

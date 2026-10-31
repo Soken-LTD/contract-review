@@ -100,7 +100,7 @@ async def test_rendered_report_carries_the_passing_run(db_pool, tmp_path, monkey
     jid = await _job(db_pool, tmp_path)
     from .test_chain_facts_render import VE
 
-    result = {"status": "passed", "rpc": {"addresses": [VE.lower()], "executed": [VE.lower()]},
+    result = {"status": "passed", "calls": {"addresses": [VE.lower()], "pinned": []},
               "tests": [{"name": "SupplyTest.test_mergeCountsTwice()", "status": "passed", "gas": 91234}]}
     async with db_pool.connection() as conn:
         # ended before finalize, against the draft's current revision 1, read the escrow address

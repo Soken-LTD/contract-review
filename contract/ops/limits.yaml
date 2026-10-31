@@ -94,7 +94,7 @@ fork_verify:                   # review_verify_on_fork (chain access design 1.7,
   memory: 1536m                # cgroup ceiling (clamped by sandbox.profile admission on a smaller host)
   pids: 256
   max_file_bytes: 134217728    # ulimit fsize; the project mount is read-only, forge writes to the 512 MiB /tmp tmpfs
-  stdout_bytes: 1048576        # forge --json output read by the supervisor; over the cap the run ends error output_cap
+  stdout_bytes: 8388608        # forge --json -vvvv output (call traces) read by the supervisor; over the cap the run ends error output_cap
   test_bytes: 65536            # one Solidity test file
   rpc_calls: 3000              # proxy meter per run (calls that reach an upstream; denied methods never do)
   rpc_bytes: 104857600

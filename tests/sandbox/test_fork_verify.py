@@ -113,8 +113,6 @@ async def test_fork_endpoint_pins_tags_and_refuses_later_blocks():
         assert r.json()["result"] == "0x0"
         r = await c.post(f"/{TOKEN}", json=_rpc("eth_getStorageAt", [addr, "0x0", {"blockHash": "0x" + "cd" * 32}]))
         assert r.json()["error"]["code"] == -32601                                 # any other hash stays refused
-    d = stats.as_dict(_meter)                             # the accounts the run read, for the evidence rule
-    assert d["addresses"] == [addr] and d["executed"] == [addr]   # getCode and getStorageAt are execution loads
     reads = [s for s in up.seen if s["method"] != "eth_getBlockByNumber"]
     assert [s["params"][-1] for s in reads] == [hex(BLOCK), hex(BLOCK), hex(BLOCK)]
     assert stats.denied == 2
@@ -124,21 +122,6 @@ def test_pin_tags_leaves_methods_without_a_block_alone():
     item = _rpc("eth_chainId", [])
     assert pin_tags(item, BLOCK) is item
     assert pin_tags(_rpc("eth_call", [{"to": "0x" + "1" * 40}, "pending"]), BLOCK)["params"][1] == hex(BLOCK)
-
-
-@pytest.mark.asyncio
-async def test_a_balance_or_nonce_read_is_not_recorded_as_execution():
-    up = _Upstream()
-    app, meter, stats = _app(up)
-    addr = "0x" + "3" * 40
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://relay") as c:
-        await c.post(f"/{TOKEN}", json=_rpc("eth_getBalance", [addr, hex(BLOCK)]))
-        await c.post(f"/{TOKEN}", json=_rpc("eth_getTransactionCount", [addr, hex(BLOCK)]))
-    d = stats.as_dict(meter)
-    assert d["addresses"] == [addr] and d["executed"] == []
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://relay") as c:
-        await c.post(f"/{TOKEN}", json=_rpc("eth_call", [{"to": addr, "data": "0x"}, hex(BLOCK)]))
-    assert stats.as_dict(meter)["executed"] == [addr]
 
 
 @pytest.mark.asyncio
@@ -237,7 +220,7 @@ def test_run_capped_kills_at_the_wall_and_at_the_output_cap(tmp_path):
 def test_foundry_toml_closes_every_way_out():
     toml = fv.foundry_toml(["@oz/=pinned/lib/oz/"])
     for line in ("ffi = false", "fs_permissions = []", "offline = true", "auto_detect_solc = false",
-                 "no_storage_caching = true", 'src = "test"', 'out = "/tmp/forge-out"'):
+                 "no_storage_caching = true", 'src = "test"', 'out = "/work/out"'):
         assert line in toml, line
     assert "eth_rpc_url" not in toml and "rpc_endpoints" not in toml
     assert '"forge-std/=/opt/forge-std/src/"' in toml and '"@oz/=pinned/lib/oz/"' in toml
@@ -328,3 +311,48 @@ async def test_execute_fails_closed_without_a_pinned_image(tmp_path, monkeypatch
     with pytest.raises(fv.RunError) as exc:
         await fv.execute({"job_id": "job_x", "run_id": "fork-000000000000"}, tmp_path)
     assert exc.value.reason == "image_unavailable"
+
+
+# ── call traces: the one rule for evidence (forge -vvvv traces of real runs, 2026-10-31) ──────
+
+
+def _trace(name: str) -> dict:
+    return fv.forge_doc((FIX.parent / name).read_bytes())
+
+
+def _counter_artifacts(tmp_path: Path) -> list[dict]:
+    out = tmp_path / "out" / "Counter.sol"
+    out.mkdir(parents=True)
+    (out / "Counter.json").write_bytes((FIX.parent / "counter.artifact.json").read_bytes())
+    return fv.load_artifacts(tmp_path / "out")
+
+
+WETH9 = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+
+
+def test_a_real_call_into_the_deployment_and_into_the_pinned_contract_is_seen(tmp_path):
+    """Verify.t.sol: WETH9.deposit and balanceOf through the fork, then new Counter() from pinned/src."""
+    called, created = fv.trace_calls(_trace("verify_trace.json"))
+    assert WETH9 in called
+    arts = _counter_artifacts(tmp_path)
+    assert [(a["path"], a["contract"]) for a in arts] == [("src/Counter.sol", "Counter")]
+    pinned = fv.called_pinned(called, created, arts)
+    assert [(p["path"], p["contract"]) for p in pinned] == [("src/Counter.sol", "Counter")]
+
+
+def test_a_shadowed_contract_a_string_literal_and_a_code_read_do_not_count(tmp_path):
+    """Shadow.t.sol: a local contract named Counter (other code), the pinned names and the WETH9
+    address only in a string, and address(WETH9).code.length (an eth_getCode read, no call)."""
+    assert "contract Counter" in (FIX.parent / "Shadow.t.sol").read_text()
+    called, created = fv.trace_calls(_trace("shadow_trace.json"))
+    assert WETH9 not in called
+    assert any(a in created for a in called)                     # the shadow Counter was created and called
+    assert fv.called_pinned(called, created, _counter_artifacts(tmp_path)) == []
+
+
+def test_immutables_are_masked_on_both_sides():
+    art = {"path": "src/V.sol", "contract": "V", "code": "6000" + "00" * 32 + "f3", "ranges": [(2, 32)]}
+    deployed = "6000" + "ab" * 32 + "f3"
+    assert fv.called_pinned({"0x" + "1" * 40}, {"0x" + "1" * 40: deployed}, [art])[0]["contract"] == "V"
+    assert fv.called_pinned({"0x" + "1" * 40}, {"0x" + "1" * 40: "6001" + "ab" * 32 + "f3"}, [art]) == []
+    assert fv.called_pinned(set(), {"0x" + "1" * 40: deployed}, [art]) == []   # created, never called
