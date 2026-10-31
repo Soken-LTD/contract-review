@@ -213,7 +213,9 @@ def _basis_items(matrix: dict[str, Any]) -> list[dict[str, Any]]:
             "condition": (
                 "An admin function in the map can restore the affected state."
             ),
-            "scope": "entry_function",
+            # the admin functions are other entries writing the same state: entry_function alone
+            # rejected their quotes as out of scope (r5 2026-10-31, magnum)
+            "scope": "shared_state_writers",
             "expect": "absent",
             "fallback_field": "reversibility",
             "fallback_value": "admin_reversible",
@@ -602,11 +604,56 @@ def _resolve_scope(
         # The `#[derive(Accounts)]` struct(s) of the instruction(s) in scope, alone. Without one (a
         # native program parses accounts in the handler body) the entry ranges are the parsing block.
         return structs, False, "semantic"
+    if scope_name == "shared_state_writers" and not nc:
+        writers = _shared_state_writer_ranges(map_doc, location_quotes, ranges)
+        if writers is not None:
+            return writers, False, "semantic"
     # entry_function, and the named scopes without a dedicated resolver (shared_state_writers,
     # handler, module, account_struct without a struct): the entry_function ranges, which hold the
     # instruction, its guards and its callees. Narrower than scopes.yaml describes for those three,
     # but real ranges from the map; an empty scope could never be answered (2026-10-26).
     return ranges, nc, "not_covered" if nc else "semantic"
+
+
+def _shared_state_writer_ranges(map_doc: dict, location_quotes: list[dict[str, Any]],
+                                base: list[str]) -> list[str] | None:
+    """scopes.yaml shared_state_writers: the entry_function ranges plus every external or public
+    function that reads or writes a state variable the location's functions write (their reads
+    when they write none), bodies only. None when the extra bodies would pass the line cap; the
+    caller then keeps the entry_function ranges."""
+    if not location_quotes:
+        return None
+    loc = location_quotes[0]
+    path, start, end = loc.get("file", ""), int(loc.get("start", 0)), int(loc.get("end", 0))
+    spans = {sp["id"]: sp for sp in map_doc.get("spans", []) or [] if sp.get("id")}
+    functions = (map_doc.get("semantic") or {}).get("functions", []) or []
+
+    def holds(fn: dict) -> bool:
+        sp = spans.get(fn.get("span", ""))
+        return bool(sp) and sp.get("file") == path and not (sp.get("end", 0) < start or sp.get("start", 0) > end)
+
+    covering = [fn for fn in functions if holds(fn)]
+    state = {w.get("var") for fn in covering for w in fn.get("writes") or []} - {None}
+    if not state:
+        state = {r.get("var") for fn in covering for r in fn.get("reads") or []} - {None}
+    if not state:
+        return None
+    extra: list[str] = []
+    for fn in functions:
+        if fn in covering or not (fn.get("is_entry") or fn.get("visibility") in ("external", "public")):
+            continue
+        touched = {w.get("var") for w in fn.get("writes") or []} | {r.get("var") for r in fn.get("reads") or []}
+        sp = spans.get(fn.get("span", ""))
+        if sp and touched & state:
+            extra.append(f"{sp['file']}:{sp['start']}-{sp['end']}")
+    if not extra:
+        return None
+    merged = sorted(set(base) | set(extra), key=lambda r: (_parse_range_ref(r) or ("", 0, 0))[:2])
+    lines = 0
+    for r in merged:
+        t = _parse_range_ref(r)
+        lines += (t[2] - t[1] + 1) if t else 0
+    return merged if lines <= _SCOPE_LINE_CAP else None
 
 
 # Scope names of rubric/enums.yaml `challenge_scope`; anything else is a rubric error -> not_covered.
