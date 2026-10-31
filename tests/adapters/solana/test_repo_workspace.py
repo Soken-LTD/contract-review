@@ -208,7 +208,8 @@ def _sup(tmp_path: Path) -> Any:
 
 @pytest.mark.asyncio
 async def test_worker_repo_subdir_job_without_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """fetch keeps the workspace off the pin; a failed build still gives leads, a parsed map, nSLOC."""
+    """fetch keeps the workspace off the pin (but its root manifests, read-only); a failed build still
+    gives leads, a parsed map, nSLOC."""
     from unittest.mock import AsyncMock, patch
 
     _tree(tmp_path / "repo")
@@ -228,9 +229,19 @@ async def test_worker_repo_subdir_job_without_build(tmp_path: Path, monkeypatch:
         assert "_full_tree" not in cand_meta and "files" not in cand_meta
         ws = json.loads((out_dir / solana_steps._WORKSPACE_FILE).read_text())
         assert ws["subdir"] == "programs/locker" and "Cargo.lock" in ws["files"]
+        # MetaDAO 2026-10-31: the workspace root manifest (overflow-checks, profiles) is readable and
+        # quotable from the pin, out of scope; the build gets it from the workspace, never twice
+        from soken_review.pinning.store import PinnedSource
+
+        pin = PinnedSource.load(sup._pin_root, job_id)
+        entry = pin.get_entry("_workspace/Cargo.toml")
+        assert entry is not None and not entry.in_scope and entry.role == "dependency"
+        assert pin.read_text("_workspace/Cargo.toml") == ROOT_MANIFEST
+        assert pin.get_entry("src/lib.rs").in_scope
 
         def _failed_build(self: Any, cand: Candidate) -> BuildResult:
             assert "programs/locker/src/lib.rs" in cand.files and "Cargo.lock" in cand.files
+            assert not any("_workspace/" in p for p in cand.files)
             return BuildResult(candidate=cand, status="failed", reason="deps_failed", stderr_head="error: offline")
 
         with patch("soken_review.adapters.solana.SolanaAdapter.build", _failed_build):
@@ -250,3 +261,18 @@ async def test_worker_repo_subdir_job_without_build(tmp_path: Path, monkeypatch:
     assert status == {"map_status": "partial", "build_detail": "deps_failed: error: offline", "build_status": "failed"}
     doc = json.loads((sup._pin_root / job_id / "map" / "map.json").read_text())
     assert [f["span"] for f in doc["semantic"]["functions"] if f["is_entry"]] == ["locker.claim"]
+
+
+def test_workspace_manifests_only_for_a_subdir_and_never_over_a_scope_path() -> None:
+    tree = {"Cargo.toml": ROOT_MANIFEST, "Cargo.lock": LOCK, "Anchor.toml": "[programs.mainnet]\n"}
+    got = solana_steps.workspace_manifests(tree, "programs/locker", {"src/lib.rs": LIB_RS})
+    assert got == {"_workspace/Cargo.toml": ROOT_MANIFEST, "_workspace/Anchor.toml": "[programs.mainnet]\n"}
+    assert solana_steps.workspace_manifests(tree, None, {}) == {}
+    assert solana_steps.workspace_manifests(None, "programs/locker", {}) == {}
+    clash = solana_steps.workspace_manifests(tree, "p", {"_workspace/Cargo.toml": "x"})
+    assert "_workspace/Cargo.toml" not in clash
+
+
+def test_build_files_drops_the_workspace_copies(tmp_path: Path) -> None:
+    pinned = {"src/lib.rs": LIB_RS, "_workspace/Cargo.toml": ROOT_MANIFEST}
+    assert solana_steps.build_files(pinned, tmp_path / "absent.json", {}) == {"src/lib.rs": LIB_RS}

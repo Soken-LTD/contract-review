@@ -227,8 +227,11 @@ async def _fetch_program(sup: Any, step: dict[str, Any], job: dict[str, Any], ou
         await _terminal(sup, step, "insufficient_source", error_code="E_SOURCE_NOT_FOUND", error_detail=detail)
         return
     cand = bundles[0].candidates[0]
-    pin = PinnedSource.from_files({p: t.encode("utf-8") for p, t in cand.files.items()},
-                                  langs={p: cand.language for p in cand.files})
+    pinned = {p: t.encode("utf-8") for p, t in cand.files.items()}
+    extra = workspace_manifests(cand._full_tree, (cand.settings or {}).get("subdir"), cand.files)
+    pin = PinnedSource.from_files({**pinned, **{p: t.encode("utf-8") for p, t in extra.items()}},
+                                  langs={p: cand.language for p in cand.files},
+                                  in_scope={p: False for p in extra}, roles=dict.fromkeys(extra, "dependency"))
     pin.persist(sup._pin_root, job["job_id"])
     meta = {k: v for k, v in asdict(cand).items() if k not in _RUNTIME_ONLY}
     (out_dir / "candidates.json").write_text(json.dumps([meta], indent=1, default=str), encoding="utf-8")
@@ -407,12 +410,38 @@ async def backfill_tiers(sup: Any) -> int:
     return done
 
 
+WORKSPACE_PIN_PREFIX = "_workspace/"
+_WORKSPACE_MANIFESTS = ("Cargo.toml", "Anchor.toml", ".cargo/config.toml", ".cargo/config")
+_MANIFEST_MAX = 200_000
+
+
+def workspace_manifests(tree: dict[str, str] | None, subdir: str | None,
+                        scope: dict[str, str]) -> dict[str, str]:
+    """Workspace root manifests of a subdir review, as read-only pin entries under `_workspace/`.
+
+    MetaDAO blind run 2026-10-31: `overflow-checks` and the release profile live in the workspace
+    root Cargo.toml, outside the pinned subdir, so the reviewer could not read or quote them. They
+    are pinned out of scope (role dependency): review_read_code reads them and quotes match them;
+    the build already has them from the workspace tree, and build_files leaves the copies out."""
+    if not tree or not subdir:
+        return {}
+    out = {}
+    for name in _WORKSPACE_MANIFESTS:
+        text = tree.get(name)
+        path = WORKSPACE_PIN_PREFIX + name
+        if isinstance(text, str) and len(text) <= _MANIFEST_MAX and path not in scope:
+            out[path] = text
+    return out
+
+
 def build_files(pinned: dict[str, str], workspace_path: Path, settings: dict[str, Any]) -> dict[str, str]:
     """Files the build gets: the pinned scope, inside its repo workspace when the fetch kept one.
 
     The workspace copy of the subdir is dropped and the pinned files are written under the subdir
     prefix, so what is built is exactly what is reviewed. Without a workspace file: the pin as is.
     """
+    if any(p.startswith(WORKSPACE_PIN_PREFIX) for p in pinned):
+        pinned = {p: c for p, c in pinned.items() if not p.startswith(WORKSPACE_PIN_PREFIX)}
     if not workspace_path.exists():
         return pinned
     data = json.loads(workspace_path.read_text(encoding="utf-8"))
@@ -468,7 +497,7 @@ async def _analyze_program(sup: Any, step: dict[str, Any], job: dict[str, Any],
     res = json.loads((out_dir / "build_result.json").read_text())
     raw = json.loads((out_dir / "candidates.json").read_text())[0]
     pin = PinnedSource.load(sup._pin_root, job["job_id"])
-    files = {p: "\n".join(pin.read_all(p)) for p in pin.entries}
+    files = {p: "\n".join(pin.read_all(p)) for p in pin.entries if not p.startswith(WORKSPACE_PIN_PREFIX)}
     if res["status"] != "ok" or not res.get("work_dir"):
         # No build: clippy and cargo-audit cannot run; the source rules still do (degraded, named).
         from ..adapters.solana.analyze import analyze_source_only
