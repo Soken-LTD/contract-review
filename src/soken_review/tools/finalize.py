@@ -432,11 +432,21 @@ async def _assign_final_ids(
         )
         analyzer_lead_draft_keys: set[str] = {row["draft_key"] for row in await cur.fetchall()}
 
+    # review_verify_on_fork: a draft with a passing fork run is test_verified for K8 (the report prints
+    # the same level); the stored evidence_level column is never changed by it.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select distinct draft_key from fork_runs where job_id = %s and status = 'passed' and draft_key is not null",
+            (job_id,))
+        fork_verified: set[str] = {r[0] for r in await cur.fetchall()}
+
     # For each draft, recompute severity at finalize using compute_severity (one implementation)
     effective_severities: dict[str, str] = {}
     for d in drafts:
         stored_sev = d["severity"] or "Informational"
         ev_level = d.get("evidence_level") or "reasoning_only"
+        if d["draft_key"] in fork_verified:
+            ev_level = "test_verified"
         map_unavail = bool(d.get("map_unavailable", False))
         has_attack_steps = bool(d.get("has_attack_steps", False))
 

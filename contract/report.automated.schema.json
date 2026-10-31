@@ -1127,7 +1127,8 @@
           "enum": [
             "analyzer_and_reasoning",
             "reasoning_challenged",
-            "reasoning_only"
+            "reasoning_only",
+            "test_verified"
           ]
         },
         "title": {
@@ -1264,6 +1265,23 @@
               "maxItems": 30,
               "items": {
                 "$ref": "#/$defs/figure"
+              }
+            },
+            "fork_test": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["run_id", "network", "block", "tests", "test_path", "test_sha256"],
+              "description": "A passing review_verify_on_fork run bound to this finding (evidence_level test_verified). The card prints the kit line fork_verified_line; the test source prints only when meta.profile is owner (same rule as attack_steps)",
+              "properties": {
+                "run_id": {"type": "string", "pattern": "^fork-[0-9a-f]{12}$", "x-text-class": "server"},
+                "network": {"type": "string", "maxLength": 120, "x-text-class": "server"},
+                "block": {"type": "integer", "minimum": 0},
+                "tests": {"type": "array", "minItems": 1, "maxItems": 3,
+                          "items": {"type": "string", "maxLength": 200, "x-text-class": "src"}},
+                "test_path": {"type": "string", "maxLength": 100, "x-text-class": "src"},
+                "test_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "x-text-class": "server"},
+                "base_level": {"enum": ["analyzer_and_reasoning", "reasoning_challenged", "reasoning_only"], "x-text-class": "kit"},
+                "source": {"type": "string", "maxLength": 65536, "x-text-class": "src"}
               }
             }
           }
