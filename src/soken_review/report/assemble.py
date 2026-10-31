@@ -376,6 +376,14 @@ def _build_verification_blocks(
     if entry_contract:
         # Contract names come from the source tree: a `src` cell, never server text (text classes).
         dep_rows.append(["Entry contract", {"src": entry_contract[:300]}])
+    for lib in (deployment.get("library_refs") or [])[:4]:
+        # TON: a masterchain library the code references by hash (multisig v2 order code)
+        if not isinstance(lib, dict) or not lib.get("hash"):
+            continue
+        state = "read from the chain" if lib.get("status") == "ok" else "not found on the chain"
+        src = ("source verified on verifier.ton.org" if lib.get("verified_source")
+               else "its source is not part of this review")
+        dep_rows.append(["Library reference", f"{str(lib['hash'])[:64]} ({state}; {src})"])
     if dep_rows:
         blocks.append({"table": {"head": ["Field", "Value"], "rows": dep_rows}})
 

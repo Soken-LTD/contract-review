@@ -246,6 +246,10 @@ def deployment_doc(prov: dict[str, Any], candidate: dict[str, Any] | None, addre
         "address": address or prov.get("address"),
         "code_hash": prov.get("dep_hash") or prov.get("build_hash"),
     }
+    libs = [r for r in (prov.get("library_refs") or []) if isinstance(r, dict) and r.get("hash")]
+    if libs:
+        out_doc["library_refs"] = [{"hash": str(r["hash"])[:64], "status": r.get("status"),
+                                    "verified_source": r.get("verified_source")} for r in libs[:8]]
     if reason == SOURCE_UNLINKED and prov.get("address"):
         # the report method row says why the deployment could not be matched (assemble.py)
         out_doc["unlinked_reason"] = unlinked_reason(prov.get("why"))

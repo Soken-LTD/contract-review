@@ -28,6 +28,7 @@ Host execution only behind SOKEN_TON_BUILD_DIRECT=1 (dev only, never default, ne
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -37,7 +38,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from soken_review.adapters.base import Artifact, BuildResult, Candidate
+from soken_review.adapters.base import Artifact, BuildResult, Candidate, Compiler
 from soken_review.adapters.ton.cell import BocError, root_info
 from soken_review.adapters.ton.tact_config import check_config
 from soken_review.adapters.ton.trust_scan import scan_files, scan_params
@@ -292,14 +293,45 @@ def build(candidate: Candidate, work_dir: Path | None = None) -> BuildResult:
     """
     language = _candidate_language(candidate)
     if work_dir is not None:
-        return _run_build(candidate, language, Path(work_dir))
+        return _with_point_builds(candidate, language, Path(work_dir))
     _SBX_ROOT.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=_SBX_ROOT) as tmp:
-        return _run_build(candidate, language, Path(tmp) / "attempt")
+        return _with_point_builds(candidate, language, Path(tmp) / "attempt")
+
+
+def func_point_builds(version: str) -> list[str]:
+    """Installed builds of the same FunC release with newer TVM opcodes in Asm.fif, newest first
+    (`0.4.4` -> `0.4.4-newops.1`, `0.4.4-newops`). The verifier names the release only; multisig
+    v2 is verified as func 0.4.4, and only `0.4.4-newops.1` assembles its stdlib (GASCONSUMED,
+    GETGASFEE): matrix r5 2026-10-31."""
+    return sorted((v for v in FUNC_VERSIONS if v.startswith(f"{version}-newops")), reverse=True)
+
+
+def _with_point_builds(candidate: Candidate, language: str, work_dir: Path) -> BuildResult:
+    """One build; for FunC, a compile error with the named release is retried with its point
+    builds (`func_point_builds`), each in a fresh sibling attempt dir. A point build can only
+    help a match: tier A still needs the rebuilt hash to equal the deployed hash. The version
+    that compiled is the candidate's compiler version from then on (the report names it)."""
+    result = _run_build(candidate, language, work_dir)
+    requested = candidate.compiler.version if candidate.compiler else None
+    if language != "func" or result.status == "ok" or result.reason != "compile_error" or not requested:
+        return result
+    for point in func_point_builds(requested):
+        alt = copy.copy(candidate)
+        alt.compiler = Compiler(version=point, version_pinned_by=candidate.compiler.version_pinned_by)
+        retry = _run_build(alt, language, work_dir.with_name(f"{work_dir.name}-{point}"))
+        if retry.status == "ok":
+            candidate.compiler = alt.compiler
+            candidate.untrusted_inputs = alt.untrusted_inputs
+            retry.candidate = candidate
+            return retry
+    return result
 
 
 def _run_build(candidate: Candidate, language: str, work_dir: Path) -> BuildResult:
-    reasons = scan_files(candidate.files)
+    lib_rows = (candidate.settings or {}).get("library_refs") or []
+    resolved = [r["hash"] for r in lib_rows if isinstance(r, dict) and r.get("status") == "ok" and r.get("hash")]
+    reasons = scan_files(candidate.files, resolved_libraries=resolved)
     if reasons:
         candidate.untrusted_inputs = True
         logger.info("ton trust scan: %s", "; ".join(reasons[:5]))
