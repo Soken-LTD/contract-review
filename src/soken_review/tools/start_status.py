@@ -599,8 +599,12 @@ _STATE_PERCENT: dict[str, int] = {
     "deleted": 100,
 }
 
-# Long-poll timeout (max 45 s per 03 §4.2; first-byte timer 60 s per plan)
-_MAX_WAIT = 45
+# Long-poll timeout. 55 s (was 45, 03 §4.2): a fifteen-minute Solana build cost 25 status calls in the
+# MetaDAO blind run 2026-10-31. The bound is the client, not the stack: nginx proxy_read_timeout is
+# 300 s on the stand and uvicorn has none, but the MCP TypeScript SDK (Claude Code, many proxies)
+# times a request out at 60 s by default, so the wait stays under that with a margin for the
+# round trip.
+_MAX_WAIT = 55
 _POLL_INTERVAL = 0.5  # seconds between DB checks
 
 
@@ -784,10 +788,18 @@ def _compute_eta(state: str, steps: list[dict[str, Any]], medians: dict[str, flo
         run = next((s for s in running if s["step"] == name and s.get("seq", 0) == seq), None)
         if run is not None and run.get("started_at") is not None:
             elapsed = (now - run["started_at"]).total_seconds()
-            # A step past its median is still running: the remaining time is unknown, so the
-            # estimate keeps a floor instead of the "3 s" it repeated for four minutes on a Solana
-            # build (2026-10-26, median from no-op mint builds).
-            expected = expected - elapsed if elapsed < expected else max(_ETA_FLOOR_S, 0.25 * expected)
+            # A step past its median is still running. Until the 90th percentile the remaining time
+            # is what is left of it; past that it is unknown and the estimate keeps a floor instead
+            # of the "3 s" it repeated for four minutes on a Solana build (2026-10-26). MetaDAO
+            # 2026-10-31: without the p90 the ETA sat at the same floor for four polls of a build
+            # that ran 806 s against a 723 s median.
+            p90 = medians.get(f"{name}.p90")
+            if elapsed < expected:
+                expected -= elapsed
+            elif p90 is not None and elapsed < p90:
+                expected = max(_ETA_FLOOR_S, p90 - elapsed)
+            else:
+                expected = max(_ETA_FLOOR_S, 0.25 * expected)
         total += expected
     return round(total)
 

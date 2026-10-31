@@ -199,8 +199,8 @@ codes:
     channel: "rejection"
     class: "input"
     tools: "read, write, finalize, report"
-    what: "Job is {state}, eta {eta_s} s."
-    fix: "Call review_status with wait_seconds 45 and wait_for settled."
+    what: "Job is {state}; {eta_text}."
+    fix: "Call review_status with wait_seconds 55 and wait_for settled; it returns when the job is ready."
   - code: E_JOB_TERMINAL
     owner: "03"
     channel: "rejection"
