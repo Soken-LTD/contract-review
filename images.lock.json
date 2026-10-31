@@ -42,7 +42,7 @@
     "doc-fetch": {
       "repository": "ghcr.io/soken-ltd/doc-fetch",
       "tag": "0.1.0-dev",
-      "digest": "sha256:2e0ef763b3169645c0377ca8baee2c2f67f9cbee580a2dc87ec686e0d0c81c48",
+      "digest": "sha256:a5e77921b471ad8942e2372d41fa2bd19b5791fa844bce0e35603346e6a746c2",
       "tools": {
         "python3": "3.13",
         "trafilatura": "2.3.1",
@@ -54,8 +54,8 @@
       ],
       "note": "soken-doc-fetch: sandboxed project-document fetcher (context ingestion spec 2026-10-23 section 3, sandbox/doc_fetch.py, context/fetcher.py) on Debian trixie; no browser, no JS. Zero digest = not built; locked_image('doc-fetch') fails closed (every requested document records error unreachable) until the CI push; the stand uses SOKEN_IMAGE_DOC_FETCH. Build: docker build -f docker/doc-fetch/Dockerfile -t ghcr.io/soken-ltd/doc-fetch:0.1.0-dev .",
       "built": {
-        "commit": "bd3eaebf496a2e46b891153ab3e4ff5cbf1405ef",
-        "run_id": "39910901988",
+        "commit": "380d43a00eef0b47c04edcf4a1b3a4d13d85efb7",
+        "run_id": "41185099990",
         "trivy_critical": 0
       }
     },
@@ -135,7 +135,7 @@
     "soken-render": {
       "repository": "ghcr.io/soken-ltd/soken-render",
       "tag": "0.1.0-dev",
-      "digest": "sha256:ef75d26672d129863a4baeea666b9efe2ccf97bb22193114a92394d6001163c8",
+      "digest": "sha256:e6ec37390af0931cdf8ca7f0eb68d523bb1a8957ae45bb8c3bef885a96e033f4",
       "tools": {
         "python": "3.12",
         "node": "22",
@@ -150,8 +150,8 @@
       ],
       "note": "08 3.2 render sandbox (docker/soken-render/Dockerfile, root context). Digest placeholder until the CI push; render_image() fails closed while unpinned (SOKEN_IMAGE_SOKEN_RENDER for local images). chrome-headless-shell zip sha256 39dcb8c4... pinned in the Dockerfile.",
       "built": {
-        "commit": "a7811412939402f7a38a40457e0a64bad865ba4d",
-        "run_id": "41183576348",
+        "commit": "380d43a00eef0b47c04edcf4a1b3a4d13d85efb7",
+        "run_id": "41185099990",
         "trivy_critical": 3
       }
     },
