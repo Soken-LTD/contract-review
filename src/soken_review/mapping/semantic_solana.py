@@ -245,6 +245,7 @@ class _Builder:
         self.programs: list[dict[str, Any]] = []
         self.program_id: str | None = None
         self.entry_names: set[str] = set()
+        self.unit_fns: set[tuple[str, str]] = set()     # (unit name, function name)
 
     # ── parse ────────────────────────────────────────────────────────────────
 
@@ -329,6 +330,7 @@ class _Builder:
         program = next((p for p in program_spans if p[0] == path and p[1] <= line <= p[2]), None)
         # the innermost enclosing impl / mod decides the unit
         unit_name, unit_kind = _module_name(path), "module"
+        impl_type: str | None = None
         parent = n.parent
         while parent is not None:
             if parent.type == "impl_item":
@@ -337,6 +339,7 @@ class _Builder:
                                     else ty).split("::")[-1])
                 if tname:
                     unit_name = tname
+                    impl_type = tname
                     unit_kind = "account" if tname in self.account_structs else "module"
                 break
             if parent.type == "mod_item":
@@ -359,11 +362,15 @@ class _Builder:
                     idents = [c for c in _walk(args) if c.type == "type_identifier"] if args is not None else []
                     if idents:
                         fn.context = _text(idents[-1])
+                        if fn.context == "Self" and impl_type:
+                            # `impl CompleteUnlock { fn handle(ctx: Context<Self>) }` (MetaDAO
+                            # 2026-10-31): the handler's Accounts struct is the impl type.
+                            fn.context = impl_type
                     break
         for a in _attrs_before(n):
             if _attr_name(a) == "access_control":
                 for text, _ln in _attr_items(a):
-                    m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", text)
+                    m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(", text) or re.match(r"([A-Za-z_][A-Za-z0-9_]*)", text)
                     if m and _safe(m.group(1)):
                         fn.modifiers.append(m.group(1))
         self.fns.append(fn)
@@ -372,6 +379,7 @@ class _Builder:
 
     def analyze(self) -> None:
         defined = {f.name for f in self.fns}
+        self.unit_fns = {(f.unit_name, f.name) for f in self.fns}
         for fn in self.fns:
             body = fn.node.child_by_field_name("body")
             if body is None:
@@ -411,6 +419,7 @@ class _Builder:
         line = f"{fn.path}:{_line(n)}"
         kind: str | None = None
         target = ""
+        qualifier = ""
         value = False
         if f.type == "identifier":
             name = _text(f)
@@ -429,6 +438,12 @@ class _Builder:
                 value = name in _VALUE_FNS
             elif name in defined:
                 kind, target = "internal", name
+                head = parts[-2] if len(parts) > 1 else ""
+                head = fn.unit_name if head == "Self" else head
+                if (head, name) in self.unit_fns:
+                    # `CompleteUnlock::handle(ctx)`: every instruction has a `handle`; the qualifier
+                    # picks the one this call reaches (MetaDAO 2026-10-31: all of them were callees)
+                    qualifier = head
         elif f.type == "field_expression":
             name = _text(f.child_by_field_name("field"))
             if name in defined:
@@ -450,6 +465,8 @@ class _Builder:
             return
         seen.add(key)
         call: dict[str, Any] = {"kind": kind, "target": target, "line": line}
+        if qualifier:
+            call["qualifier"] = qualifier
         if kind == "cpi":
             call["value_bearing"] = value
         fn.calls.append(call)
@@ -595,6 +612,8 @@ class _Builder:
                     if c["kind"] != "internal":
                         continue
                     for h in by_name.get(c["target"], []):
+                        if c.get("qualifier") and h.unit_name != c["qualifier"]:
+                            continue
                         if id(h) not in seen:
                             seen.add(id(h))
                             nxt.append(h)

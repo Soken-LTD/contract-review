@@ -697,6 +697,21 @@ def _resolve_entry_function_scope(
         for ins in instructions:
             if ins.get("context") == held and ins["span"] in fn_by_span and ins["span"] not in covering:
                 covering.append(ins["span"])
+    if contexts:
+        # The methods of `impl <Struct>` (validate, handle) run the instruction whose Accounts struct
+        # it is: with the location in the struct, in a handler, or in the program wrapper, they are
+        # the instruction's body (MetaDAO 2026-10-31: the scope was the struct alone, every quote
+        # from the handler came back unverified).
+        names = set(ctx_names)
+        for sid in list(covering):
+            unit = sid.split("@", 1)[0].rsplit(".", 1)[0]
+            if unit in contexts:
+                names.add(unit)
+            names.update(i["context"] for i in instructions if i["span"] == sid and i.get("context") in contexts)
+        for sid in fn_by_span:
+            if sid not in covering and sid.split("@", 1)[0].rsplit(".", 1)[0] in names:
+                covering.append(sid)
+        ctx_names.extend(sorted(names - set(ctx_names)))
 
     if not covering:
         return [], True, []
@@ -757,7 +772,7 @@ def _resolve_entry_function_scope(
             for call in (fn_by_span.get(sid) or {}).get("calls", []) or []:
                 if call.get("kind") not in _TRAVERSABLE_CALL_KINDS:
                     continue
-                for callee in fn_by_name.get(call.get("target", ""), []):
+                for callee in _call_targets(call, fn_by_name):
                     csid = callee.get("span", "")
                     if not csid or csid in seen:
                         continue
@@ -794,6 +809,17 @@ def _function_indexes(functions: list[dict], span_meta: dict[str, dict[str, Any]
     return fn_by_span, fn_by_name
 
 
+def _call_targets(call: dict[str, Any], fn_by_name: dict[str, list[dict]]) -> list[dict]:
+    """Functions a call edge may reach. A Solana `Type::name(...)` call carries `qualifier`: only the
+    function of that impl (span id `Type.name`) is the target, not every `name` in the program
+    (MetaDAO 2026-10-31: each instruction's `handle` called every other `handle`)."""
+    cands = fn_by_name.get(call.get("target", ""), [])
+    q = call.get("qualifier")
+    if not q:
+        return cands
+    return [c for c in cands if str(c.get("span", "")).split("@", 1)[0].rsplit(".", 1)[0] == q]
+
+
 def _caller_index(functions: list[dict], fn_by_name: dict[str, list[dict]]) -> dict[str, set[str]]:
     """callee span id -> span ids of functions that call it over a traversable edge."""
     callers: dict[str, set[str]] = {}
@@ -802,7 +828,7 @@ def _caller_index(functions: list[dict], fn_by_name: dict[str, list[dict]]) -> d
         for call in fn.get("calls", []) or []:
             if call.get("kind") not in _TRAVERSABLE_CALL_KINDS:
                 continue
-            for callee in fn_by_name.get(call.get("target", ""), []):
+            for callee in _call_targets(call, fn_by_name):
                 csid = callee.get("span", "")
                 if csid and sid and csid != sid:
                     callers.setdefault(csid, set()).add(sid)
