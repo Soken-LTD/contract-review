@@ -243,9 +243,12 @@ def _topic_chain() -> list[str]:
         ("Fork tests: review_verify_on_fork runs one Foundry test (assertions about balances, state or reverts) on a"
          " local in-memory fork of the job's EVM chain at the pinned block, reached only through the read-only proxy;"
          " nothing is sent to a network. Import forge-std/Test.sol and the reviewed code as pinned/<path as"
-         " review_read_code lists it>. Bind the run to a finding with draft_key: a passing run raises its evidence"
-         " to test_verified and the report prints the fork, the block and the test name; the test source prints"
-         " for the owner profile only. One run per job at a time, 6 per job; a queued run answers with run_id to poll."
+         " review_read_code lists it>. Bind the run to a finding with draft_key: a passing run (expect pass) of the"
+         " finding's current revision that read the deployment address or imports a pinned file the finding quotes"
+         " raises its printed evidence to test_verified, and the report prints the fork, the block and the test name;"
+         " severity caps keep the base level. A revised finding needs a new run. The test source prints for the owner"
+         " profile only. One run per job at a time, 6 per job; a queued run answers with run_id to poll, and"
+         " review_finalize waits until a queued or running run has ended."
          " Assertion messages and console lines come back as untrusted_text. Optional: a failed or unavailable run"
          " never blocks a finding or finalize."),
     ]

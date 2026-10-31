@@ -3,7 +3,8 @@
 -- fork of chain state, reached only through the read-only chain proxy. The worker claims one such step
 -- at a time (job_repo.claim_step); the rest stay queued.
 -- fork_runs: one row per requested run. The test source is kept with the run (the owner profile of the
--- report prints it); `result` is written by the supervisor only. Deleted with the job.
+-- report prints it); `result` is written by the supervisor only. Deleted with the job. A run counts as
+-- evidence only for the draft revision it was queued against (engine/fork_evidence.py).
 do $$
 declare c text;
 begin
@@ -24,6 +25,7 @@ create table if not exists fork_runs (
   job_id       text not null references jobs on delete cascade,
   step_id      bigint references job_steps(id) on delete set null,
   draft_key    text,
+  draft_revision int,                          -- the draft's current_revision when the run was queued
   status       text not null default 'queued'
                check (status in ('queued','running','passed','failed','error','timeout')),
   chain_id     bigint not null,

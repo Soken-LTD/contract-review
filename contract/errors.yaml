@@ -740,6 +740,13 @@ codes:
     tools: "review_verify_on_fork"
     what: "Fork verification limit reached: {what}."
     fix: "{fix_hint} Findings, finalize and the report do not depend on a fork run."
+  - code: E_FORK_PENDING
+    owner: "03"
+    channel: "rejection"
+    class: "input"
+    tools: "review_finalize"
+    what: "Fork run {run_id} of this job is still {status}; finalize waits for it so the report evidence cannot change after finalize. The job is unchanged."
+    fix: "Call review_verify_on_fork with run_id {run_id} until it ends (at most a few minutes), then call review_finalize again."
   - code: E_FORK_UNAVAILABLE
     owner: "03"
     channel: "rejection"

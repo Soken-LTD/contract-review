@@ -64,8 +64,8 @@ def report_line(network: str, block: int, tests: list[dict[str, Any]]) -> str:
     return f"Verified by a test on a local fork of {network} at block {block:,}: {', '.join(names)}"
 
 
-def run_view(row: dict[str, Any]) -> dict[str, Any]:
-    """The tool result of one fork_runs row."""
+def run_view(row: dict[str, Any], why_not: str | None = None) -> dict[str, Any]:
+    """The tool result of one fork_runs row; `why_not` is None when the run raises its draft."""
     result = row.get("result") or {}
     if isinstance(result, str):
         result = json.loads(result)
@@ -83,12 +83,11 @@ def run_view(row: dict[str, Any]) -> dict[str, Any]:
         for k in ("tests", "rpc", "wall_s", "reason", "diagnostics", "engine"):
             if k in result:
                 out[k] = result[k]
-        if status == "passed" and row.get("draft_key"):
+        if row.get("draft_key") and why_not is None:
             out["evidence"] = {"draft_key": row["draft_key"], "level": "test_verified",
                                "report_line": report_line(row["network"], int(row["block"]), result.get("tests") or [])}
         elif row.get("draft_key"):
-            out["evidence"] = {"draft_key": row["draft_key"], "level": "unchanged",
-                               "why": "only a passing run raises the finding's evidence level"}
+            out["evidence"] = {"draft_key": row["draft_key"], "level": "unchanged", "why": why_not}
         out["untrusted_text_note"] = ("Assertion messages, console lines and compiler diagnostics are in untrusted_text: "
                                       + GUIDE_NOTE.replace("from the chain", "from the test run"))
     else:
@@ -97,7 +96,8 @@ def run_view(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-_COLS = ("run_id, job_id, draft_key, status, chain_id, network, block, test_path, test_sha256, expect, result")
+_COLS = ("run_id, job_id, draft_key, draft_revision, status, chain_id, network, block, test_path, test_sha256, "
+         "test_source, expect, result, finished_at")
 
 
 async def _fetch_run(job_id: str, run_id: str) -> dict[str, Any] | None:
@@ -106,6 +106,20 @@ async def _fetch_run(job_id: str, run_id: str) -> dict[str, Any] | None:
     async with _get_pool().connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(f"select {_COLS} from fork_runs where job_id = %s and run_id = %s", (job_id, run_id))
         return await cur.fetchone()
+
+
+async def _view(row: dict[str, Any]) -> dict[str, Any]:
+    """run_view with the evidence decision of engine/fork_evidence.py (revision, expectation, finalize
+    time, exercised contract)."""
+    why = None
+    if row.get("draft_key") and row.get("status") in _DONE:
+        from ..engine import fork_evidence
+
+        async with _get_pool().connection() as conn:
+            address, finalized_at, revs, cited = await fork_evidence.context(conn, row["job_id"])
+        why = fork_evidence.why_not(row, revs.get(row["draft_key"]), address, cited.get(row["draft_key"], set()),
+                                    finalized_at)
+    return run_view(row, why)
 
 
 async def _wait(job_id: str, run_id: str, wait_s: float) -> dict[str, Any] | None:
@@ -162,7 +176,7 @@ async def handle_verify_on_fork(args: dict[str, Any]) -> dict[str, Any]:
             raise ReviewError("E_INVALID_ARGUMENT", field="run_id", rule="a run of this job", value80=str(args["run_id"]),
                               example="the run_id a previous call returned")
         row = await _wait(job_id, row["run_id"], wait_s)
-        return run_view(row or {})
+        return await _view(row or {})
     try:
         job = await chain_tools._job_row(job_id)
         root = _pin_root()
@@ -202,13 +216,15 @@ async def handle_verify_on_fork(args: dict[str, Any]) -> dict[str, Any]:
         if locked is None or locked["state"] != "ready":
             return {"accepted": False, "errors": [ReviewError(
                 "E_JOB_NOT_READY", state=(locked or {}).get("state", "deleted"), eta_s=0).envelope()]}
+        revision = None
         async with conn.cursor() as cur:
             if draft_key:
-                await cur.execute("select status from finding_drafts where job_id = %s and draft_key = %s",
-                                  (job_id, draft_key))
+                await cur.execute("select status, current_revision from finding_drafts "
+                                  "where job_id = %s and draft_key = %s", (job_id, draft_key))
                 d = await cur.fetchone()
                 if d is None or d[0] == "withdrawn":
                     return {"accepted": False, "errors": [ReviewError("E_FINDING_NOT_FOUND", draft=str(draft_key)[:40]).envelope()]}
+                revision = int(d[1])
             await cur.execute("select count(*), count(*) filter (where status in ('queued','running')) "
                               "from fork_runs where job_id = %s", (job_id,))
             total, pending = await cur.fetchone()
@@ -224,11 +240,11 @@ async def handle_verify_on_fork(args: dict[str, Any]) -> dict[str, Any]:
                                       units=1, ram_mb=1536, max_attempts=1)
         async with conn.cursor() as cur:
             await cur.execute(
-                """insert into fork_runs (run_id, job_id, step_id, draft_key, chain_id, network, block, test_path,
-                                          test_sha256, test_source, expect)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (run_id, job_id, step["id"], draft_key, int(cj.chain_id), cj.network, block, path,
+                """insert into fork_runs (run_id, job_id, step_id, draft_key, draft_revision, chain_id, network, block,
+                                          test_path, test_sha256, test_source, expect)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (run_id, job_id, step["id"], draft_key, revision, int(cj.chain_id), cj.network, block, path,
                  fv.test_sha256(test["content"]), test["content"], args.get("expect") or "pass"))
     logger.info("job %s: fork run %s queued at block %d", job_id[-8:], run_id, block)
     row = await _wait(job_id, run_id, wait_s)
-    return run_view(row or {})
+    return await _view(row or {})

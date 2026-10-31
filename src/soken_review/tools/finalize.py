@@ -432,21 +432,12 @@ async def _assign_final_ids(
         )
         analyzer_lead_draft_keys: set[str] = {row["draft_key"] for row in await cur.fetchall()}
 
-    # review_verify_on_fork: a draft with a passing fork run is test_verified for K8 (the report prints
-    # the same level); the stored evidence_level column is never changed by it.
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select distinct draft_key from fork_runs where job_id = %s and status = 'passed' and draft_key is not null",
-            (job_id,))
-        fork_verified: set[str] = {r[0] for r in await cur.fetchall()}
-
     # For each draft, recompute severity at finalize using compute_severity (one implementation)
     effective_severities: dict[str, str] = {}
     for d in drafts:
         stored_sev = d["severity"] or "Informational"
+        # The stored (base) level: a fork run raises the printed level only, never a cap input (K8).
         ev_level = d.get("evidence_level") or "reasoning_only"
-        if d["draft_key"] in fork_verified:
-            ev_level = "test_verified"
         map_unavail = bool(d.get("map_unavailable", False))
         has_attack_steps = bool(d.get("has_attack_steps", False))
 
@@ -996,6 +987,15 @@ async def handle_review_finalize(args: dict[str, Any]) -> dict[str, Any]:
 
 async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], job_id: str) -> dict[str, Any]:
     """Checks, pre-freeze gate, quota, final ids and the render queue for a ready job (job row locked)."""
+    # ── Fork runs still pending (review_verify_on_fork) ─────────────
+    # Evidence never changes after finalize: a queued or running run must end first (a run is at most
+    # fork_verify.wall_s once it starts). A run that failed or errored never blocks.
+    async with conn.cursor() as cur:
+        await cur.execute("select run_id, status from fork_runs where job_id = %s and status in ('queued','running') "
+                          "order by created_at limit 1", (job_id,))
+        pending = await cur.fetchone()
+    if pending is not None:
+        return {"accepted": False, "errors": [ReviewError("E_FORK_PENDING", run_id=pending[0], status=pending[1]).envelope()]}
     # ── Run finalize checks ────────────────────────────────────────
     # Gate policy (never-worse): only blocking checks refuse (F1 no source, F4 server invariant, F6
     # unresolved placeholder). Advisory checks are recorded as coverage gaps and printed as the

@@ -184,7 +184,8 @@ async def test_worker_step_records_the_result_and_a_crash_never_fails_the_job(db
     res = await vf_mod.handle_verify_on_fork({"job_id": jid, "test": {"content": TEST}, "draft_key": key,
                                               "wait_seconds": 0})
     passed = {"status": "passed", "wall_s": 9.5, "rpc": {"requests": 30, "upstream_calls": 28, "denied": 1,
-                                                          "denied_methods": ["anvil_nodeInfo"]},
+                                                          "denied_methods": ["anvil_nodeInfo"],
+                                                          "addresses": [WETH9.lower()]},
               "tests": [{"name": "VerifyTest.test_depositCredits()", "status": "passed", "gas": 253747, "events": 2}]}
 
     async def fake_execute(run, root, **kw):
@@ -238,3 +239,128 @@ async def test_poll_waits_for_the_result(db_pool):
     await task
     assert polled["status"] == "failed" and polled["matches_expectation"] is False
     assert polled["tests"][0]["reason"]["class"] == "chain_text"
+
+
+# ── security review 2026-10-31: what a run may raise, and finalize ─────────
+
+
+async def _passed_run(db_pool, jid: str, key: str, *, revision: int = 1, expect: str = "pass",
+                      addresses: list[str] | None = None, source: str = TEST, finished: str = "now() - interval '1 minute'") -> str:
+    import secrets
+
+    run_id = "fork-" + secrets.token_hex(6)
+    result = {"status": "passed", "rpc": {"addresses": addresses or []},
+              "tests": [{"name": "VerifyTest.test_depositCredits()", "status": "passed", "gas": 1}]}
+    async with db_pool.connection() as conn:
+        await conn.execute(f"""insert into fork_runs (run_id, job_id, draft_key, draft_revision, status, chain_id, network,
+              block, test_path, test_sha256, test_source, expect, result, finished_at)
+              values (%s, %s, %s, %s, 'passed', 1, 'Ethereum Mainnet', %s, 'test/Verify.t.sol', %s, %s, %s, %s, {finished})""",
+                           (run_id, jid, key, revision, BLOCK, "d" * 64, source, expect, json.dumps(result)))
+    return run_id
+
+
+async def _verified(db_pool, jid: str) -> dict:
+    from soken_review.engine.fork_evidence import verified_runs
+
+    async with db_pool.connection() as conn:
+        return await verified_runs(conn, jid)
+
+
+async def _poll(jid: str, run_id: str) -> dict:
+    return await vf_mod.handle_verify_on_fork({"job_id": jid, "run_id": run_id, "wait_seconds": 0})
+
+
+@ASYNC
+async def test_a_revised_draft_loses_the_mark_until_a_new_run_passes(db_pool):
+    jid, _ = await _job(db_pool)
+    key = await _draft(db_pool, jid)
+    old = await _passed_run(db_pool, jid, key, revision=1, addresses=[WETH9.lower()])
+    assert set(await _verified(db_pool, jid)) == {key}
+    async with db_pool.connection() as conn:
+        await conn.execute("update finding_drafts set current_revision = 2 where job_id = %s and draft_key = %s", (jid, key))
+    assert await _verified(db_pool, jid) == {}
+    polled = await _poll(jid, old)
+    assert polled["evidence"]["level"] == "unchanged" and "revised" in polled["evidence"]["why"]
+    new = await _passed_run(db_pool, jid, key, revision=2, addresses=[WETH9.lower()])
+    assert (await _verified(db_pool, jid))[key]["run_id"] == new
+
+
+@ASYNC
+async def test_queued_runs_store_the_current_revision(db_pool):
+    jid, _ = await _job(db_pool)
+    key = await _draft(db_pool, jid)
+    async with db_pool.connection() as conn:
+        await conn.execute("update finding_drafts set current_revision = 3 where job_id = %s and draft_key = %s", (jid, key))
+    res = await vf_mod.handle_verify_on_fork({"job_id": jid, "test": {"content": TEST}, "draft_key": key, "wait_seconds": 0})
+    assert await _rows(db_pool, "select draft_revision from fork_runs where run_id = %s", res["run_id"]) == [(3,)]
+
+
+@ASYNC
+async def test_expect_fail_and_unexercised_runs_do_not_raise(db_pool):
+    jid, _ = await _job(db_pool)
+    key = await _draft(db_pool, jid)
+    fail_claim = await _passed_run(db_pool, jid, key, expect="fail", addresses=[WETH9.lower()])
+    other = await _passed_run(db_pool, jid, key, addresses=["0x" + "9" * 40])     # read another contract only
+    assert await _verified(db_pool, jid) == {}
+    assert "expect fail" in (await _poll(jid, fail_claim))["evidence"]["why"]
+    assert "deployment address" in (await _poll(jid, other))["evidence"]["why"]
+
+
+@ASYNC
+async def test_importing_a_cited_pinned_file_counts_as_exercised(db_pool):
+    jid, _ = await _job(db_pool)
+    async with db_pool.connection() as conn:
+        await conn.execute("update jobs set address = null where job_id = %s", (jid,))   # a repository review
+    key = await _draft(db_pool, jid)
+    run = await _passed_run(db_pool, jid, key)          # TEST imports pinned/src/Vault.sol, nothing read
+    assert await _verified(db_pool, jid) == {}           # the finding quotes no file yet
+    async with db_pool.connection() as conn:
+        await conn.execute("""insert into finding_revisions (job_id, draft_key, revision, content, content_hash, category,
+            category_family, impact_class, computed_severity, severity_rule)
+            values (%s, %s, 1, '{}', 'h', 'evm.dos', 'evm', 'griefing_with_victim_loss', 'Medium', 'r')""", (jid, key))
+        await conn.execute("insert into finding_quote_ranges values (%s, %s, 1, 0, 'location', 'src/Vault.sol', 1, 3)",
+                           (jid, key))
+    assert (await _verified(db_pool, jid))[key]["run_id"] == run
+
+
+@ASYNC
+async def test_runs_that_end_after_finalize_do_not_count(db_pool):
+    jid, _ = await _job(db_pool)
+    key = await _draft(db_pool, jid)
+    await _passed_run(db_pool, jid, key, addresses=[WETH9.lower()], finished="now() + interval '1 hour'")
+    async with db_pool.connection() as conn:
+        await conn.execute("update jobs set state = 'finalized', finalized_at = now() where job_id = %s", (jid,))
+    assert await _verified(db_pool, jid) == {}
+
+
+@ASYNC
+async def test_finalize_refuses_while_a_fork_run_is_pending(db_pool):
+    from soken_review.tools import finalize as fin_mod
+
+    jid, pin_root = await _job(db_pool)
+    fin_mod.set_pool(db_pool)
+    fin_mod.set_context(MemoryJobContext(pin_root))
+    res = await vf_mod.handle_verify_on_fork({"job_id": jid, "test": {"content": TEST}, "wait_seconds": 0})
+    out = await fin_mod.handle_review_finalize({"job_id": jid})
+    assert out["accepted"] is False and out["errors"][0]["code"] == "E_FORK_PENDING"
+    assert res["run_id"] in out["errors"][0]["what"]
+    assert await _rows(db_pool, "select state from jobs where job_id = %s", jid) == [("ready",)]
+    async with db_pool.connection() as conn:   # an ended run (any status) never blocks finalize
+        await conn.execute("update fork_runs set status = 'error' where run_id = %s", (res["run_id"],))
+    out = await fin_mod.handle_review_finalize({"job_id": jid})
+    assert not any(e["code"] == "E_FORK_PENDING" for e in out.get("errors") or [])
+    async with db_pool.connection() as conn:   # its render row never reaches another module's claim
+        await conn.execute("update job_steps set status = 'cancelled', cancel_reason = 'budget' "
+                           "where job_id = %s and status = 'queued'", (jid,))
+
+
+def test_test_verified_alone_never_passes_k8():
+    """The raise is printed only: finalize passes the base level. Even if a caller passed
+    test_verified, K8 still caps an otherwise Critical finding at High."""
+    from soken_review.engine.severity import SeverityContext, compute_severity
+
+    matrix = {"impact_class": "theft_of_funds", "magnitude": "unbounded", "trigger": "anyone",
+              "precondition": "none", "reversibility": "irreversible"}
+    r = compute_severity(matrix, "finalize", SeverityContext(phase="finalize", evidence_level="test_verified",
+                                                              has_attack_steps=True, open_downgrade_item=False))
+    assert "K8" in r.caps_applied and r.severity == "High"

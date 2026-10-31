@@ -113,6 +113,7 @@ async def test_fork_endpoint_pins_tags_and_refuses_later_blocks():
         assert r.json()["result"] == "0x0"
         r = await c.post(f"/{TOKEN}", json=_rpc("eth_getStorageAt", [addr, "0x0", {"blockHash": "0x" + "cd" * 32}]))
         assert r.json()["error"]["code"] == -32601                                 # any other hash stays refused
+    assert stats.as_dict(_meter)["addresses"] == [addr]   # the accounts the run read, for the evidence rule
     reads = [s for s in up.seen if s["method"] != "eth_getBlockByNumber"]
     assert [s["params"][-1] for s in reads] == [hex(BLOCK), hex(BLOCK), hex(BLOCK)]
     assert stats.denied == 2

@@ -1045,12 +1045,11 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     flinks = await _rows(conn, """select l.* from finding_leads l join finding_drafts d
         on d.job_id = l.job_id and d.draft_key = l.draft_key and d.current_revision = l.revision
         where l.job_id = %s""", (job_id,))
-    # review_verify_on_fork: the latest passing run bound to each draft raises its evidence level.
-    fork_rows = await _rows(conn, """select distinct on (draft_key) run_id, draft_key, network, block, test_path,
-               test_sha256, test_source, result
-        from fork_runs where job_id = %s and status = 'passed' and draft_key is not null
-        order by draft_key, finished_at desc nulls last""", (job_id,))
-    fork_of = {r["draft_key"]: r for r in fork_rows}
+    # review_verify_on_fork: a passing run of the current revision that exercised the cited contract and
+    # ended before finalize raises the printed evidence level (engine/fork_evidence.py).
+    from ..engine.fork_evidence import verified_runs
+
+    fork_of = await verified_runs(conn, job_id)
     by_key_ranges: dict[str, list[dict[str, Any]]] = {}
     for q in ranges:
         by_key_ranges.setdefault(q["draft_key"], []).append(q)

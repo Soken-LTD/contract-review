@@ -21,6 +21,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +32,7 @@ from .proxy import ChainProxy, Meter, asgi_app
 
 logger = logging.getLogger(__name__)
 
+_ADDR = re.compile(r"^0x[0-9a-fA-F]{40}$")
 _PIN_TAGS = frozenset({"latest", "pending", "safe", "finalized"})
 _MAX_BODY = 1024 * 1024
 
@@ -41,11 +43,21 @@ class ForkStats:
     denied: int = 0
     denied_methods: list[str] = field(default_factory=list)
     bad_path: int = 0
+    addresses: set[str] = field(default_factory=set)   # accounts the run read (code, balance, storage, calls)
+
+    def note(self, items: list[Any]) -> None:
+        for i in items:
+            if not isinstance(i, dict) or not isinstance(i.get("params"), list) or not i["params"]:
+                continue
+            first = i["params"][0]
+            addr = first.get("to") if isinstance(first, dict) else first
+            if isinstance(addr, str) and _ADDR.match(addr) and len(self.addresses) < 500:
+                self.addresses.add(addr.lower())
 
     def as_dict(self, meter: Meter) -> dict[str, Any]:
         return {"requests": self.requests, "upstream_calls": meter.calls, "cached": meter.cached,
                 "bytes": meter.bytes, "denied": self.denied, "denied_methods": sorted(set(self.denied_methods))[:10],
-                "bad_path": self.bad_path}
+                "bad_path": self.bad_path, "addresses": sorted(self.addresses)[:200]}
 
 
 def pin_tags(item: Any, block: int, fork_hash: str | None = None) -> Any:
@@ -128,6 +140,7 @@ def fork_app(chain_id: int, block: int, token: str, meter: Meter, stats: ForkSta
             pinned = [pin_tags(i, block, fh) for i in items]
             try:
                 policy.check_evm_payload(pinned, max_block=block)
+                stats.note(pinned)
             except policy.ProxyDenied as exc:
                 stats.denied += 1
                 stats.denied_methods.append(exc.method[:60])

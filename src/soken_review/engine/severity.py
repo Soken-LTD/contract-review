@@ -389,7 +389,7 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
     # (04 §7.4 K8: "all three required" — was previously inverted using `and` instead of `or`)
     if phase in ("post_challenge", "finalize"):
         requires_k8 = sev == "Critical" and (
-            ctx.evidence_level not in ("reasoning_challenged", "analyzer_and_reasoning", "test_verified")
+            ctx.evidence_level not in ("reasoning_challenged", "analyzer_and_reasoning")
             or not ctx.has_attack_steps
             or ctx.open_downgrade_item
         )

@@ -97,12 +97,16 @@ async def test_rendered_report_carries_the_passing_run(db_pool, tmp_path, monkey
     from .test_render_flow import PDF
 
     jid = await _job(db_pool, tmp_path)
-    result = {"status": "passed", "tests": [{"name": "SupplyTest.test_mergeCountsTwice()", "status": "passed", "gas": 91234}]}
+    from .test_chain_facts_render import VE
+
+    result = {"status": "passed", "rpc": {"addresses": [VE.lower()]},
+              "tests": [{"name": "SupplyTest.test_mergeCountsTwice()", "status": "passed", "gas": 91234}]}
     async with db_pool.connection() as conn:
-        await conn.execute("""insert into fork_runs (run_id, job_id, draft_key, status, chain_id, network, block, test_path,
-                                test_sha256, test_source, result, finished_at)
-                              values (%s, %s, 'thena-t5', 'passed', 56, 'BNB Smart Chain Mainnet', %s,
-                                      'test/Verify.t.sol', %s, %s, %s, now())""",
+        # ended before finalize, against the draft's current revision 1, read the escrow address
+        await conn.execute("""insert into fork_runs (run_id, job_id, draft_key, draft_revision, status, chain_id, network,
+                                block, test_path, test_sha256, test_source, result, finished_at)
+                              values (%s, %s, 'thena-t5', 1, 'passed', 56, 'BNB Smart Chain Mainnet', %s,
+                                      'test/Verify.t.sol', %s, %s, %s, now() - interval '1 hour')""",
                            ("fork-" + secrets.token_hex(6), jid, META["block"], "c" * 64, SOURCE, json.dumps(result)))
     monkeypatch.setenv("SOKEN_REPORT_STORE", str(tmp_path / "store"))
     monkeypatch.setenv("SOKEN_RENDER_ROOT", str(tmp_path / "render-root"))
@@ -113,6 +117,8 @@ async def test_rendered_report_carries_the_passing_run(db_pool, tmp_path, monkey
 
     monkeypatch.setattr(render, "run_container", fake)
     async with db_pool.connection() as conn:
+        await conn.execute("update job_steps set status = 'cancelled', cancel_reason = 'budget' "
+                           "where step = 'render' and status = 'queued' and job_id <> %s", (jid,))
         step = await JobRepo(conn).claim_step(host="t", free_units=4, lease_secs=60, free_ram_mb=8192,
                                               max_units_idle=4, max_ram_idle=8192, render=True)
     assert step and step["job_id"] == jid
