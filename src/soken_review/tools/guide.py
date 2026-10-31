@@ -86,6 +86,11 @@ def _topic_categories(family: str) -> list[str]:
             line += "  " + ", ".join(flags)
         out.append(line)
     out.append("Category and lead must agree: a linked lead's category must equal the finding category.")
+    from ..engine.category_fit import guide_lines
+    fit = guide_lines(family)
+    if fit:
+        out.append("")
+        out.extend(fit)
     return out
 
 

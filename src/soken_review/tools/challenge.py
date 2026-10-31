@@ -1158,7 +1158,19 @@ async def handle_review_challenge(args: dict[str, Any]) -> dict[str, Any]:
     }
     if draft_status != "needs_challenge":
         out["note"] = _CHALLENGE_STATUS_NOTE.get(draft_status, "")
+    notice = _category_notice(family, category, is_generic)
+    if notice:
+        out["checklist_notice"] = notice
     return out
+
+
+def _category_notice(family: str, category: str, is_generic: bool) -> str | None:
+    """Which checklist the category uses and what it fits (rubric/category_fit.yaml): the category
+    silently picked the kill items before (r5 2026-10-31: an accounting bug met P1)."""
+    from ..engine.category_fit import checklist_notice
+    kills = [str(i["id"]) for i in _checklist_items_for_category(family, category, is_generic)
+             if i.get("kind") == "kill" and i.get("id")]
+    return checklist_notice(category, kills, generic=is_generic)
 
 
 _CHALLENGE_STATUS_NOTE = {
@@ -1167,6 +1179,11 @@ _CHALLENGE_STATUS_NOTE = {
                  "with changed text opens a new revision and a new challenge."),
     "withdrawn": "This draft is withdrawn; resubmit it to open a new revision and a new challenge.",
 }
+
+
+def _kill_hint(category: str, kill_item: Any) -> str | None:
+    from ..engine.category_fit import kill_hint
+    return kill_hint(category, str(kill_item))
 
 
 # ── review_answer_challenge handler ──────────────────────────────────────────
@@ -1799,6 +1816,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         "status": new_status,
         "evidence_level": new_evidence,
         "kill_item": kill_present,
+        **({"checklist_notice": hint} if kill_present and (hint := _kill_hint(category, kill_present)) else {}),
         "leads_reopened": leads_reopened,
         "severity_rule": severity_rule,
         "caps_applied": caps_named,
