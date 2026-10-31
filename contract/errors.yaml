@@ -606,7 +606,7 @@ codes:
     class: "input"
     tools: "submit"
     what: "The matrix computes {computed} by {rule}; {why}. This round trip does not count against the retry budget."
-    fix: "Resend with claimed_severity {computed} to confirm it, or keep a value within one step of {computed} and add the argument severity_reason (a string of 20 to 200 characters, for example severity_reason: \"The balance is zero and the constructor already ran, so no value is at risk\"; it is a top-level argument of review_submit_finding next to claimed_severity; if your tool list does not show it, send it anyway or write a body paragraph \"Severity: <level>. Reason: ...\"), or reclassify the matrix: reversibility admin_reversible or self_recovering, magnitude residual or bounded with a bound_ref quote, impact griefing_with_victim_loss when the actor harms only itself, precondition victim_unusual_action."
+    fix: "Resend with claimed_severity {computed} to confirm it, or keep a value within one step of {computed} and add the argument severity_reason (a string of 20 to 200 characters, for example severity_reason: \"The balance is zero and the constructor already ran, so no value is at risk\"; it is a top-level argument of review_submit_finding next to claimed_severity; if the tool list does not show it, send it anyway or write a body paragraph \"Severity: <level>. Reason: ...\"), or reclassify the matrix: reversibility admin_reversible or self_recovering, magnitude residual or bounded with a bound_ref quote, impact griefing_with_victim_loss when the actor harms only itself, precondition victim_unusual_action."
   - code: E_CHALLENGE_SCOPE
     owner: "04"
     channel: "rejection"
