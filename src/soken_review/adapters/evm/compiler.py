@@ -111,9 +111,13 @@ class SolcCache:
         self._platform_dir.mkdir(parents=True, exist_ok=True)
         url = f"{_BASE_URL}/{self._platform}/list.json"
         data = _http_get(url)
-        tmp = self._list_path().with_suffix(".tmp")
-        tmp.write_bytes(data)
-        tmp.rename(self._list_path())
+        # A per-writer temp file and an atomic replace: two builds that fetch the list at once (the
+        # e2e runs three EVM targets in parallel, 2026-10-31) shared list.tmp, and the second rename
+        # found it gone (FileNotFoundError, E_INTERNAL at build).
+        with tempfile.NamedTemporaryFile(dir=self._platform_dir, prefix="list.", suffix=".tmp", delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = Path(tmp.name)
+        os.replace(tmp_path, self._list_path())
         self._list = None  # invalidate cache
 
     @staticmethod
@@ -143,7 +147,7 @@ class SolcCache:
         # 0755, not 0711: NamedTemporaryFile is 0600, and gVisor (runsc) reads the ELF as the
         # sandbox user (uid 10001) to load it, so execute without read fails there (runc does not care).
         tmp_path.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-        tmp_path.rename(dest)
+        os.replace(tmp_path, dest)
 
 
 def _http_get(url: str, timeout: int = 60) -> bytes:
