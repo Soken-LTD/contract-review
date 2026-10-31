@@ -6,7 +6,6 @@ make the newest capabilities reachable through fields an old list already has.""
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from mcp import Client
@@ -16,7 +15,6 @@ from starlette.testclient import TestClient
 from soken_review import client_refresh
 from soken_review.contract import schema_version
 from soken_review.server import SokenServer, _finish, create_app, server_version
-from soken_review.tools.context import MemoryJobContext
 from soken_review.tools.set_section import route_walk_rows
 from soken_review.tools.submit import lift_severity_line
 
@@ -26,13 +24,6 @@ JOB = "job_" + "0" * 25 + "A"
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
-
-
-@pytest.fixture
-def pin_ctx(tmp_path: Path):
-    client_refresh.set_context(MemoryJobContext(tmp_path))
-    yield tmp_path
-    client_refresh.set_context(None)
 
 
 # ── what an old list lacks ────────────────────────────────────────────────
@@ -66,42 +57,54 @@ def test_notice_is_plain_and_actionable():
     assert client_refresh.notice(False).startswith("Your tool list may be older")
 
 
-# ── per-job decision ──────────────────────────────────────────────────────
+# ── per-job decision (pure part; the DB part is tests/tools/test_client_refresh_chain.py) ──
 
 
-def test_decide_notices_until_a_new_tool_is_called(pin_ctx):
-    start = client_refresh.decide("review_start", {}, {"accepted": True, "job_id": JOB}, False)
-    assert start and "review_chain_read" in start
-    assert client_refresh.decide("review_status", {"job_id": JOB}, {"state": "ready"}, False)
-    assert client_refresh.decide("review_status", {"job_id": JOB}, {"state": "ready"}, False) is None   # once
-    assert client_refresh.decide("review_read_code", {"job_id": JOB}, "text", False) is None
-    sev = {"accepted": False, "errors": [{"code": "E_SEVERITY_CONFIRM"}]}
-    assert client_refresh.decide("review_submit_finding", {"job_id": JOB}, sev, False)
-    assert client_refresh.decide("review_chain_read", {"job_id": JOB}, {"accepted": True}, False) is None
-    assert client_refresh.load_state(JOB)["fresh"] is True
-    assert client_refresh.decide("review_finalize", {"job_id": JOB}, {"accepted": True}, False) is None
+def test_next_state_notices_until_a_new_tool_is_called():
+    st: dict = {}
+    st, send = client_refresh._next_state("review_start", st, set())
+    assert send and st["notices"] == 1
+    st, send = client_refresh._next_state("review_status", st, set())
+    assert send and st["status_noticed"] is True
+    new, send = client_refresh._next_state("review_status", st, set())
+    assert new is None and not send                                       # status once
+    new, send = client_refresh._next_state("review_read_code", st, set())
+    assert new is None and not send
+    st, send = client_refresh._next_state("review_submit_finding", st, {"E_SEVERITY_CONFIRM"})
+    assert send and st["notices"] == 3
+    st, send = client_refresh._next_state("review_chain_read", st, set())
+    assert st["fresh"] is True and not send
+    assert client_refresh._next_state("review_finalize", st, set()) == (None, False)
 
 
-def test_decide_caps_the_likely_notice(pin_ctx):
-    shown = [client_refresh.decide("review_finalize", {"job_id": JOB}, {}, False) for _ in range(8)]
-    assert sum(1 for s in shown if s) == 4
+def test_next_state_caps_the_likely_notice():
+    st: dict = {}
+    sent = 0
+    for _ in range(8):
+        new, send = client_refresh._next_state("review_finalize", st, set())
+        st = new or st
+        sent += send
+    assert sent == 4
 
 
-def test_certain_signal_always_speaks_and_no_state_means_no_guess():
-    client_refresh.set_context(None)
-    assert client_refresh.decide("review_start", {}, {"job_id": JOB}, False) is None
-    assert client_refresh.decide("review_leads", {"job_id": JOB}, "x", True).startswith("Your tool list predates")
+@pytest.mark.anyio
+async def test_certain_signal_always_speaks_and_no_state_means_no_guess():
+    client_refresh.set_pool(None)
+    assert await client_refresh.decide("review_start", {}, {"job_id": JOB}, False) is None
+    text = await client_refresh.decide("review_leads", {"job_id": JOB}, "x", True)
+    assert text.startswith("Your tool list predates")
 
 
-def test_finish_attaches_client_notice_to_structured_and_text(pin_ctx):
-    res = CallToolResult(content=[TextContent(type="text", text=json.dumps({"accepted": True, "job_id": JOB}))],
-                         structured_content={"accepted": True, "job_id": JOB})
-    out = _finish("review_start", {}, res, False)
-    assert out.structured_content["client_notice"].startswith("Your tool list may be older")
-    assert "schema_hint" not in out.structured_content
-    text = _finish("review_leads", {"job_id": JOB}, CallToolResult(content=[TextContent(type="text", text="end")]), True)
-    lines = text.content[-1].text.splitlines()
+@pytest.mark.anyio
+async def test_finish_attaches_schema_hint_for_the_certain_signal():
+    client_refresh.set_pool(None)
+    res = CallToolResult(content=[TextContent(type="text", text="end")])
+    lines = (await _finish("review_leads", {"job_id": JOB}, res, True)).content[-1].text.splitlines()
     assert lines[0] == "end" and lines[1].startswith("client_notice ") and lines[2].startswith("schema_hint ")
+    structured = CallToolResult(content=[TextContent(type="text", text=json.dumps({"accepted": True}))],
+                                structured_content={"accepted": True})
+    out = await _finish("review_status", {"job_id": JOB}, structured, False)
+    assert out is structured                                            # no pool, no guess
 
 
 # ── server levers ─────────────────────────────────────────────────────────
@@ -134,6 +137,13 @@ def test_request_log_line_names_method_tool_and_client():
     line = describe_request({"method": "tools/call", "params": {"name": "review_status", "arguments": {"job_id": JOB}}},
                             "2025-11-25", "Claude-User")
     assert line == "mcp_request method=tools/call tool=review_status proto=2025-11-25 ua=Claude-User"
+    forged = describe_request({"method": "tools/call\nINFO fake", "params": {"name": "evil\r\nINFO: x", "_meta": {
+        "io.modelcontextprotocol/clientInfo": {"name": "a b\x1b[31m", "version": "\u202e" + "9" * 200}}}},
+        "2025-11-25", "UA\twith\ttabs")
+    assert "\n" not in forged and "\r" not in forged and "\x1b" not in forged and "\u202e" not in forged
+    assert "method=unknown" in forged and "tool" not in forged.split("method=unknown")[1].split()[0]
+    assert "ua=UA_with_tabs" in forged and all(len(p) <= 70 for p in forged.split())
+    assert describe_request({"method": "tools/call", "params": {"name": "review_nope"}}, None, None).endswith("tool=unknown proto=-")
     init = describe_request({"method": "initialize", "params": {"protocolVersion": "2025-06-18",
                                                                 "clientInfo": {"name": "claude-ai", "version": "0.1.0"}}},
                             None, None)

@@ -10,17 +10,15 @@ topic never reached the model. The server cannot read the client's list, so it u
 
 The missing tools, arguments and values are the diff of the served bundle against the baseline, so
 the notice never goes stale itself. Texts live in contract/mcp/client_refresh.yaml. Per-job state is
-a small file in the job's pin directory (deleted with the job).
+the job row's client_shape column (migration 019).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from functools import cache
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -31,16 +29,10 @@ logger = logging.getLogger(__name__)
 
 BASELINE_FILE = CONTRACT_DIR / "mcp" / "client_baseline.json"
 TEXTS_FILE = CONTRACT_DIR / "mcp" / "client_refresh.yaml"
-STATE_FILE = "client_shape.json"
 _JOB_RE = re.compile(r"^job_[0-9A-HJKMNP-TV-Z]{26}$")
 _LIST_CAP = 6
 
-_ctx: Any | None = None
-
-
-def set_context(ctx: Any) -> None:
-    global _ctx
-    _ctx = ctx
+_pool: Any | None = None
 
 
 def fingerprint(tools: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -127,40 +119,16 @@ def instructions() -> str:
     return text.format(tool_count=len(tools), schema_version=schema_version(), probe=_probe())
 
 
-# ── per-job state ──────────────────────────────────────────────────────────
+# ── per-job state (jobs.client_shape, migration 019) ───────────────────────
+
+# Results that show the call did not reach an existing job the caller may use: no state is written.
+_SKIP_CODES = frozenset({"E_JOB_NOT_FOUND", "E_JOB_EXPIRED", "E_INVALID_ARGUMENT", "E_JOB_TERMINAL",
+                         "E_MANAGE_KEY_INVALID", "E_QUOTA_EXCEEDED"})
 
 
-def _state_path(job_id: str) -> Path | None:
-    if _ctx is None or not _JOB_RE.match(job_id or ""):
-        return None
-    try:
-        return Path(_ctx.get_pin_root()) / job_id / STATE_FILE
-    except Exception:  # noqa: BLE001  # no pin root wired: no per-job state
-        return None
-
-
-def load_state(job_id: str) -> dict[str, Any]:
-    p = _state_path(job_id)
-    if p is None or not p.exists():
-        return {}
-    try:
-        data = json.loads(p.read_text())
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_state(job_id: str, state: dict[str, Any]) -> None:
-    p = _state_path(job_id)
-    if p is None:
-        return
-    try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(f".{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(state, sort_keys=True))
-        tmp.replace(p)
-    except OSError as exc:  # the notice is advisory; a full disk must not fail a tool call
-        logger.warning("client shape write failed for %s: %s", job_id[-8:], type(exc).__name__)
+def set_pool(pool: Any) -> None:
+    global _pool
+    _pool = pool
 
 
 def _codes(body: Any) -> set[str]:
@@ -170,32 +138,46 @@ def _codes(body: Any) -> set[str]:
     return {str(r.get("code")) for r in rows if isinstance(r, dict) and r.get("code")}
 
 
-def decide(tool: str, arguments: dict[str, Any], body: Any, certain: bool) -> str | None:
-    """The notice to attach to this result, or None. Records per-job freshness and the notice count."""
+def _next_state(tool: str, state: dict[str, Any], codes: set[str]) -> tuple[dict[str, Any] | None, bool]:
+    """(new state or None when unchanged, send the notice)."""
+    if tool in added_tools():
+        return (None if state.get("fresh") else {**state, "fresh": True}), False
+    if state.get("fresh"):
+        return None, False
+    t = texts()
+    if int(state.get("notices") or 0) >= int(t.get("max_notices_per_job") or 4):
+        return None, False
+    by_code = bool(codes & set(t.get("notice_codes") or []))
+    hit = by_code if tool == "review_status" and state.get("status_noticed") else (
+        tool in set(t.get("notice_tools") or []) or by_code)
+    if not hit:
+        return None, False
+    new = {**state, "notices": int(state.get("notices") or 0) + 1}
+    if tool == "review_status":
+        new["status_noticed"] = True
+    return new, True
+
+
+async def decide(tool: str, arguments: dict[str, Any], body: Any, certain: bool) -> str | None:
+    """The notice to attach to this result, or None. Records per-job freshness and the notice count in the
+    job's own row: never for a job id the call could not reach (an error result, a made-up id)."""
     if certain:
         return notice(True)
     job_id = str(arguments.get("job_id") or (body.get("job_id") if isinstance(body, dict) else "") or "")
-    if not job_id or _state_path(job_id) is None:
+    pool = _pool
+    if pool is None or not _JOB_RE.match(job_id):
         return None   # without per-job state the notice could not be capped: only the certain signal speaks
-    state = load_state(job_id)
-    if tool in added_tools():
-        if not state.get("fresh"):
-            state["fresh"] = True
-            _save_state(job_id, state)
+    codes = _codes(body)
+    if not isinstance(body, (dict, str)) or codes & _SKIP_CODES:
         return None
-    if state.get("fresh"):
+    if isinstance(body, dict) and body.get("accepted") is False and not codes & set(texts().get("notice_codes") or []):
         return None
-    t = texts()
-    if int(state.get("notices") or 0) >= int(t.get("max_notices_per_job") or 4):
-        return None
-    if tool == "review_status" and state.get("status_noticed"):
-        hit = bool(_codes(body) & set(t.get("notice_codes") or []))
-    else:
-        hit = tool in set(t.get("notice_tools") or []) or bool(_codes(body) & set(t.get("notice_codes") or []))
-    if not hit:
-        return None
-    state["notices"] = int(state.get("notices") or 0) + 1
-    if tool == "review_status":
-        state["status_noticed"] = True
-    _save_state(job_id, state)
-    return notice(False)
+    async with pool.connection() as conn, conn.transaction():
+        row = await (await conn.execute(
+            "select client_shape from jobs where job_id = %s and state <> 'deleted' for update", (job_id,))).fetchone()
+        if row is None:
+            return None
+        new, send = _next_state(tool, dict(row[0] or {}), codes)
+        if new is not None:
+            await conn.execute("update jobs set client_shape = %s where job_id = %s", (json.dumps(new), job_id))
+    return notice(False) if send else None

@@ -53,3 +53,49 @@ async def test_snapshot_waits_for_ready_and_never_fails_the_caller(db_pool, monk
     marker = json.loads((pin_root / jid / chain_mod.AUTO_FILE).read_text())
     assert marker["ok"] is False and marker["detail"] == "RuntimeError"
     assert chain_mod._auto_due(jid) is False                     # retried only after AUTO_RETRY_S
+
+
+# ── per-job notice state in jobs.client_shape ─────────────────────────────
+
+
+async def _shape(db_pool, jid):
+    async with db_pool.connection() as conn:
+        row = await (await conn.execute("select client_shape from jobs where job_id = %s", (jid,))).fetchone()
+    return row[0] if row else None
+
+
+@ASYNC
+async def test_notice_state_lives_in_the_job_row(db_pool):
+    from soken_review import client_refresh
+
+    jid, _pin = await _bsc_job(db_pool)
+    client_refresh.set_pool(db_pool)
+    try:
+        assert await client_refresh.decide("review_start", {}, {"accepted": True, "job_id": jid}, False)
+        assert (await _shape(db_pool, jid))["notices"] == 1
+        assert await client_refresh.decide("review_chain_read", {"job_id": jid}, {"accepted": True}, False) is None
+        assert (await _shape(db_pool, jid))["fresh"] is True
+        assert await client_refresh.decide("review_finalize", {"job_id": jid}, {"accepted": True}, False) is None
+    finally:
+        client_refresh.set_pool(None)
+
+
+@ASYNC
+async def test_no_state_for_made_up_ids_or_failed_calls(db_pool, tmp_path):
+    from soken_review import client_refresh
+
+    jid, pin_root = await _bsc_job(db_pool)
+    client_refresh.set_pool(db_pool)
+    ghost = "job_" + "Z" * 26
+    try:
+        assert await client_refresh.decide("review_status", {"job_id": ghost}, {"accepted": True}, False) is None
+        assert not (pin_root / ghost).exists()
+        missing = {"accepted": False, "errors": [{"code": "E_JOB_NOT_FOUND"}]}
+        assert await client_refresh.decide("review_status", {"job_id": jid}, missing, False) is None
+        rejected = {"accepted": False, "errors": [{"code": "E_JOB_NOT_READY"}]}
+        assert await client_refresh.decide("review_finalize", {"job_id": jid}, rejected, False) is None
+        assert await _shape(db_pool, jid) == {}
+        sev = {"accepted": False, "errors": [{"code": "E_SEVERITY_CONFIRM"}]}
+        assert await client_refresh.decide("review_submit_finding", {"job_id": jid}, sev, False)
+    finally:
+        client_refresh.set_pool(None)

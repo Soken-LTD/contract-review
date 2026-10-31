@@ -102,7 +102,7 @@ class SokenServer(MCPServer):
                     example=example,
                 )
             )
-            return _finish(name, arguments, res, stale_client)
+            return await _finish(name, arguments, res, stale_client)
         fn = HANDLERS.get(name)
         if fn is None:
             raise NotImplementedError(f"{name} handler lands in W1 to W4 (part 03)")
@@ -110,7 +110,7 @@ class SokenServer(MCPServer):
             result = await fn(arguments)
         except ReviewError as err:
             res = _error_result(err, structured="outputSchema" in tool)
-            return _finish(name, arguments, res, stale_client)
+            return await _finish(name, arguments, res, stale_client)
         if "outputSchema" in tool:
             if not isinstance(result, dict):
                 raise TypeError(f"{name} is a control tool and must return an object")
@@ -118,14 +118,14 @@ class SokenServer(MCPServer):
             res = CallToolResult(content=[TextContent(type="text", text=text)], structured_content=result)
         else:
             res = CallToolResult(content=[TextContent(type="text", text=str(result))])
-        return _finish(name, arguments, res, stale_client)
+        return await _finish(name, arguments, res, stale_client)
 
 
-def _finish(name: str, arguments: dict[str, Any], res: CallToolResult, stale_client: bool) -> CallToolResult:
+async def _finish(name: str, arguments: dict[str, Any], res: CallToolResult, stale_client: bool) -> CallToolResult:
     """Attach the stale-tool-list notice when the call shows an old list (client_refresh.decide).
     A notice never fails a call: any error in deciding leaves the result as it was."""
     try:
-        text = client_refresh.decide(name, arguments, _result_body(res), stale_client)
+        text = await client_refresh.decide(name, arguments, _result_body(res), stale_client)
     except Exception:
         logger.warning("client notice failed for %s", name, exc_info=True)
         text = None

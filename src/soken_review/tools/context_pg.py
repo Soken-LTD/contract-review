@@ -176,7 +176,7 @@ class _LifespanWrapper:
                 mod.set_context(ctx)
         from .. import client_refresh
 
-        client_refresh.set_context(ctx)   # per-job stale-tool-list state lives in the pin directory
+        client_refresh.set_pool(self._async_pool)   # per-job stale-tool-list state: jobs.client_shape
 
     async def _shutdown(self) -> None:
         if self._async_pool:

@@ -358,8 +358,9 @@ def _auto_mark(job_id: str, ok: bool, detail: str = "") -> None:
     import time
 
     p = _auto_marker(job_id)
+    if not p.parent.is_dir():   # never create a job directory: only a pinned job has one
+        return
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps({"at": time.time(), "ok": ok, "detail": detail[:200]}))
     except OSError:
         pass
