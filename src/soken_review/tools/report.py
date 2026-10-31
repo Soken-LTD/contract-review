@@ -71,6 +71,23 @@ def require_report_keys() -> int:
     return version
 
 
+def require_report_site() -> str:
+    """Startup check: the signed links built from SOKEN_REPORT_SITE must match the review_report
+    outputSchema. A client that enforces outputSchema (Claude Code 2.1.309 and later) drops every
+    result whose url does not match, so a host the contract does not list must fail at boot, not on
+    each call (2026-10-31: SOKEN_REPORT_SITE=https://mcp.soken.dev against a soken.dev-only pattern
+    lost every PDF link). Returns the site."""
+    from ..server import output_violations
+
+    rid = "a" * 26
+    body = {"accepted": True, "report_id": rid, **links(rid, "public_review", current_key_version(), now=2_000_000_000)}
+    bad = [v for v in output_violations("review_report", body) if v.split(":")[0] in ("url", "pdf_url", "manage_url")]
+    if bad:
+        raise RuntimeError(f"SOKEN_REPORT_SITE={SITE!r} builds report links the review_report outputSchema "
+                           f"rejects ({'; '.join(bad)}); use a host the contract lists")
+    return SITE
+
+
 def _b32(digest: bytes) -> str:
     return base64.b32encode(digest).decode().lower().rstrip("=")[:26]
 
