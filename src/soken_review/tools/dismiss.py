@@ -391,7 +391,7 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                     # fp_guarded is only valid for reentrancy and access_control categories (04 §10).
                     # Without a semantic layer the guard class cannot be verified — reject with
                     # E_DISMISS_UNCHECKABLE so the model must provide a different reason or more evidence.
-                    lead_category = lead.get("category", "")
+                    lead_category = _guard_category(lead)
                     if lead_category in ("evm.reentrancy", "cairo.reentrancy"):
                         required_guard_class: str | None = "reentrancy_lock"
                     elif "access_control" in lead_category:
@@ -732,3 +732,18 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
         "rejected": rejected,
         "high_medium_open": hm_open,
     }
+
+
+def _guard_category(lead: dict[str, Any]) -> str:
+    """Category that decides the fp_guarded guard class. A lead filed under `evm.other` by an
+    older rule map keeps its analyzer rule id; re-map it so an aderyn `reentrancy-state-change`
+    lead checks against a reentrancy lock (r5 2026-10-31: 18 leads needed a second dismissal)."""
+    category = str(lead.get("category") or "")
+    if category != "evm.other":
+        return category
+    from ..adapters.evm.analyze import _category_for
+    for tool in lead.get("tools") or []:
+        mapped = _category_for(str(tool), str(lead.get("rule_id") or ""))
+        if mapped != "evm.other":
+            return mapped
+    return category
