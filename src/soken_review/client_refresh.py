@@ -122,8 +122,7 @@ def instructions() -> str:
 # ── per-job state (jobs.client_shape, migration 019) ───────────────────────
 
 # Results that show the call did not reach an existing job the caller may use: no state is written.
-_SKIP_CODES = frozenset({"E_JOB_NOT_FOUND", "E_JOB_EXPIRED", "E_INVALID_ARGUMENT", "E_JOB_TERMINAL",
-                         "E_MANAGE_KEY_INVALID", "E_QUOTA_EXCEEDED"})
+_SKIP_CODES = frozenset({"E_JOB_NOT_FOUND", "E_JOB_EXPIRED", "E_INVALID_ARGUMENT", "E_JOB_TERMINAL"})
 
 
 def set_pool(pool: Any) -> None:

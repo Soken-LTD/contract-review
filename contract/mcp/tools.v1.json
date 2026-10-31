@@ -953,7 +953,7 @@
        },
        "attempts": {
         "type": "array",
-        "description": "every compile attempt of the build step in order; a parse error at the chosen version is retried once with the newest release that satisfies every pragma; a repo build that still fails is retried with the files the deployable contracts need (scope closure), then without the files that do not compile when nothing reviewed imports them (scope exclude; they are out of scope in the report)",
+        "description": "every compile attempt of the build step in order: newest release satisfying every pragma after a parse error, then the scope closure of the deployable contracts, then without unimported files that fail (out of scope in the report)",
         "items": {
          "type": "object",
          "additionalProperties": false,
