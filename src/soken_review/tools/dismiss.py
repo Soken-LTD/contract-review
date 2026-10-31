@@ -30,10 +30,12 @@ Design choices (fail-closed):
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Any
 
 import psycopg
 import psycopg_pool
+import yaml
 from psycopg.rows import dict_row
 
 from ..db.pool import get_pool
@@ -44,7 +46,7 @@ from ..pinning.store import PinnedSource
 from ..server import handler
 from .challenge import _load_map_with_status, _parse_range_ref, _resolve_scope, _run_auto
 from .context import JobContext
-from .submit import _family_from_chain
+from .submit import RUBRIC_DIR, _family_from_chain
 
 _pool: psycopg_pool.AsyncConnectionPool | None = None
 _ctx: JobContext | None = None
@@ -188,6 +190,20 @@ def _pinned_lines_equal(pin: PinnedSource, path: str, start: int, end: int, text
     return bool(pinned) and pinned == quoted
 
 
+@cache
+def _lead_link_rules() -> dict[str, dict[str, str]]:
+    """contract/rubric/lead_links.yaml: duplicate_of rule id -> {text, fix}."""
+    doc = yaml.safe_load((RUBRIC_DIR / "lead_links.yaml").read_text(encoding="utf-8")) or {}
+    return {r["id"]: r for r in doc.get("rules") or []}
+
+
+def _dup_error(rule: str) -> ReviewError:
+    """E_DUPLICATE_TARGET naming the failing rule, what it requires and how to satisfy it (BakerFi r5:
+    D1_category_mismatch and D3_no_overlap were bare ids documented nowhere)."""
+    row = _lead_link_rules().get(rule) or {}
+    return ReviewError("E_DUPLICATE_TARGET", rule=rule, rule_text=row.get("text", ""), rule_fix=row.get("fix", ""))
+
+
 async def _check_duplicate_target(
     lead: dict[str, Any],
     target: str,
@@ -206,20 +222,20 @@ async def _check_duplicate_target(
             )
             target_lead = await cur.fetchone()
         if target_lead is None:
-            return [ReviewError("E_DUPLICATE_TARGET", rule="target_not_found").envelope()]
+            return [_dup_error("target_not_found").envelope()]
         if target_lead["state"] != "promoted":
-            return [ReviewError("E_DUPLICATE_TARGET", rule="D2_target_not_promoted").envelope()]
+            return [_dup_error("D2_target_not_promoted").envelope()]
         # D1: same category
         if target_lead["category"] != lead["category"]:
-            return [ReviewError("E_DUPLICATE_TARGET", rule="D1_category_mismatch").envelope()]
+            return [_dup_error("D1_category_mismatch").envelope()]
         # D4: target severity >= lead severity
         if target_lead["sev_rank"] < lead["sev_rank"]:
-            return [ReviewError("E_DUPLICATE_TARGET", rule="D4_target_lower_severity").envelope()]
+            return [_dup_error("D4_target_lower_severity").envelope()]
         # D3: location overlap
         if (target_lead["path"] != lead["path"] or
                 target_lead["end_line"] < lead["start_line"] or
                 target_lead["start_line"] > lead["end_line"]):
-            return [ReviewError("E_DUPLICATE_TARGET", rule="D3_no_overlap").envelope()]
+            return [_dup_error("D3_no_overlap").envelope()]
         return []
 
     # Target is a draft_key
@@ -231,11 +247,11 @@ async def _check_duplicate_target(
         target_draft = await cur.fetchone()
 
     if target_draft is None:
-        return [ReviewError("E_DUPLICATE_TARGET", rule="target_not_found").envelope()]
+        return [_dup_error("target_not_found").envelope()]
 
     # D2: target must be accepted or needs_challenge (live)
     if target_draft["status"] not in ("accepted", "needs_challenge"):
-        return [ReviewError("E_DUPLICATE_TARGET", rule="D2_target_not_live").envelope()]
+        return [_dup_error("D2_target_not_live").envelope()]
 
     # D1: category must match - check via finding_revisions
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -247,16 +263,16 @@ async def _check_duplicate_target(
         target_rev = await cur.fetchone()
 
     if target_rev is None:
-        return [ReviewError("E_DUPLICATE_TARGET", rule="target_rev_missing").envelope()]
+        return [_dup_error("target_rev_missing").envelope()]
 
     if target_rev["category"] != lead["category"]:
-        return [ReviewError("E_DUPLICATE_TARGET", rule="D1_category_mismatch").envelope()]
+        return [_dup_error("D1_category_mismatch").envelope()]
 
     # D4: target severity >= lead severity (by rank)
     _SEV_RANK = {"Critical": 5, "High": 4, "Medium": 3, "Low": 2, "Informational": 1, "Info": 1}
     target_sev_rank = _SEV_RANK.get(target_draft["severity"] or "Informational", 1)
     if target_sev_rank < lead["sev_rank"]:
-        return [ReviewError("E_DUPLICATE_TARGET", rule="D4_target_lower_severity").envelope()]
+        return [_dup_error("D4_target_lower_severity").envelope()]
 
     # D3: location overlap — check via quote ranges
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -278,7 +294,7 @@ async def _check_duplicate_target(
         for q in target_quotes
     )
     if not overlaps:
-        return [ReviewError("E_DUPLICATE_TARGET", rule="D3_no_overlap").envelope()]
+        return [_dup_error("D3_no_overlap").envelope()]
 
     return []
 

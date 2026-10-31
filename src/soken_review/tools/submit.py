@@ -583,6 +583,29 @@ async def _demote_leads_to_open(
 
 # ── Main handler ──────────────────────────────────────────────────────────────
 
+async def _severity_jump(conn: psycopg.AsyncConnection, job_id: str, draft_key: str, prev_revision: int,
+                         category: str | None, matrix: dict[str, Any], severity: str) -> dict[str, Any] | None:
+    """E_SEVERITY_JUMP envelope when the computed severity moved more than one step from the previous
+    revision, naming the inputs that changed (BakerFi r5: a reclassification jumped Low to High and the
+    client only saw the new value)."""
+    cur = await conn.execute(
+        """select computed_severity, category, content->'matrix' from finding_revisions
+            where job_id = %s and draft_key = %s and revision = %s""",
+        (job_id, draft_key, prev_revision))
+    row = await cur.fetchone()
+    if row is None or row[0] not in _SEV_RANK or severity not in _SEV_RANK:
+        return None
+    before, prev_cat, prev_matrix = row[0], row[1], row[2] if isinstance(row[2], dict) else {}
+    if abs(_SEV_RANK[severity] - _SEV_RANK[before]) <= 1:
+        return None
+    moved = [f"category {prev_cat} to {category}"] if prev_cat != category else []
+    moved += [f"{k} {prev_matrix.get(k)} to {matrix.get(k)}" for k in
+              ("impact_class", "magnitude", "trigger", "precondition", "reversibility")
+              if prev_matrix.get(k) != matrix.get(k)]
+    return ReviewError("E_SEVERITY_JUMP", before=before, after=severity, prev=prev_revision,
+                       rev=prev_revision + 1, inputs="; ".join(moved) or "the linked leads or the map").envelope()
+
+
 @handler("review_submit_finding")
 async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
     """Submit or revise a finding, then attach the disproof checklist when the draft needs it.
@@ -1107,6 +1130,12 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
 
         computed_severity = sev_result.severity
         evidence_level = sev_result.evidence_level
+        if draft is not None and current_revision >= 0:
+            jump = await _severity_jump(conn, job_id, draft_key, current_revision, category, matrix,
+                                        computed_severity)
+            if jump is not None:
+                gate.warnings.insert(0, gate_policy.warning(jump, code="E_SEVERITY_JUMP", rule=None,
+                                                            field="matrix", match=None, suggest=None))
         # Issue 4a: >= 2 so Medium also goes to needs_challenge (was >= 3, a severity-laundering bug)
         new_status = "needs_challenge" if _SEV_RANK[computed_severity] >= 2 else "accepted"
 

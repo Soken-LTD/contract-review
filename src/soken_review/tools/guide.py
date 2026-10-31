@@ -53,6 +53,16 @@ _EVIDENCE = [
 
 
 @lru_cache(maxsize=1)
+@lru_cache(maxsize=1)
+def _guide_notes() -> dict[str, Any]:
+    return yaml.safe_load((_RUBRIC / "guide_notes.yaml").read_text(encoding="utf-8")) or {}
+
+
+@lru_cache(maxsize=1)
+def _lead_links() -> dict[str, Any]:
+    return yaml.safe_load((_RUBRIC / "lead_links.yaml").read_text(encoding="utf-8")) or {}
+
+
 def _enums() -> dict[str, Any]:
     return yaml.safe_load((_RUBRIC / "enums.yaml").read_text(encoding="utf-8"))
 
@@ -119,9 +129,8 @@ def _topic_severity_inputs() -> list[str]:
                " when the amount is whatever is left over in the unit under normal operation (stranded excess,"
                " bounced value, remainders: near zero in practice, uncapped in code), dust for rounding."
                " impact supply_inflation: an unbacked mint, a burn that is not a burn, a double-counted fee,"
-               " balances above totalSupply (holders diluted, nobody takes a balance). A freeze that lasts"
-               " until an admin acts is permanent_freeze with reversibility admin_reversible, not"
-               " temporary_freeze; temporary_freeze is a freeze that clears by itself."
+               " balances above totalSupply (holders diluted, nobody takes a balance). "
+               + _guide_notes()["freeze_classes"]["text"] +
                " precondition: normal_operation when the path runs in a state the protocol expects (a removed"
                " gauge, a slashed round, an admin-added token); uncommon_protocol_state only for a state it does"
                " not expect. A bounded loss under an uncommon state prints Low by the matrix (I2 x L1); an"
@@ -168,8 +177,11 @@ def _topic_challenge_rules() -> list[str]:
                " fp_unreachable: the map must prove no entry reaches the location."
                " not_a_vulnerability: analyzer leads only; quote a code line inside the function that holds the"
                " lead and give a note of at least 40 characters stating why the detector pattern is not a"
-               " weakness there. duplicate_of: an accepted or needs_challenge draft of the same family."
-               " Notes are audit-log text: no prose or number rules apply to them.")
+               " weakness there. Notes are audit-log text: no prose or number rules apply to them.")
+    links = _lead_links()
+    out.append(str(links.get("intro", "")).strip())
+    for rule in links.get("rules") or []:
+        out.append(f"  {rule['id']}: {rule['text']} Fix: {rule['fix']}")
     out.append("Project documents (review_add_context): quotes with role context cite context/ paths exactly like"
                " code and never count as a location; {{fact:context.*}} placeholders carry the document line.")
     out.append("Text rules on every model string: no second person, no questions, no severity words or"
