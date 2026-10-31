@@ -21,16 +21,15 @@ refresh: >-
   in Settings, Connectors and add it again (a new chat alone kept the old list on 2026-10-31). A server added
   to Claude Code directly: run /mcp and reconnect it. Other clients reload the tool list on reconnect.
 works_now: >-
-  Until then: the server accepts those arguments even if your list does not show them. Or write a body
-  paragraph "Severity: High. Reason: ..." to keep your severity; answer an invariant walk as a coverage row
-  (area_id the walk id, reason nr_holds, nr_violated or nr_not_applicable, refs path:start-end in the note);
-  topic checklist with job_id lists the walks; review_facts has the deployment's owner, roles, paused and
-  balance under chain.target.
+  Until then: claimed_severity is the printed severity on any tool list (no reason needed); answer an invariant
+  walk as a coverage row (area_id the walk id, reason nr_holds, nr_violated or nr_not_applicable, refs
+  path:start-end in the note); topic checklist with job_id lists the walks; review_status chain_state and
+  review_facts have the deployment's owner, roles, paused and balance under chain.target.
 
 # Server instructions (initialize result and server/discover): read by the client when it connects, so a
 # client that reconnects sees them even when its tool list is cached elsewhere.
 instructions: >-
-  SOKEN contract review. Start with review_get_guide, then review_start. This server has {tool_count} tools
+  SOKEN contract review. review_start returns the short default guide (also review_get_guide with no topic). This server has {tool_count} tools
   (schema_version {schema_version}), including {probe}. If your tool list lacks them, it is cached from an
   older version: in claude.ai (also when Claude Code uses the claude.ai connector) remove the connector and
   add it again; for a server added to Claude Code directly run /mcp and reconnect. Results carry

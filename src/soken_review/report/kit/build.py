@@ -827,6 +827,10 @@ def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status:
                    "<tr>" + "".join(f"<td>{c[1]}</td>" for c in cols) + "</tr>", name="finding_meta", keep=True)
     head = f'<div class="fh"><span class="fid">{esc(f["id"])} {inl(f["title"], ctx)}</span>{chips}</div>'
     body = ""
+    if f.get("calibration"):
+        # The matrix outcome beside the reviewer's severity (thin server, 2026-10-31); server text.
+        cal = f["calibration"]
+        body += f'<p class="nofind">{esc(lab["calibration"])}: {esc(cal["severity"])} ({esc(cal["rule"])})</p>'
     fixed = f.get("status") == "Fixed"
     if not fixed:
         body += f'<div class="fl">{esc(lab["description"])}</div>{blocks(f.get("description", []), ctx, meta)}'

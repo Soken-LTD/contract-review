@@ -1625,7 +1625,8 @@ class TestResolveScopeSpanJoin:
 
 @ASYNC
 async def test_e2e_disproved_locked_new_key_same_category(db_pool):
-    """After kill, a new draft with different key but overlapping location -> E_DISPROVED_LOCKED."""
+    """After kill, a new draft with different key but overlapping location is accepted with an
+    E_DISPROVED_LOCKED warning (thin server 2026-10-31: the reviewer's later judgement is kept)."""
     from soken_review.tools import challenge as challenge_mod
     from soken_review.tools import submit as submit_mod
     from soken_review.tools.context import MemoryJobContext
@@ -1687,14 +1688,14 @@ async def test_e2e_disproved_locked_new_key_same_category(db_pool):
     args2["draft_key"] = "draft-lock-002"  # different key
     # Same category (evm.reentrancy) and overlapping location (lines 5-7)
     result2 = await submit_mod.handle_review_submit_finding(args2)
-    assert result2["accepted"] is False
-    codes = [e["code"] for e in result2["errors"]]
-    assert "E_DISPROVED_LOCKED" in codes
+    assert result2["accepted"] is True, result2
+    codes = [w["code"] for w in result2["warnings"]]
+    assert codes.count("E_DISPROVED_LOCKED") == 1
 
 
 @ASYNC
 async def test_disproved_locked_same_key_resubmit_rejected(db_pool):
-    """Resubmitting under a challenge-killed draft key -> E_DISPROVED_LOCKED."""
+    """Resubmitting under a challenge-killed draft key reopens it with an E_DISPROVED_LOCKED warning."""
     from soken_review.tools import challenge as challenge_mod
     from soken_review.tools import submit as submit_mod
     from soken_review.tools.context import MemoryJobContext
@@ -1747,14 +1748,19 @@ async def test_disproved_locked_same_key_resubmit_rejected(db_pool):
     })
     assert ar["verdict"] == "withdrawn"
 
-    # Resubmit under the SAME draft key — must be rejected
+    # Resubmit under the SAME draft key: accepted, warned once, the kill record cleared from the draft
     args_re = dict(_VALID_SUBMISSION)
     args_re["job_id"] = job_id
     args_re["draft_key"] = "draft-lock-same-001"
     result_re = await submit_mod.handle_review_submit_finding(args_re)
-    assert result_re["accepted"] is False
-    codes = [e["code"] for e in result_re["errors"]]
-    assert "E_DISPROVED_LOCKED" in codes
+    assert result_re["accepted"] is True, result_re
+    codes = [w["code"] for w in result_re["warnings"]]
+    assert codes.count("E_DISPROVED_LOCKED") == 1
+    async with db_pool.connection() as conn:
+        row = await (await conn.execute(
+            "select status, withdrawn_by, kill_item from finding_drafts where job_id = %s and draft_key = %s",
+            (job_id, "draft-lock-same-001"))).fetchone()
+    assert row[0] in ("accepted", "needs_challenge") and row[1] is None and row[2] is None
 
 
 # ── Scope tests for present answers ──────────────────────────────────────────

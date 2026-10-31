@@ -78,6 +78,7 @@
   "recommendation": "Recommendation",
   "evidence": "Evidence",
   "severity_basis": "Severity basis",
+  "calibration": "Calibration",
   "challenge": "Challenge",
   "analyzer_lead": "Analyzer lead: {analyzer} {rule_id}",
   "fork_test": "Fork test",

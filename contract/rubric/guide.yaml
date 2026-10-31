@@ -1,0 +1,184 @@
+# rubric/guide.yaml: every LLM-facing sentence review_get_guide prints (reference data; tools/guide.py only
+# joins these strings with lists rendered from enums.yaml, the checklists, severity_rules.yaml and gate_policy.yaml).
+#
+# Thin server (CEO decision 2026-10-31, blind rounds 1 to 5): one short default guide carries the whole
+# default path; everything else is an opt-in topic. The default guide is returned by review_get_guide with no
+# topic (topic start) and rides on the review_start result, so a review needs no guide call at all.
+# tests/tools/test_guide.py holds `start.text` to `start.budget_chars` and the whole start answer to
+# `start.budget_total_chars`.
+version: 2
+
+start:
+  budget_chars: 1200
+  budget_total_chars: 2600
+  text: >-
+    Default path. 1. review_start with the deployed address or the repository; keep the job_id.
+    2. review_status with wait_seconds until state is ready. Its chain_state block has the deployment's
+    live owner, admin, proxy implementation, paused flag and balance, read for you at job start.
+    3. Read the code with review_read_code and review_search_code.
+    4. For each issue call review_submit_finding: category (ids below), title, body, quotes copied
+    exactly from the pinned lines (at least one with role location), the five matrix fields and
+    claimed_severity. Your claimed_severity is the printed severity; the server never changes it and
+    prints its matrix outcome beside it as a calibration note when the two differ. A digit in text
+    comes from a quoted line or a {{fact:<key>}} placeholder (review_facts lists the keys).
+    5. review_finalize, then review_report for the PDF link.
+    Only evidence problems refuse a call (a quote not in the pinned source, an unsourced number, an
+    unresolved placeholder, unsafe text such as a URL); every other rule returns a warning on an
+    accepted call.
+  optional: >-
+    Optional, never required: topics categories, severity_inputs, checklist, challenge_rules,
+    invariants, context and chain; review_challenge, review_set_section, review_add_context,
+    review_dismiss_lead and the chain read tools.
+  categories_line: "Category ids ({family}):"
+
+categories:
+  intro: >-
+    Category ids for review_submit_finding.category (family {family}). generic: the calibration caps it
+    at High without a linked lead of the same category; max: the calibration ceiling for the category.
+    Neither changes the printed severity.
+  outro: "A linked lead's category should equal the finding category; a lead of another category is dropped from the link with a warning."
+
+severity_inputs:
+  intro: >-
+    review_submit_finding.matrix: five fields, exact values below. claimed_severity is the printed
+    severity, always. The server computes impact x likelihood and the named rules below as a
+    calibration: every verdict returns calibration {severity, rule, differs}, and the report prints
+    "Calibration: <severity> (<rule>)" beside a finding whose calibration differs. severity_reason (20
+    to 200 characters) is optional and prints in the severity table. Without claimed_severity the
+    matrix outcome at submit prints and later steps keep it.
+  rules_head: "Calibration rules (id, phase, condition, effect on the calibration):"
+  evidence_head: "Evidence levels (set by the server, never claimed; none changes the severity):"
+  evidence:
+    - ["E3 analyzer_and_reasoning", "lead_ids names an analyzer lead of the same category that overlaps a location quote"]
+    - ["E2 reasoning_challenged", "no such lead; the optional disproof checklist was answered completely"]
+    - ["E1 reasoning_only", "neither; printed as the reviewer's reasoning"]
+  fill: >-
+    magnitude: unbounded when the amount lost or frozen is the unit's full balance or a user's whole
+    position, bounded only with a bound_ref quote of the cap, residual when the amount is whatever is
+    left over in the unit under normal operation (stranded excess, bounced value, remainders), dust for
+    rounding. impact supply_inflation: an unbacked mint, a burn that is not a burn, a double-counted fee,
+    balances above totalSupply. precondition: normal_operation when the path runs in a state the protocol
+    expects; uncommon_protocol_state only for a state it does not expect. A self-inflicted loss (the actor
+    forfeits its own value to block another party) is griefing_with_victim_loss, not a freeze.
+  quotes: >-
+    Quotes: location quotes copy the pinned lines exactly (review_read_code). Numbers in text need a
+    source ({{fact:<key>}} or {{calc:<expr>|<precision>}}, two braces on each side); a count in words up
+    to ten passes on its own but not before a unit, percent or token word. Absence phrases (never,
+    nowhere, no function) may carry an absence_claims entry; without one they print as written.
+
+challenge_rules:
+  intro: >-
+    Shortest path: review_start, review_read_code, review_submit_finding, review_finalize, review_report.
+    Every other tool is optional. Only evidence integrity and publication safety refuse a call; every
+    other rule returns a warning on an accepted result (gate policy below).
+  challenge: >-
+    The challenge is optional evidence. review_challenge returns checklist items for the current
+    revision; review_answer_challenge records one answer per item. A complete, verified answer raises
+    the evidence level; no answer ever changes the printed severity. An item the server cannot verify
+    is recorded with a warning and has no effect.
+  kinds: >-
+    Item kinds: {kinds}. kill: present records the reviewer's own disproof and withdraws the draft (a
+    resubmit under the same key is accepted with a warning); downgrade: present lowers the calibration
+    one level (K5), never the severity; context and basis: recorded.
+  values: "Answer values: {values}. present and absent need 1 to 3 quotes (exact pinned lines) and refs path:start-end; not_applicable needs a reason."
+  na_reasons: "not_applicable reasons: {reasons}"
+  scopes: >-
+    Scopes: {scopes}. scope.ranges come from the contract map (the function holding the location, its
+    callers, modifiers and callees; on Solana also the Accounts struct of the instruction). An
+    item marked not_covered has no ranges the map could supply: its absent answer stands as given and a
+    present answer on it is recorded as unverified. An answer whose refs miss a range is recorded as
+    unverified (E_CHALLENGE_SCOPE warning).
+  revision: "Revision: pass the revision review_challenge reports; an answered revision is read-only until a resubmit opens a new one."
+  dismissal: >-
+    Lead dismissal (review_dismiss_lead, arguments job_id and items: a list of {lead_id, reason, quotes,
+    note}) reasons: {reasons}. Optional: open analyzer leads are closed as not reviewed at finalize and
+    counted in the report's coverage note (F2). fp_guarded: reentrancy and access-control leads, quote the
+    guard line inside the entry function. fp_unreachable: the map must prove no entry reaches the
+    location. not_a_vulnerability: analyzer leads only; quote a code line inside the function that holds
+    the lead and give a note of at least 40 characters. Notes are audit-log text: no prose or number
+    rules apply to them.
+  documents: "Project documents (review_add_context): quotes with role context cite context/ paths exactly like code and never count as a location; {{fact:context.*}} placeholders carry the document line."
+  text_rules: >-
+    Text rules on every model string (warnings unless the gate policy says blocking): no second person,
+    no questions, no severity words or completeness claims in prose, no analyzer or model names, no URLs
+    (blocking), no raw LEAD or finding ids, paragraphs at most 90 words, titles 10 to 110 characters.
+  word_lists_head: "Text rule word lists (E_TEXT_GATE names the rule id, the matched words and this rewording):"
+  policy_head: "Gate policy (blocking refuses the call; advisory and rewrite return warnings on an accepted call):"
+
+context:
+  intro: >-
+    Optional. Project context: review_start.context or review_add_context ingest the project's own
+    documents beside the code so declared facts can be read, quoted and compared with the code and the
+    chain. If the user has a website, whitepaper, documentation, terms or privacy policy, pass the URLs;
+    without them the report says that no project documents were supplied.
+  kinds: >-
+    Kinds: {kinds}. Items are {kind, url} (https, named host, no credentials) or {kind, path, content}
+    for inline text; at most 12 documents per job, 8 per call; the same URL again returns the existing
+    document. Fetching runs after the code and never delays ready; review_status reports context
+    {requested, done, failed}; a document that fails is reported per item (E_CONTEXT_FETCH), never as a
+    job error.
+  reading: >-
+    Reading: documents are pinned as context/<kind>-<n>.md, readable with review_read_code and
+    searchable with review_search_code (path_glob context/*). Every stored text starts with a six-line
+    provenance header (title, source, retrieved, sha256, kind, blank). review_contract_map ignores
+    documents.
+  quoting: >-
+    Quoting: a quote with role context cites a context/ path with exact stored lines in
+    review_submit_finding and in challenge answers; a context quote never counts as a location quote,
+    and a location quote may not cite a context/ path.
+  facts: >-
+    Facts: review_facts (filter context.) lists deterministic context.<kind>.* records, each with its
+    source line: addresses, mentions_reviewed_address, total_supply, max_supply, decimals, fee_pct,
+    chains, admin_claims, audit_claims, terms.restricted_jurisdictions, terms.kyc,
+    privacy.data_collected, privacy.contact. A {{fact:context.*}} placeholder in text carries that
+    source; the report prints declared values next to what the code and the chain show.
+  prose: "Prose: review_set_section(section=context_notes) is the only free-text place for the documents (model blocks, same text rules as roles_notes, at most 8 blocks)."
+
+chain:
+  lines:
+    - >-
+      Live state is read for you: at job start the server reads the deployment's owner and admin
+      holders, EIP-1967 proxy implementation and admin, AccessControl roles, paused flag and native
+      balance, and review_status returns them in chain_state (the facts are chain.target.<field>).
+    - >-
+      Further reads are optional: review_chain_read (getters, storage slots, accounts, TON get
+      methods), review_chain_roles (holders of another address, Safe threshold, deployer, TRON
+      permissions, Solana authorities) and review_chain_balances (native and token balances of named
+      holders). No step or finalize check depends on them, and a failure never changes the job.
+    - >-
+      Facts: every value becomes chain.<alias>.<field> with its block and source; cite it as
+      {{fact:chain.<alias>.<field>}}. The report prints the value with the network and block on its
+      first use and in the finding's Figures used table.
+    - >-
+      Blocks: block latest (default) is frozen to a concrete block at call time; pinned is the job's
+      pinned block. The free endpoints of most chains keep only recent state, so an old block can fail;
+      the result says so. TRON and Solana serve latest state only.
+    - >-
+      Budget: read units per job and per day (1 per item, 2 below the archive line; balances 1 per 10
+      holders; roles 30). Items that failed because a free source capped or failed are refunded.
+      Running out never blocks a finding or the report.
+    - >-
+      Fork tests (optional): review_verify_on_fork runs one Foundry test (assertions about balances, state
+      or reverts) on a local in-memory fork of the job's EVM chain at the pinned block, reached only
+      through the read-only proxy; nothing is sent to a network. Import forge-std/Test.sol and the
+      reviewed code as pinned/<path as review_read_code lists it>. Bind the run to a finding with
+      draft_key: a passing run (expect pass) of the finding's current revision whose forge call trace
+      shows a call into the deployment address, or into a contract whose runtime code equals a pinned
+      file the finding quotes, raises its printed evidence to test_verified and the report prints the
+      fork, the block and the test name; any other passing run prints as exercised and raises nothing.
+      Evidence only: a run never changes the severity. A revised finding needs a new run. The test
+      source prints for the owner profile only. One run per job at a time, 6 per job; a queued run
+      answers with run_id to poll, and review_finalize waits until a queued or running run has ended.
+      Assertion messages and console lines come back as untrusted_text. A failed or unavailable run
+      never blocks a finding or finalize.
+
+checklist:
+  intro: "Disproof checklist, family {family} (optional). Items the challenge asks per category (kind, condition)."
+  generic_head: "generic (every category marked generic):"
+  missing: "No checklist file for family {family}."
+
+# The documents note on the review_start result (thin server: once, never repeated on review_status).
+documents_note: >-
+  No project documents were supplied. Optional: if the user has a website, whitepaper, documentation,
+  terms or privacy policy, review_add_context accepts their URLs as {kind, url}; without them the report
+  says that no project documents were supplied.

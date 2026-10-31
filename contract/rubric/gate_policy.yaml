@@ -1,4 +1,4 @@
-# rubric/gate_policy.yaml (never-worse, CEO direction 2026-10-27 section A). Reference data, read by
+# rubric/gate_policy.yaml (never-worse, CEO direction 2026-10-27 section A; thin server, CEO decision 2026-10-31). Reference data, read by
 # engine/gate_policy.py. Every rejection review_submit_finding, review_set_section, review_answer_challenge
 # and review_finalize can return is listed here with its class and a one-line rationale:
 #
@@ -15,7 +15,16 @@
 # so a new rule cannot become advisory by accident (tests/engine/test_gate_policy.py collects every rule id
 # the engines emit and asserts each has a row). The code row classifies rejections without a rule id.
 # `exempt_fields` lists prose fields where the rule does not apply at all.
-version: 1
+#
+# Thin-server audit (2026-10-31): blocking is kept only for evidence integrity (the quote is in the pinned
+# source, numbers come from recorded facts, quoted code or a calc, placeholders resolve), publication safety
+# (control characters, scripts, links, injection echoes, attack recipes, legal and brand claims), argument shape
+# (the server cannot store the call: unknown fields, enum values, stale revisions) and job state or quota.
+# Moved to advisory in that audit: E_QUOTE_TRIVIAL (a trivial quote that matches the pinned lines), E_DISPROVED_LOCKED
+# (the reviewer's own kill answer), E_ABSENCE_FALSE and E_CLAIM_UNSUPPORTED (the map or a fact read disagrees
+# with the reviewer's prose: the map and the reads can be wrong, round 5 read a proxy's owner from implementation
+# storage). E_SEVERITY_CONFIRM is no longer returned: the reviewer's severity is final.
+version: 2
 default_class: blocking
 
 codes:
@@ -23,18 +32,18 @@ codes:
   E_QUOTE_MISMATCH: {class: blocking, why: "A quote that does not match the pinned lines would print code the contract does not contain."}
   E_QUOTE_ELISION: {class: blocking, why: "More than one elision makes the printed quote unverifiable against the pinned lines."}
   E_QUOTE_TOO_LONG: {class: blocking, why: "The report prints at most 40 quoted lines; a longer quote cannot be printed as evidence."}
-  E_QUOTE_TRIVIAL: {class: blocking, why: "A quote with no code tokens is not evidence of the finding."}
+  E_QUOTE_TRIVIAL: {class: advisory, why: "A quote with no code tokens (a doc comment, a brace) that still matches the pinned lines is printed as the reviewer cited it; the warning suggests a code line. A mismatch is still E_QUOTE_MISMATCH."}
   E_FILE_UNKNOWN: {class: blocking, why: "A path that is not pinned cannot be printed as evidence."}
   E_RANGE_INVALID: {class: blocking, why: "A range outside the file cannot be printed as evidence."}
   E_FILE_OUT_OF_SCOPE: {class: blocking, why: "The report prints the reviewed scope; a finding located in a file outside it contradicts that table."}
   E_INVALID_ARGUMENT: {class: blocking, why: "The argument does not have the shape the server stores; nothing can be kept."}
-  E_CATEGORY_UNKNOWN: {class: blocking, why: "Severity and the checklist are computed from the category; an unknown id cannot be classified."}
+  E_CATEGORY_UNKNOWN: {class: blocking, why: "Argument shape: the category id is stored with the finding and printed as its label; an id outside the family's list cannot be stored."}
   E_FIELD_FIXED: {class: blocking, why: "Server drafts carry analyzer evidence that the reviewer may not change."}
-  E_DISPROVED_LOCKED: {class: blocking, why: "The reviewer's own answered kill item disproved this range; printing it again contradicts the record."}
+  E_DISPROVED_LOCKED: {class: advisory, why: "The reviewer's own kill answer disproved an earlier draft at this range; the new revision is the reviewer's later judgement and is kept, the warning names the earlier answer."}
   E_REVISION_CONFLICT: {class: blocking, why: "A stale revision would overwrite a newer one."}
   E_SEVERITY_JUMP: {class: advisory, why: "A notice on an accepted revision: the computed severity moved more than one step and the inputs that moved it are named."}
   E_REVISION_ANSWERED: {class: blocking, why: "An answered checklist is the record of that revision; a new answer needs a new revision."}
-  E_RETRY_BUDGET: {class: blocking, why: "Rate limit on rejected calls per draft; advisory warnings never count against it."}
+  E_RETRY_BUDGET: {class: blocking, why: "Abuse control: a rate limit on blocking rejections per draft; advisory warnings never count against it."}
   E_DRAFT_STATUS: {class: blocking, why: "The draft has no open checklist to answer."}
   E_FINDING_NOT_FOUND: {class: blocking, why: "The draft does not exist."}
   E_LEAD_NOT_FOUND:
@@ -93,9 +102,9 @@ codes:
     why: "A finding placeholder that names no draft cannot expand."
     rules: {L0: {class: blocking, why: "A finding placeholder that names no draft cannot expand."}}
   E_CLAIM_UNSUPPORTED:
-    class: blocking
-    why: "The sentence contradicts the recorded on-chain accounts, so the PDF would state a false fact."
-    rules: {C1: {class: blocking, why: "Owner and deployer stated as one account against the recorded facts."}}
+    class: advisory
+    why: "The sentence disagrees with the recorded on-chain accounts. The reads can be wrong (a proxy's owner read from implementation storage, round 5), so the reviewer's text is kept and the warning names the recorded values."
+    rules: {C1: {class: advisory, why: "Owner and deployer stated as one account against the recorded facts; kept with a warning naming both values."}}
   E_INJECTION_ECHO:
     class: blocking
     why: "The text repeats an instruction-like comment from the code; publishing it would carry the injection into the PDF."
@@ -121,7 +130,7 @@ codes:
     rules: {T24: {class: advisory, why: "An absence phrase is wording; absence_claims is an optional evidence upgrade."}}
   E_ABSENCE_UNCHECKABLE: {class: advisory, why: "Without a map the absence claim stays the reviewer's statement; it is printed as written."}
   E_ABSENCE_KIND: {class: advisory, why: "A mismatched claim kind drops the claim; the finding is kept."}
-  E_ABSENCE_FALSE: {class: blocking, why: "The map shows the guard the text says is absent, so the PDF would state a false fact."}
+  E_ABSENCE_FALSE: {class: advisory, why: "The map shows a guard the text says is absent. The map is a heuristic over the code and can be wrong, so the reviewer's text is kept and the warning names the guard the map found."}
   E_MATRIX_FIELD: {class: advisory, why: "The map disagrees with a matrix field; the severity stands with the reviewer's classification and the warning names the field."}
   E_MATRIX_EVIDENCE: {class: advisory, why: "A matrix field without its supporting quote stands as the reviewer's classification."}
   E_DUPLICATE: {class: advisory, why: "An overlapping finding of the same family is kept; the warning names the other draft."}
@@ -129,7 +138,7 @@ codes:
   E_DOC_NOT_USER_SUPPLIED: {class: advisory, why: "documented_intent_ref is dropped when it does not cite a user-supplied document."}
   E_SEVERITY_CONFIRM:
     class: advisory
-    why: "The reviewer's severity stands within one step with its reason (RV1); further away it moves to the nearest value within one step and the warning names the computed cell."
+    why: "Retired 2026-10-31, never returned: the reviewer's severity is final and the matrix outcome prints beside it as a calibration note."
   E_TEXT_GATE:
     class: advisory
     why: "Wording rules are style; the call succeeds and the warning suggests the rewording."
@@ -235,7 +244,7 @@ codes:
 finalize_checks:
   F1: {class: blocking, why: "No tier or tier D: no pinned source, so no finding can be printed with evidence."}
   F2: {class: advisory, kind: leads_not_triaged, why: "Open High or Medium analyzer leads are closed as not reviewed at finalize and counted in the coverage note."}
-  F3: {class: advisory, kind: challenge_not_answered, why: "A finding without its optional challenge keeps its severity with evidence reasoning_only (K8 still caps Critical at High)."}
+  F3: {class: advisory, kind: challenge_not_answered, why: "A finding without its optional challenge keeps its severity with evidence reasoning_only; K8 is a calibration note, never a cap."}
   F4: {class: blocking, why: "Server state invariant (a promoted lead of a withdrawn draft); never reachable through the tools."}
   F5: {class: advisory, kind: coverage_na_unconfirmed, why: "A not-applicable coverage row whose predicate no longer holds prints as not covered."}
   F6: {class: blocking, why: "An unresolved placeholder would print as a raw token."}

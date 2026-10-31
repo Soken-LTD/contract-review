@@ -6,6 +6,9 @@ also runs the reviewer's claimed_severity with a reason, which is the client pat
 Before the change the server printed: Solana F-02 High (+1), TON CreateSquad Medium (+1), TRON F-01
 and F-02 Low (-1 each), BNB F-01 High (+1), Apyee F-01 Medium (-1), F-03 Informational (-2), F-06
 Low (+1). In zero of eight did the override improve on the reviewer.
+
+Thin server (2026-10-31): the reviewer's claim is final and every rule moves only the calibration, so
+the cases below assert the printed severity and, where it differs, the calibration.
 """
 
 from __future__ import annotations
@@ -22,6 +25,10 @@ def _sev(matrix: dict[str, str], phase: str = "submit", **ctx) -> tuple[str, lis
     return r.severity, r.caps_applied, r.set_by
 
 
+def _cal(matrix: dict[str, str], phase: str = "submit", **ctx) -> str:
+    return compute_severity(matrix, phase, SeverityContext(phase=phase, **ctx)).calibration
+
+
 class TestSolanaLockAndLoan:
     F02: ClassVar[dict[str, str]] = {"impact_class": "permanent_freeze", "magnitude": "unbounded", "trigger": "permissionless_role",
            "precondition": "normal_operation", "reversibility": "admin_reversible"}   # I3xL3 = High by the cell
@@ -29,7 +36,8 @@ class TestSolanaLockAndLoan:
     def test_f02_lender_self_harm_prints_the_reviewers_medium(self):
         reason = "The lender gains nothing, forfeits its own repayment, and can lift the block by restoring the ATA."
         sev, rules, by = _sev(self.F02, claimed_severity="Medium", claimed_reason=reason)
-        assert (sev, by) == ("Medium", "reviewer") and rules == ["RV1:reviewer=Medium"]
+        assert (sev, by) == ("Medium", "reviewer") and rules == []
+        assert _cal(self.F02, claimed_severity="Medium", claimed_reason=reason) == "High"
 
     def test_f02_reclassified_as_griefing_is_medium_by_the_cell(self):
         sev, rules, _ = _sev({**self.F02, "impact_class": "griefing_with_victim_loss"})
@@ -45,16 +53,17 @@ class TestSolanaLockAndLoan:
         High with a reason (RV1) prints, never a rule the reviewer cannot answer."""
         f01 = {**self.F02, "reversibility": "irreversible"}
         sev, rules, by = _sev(f01, "post_challenge", **_POST, scope_not_covered=True, severity_before="Critical")
-        assert (sev, rules, by) == ("Critical", [], "matrix")
+        assert (sev, rules, by) == ("Critical", [], "matrix")    # the submit outcome, kept
         reason = "The borrower needs the loan to default first and the lender keeps the collateral claim path."
         sev, rules, by = _sev(f01, "post_challenge", **_POST, scope_not_covered=True, severity_before="High",
                               claimed_severity="High", claimed_reason=reason)
-        assert (sev, by) == ("High", "reviewer") and rules == ["RV1:reviewer=High"]
+        assert (sev, by) == ("High", "reviewer") and rules == []
 
-    def test_no_contract_map_still_caps_at_high(self):
+    def test_no_contract_map_is_a_calibration_note(self):
         f01 = {**self.F02, "reversibility": "irreversible"}
         sev, rules, _ = _sev(f01, "post_challenge", **_POST, map_unavailable=True, severity_before="Critical")
-        assert sev == "High" and rules == ["K10"]
+        assert sev == "Critical" and rules == ["K10"]
+        assert _cal(f01, "post_challenge", **_POST, map_unavailable=True, severity_before="Critical") == "High"
 
 
 class TestTonForton:
@@ -65,13 +74,12 @@ class TestTonForton:
         sev, rules, _ = _sev({**self.CREATE_SQUAD, "magnitude": "residual"})
         assert sev == "Low" and rules == []
 
-    def test_create_squad_as_filed_now_prints_high_under_irr1_so_the_claim_matters(self):
-        # as filed (unbounded) the cell is High under IRR1: the reviewer's Low is two steps away and
-        # the server asks for the mitigating classification instead of printing either value
+    def test_create_squad_as_filed_prints_the_reviewers_low_with_a_high_calibration(self):
+        # as filed (unbounded) the cell is High under IRR1; the reviewer's Low prints, High is the note
         r = compute_severity(self.CREATE_SQUAD, "submit",
                              SeverityContext(claimed_severity="Low",
                                              claimed_reason="The master balance normally stays close to the storage reserve."))
-        assert r.confirm_needed and r.computed == "High"
+        assert r.severity == "Low" and not r.confirm_needed and r.calibration == "High"
 
 
 class TestTronCrs:
@@ -131,14 +139,15 @@ class TestApyeeV2:
         filed = {**self.F01, "precondition": "normal_operation"}
         assert _sev(filed)[0] == "Critical"
         sev, rules, _ = _sev(self.F01, "post_challenge", **_POST, severity_before="Critical")
-        assert sev == "High" and "IRR1" in rules
+        assert sev == "Critical" and "IRR1" in rules       # the challenge never moves the severity
+        assert _cal(self.F01, "post_challenge", **_POST, severity_before="Critical") == "High"
 
     def test_f03_two_stacked_downgrades_leave_a_low_not_informational(self):
         assert _sev(self.F03)[0] == "Medium"                       # the cell the judge agrees with
         after_mb6 = {**self.F03, "magnitude": "dust"}              # MB6 answered against expectation
         sev, rules, _ = _sev(after_mb6, "post_challenge", **_POST, downgrade_items_present=1,   # plus L3
                              severity_before="Medium")
-        assert sev == "Low" and "DG1" in rules
+        assert sev == "Medium" and "DG1" not in rules and "K5" in rules
 
     def test_f03_the_reviewers_low_stands_at_submit(self):
         sev, _, by = _sev(self.F03, claimed_severity="Low",

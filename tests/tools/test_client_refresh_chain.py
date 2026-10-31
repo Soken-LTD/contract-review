@@ -37,22 +37,45 @@ async def test_review_facts_carries_the_target_snapshot_once(db_pool, monkeypatc
 
 
 @ASYNC
-async def test_snapshot_waits_for_ready_and_never_fails_the_caller(db_pool, monkeypatch):
+async def test_snapshot_runs_before_ready_and_never_fails_the_caller(db_pool, monkeypatch):
+    """Thin server (2026-10-31): live state does not depend on the source, so the snapshot runs from job
+    start (any pipeline state with a pin directory) and review_status returns it as chain_state."""
     jid, pin_root = await _bsc_job(db_pool, state="analyzing")
     _use(monkeypatch, FIX / "thena_bsc.json")
+    assert chain_mod.chain_state({"job_id": jid, "address": "0x" + "1" * 40})["state"] == "pending"
     await chain_mod.auto_snapshot(jid, wait=True)
-    assert not (pin_root / jid / chain_mod.AUTO_FILE).exists()   # not ready: no marker, tried again later
+    marker = json.loads((pin_root / jid / chain_mod.AUTO_FILE).read_text())
+    assert marker["ok"] is True
+    async with db_pool.connection() as conn:
+        row = await (await conn.execute("select address from jobs where job_id = %s", (jid,))).fetchone()
+    cs = chain_mod.chain_state({"job_id": jid, "address": row[0]})
+    assert cs["state"] == "done" and cs["values"]["deployer"].startswith("0x")
+    assert "chain.target.<field>" in cs["note"]
+    assert chain_mod.chain_state({"job_id": jid, "address": None}) is None
 
+    jid2, pin_root2 = await _bsc_job(db_pool, state="ready")
     async def boom(job_id):
         raise RuntimeError("upstream exploded")
 
-    async with db_pool.connection() as conn:
-        await conn.execute("update jobs set state = 'ready' where job_id = %s", (jid,))
     monkeypatch.setattr(chain_mod, "_auto_body", boom)
-    await chain_mod.auto_snapshot(jid, wait=True)
-    marker = json.loads((pin_root / jid / chain_mod.AUTO_FILE).read_text())
+    await chain_mod.auto_snapshot(jid2, wait=True)
+    marker = json.loads((pin_root2 / jid2 / chain_mod.AUTO_FILE).read_text())
     assert marker["ok"] is False and marker["detail"] == "RuntimeError"
-    assert chain_mod._auto_due(jid) is False                     # retried only after AUTO_RETRY_S
+    assert chain_mod._auto_due(jid2) is False                    # retried only after AUTO_RETRY_S
+    assert chain_mod.chain_state({"job_id": jid2, "address": "0x" + "1" * 40})["state"] == "failed"
+
+
+@ASYNC
+async def test_snapshot_waits_for_the_pin_directory(db_pool, monkeypatch):
+    jid, pin_root = await _bsc_job(db_pool, state="queued")
+    _use(monkeypatch, FIX / "thena_bsc.json")
+    import shutil
+
+    shutil.rmtree(pin_root / jid)
+    monkeypatch.setattr(chain_mod, "AUTO_PIN_WAIT_S", 0.2)
+    monkeypatch.setattr(chain_mod, "AUTO_PIN_POLL_S", 0.05)
+    await chain_mod.auto_snapshot(jid, wait=True)
+    assert not (pin_root / jid).exists()        # never creates the job directory; retried by review_status
 
 
 # ── per-job notice state in jobs.client_shape ─────────────────────────────

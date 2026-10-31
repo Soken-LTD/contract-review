@@ -1205,6 +1205,9 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         }
         if further:
             f["evidence"]["further"] = further
+        cal = d.get("calibration_severity")
+        if cal in SEV_RANK and cal != sev:
+            f["calibration"] = {"severity": cal, "rule": str(d.get("calibration_rule") or "")[:200]}
         figs = chain_figures(c, facts, printable_facts)
         if figs:
             f["evidence"]["figures"] = figs
