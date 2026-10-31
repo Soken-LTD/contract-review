@@ -86,6 +86,23 @@ chain_access:                  # chain access design 2026-10-27 sections 1 and 4
   latest_cache_s: 12           # in-process cache for reads at a recent block
   finality_blocks: {evm: 64, tron: 19}   # a read at or below head minus this may enter chain_cache
   shared_cache_days: 30        # chain_cache rows other jobs may use: two distinct hosts agreed, or an operator-configured host
+fork_verify:                   # review_verify_on_fork (chain access design 1.7, P4 EVM); sized for the 2 vCPU / 3.9 GiB stand
+  runs_per_job: 6              # every requested run counts, passed or not
+  pending_per_job: 1           # one queued or running run per job; the worker runs one fork at a time overall
+  wall_s: 180                  # container wall clock, compile included; the container is removed at the wall
+  cpus: 1.5
+  memory: 1536m                # cgroup ceiling (clamped by sandbox.profile admission on a smaller host)
+  pids: 256
+  max_file_bytes: 134217728    # ulimit fsize; the project mount is read-only, forge writes to the 512 MiB /tmp tmpfs
+  stdout_bytes: 1048576        # forge --json output read by the supervisor; over the cap the run ends error output_cap
+  test_bytes: 65536            # one Solidity test file
+  rpc_calls: 3000              # proxy meter per run (calls that reach an upstream; denied methods never do)
+  rpc_bytes: 104857600
+  max_tests: 20                # test functions reported per run
+  log_lines: 40                # decoded log lines kept per test
+  solc: 0.8.28                 # compiler of the test when the job's own compiler is older than forge-std's floor
+  forge_std_floor: 0.8.13      # forge-std pragma floor (images.lock.json evm-analyze tools.forge-std)
+  wait_s: 25                   # how long the tool call waits for the result before it answers queued or running
 claim:                         # 08 claim page
   nonce_ttl_min: 30
 report:                        # S8 durations; keys of the 09 retention table

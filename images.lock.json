@@ -66,7 +66,8 @@
       "tools": {
         "slither": "0.11.6",
         "aderyn": "0.6.8",
-        "forge": "1.8.5"
+        "forge": "1.8.5",
+        "forge-std": "1.16.2"
       },
       "platforms": [
         "linux/amd64"

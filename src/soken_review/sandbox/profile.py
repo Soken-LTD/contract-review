@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 OFFLINE_STEPS = {"build", "analyze", "map", "verify", "render"}
 NETWORK_STEPS = {"fetch", "deps"}
+# review_verify_on_fork: gVisor with netstack (runsc-egress) on the internal chainsim network, whose
+# only peer is the read-only chain proxy relay; no smokescreen, so no proxy variables are set.
+FORK_STEPS = {"fork"}
+CHAINSIM_NETWORK = "soken-chainsim"
 SANDBOX_UID = "10001:10001"
 _SYSTEM_ROOTS = frozenset({"", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/run",
                            "/sbin", "/sys", "/tmp", "/usr", "/usr/local", "/var"})
@@ -201,18 +205,21 @@ def docker_argv(
             return True
         return any(path == r or path.startswith(r + "/") for r in image_paths)
 
-    if step not in OFFLINE_STEPS | NETWORK_STEPS:
+    if step not in OFFLINE_STEPS | NETWORK_STEPS | FORK_STEPS:
         raise ValueError(f"unknown step {step}")
     if step in NETWORK_STEPS and not family_network:
         raise ValueError(f"{step} needs the family egress network")
+    if step in FORK_STEPS and family_network != CHAINSIM_NETWORK:
+        raise ValueError(f"{step} runs on {CHAINSIM_NETWORK} only")
     # Admission: a limit the host cannot honour is refused here, before any `docker run`, so the
     # global OOM killer never decides the outcome of a step (HostCapacityError carries the numbers).
     memory = host_capacity().check(limits, step)
-    default_runtime = "runsc-egress" if step in NETWORK_STEPS else "runsc-none"
+    networked = step in NETWORK_STEPS or step in FORK_STEPS
+    default_runtime = "runsc-egress" if networked else "runsc-none"
     runtime = runtime or os.environ.get("SOKEN_SANDBOX_RUNTIME") or default_runtime
-    if step in NETWORK_STEPS and runtime == "runsc-none":
+    if networked and runtime == "runsc-none":
         runtime = "runsc-egress"   # runsc-none has loopback only (S3); the family network needs netstack
-    network = family_network if step in NETWORK_STEPS else "none"
+    network = family_network if networked else "none"
     if runtime.startswith("runsc") and "@sha256:" not in image:
         # 09 4.4: under gVisor (production) an image runs only by digest, never a floating tag.
         raise ValueError(f"image must be pinned by digest under {runtime}: {image!r}")
