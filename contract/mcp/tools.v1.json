@@ -3611,7 +3611,7 @@
     "idempotentHint": true,
     "openWorldHint": true
    },
-   "description": "Reads who controls an address at one block: owner, admin and other holder getters, EIP-1967 proxy implementation, admin and beacon, AccessControl members, Safe threshold, deployer and creation transaction (verified source), TRON account permissions, Solana upgrade and mint authorities, TON admin. Each value is a fact with its block. Optional.",
+   "description": "Reads who controls an address at one block: owner, admin and other holder getters, EIP-1967 proxy slots, AccessControl and TimelockController role members (getRoleMember, else role logs confirmed by hasRole; complete false when the free log range ran out), Safe threshold, deployer, TRON permissions, Solana upgrade and mint authorities with their kind (Squads vault and its threshold, PDA, on-curve key, unknown), TON admin. Each value is a fact with its block. Optional.",
    "inputSchema": {
     "type": "object",
     "additionalProperties": false,
