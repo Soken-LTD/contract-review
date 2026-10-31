@@ -1143,6 +1143,8 @@ async def test_e2e_negative_kill_item_withdraws_finding(db_pool):
     assert answer_result["accepted"] is True, f"answer failed: {answer_result}"
     assert answer_result["verdict"] == "withdrawn"
     assert answer_result["kill_item"] == kill_item_id
+    # r5 2026-10-31: the kill names the category whose checklist fits a near-miss issue
+    assert kill_item_id in answer_result["checklist_notice"] and "evm.accounting_logic" in answer_result["checklist_notice"]
 
     # Verify finding is withdrawn in DB
     async with db_pool.connection() as conn:

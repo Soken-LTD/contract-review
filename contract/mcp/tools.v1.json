@@ -1839,6 +1839,11 @@
       "maxLength": 200,
       "description": "The reviewer's reason when set by the reviewer, else the one-line text of the binding rules"
      },
+     "checklist_notice": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "Which checklist the finding category uses and what it fits, or after a kill item the category whose checklist fits a near-miss issue"
+     },
      "matrix_cell": {
       "$ref": "#/$defs/severity"
      },
@@ -2106,6 +2111,11 @@
      "note": {
       "type": "string",
       "maxLength": 400
+     },
+     "checklist_notice": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "Which checklist the finding category uses, its kill items and what the category fits"
      }
     }
    }
@@ -2295,6 +2305,11 @@
      "severity_reason": {
       "type": "string",
       "maxLength": 200
+     },
+     "checklist_notice": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "Which checklist the finding category uses and what it fits, or after a kill item the category whose checklist fits a near-miss issue"
      },
      "matrix_cell": {
       "type": [

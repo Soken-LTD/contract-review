@@ -667,6 +667,8 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
         if challenge and challenge.get("accepted"):
             result["challenge"] = {k: v for k, v in challenge.items() if k != "accepted"}
             result["next_tools"] = ["review_finalize", "review_answer_challenge"]
+            if challenge.get("checklist_notice"):
+                result["checklist_notice"] = challenge["checklist_notice"]
     return result
 
 

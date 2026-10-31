@@ -94,3 +94,24 @@ def test_mandatory_scope_over_the_line_cap_is_not_covered():
             sp["end"] = sp["start"] + 450
     ranges, not_covered, _ = _scope(doc, "src/Vault.sol", 55, 57)
     assert ranges == [] and not_covered
+
+
+def test_shared_state_writers_scope_adds_admin_writer():
+    """MB3 (r5 2026-10-31): "an admin function in the map can restore the affected state" had the
+    entry_function scope, so quotes of the admin function were outside it. shared_state_writers
+    adds every external function touching the state the location writes (or reads)."""
+    doc = _vault_map()
+    loc = [{"file": "src/Vault.sol", "start": 56, "end": 56}]      # _chargeFee reads feeBps
+    base, _, _ = _resolve_scope("entry_function", "evm", doc, loc)
+    ranges, nc, source = _resolve_scope("shared_state_writers", "evm", doc, loc)
+    assert not nc and source == "semantic"
+    assert set(base) <= set(ranges)
+    assert "src/Vault.sol:36-38" in ranges and "src/Vault.sol:36-38" not in base   # setFee(uint256)
+
+
+def test_mb3_uses_shared_state_writers_scope():
+    from soken_review.tools.challenge import _basis_items
+    items = _basis_items({"impact_class": "permanent_freeze", "magnitude": "bounded", "trigger": "anyone",
+                          "precondition": "market_condition", "reversibility": "irreversible"})
+    mb3 = [i for i in items if i["id"] == "MB3"]
+    assert mb3 and mb3[0]["scope"] == "shared_state_writers"

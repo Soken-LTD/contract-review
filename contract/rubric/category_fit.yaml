@@ -1,0 +1,60 @@
+# rubric/category_fit.yaml: which finding category fits which issue (r5 blind run 2026-10-31).
+# Read by review_submit_finding / review_answer_challenge (`checklist_notice`) and by review_get_guide
+# topic `categories`. The category picks the disproof checklist: a category whose kill items test the
+# wrong thing can withdraw a true finding (an accounting bug filed as evm.arithmetic_precision met
+# kill item P1 "checked arithmetic covers the line"). Reference data, not model output.
+#
+# Templates: {category} the chosen id, {kills} its kill item ids, {fits} / {not_for} / {alternative}
+# from the category row, {item} the kill item that fired.
+templates:
+  notice: "Category {category} uses its own checklist; kill items {kills} can withdraw the draft. It fits {fits}. For {not_for}, use {alternative}."
+  notice_generic: "Category {category} uses the generic checklist (kill items {kills}). It fits {fits}."
+  kill_fired: "Kill item {item} of the {category} checklist fired. If the issue is {not_for}, resubmit under a new draft key as {alternative}, whose checklist fits it."
+  guide_header: "Which category fits (the category picks the disproof checklist):"
+  guide_row: "{category}: {fits}. Not for {not_for}: use {alternative}."
+  guide_row_generic: "{category}: {fits}."
+categories:
+  evm.arithmetic_precision:
+    fits: overflow, underflow, division before multiplication, rounding and precision loss at a calculation line
+    not_for: wrong accounting, insolvency or an economic flaw where each calculation is itself correct
+    alternative: evm.accounting_logic
+  evm.accounting_logic:
+    fits: wrong bookkeeping, insolvency, reward or fee accounting, solvency gaps and economic design flaws
+  evm.reentrancy:
+    fits: state read or written across an external call that can call back into the contract
+    not_for: an ordering or accounting flaw with no callback path
+    alternative: evm.accounting_logic
+  evm.oracle_manipulation:
+    fits: a price an attacker can move in the same transaction (spot reserves, thin pools)
+    not_for: wrong use of a correct price (decimals, staleness handling, accounting on top of the price)
+    alternative: evm.accounting_logic
+  evm.access_control:
+    fits: a function that lacks the caller check it needs
+    not_for: a role that is checked but holds too much power (owner can take funds, pause forever)
+    alternative: evm.centralization
+  evm.centralization:
+    fits: a checked privileged role whose powers put users at risk (EOA owner, no timelock)
+  evm.unchecked_call:
+    fits: an ignored return value of a call or token transfer
+    not_for: a call whose result is checked but whose effect is accounted wrongly
+    alternative: evm.accounting_logic
+  evm.dos:
+    fits: a core function that an attacker can make revert or run out of gas
+    not_for: a function an admin can switch off on purpose
+    alternative: evm.centralization
+  solana.arithmetic:
+    fits: overflow, underflow, rounding and precision loss at a calculation line
+    not_for: wrong accounting or an economic flaw where each calculation is correct
+    alternative: solana.economic
+  solana.economic:
+    fits: economic design flaws, insolvency and wrong reward or fee accounting
+  ton.arithmetic:
+    fits: overflow, underflow, rounding and precision loss at a calculation line
+    not_for: wrong accounting or an economic flaw where each calculation is correct
+    alternative: ton.economic
+  ton.economic:
+    fits: economic design flaws, insolvency and wrong reward or fee accounting
+  cairo.felt_arithmetic:
+    fits: felt252 wraparound, overflow, rounding and precision loss at a calculation line
+    not_for: wrong accounting or an economic flaw where each calculation is correct
+    alternative: cairo.business_logic
