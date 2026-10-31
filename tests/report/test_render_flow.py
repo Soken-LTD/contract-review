@@ -120,15 +120,17 @@ async def test_render_ok_reports_row_and_review_report(db_pool, tmp_path, monkey
     stored = tmp_path / "store" / row["object_prefix"]
     assert (stored / "report.pdf").read_bytes() == PDF
     screen = (stored / "screen.html").read_text()
-    assert SECRET_TITLE not in screen and "<script" not in screen
-    assert SECRET_TITLE in (stored / "report.json").read_text()  # full data kept, projection at build only
+    # CEO 2026-10-28: the third-party High prints as is on the hosted page (the site copy) as in report.json
+    assert SECRET_TITLE in screen and "<script" not in screen
+    assert "src/Vault.sol:5-8" in screen and "withheld" not in screen.lower()
+    assert SECRET_TITLE in (stored / "report.json").read_text()
 
     report_tool.set_pool(db_pool)
     res = await report_tool.handle_review_report({"job_id": jid, "page": 1})
     assert res["status"] == "ready" and res["counts"]["High"] == 1 and res["pages"] == 5
-    assert res["top"] == {"id": "H-001", "severity": "High", "title": "Reentrancy"}
-    assert SECRET_TITLE not in json.dumps(res)
-    assert res["rows"][0]["location"] == "Withheld until control of the code is proven."
+    assert res["top"] == {"id": "H-001", "severity": "High", "title": SECRET_TITLE}  # printed as is
+    assert SECRET_TITLE[:50] in res["summary_text"] and "withheld" not in json.dumps(res).lower()
+    assert res["rows"][0]["location"] == "src/Vault.sol:5-8"
     assert "?e=" in res["url"] and res["manage_url"].startswith(f"https://soken.dev/r/{row['report_id']}/manage#k=")
     assert len(res["summary_text"]) < 2000 and "Manage or delete:" in res["summary_text"]
 
@@ -221,7 +223,8 @@ def test_summary_text_under_limit_with_sixty_findings():
     text = report_tool.summary_text(p, counts(p["findings"]), report_tool.links("a" * 26, "public_review", 1),
                                     "2026-11-09")
     assert len(text) < 2000 and "and 52 more in the report" in text
-    assert "Withheld until control of the code is proven." in text
+    assert "withheld" not in text.lower() and "control of the code" not in text
+    assert "| C-001 | Critical | Balance written after the external call in withdraw path 1 | src/Vault.sol:10-14 |" in text
 
 
 @ASYNC

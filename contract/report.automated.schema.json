@@ -23,7 +23,7 @@
     },
     "facts": {
       "type": "object",
-      "description": "Server facts referenced by {{fact:key}} and {{calc:...}} in model strings, which stay in placeholder form in report.json. check_strings() runs on the placeholder form; project() (08 2.4) substitutes value, or kit withheld_value for amount_at_risk under public_review (04 4.1 effect 4), and drops the matching Figures used rows",
+      "description": "Server facts referenced by {{fact:key}} and {{calc:...}} in model strings, which stay in placeholder form in report.json. check_strings() runs on the placeholder form; project() (08 2.4) substitutes the value under every profile; nothing is withheld",
       "propertyNames": {
         "$ref": "#/$defs/fact_key"
       },
@@ -1348,7 +1348,7 @@
           }
         },
         {
-          "description": "Fixed cards carry no model body, at least one dismissal quote and the challenge table with the kill item (08 2.3); every other card carries description, impact and a recommendation. report.json always holds full data; withholding happens only in project() at build (08 2.4)",
+          "description": "Fixed cards carry no model body, at least one dismissal quote and the challenge table with the kill item (08 2.3); every other card carries description, impact and a recommendation. report.json always holds full data and every profile prints it as is",
           "if": {
             "properties": {
               "status": {
@@ -1576,6 +1576,11 @@
               "dismissed": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "lower_priority": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Leads of this analyzer the rule tier policy listed after the others or collapsed (learning-loop P1)"
               }
             }
           }
@@ -1726,6 +1731,25 @@
                 "pattern": "^[CHMLI]-[0-9]{3}$",
                 "x-text-class": "server"
               }
+            }
+          }
+        },
+        "rule_tiers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "lower_priority"
+          ],
+          "properties": {
+            "version": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$",
+              "x-text-class": "server"
+            },
+            "lower_priority": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         }
@@ -2008,7 +2032,7 @@
         "figure",
         "operands"
       ],
-      "description": "04 6.4: one row per {{fact}} or {{calc}}; value, expression, each operand's source. Omitted under public_review when any operand fact is tagged amount_at_risk (04 4.1 effect 4)",
+      "description": "04 6.4: one row per {{fact}} or {{calc}}; value, expression, each operand's source. Printed under every profile",
       "properties": {
         "figure": {
           "type": "string",

@@ -5,8 +5,8 @@ stored report.json of the three MCP jobs and fixed in the kit:
   `{fact:compiler.version}` with one brace; the gate accepted them and the PDF printed them raw. The
   render now fails as a late gate on the reviewer's text instead of printing the token.
 * APAD (job_BZJD7F3E01142Q3YK00P0EP0NT): `{{fact:onchain.balance}}` is an amount-at-risk fact, so the
-  public projection printed "holds a native balance of (withheld), which shows that ...". The sentence
-  that carries a withheld value is dropped whole.
+  public projection printed "holds a native balance of (withheld), which shows that ...". Since CEO
+  2026-10-28 every profile prints the value as is.
 * 1inch (job_536H8JDV9PQ5NY4EXCA6GQWG17): the cover said "Not deployed" and labelled the sha256 source
   pin "Commit"; the failed build was visible only as "Checked without a contract map" on every card.
 """
@@ -25,7 +25,7 @@ from soken_review.report.kit.build import (
     BuildError,
     assert_expanded,
     build,
-    expand_prose,
+    expand,
     malformed_placeholder,
     project,
 )
@@ -58,7 +58,7 @@ def test_wallitelli_half_placeholder_fails_the_render_as_a_late_gate_on_the_revi
     assert failure_cause(err.code, err.path, r) == {"cause": "model", "path": err.path}
 
 
-def test_wallitelli_with_double_braces_renders_without_any_placeholder_or_withheld_token(tmp_path):
+def test_wallitelli_with_double_braces_renders_without_any_placeholder_token(tmp_path):
     r = _report("wallitelli")
     for f in r["findings"]:
         for key in ("description", "impact", "recommendation"):
@@ -66,10 +66,10 @@ def test_wallitelli_with_double_braces_renders_without_any_placeholder_or_withhe
                 if "p" in b:
                     b["p"] = re.sub(r"(?<!\{)\{(fact:[a-z_.]+)\}(?!\})", r"{{\1}}", b["p"])
     html = _html(r, tmp_path)
-    assert "fact:" not in html and "(withheld)" not in html
+    assert "fact:" not in html and "withheld" not in html.lower()
     assert "0.8.28" in html                                   # compiler.version expanded in I-001
-    # onchain.total_supply is an amount-at-risk fact: its sentence is dropped, the rest of the paragraph stays
-    assert "token units to msg.sender" not in html
+    # onchain.total_supply is an amount-at-risk fact: it prints as is with its sentence (CEO 2026-10-28)
+    assert "token units to msg.sender" in html
     assert "The token exposes only the standard ERC-20 entry points" in html
 
 
@@ -92,36 +92,32 @@ def test_post_projection_sweep_refuses_any_surviving_placeholder():
     assert exc.value.code == "schema" and exc.value.path == "$.roles.notes[0].p"
 
 
-# ── E5: withheld values inside prose ──────────────────────────────────────────
+# ── E5: amount-at-risk values print as is (CEO 2026-10-28: nothing withheld) ──────
 
-def test_apad_withheld_balance_sentence_is_dropped_not_printed(tmp_path):
+def test_apad_amount_at_risk_sentence_prints_with_its_value(tmp_path):
     r = _report("apad")
     assert r["facts"]["onchain.balance"]["amount_at_risk"] is True
     stored = next(p["p"] for f in r["findings"] for p in f["description"] if "{{fact:onchain.balance}}" in p.get("p", ""))
     assert "which shows that the deployment transaction carried nothing" in stored
     html = _html(r, tmp_path)
-    assert "(withheld)" not in html
-    assert "native balance of" not in html
-    assert "which shows that the deployment transaction carried nothing" not in html
-    # the sentences around it survive
+    assert "withheld" not in html.lower()
+    assert "native balance of" in html
+    assert "which shows that the deployment transaction carried nothing" in html
     assert "stays for the life of the contract" in html
-    assert kb.kit_texts()["withheld_value"] not in html
 
 
-def test_expand_prose_drops_only_the_sentence_that_carries_the_withheld_value():
+def test_expand_prints_amount_at_risk_values_under_every_profile():
     facts = {"vault.balance": {"value": "1,250", "unit": "ETH", "amount_at_risk": True},
              "compiler.version": {"value": "0.8.28", "unit": None, "amount_at_risk": False}}
     text = ("The vault accepts deposits. It holds {{fact:vault.balance}} at the pinned block, which is the "
             "amount at stake. Built with {{fact:compiler.version}}.")
-    assert expand_prose(text, facts, "public_review") == "The vault accepts deposits. Built with 0.8.28."
-    assert expand_prose(text, facts, "owner") == ("The vault accepts deposits. It holds 1,250 ETH at the pinned "
-                                                  "block, which is the amount at stake. Built with 0.8.28.")
-    assert expand_prose("It holds {{fact:vault.balance}}.", facts, "public_review") is None
-    assert expand_prose("{{calc:fact:vault.balance*2|0}} is twice the balance. Nothing else.", facts,
-                        "public_review") == "Nothing else."
+    assert expand(text, facts) == ("The vault accepts deposits. It holds 1,250 ETH at the pinned "
+                                   "block, which is the amount at stake. Built with 0.8.28.")
+    assert expand("{{calc:fact:vault.balance*2|0}} is twice the balance.", facts) == "2,500 is twice the balance."
 
 
-def test_project_drops_emptied_blocks_items_rows_and_notes_and_falls_back_on_the_title():
+@pytest.mark.parametrize("profile", ["public_review", "owner"])
+def test_project_keeps_every_block_item_row_and_note_with_amount_at_risk_values(profile):
     r = _report("apad")
     f = r["findings"][0]
     f["title"] = "Balance of {{fact:onchain.balance}} is stranded"
@@ -131,25 +127,21 @@ def test_project_drops_emptied_blocks_items_rows_and_notes_and_falls_back_on_the
                                                                         ["Owner", "{{fact:onchain.owner}}"]]}},
                         {"p": "Kept paragraph."}]
     r["roles"]["notes"] = [{"p": "The owner holds {{fact:onchain.balance}}."}]
-    r["roles"]["rows"] = [{**r["roles"]["rows"][0], "risk_note": "Holds {{fact:onchain.balance}}."}] if r["roles"]["rows"] else []
     r["review_coverage"]["areas"][0]["note"] = "Checked against {{fact:onchain.balance}}."
     r["scope"]["out_of_scope"] = [{"path": "x.sol", "reason": "Holds {{fact:onchain.balance}}.", "by": "model"}]
-    p = project(copy.deepcopy(r), "public_review")
+    p = project(copy.deepcopy(r), profile)
     pf = p["findings"][0]
-    assert pf["title"] == f["category"]
-    assert pf["description"] == [{"ul": ["The constructor is payable."]},
+    assert pf["title"] == "Balance of 0 wei is stranded"
+    assert pf["description"] == [{"p": "Holds 0 wei."},
+                                 {"ul": ["Balance 0 wei stays.", "The constructor is payable."]},
                                  {"table": {"head": ["Item", "Value"],
-                                            "rows": [["Owner", "0xa9e3e9afa056d200241b85aec824b039ffe17582"]]}},
+                                            "rows": [["Balance", "0 wei now"],
+                                                     ["Owner", "0xa9e3e9afa056d200241b85aec824b039ffe17582"]]}},
                                  {"p": "Kept paragraph."}]
-    assert p["roles"]["notes"] == []
-    assert all("risk_note" not in row for row in p["roles"]["rows"])
-    assert "note" not in p["review_coverage"]["areas"][0]
-    assert p["scope"]["out_of_scope"] == []
+    assert p["roles"]["notes"] == [{"p": "The owner holds 0 wei."}]
+    assert p["review_coverage"]["areas"][0]["note"] == "Checked against 0 wei."
+    assert p["scope"]["out_of_scope"][0]["reason"] == "Holds 0 wei."
     assert_expanded(p)
-    # the owner profile withholds nothing and keeps every block
-    o = project(copy.deepcopy(r), "owner")
-    assert o["findings"][0]["title"] == "Balance of 0 wei is stranded"
-    assert len(o["findings"][0]["description"]) == 4
 
 
 # ── E6 / E3: cover facts on a repo job whose build failed ─────────────────────

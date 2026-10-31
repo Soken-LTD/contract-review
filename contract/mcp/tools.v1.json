@@ -1587,6 +1587,11 @@
       "minimum": 1,
       "maximum": 100,
       "default": 25
+     },
+     "include_collapsed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Also list leads of rules the rule tier policy collapsed (counted in the header either way)"
      }
     },
     "required": [

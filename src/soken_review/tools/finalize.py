@@ -41,6 +41,7 @@ from ..engine.numbers import lex_numbers as _lex_numbers_all
 from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import check_model_field as _check_model_field_all
 from ..errors import ReviewError
+from ..learning import ledger
 from ..mapping.build import load_map
 from ..mapping.lifecycle import load_lifecycle
 from ..mapping.semantic_evm import detect_token_review, units_holding
@@ -1061,6 +1062,9 @@ async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], jo
 
     # Queue render: finalized -> render_queued
     await queue_render(conn, job_id)
+
+    # Outcome ledger (learning-loop design P0): replaces this job's rows, fail-soft, no gating.
+    await ledger.record_job_safe(conn, job_id, "finalize")
 
     await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
 

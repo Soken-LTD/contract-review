@@ -5,9 +5,8 @@
  "footer_public_review": "Automated security review. Code ownership not proven; not confirmed by SOKEN LTD.",
  "generated_by": "Generated with SOKEN LTD tooling at the request of the party named on the cover",
  "requested_by_line": "Role declared by the requester, not verified by SOKEN LTD: {label}",
+ "attack_steps_owner_only": "Step-by-step exploit sequence available to the code owner.",
  "public_review_banner": "Ownership of this code is not proven. Automated output, not confirmed by SOKEN LTD.",
- "withheld_line": "Withheld until control of the code is proven.",
- "withheld_value": "(withheld)",
  "authorship_box": "Findings were written by the requester's language model session and checked by automated rules only. SOKEN LTD has not confirmed them.",
  "tier_labels": {
   "tier_a": "Source matched to deployed code at {unit} {n} ({date})",
@@ -53,7 +52,7 @@
  "architecture_title": "Units in scope and their external dependencies",
  "no_map_line": "Contract map not available; diagram and roles table omitted.",
  "empty_findings": "No findings were recorded.",
- "disclaimer": "This report was generated with SOKEN LTD (Companies House 15253906) tooling at the request of the party named on the cover. Analyzers produced leads; a large language model, run in the requester's own session, selected and wrote the findings and chose the classifications that feed the severity matrix. Server checks matched every code quote to the pinned source, computed every count and total in tables and tiles, and mapped severity from classifications chosen by the model through a fixed matrix. Every amount, count or percentage above one in finding text is either a value on, or folded by the server from, the quoted source lines, or a server value (pinned source, chain read or server arithmetic) listed under Figures used, except where withheld. No person at SOKEN LTD read the code or the findings before issue, and SOKEN LTD has not confirmed them. The review covers the source code identified on the cover, dated {date}. An automated review is not a manual audit: it finds part of the defects present and can report defects that do not exist; the Review coverage section lists the areas whose code was returned to the reviewing session and the areas not covered. It is not a guarantee that the code is free of defects, nor an endorsement of the project, its economics or its operators. Off-chain key management, operational practice, the front end and third-party protocol risk are outside its scope. Nothing in this document is financial, investment or legal advice.",
+ "disclaimer": "This report was generated with SOKEN LTD (Companies House 15253906) tooling at the request of the party named on the cover. Analyzers produced leads; a large language model, run in the requester's own session, selected and wrote the findings and chose the classifications that feed the severity matrix. Server checks matched every code quote to the pinned source, computed every count and total in tables and tiles, and mapped severity from classifications chosen by the model through a fixed matrix. Every amount, count or percentage above one in finding text is either a value on, or folded by the server from, the quoted source lines, or a server value (pinned source, chain read or server arithmetic) listed under Figures used. No person at SOKEN LTD read the code or the findings before issue, and SOKEN LTD has not confirmed them. The review covers the source code identified on the cover, dated {date}. An automated review is not a manual audit: it finds part of the defects present and can report defects that do not exist; the Review coverage section lists the areas whose code was returned to the reviewing session and the areas not covered. It is not a guarantee that the code is free of defects, nor an endorsement of the project, its economics or its operators. Off-chain key management, operational practice, the front end and third-party protocol risk are outside its scope. Nothing in this document is financial, investment or legal advice.",
  "links_valid_line": "Links valid for one hour; call review_report again for new links.",
  "responsible_disclosure": "Before publishing any finding about code operated by others, report it privately to the code owner and allow time for a fix.",
  "gone": {
@@ -153,6 +152,8 @@
  },
  "upgrade_authority_not_checked": "Not checked in this review",
  "dismissed_leads_reason_header": "Reason",
+ "lower_priority_header": "Lower priority",
+ "rule_tiers_note": "Lower priority: {n} leads came from rules that earlier reviews rarely confirmed, so rule tier policy {version} listed them after the others. Every one was run and is counted in the table.",
  "dismissal_reasons": {
   "fp_guarded": "Guarded at the entry",
   "fp_unreachable": "Unreachable",

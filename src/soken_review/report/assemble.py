@@ -4,7 +4,7 @@ Reads the pin store, the job work dir (candidates, chain state, build result), `
 the finding, challenge, section and read tables. Every printed number is recomputed from rows
 here (08 3.1 step 5). Model strings stay in placeholder form; `{{finding:key}}` is replaced by
 the final id because report.json has no draft-key map (W0 finding). `project()` at build is the
-only place facts expand and withholding happens (08 2.4).
+only place facts expand (08 2.4); every finding prints as is under every profile.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from ..adapters.evm.build_scope import subject_unit
 from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
 from ..engine.severity import explain_rules
+from ..learning import tiers as rule_tiers
 from ..mapping.build import load_map
 from ..mapping.build_note import job_build_failure
 from ..mapping.facts import load_facts
@@ -1159,6 +1160,12 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     # Leads per analyzer, promoted, dismissed (08 2.2 Review coverage; KPIs)
     promoted_ids = {fl["lead_id"] for fl in flinks} | {lead["id"] for lead in leads if lead["state"] == "promoted"}
     per_tool: dict[tuple[str, str], dict[str, int]] = {}
+    # Rule tiers the reviewer was shown (learning-loop design 2.2): every lead stays counted here;
+    # the ones a tier listed lower or collapsed are counted again as lower priority, so the client
+    # sees what was run and what was set aside.
+    tier_version = str(job.get("learning_policy_version") or rule_tiers.baseline_version())
+    tiered, tier_summary = rule_tiers.apply_tiers(leads, tier_version, job_id)
+    lower = {x.get("id") for x in tiered if x["tier"] in ("demoted", "collapsed")}
     for lead in leads:
         tool = (lead.get("tools") or ["analyzer@"])[0]
         name, _, ver = pass_label(tool, 120).partition("@")
@@ -1166,6 +1173,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         row["leads"] += 1
         row["promoted"] += lead["id"] in promoted_ids
         row["dismissed"] += lead["state"] == "dismissed"
+        if lower:
+            row["lower_priority"] = row.get("lower_priority", 0) + (lead.get("id") in lower)
     reads = await _rows(conn, "select path, start_line, end_line from job_reads where job_id = %s", (job_id,))
 
     def returned(cat: str) -> bool:
@@ -1286,6 +1295,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
                             "leads": [{"analyzer": n[:40], "version": v[:40], **r} for (n, v), r in sorted(per_tool.items())],
                             "withdrawn": withdrawn[:60], "injection_flags": []},
     }
+    if lower:
+        report["review_coverage"]["rule_tiers"] = {"version": tier_summary["version"][:40], "lower_priority": len(lower)}
     # Coverage note (never-worse, gate_policy.yaml finalize_checks): the advisory steps the requester's
     # session did not take, as finalize recorded them. Server data, printed from kit text.
     not_taken = [{"kind": str(g["kind"]), "count": max(1, int(g.get("count") or 1))}

@@ -2,7 +2,7 @@
 
 `build(report, out_dir, mode=, compact_evidence=)` validates `report.automated.schema.json`,
 runs `check_strings()` on the placeholder form (08 1.5), applies `project()` (08 2.4, the only
-place placeholders expand and withholding happens) and writes `print.html` or `screen.html`.
+place placeholders expand) and writes `print.html` or `screen.html`.
 Every call uses its own `BuildContext` (08 1.1 item 2), so print, screen, print in one process
 give identical bytes. The manual kit stays in the soken-offsec skill (08 1.1: manual unchanged).
 """
@@ -34,7 +34,6 @@ SURF, INK, MUTE, GRID = "#0d1728", "#cdd9ea", "#8397b4", "#26374f"
 STATUS_COL = {"matches": "#199e70", "differs": "#c2922f", "not_checkable": "#8397b4"}
 MAX_CONTEXT_KEEP_ROWS = 12
 SERIES = ["#3987e5", "#199e70"]  # kit palette, validated on SURF (kit REPORT-STANDARD)
-WITHHELD = ("Critical", "High")
 CSP = ("default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; "
        "script-src 'unsafe-inline'")  # print.html: paged.js is inline; never leaves the sandbox
 # screen.html is published on the soken.dev origin: no script at all. The hosted route adds the same
@@ -52,11 +51,6 @@ PLACEHOLDER_RE = re.compile(r"\{\{(fact|calc|finding):([^{}]*)\}\}")
 # form `expand()` does not substitute instead of printing it (Wallitelli PDF, matrix run 2026-10-27:
 # `{fact:onchain.total_supply}` and `{fact:compiler.version}` printed on page 4).
 PLACEHOLDER_ANY_RE = re.compile(r"\{{1,2}(?:fact|calc|finding):[^{}\n]*\}{1,2}")
-# Sentence boundary for withholding: a model sentence that carries a withheld amount is dropped
-# whole, never printed with "(withheld)" inside it (APAD PDF, matrix run 2026-10-27: "holds a native
-# balance of (withheld), which shows that the deployment transaction carried nothing").
-_SENTENCE_RE = re.compile(r"((?<=[.!?])\s+)")
-_WITHHELD_MARK = "\x00withheld\x00"
 MAX_COMPONENT_ROWS, MAX_FILE_ROWS = 12, 15
 # Pagination (kit CSS contract): a table or a heading-plus-table block is kept on one page
 # (break-inside:avoid) only when it is short enough to always fit: at most MAX_KEEP_ROWS rows and
@@ -242,8 +236,7 @@ def malformed_placeholder(text: str) -> str | None:
 
 
 def _walk_strings(obj: Any, path: str = "$"):
-    """(path, string) for every string of a plain JSON object, schema-free (projected reports drop
-    required keys of withheld cards, so the schema walk does not apply to them)."""
+    """(path, string) for every string of a plain JSON object, schema-free."""
     if isinstance(obj, str):
         yield path, obj
     elif isinstance(obj, list):
@@ -386,11 +379,9 @@ def eval_calc(body: str, facts: dict[str, Any]) -> tuple[str, list[str]]:
     return f"{val.quantize(q, rounding=ROUND_HALF_EVEN):,}", keys
 
 
-def _risky(keys: list[str], facts: dict[str, Any]) -> bool:
-    return any(facts.get(k, {}).get("amount_at_risk") for k in keys)
-
-
-def expand(text: str, facts: dict[str, Any], profile: str, withheld_value: str) -> str:
+def expand(text: str, facts: dict[str, Any]) -> str:
+    """Placeholders expanded to their server values. Every profile prints every value as is (CEO
+    2026-10-28: findings are never hidden, amount_at_risk facts included)."""
     seen: set[str] = set()
 
     def sub(m: re.Match) -> str:
@@ -399,8 +390,6 @@ def expand(text: str, facts: dict[str, Any], profile: str, withheld_value: str) 
             f = facts.get(body)
             if f is None:
                 raise BuildError("schema", f"fact {body} not in facts")
-            if profile == "public_review" and f["amount_at_risk"]:
-                return withheld_value
             # chain text prints as a quoted literal; the network and block of chain facts print once per
             # string (several values read at one block share one label)
             value = f'"{f["value"]}"' if f.get("literal") else f["value"]
@@ -410,139 +399,59 @@ def expand(text: str, facts: dict[str, Any], profile: str, withheld_value: str) 
                 out += f" ({f['at']})"
             return out
         if kind == "calc":
-            value, keys = eval_calc(body, facts)
-            return withheld_value if profile == "public_review" and _risky(keys, facts) else value
+            return eval_calc(body, facts)[0]
         raise BuildError("schema", f"unexpanded finding placeholder {body}")
 
     return PLACEHOLDER_RE.sub(sub, text)
 
 
-def expand_prose(text: str, facts: dict[str, Any], profile: str) -> str | None:
-    """Model prose after projection: placeholders expanded; a sentence whose value is withheld under
-    the profile is dropped whole. None when nothing of the string survives, so the caller drops the
-    paragraph, list item or row instead of printing an empty one."""
-    expanded = expand(text, facts, profile, _WITHHELD_MARK)
-    if _WITHHELD_MARK not in expanded:
-        return expanded
-    sentences = _SENTENCE_RE.split(expanded)[::2]  # sentence, separator, sentence, ...: sentences only
-    out = " ".join(s.strip() for s in sentences if s.strip() and _WITHHELD_MARK not in s)
-    return out or None
-
-
 def _project_blocks(blocks: list[dict[str, Any]], exp) -> list[dict[str, Any]]:
-    """Model blocks through `expand_prose`: an emptied paragraph, item or table row is dropped."""
+    """Model blocks through `expand`: paragraphs, list items and string table cells."""
     out: list[dict[str, Any]] = []
     for b in blocks:
         if "p" in b:
-            text = exp(b["p"])
-            if text:
-                out.append({**b, "p": text})
+            out.append({**b, "p": exp(b["p"])})
         elif "ul" in b:
-            items = [t for t in (exp(x) for x in b["ul"]) if t]
-            if items:
-                out.append({**b, "ul": items})
+            out.append({**b, "ul": [exp(x) for x in b["ul"]]})
         elif "table" in b:
             t = b["table"]
-            rows = []
-            for row in t.get("rows", []):
-                cells = [exp(c) if isinstance(c, str) else c for c in row]
-                if all(c is not None for c in cells):
-                    rows.append(cells)
-            if rows:
-                out.append({**b, "table": {**t, "rows": rows}})
+            rows = [[exp(c) if isinstance(c, str) else c for c in row] for row in t.get("rows", [])]
+            out.append({**b, "table": {**t, "rows": rows}})
         else:
             out.append(b)
     return out
 
 
-def _map_strings(obj: Any, fn) -> Any:
-    if isinstance(obj, str):
-        return fn(obj)
-    if isinstance(obj, list):
-        return [_map_strings(x, fn) for x in obj]
-    if isinstance(obj, dict):
-        return {k: _map_strings(v, fn) for k, v in obj.items()}
-    return obj
-
-
-def _figure_risky(fig: dict[str, Any], facts: dict[str, Any]) -> bool:
-    return any("fact" in op["source"] and facts.get(op["source"]["fact"], {}).get("amount_at_risk")
-               for op in fig["operands"])
-
-
-def is_withheld(f: dict[str, Any], profile: str) -> bool:
-    return profile == "public_review" and f["severity"] in WITHHELD
-
-
 def project(report: dict[str, Any], profile: str | None = None) -> dict[str, Any]:
-    """The only projection (08 2.4): expands placeholders, applies 04 4.1 effects 2 to 4.
+    """The only projection (08 2.4): expands placeholders in every model string.
 
-    Withheld High and Critical findings keep only server fields (id, severity, category,
-    component, evidence level, status) plus `withheld: true`; attack steps are dropped for
-    every finding under `public_review`; a sentence that carries an amount-at-risk fact is dropped
-    whole (an emptied block, item, row or note with it) and the fact's Figures used rows are dropped.
+    Every finding prints as is under every profile and requester role (CEO 2026-10-28): title,
+    severity, location, description, impact, recommendation, code quotes, amount-at-risk values and
+    Figures used rows. The attack step list prints for the owner profile only (`card()`).
     """
     profile = profile or report["meta"]["profile"]
     facts = report["facts"]
     out = copy.deepcopy(report)
     out["meta"]["profile"] = profile
 
-    def prose(s: str) -> str | None:
-        return expand_prose(s, facts, profile)
+    def prose(s: str) -> str:
+        return expand(s, facts)
 
-    findings = []
     for f in out["findings"]:
-        if is_withheld(f, profile):
-            keep = {k: f[k] for k in ("id", "severity", "evidence_level", "category", "component", "status")
-                    if k in f}
-            keep["withheld"] = True
-            findings.append(keep)
-            continue
-        if profile == "public_review":
-            f.pop("attack_steps", None)
-        # A title that only states a withheld amount falls back to the category label (server text).
-        f["title"] = prose(f["title"]) or f["category"]
+        f["title"] = prose(f["title"])
         for key in ("description", "impact", "recommendation"):
             if key in f:
                 f[key] = _project_blocks(f[key], prose)
         if f.get("attack_steps"):
-            steps = [{**s, "text": t} for s in f["attack_steps"] if (t := prose(s["text"]))]
-            if steps:
-                f["attack_steps"] = steps
-            else:
-                f.pop("attack_steps")
-        figs = f["evidence"].get("figures")
-        if figs is not None and profile == "public_review":
-            f["evidence"]["figures"] = [g for g in figs if not _figure_risky(g, facts)]
-        findings.append(f)
-    out["findings"] = findings
+            f["attack_steps"] = [{**s, "text": prose(s["text"])} for s in f["attack_steps"]]
     roles = out["roles"]
-    rows = []
-    for r in roles["rows"]:
-        if "risk_note" in r:
-            note = prose(r["risk_note"])
-            r = {**{k: v for k, v in r.items() if k != "risk_note"}, **({"risk_note": note} if note else {})}
-        rows.append(r)
-    roles["rows"] = rows
+    roles["rows"] = [{**r, "risk_note": prose(r["risk_note"])} if "risk_note" in r else r for r in roles["rows"]]
     roles["notes"] = _project_blocks(roles["notes"], prose)
-    if "figures" in roles and profile == "public_review":
-        roles["figures"] = [g for g in roles["figures"] if not _figure_risky(g, facts)]
     if "context" in out:  # context_notes blocks expand like roles notes (same gates, same projection)
         out["context"]["notes"] = _project_blocks(out["context"]["notes"], prose)
     cov = out["review_coverage"]
-    areas = []
-    for a in cov["areas"]:
-        if "note" in a:
-            note = prose(a["note"])
-            a = {**{k: v for k, v in a.items() if k != "note"}, **({"note": note} if note else {})}
-        areas.append(a)
-    cov["areas"] = areas
-    oos = []
-    for r in out["scope"]["out_of_scope"]:
-        reason = prose(r["reason"])
-        if reason:
-            oos.append({**r, "reason": reason})
-    out["scope"]["out_of_scope"] = oos
+    cov["areas"] = [{**a, "note": prose(a["note"])} if "note" in a else a for a in cov["areas"]]
+    out["scope"]["out_of_scope"] = [{**r, "reason": prose(r["reason"])} for r in out["scope"]["out_of_scope"]]
     return out
 
 
@@ -890,14 +799,6 @@ def figures_table(figs: list[dict[str, Any]], ctx: BuildContext, meta: dict[str,
 def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status: bool) -> str:
     t, lab = ctx.texts, ctx.texts["labels"]
     chips = f'<span class="chips">{chip(f["severity"])}{ev_chip(f["evidence_level"], ctx)}</span>'
-    if f.get("withheld"):
-        cols = [["Component", esc_src(f["component"], ctx)], ["Category", esc(f["category"])]]
-        if has_status:
-            cols.append(["Status", esc(f.get("status", ""))])
-        meta_row = tbl("".join(f"<th>{c[0]}</th>" for c in cols), "<tr>" + "".join(f"<td>{c[1]}</td>" for c in cols) + "</tr>",
-                       name="finding_meta", keep=True)
-        return (f'<div class="finding keep withheld" id="{esc(f["id"])}" data-block="finding"><div class="fh"><span class="fid">'
-                f'{esc(f["id"])} {esc(f["category"])}</span>{chips}</div>{meta_row}<p class="nofind">{esc(t["withheld_line"])}</p></div>')
     cols = [["Component", esc_src(f["component"], ctx), "20%"], ["Location", esc_src(ref_text(f["location"]), ctx), ""],
             ["Category", esc(f["category"]), "22%"]]
     if has_status:
@@ -910,9 +811,13 @@ def card(f: dict[str, Any], ctx: BuildContext, meta: dict[str, Any], has_status:
     if not fixed:
         body += f'<div class="fl">{esc(lab["description"])}</div>{blocks(f.get("description", []), ctx, meta)}'
         body += f'<div class="fl">{esc(lab["impact"])}</div>{blocks(f.get("impact", []), ctx, meta)}'
+        # The step list prints for the owner profile only (security review 2026-10-28, pending the CEO's
+        # call): public copies keep title, location, quotes, mechanism and impact, and name the sequence.
         if f.get("attack_steps") and ctx.profile == "owner":
             body += f'<div class="fl">{esc(lab["attack_steps"])}</div><ol>' + "".join(
                 f'<li>{inl(s["text"], ctx)} {esc_src(ref_text(s["ref"]), ctx)}</li>' for s in f["attack_steps"]) + "</ol>"
+        elif f.get("attack_steps"):
+            body += f'<div class="fl">{esc(lab["attack_steps"])}</div><p class="nofind">{esc(t["attack_steps_owner_only"])}</p>'
         body += f'<div class="fl">{esc(lab["recommendation"])}</div>{blocks(f.get("recommendation", []), ctx, meta)}'
     ev = f["evidence"]
     body += f'<div class="fl">{esc(lab["evidence"])}</div>'
@@ -1065,8 +970,7 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
                        key=lambda x: -sum(x[1].values()))
     rows = ""
     for f in F:
-        title = (f'{esc(f["category"])}<br><span class="nofind">{esc(t["withheld_line"])}</span>' if f.get("withheld")
-                 else inl(f["title"], ctx))
+        title = inl(f["title"], ctx)
         rows += (f'<tr><td class="id">{esc(f["id"])}</td><td>{chip(f["severity"])}</td><td>{ev_chip(f["evidence_level"], ctx)}</td>'
                  f'<td>{esc_src(f["component"], ctx)}</td><td>{title}</td>'
                  + (f'<td>{esc(f.get("status", ""))}</td>' if has_status else "") + "</tr>")
@@ -1176,12 +1080,19 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
         ret = a["code_returned"] + (f' ({a["units_returned"]} of {a["units_total"]})' if a["code_returned"] == "Partly" else "")
         note = f'<br><span class="nofind">{inl(a["note"], ctx)}</span>' if a.get("note") else ""
         arows += f'<tr><td>{esc(a["area"])}</td><td>{esc(ret)}</td><td>{esc(res)}{note}</td></tr>'
+    # Rule tiers (learning-loop P1): a lower-priority column and one sentence only when a tier moved a lead.
+    tiers_cov = cov.get("rule_tiers")
+    lp_head = f'<th class="num">{esc(t["lower_priority_header"])}</th>' if tiers_cov else ""
     lrows = "".join(f'<tr><td>{esc(x["analyzer"])}</td><td>{esc(x["version"])}</td><td class="num">{x["leads"]:,}</td>'
-                    f'<td class="num">{x["promoted"]:,}</td><td class="num">{x["dismissed"]:,}</td></tr>' for x in cov["leads"])
+                    f'<td class="num">{x["promoted"]:,}</td><td class="num">{x["dismissed"]:,}</td>'
+                    + (f'<td class="num">{x.get("lower_priority", 0):,}</td>' if tiers_cov else "") + '</tr>'
+                    for x in cov["leads"])
+    tiers_note = (f'<p class="nofind">{esc(t["rule_tiers_note"].format(n=f"{tiers_cov["lower_priority"]:,}", version=tiers_cov["version"]))}</p>'
+                  if tiers_cov else "")
     cov_html = (tbl('<th style="width:40%">Area</th><th style="width:22%">Code returned</th><th>Result</th>', arows, name="coverage_areas")
                 + nohigh + titled("<h3>Analyzer leads</h3>",
                                   tbl('<th>Analyzer</th><th>Version</th><th class="num">Leads</th><th class="num">Promoted</th>'
-                                      '<th class="num">Dismissed</th>', lrows, name="analyzer_leads")))
+                                      '<th class="num">Dismissed</th>' + lp_head, lrows, name="analyzer_leads")) + tiers_note)
     if cov["withdrawn"]:
         wrows = "".join(
             f'<tr><td>{esc(w["candidate"])}</td><td>{esc(w["category"])}</td>'

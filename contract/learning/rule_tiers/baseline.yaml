@@ -1,0 +1,6 @@
+# Baseline rule tier policy: every rule normal, analyzer severity as mapped. This is what
+# review_leads shows with no flag set and what a rollback returns to. Immutable.
+version: baseline
+previous: null
+generated_from: null
+rules: []
