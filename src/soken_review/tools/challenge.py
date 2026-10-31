@@ -55,6 +55,7 @@ from psycopg.rows import dict_row
 
 from ..context.store import ContextStore, is_context_path
 from ..db.pool import get_pool
+from ..engine import gate_policy
 from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
@@ -1292,7 +1293,13 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                     "severity_reason": draft.get("severity_reason") or "",
                     "matrix_cell": None,
                 }
-            # Different answers for same revision = reject (revision already answered)
+            # Different answers for an answered revision. The current one is frozen (the client sent
+            # the right number, BakerFi r5 read "Revision is now 0. Resend with revision 0."): say so,
+            # and how to answer again. An older revision is a stale number.
+            if revision == current_revision:
+                return {"accepted": False, "errors": [ReviewError(
+                    "E_REVISION_ANSWERED", draft=draft_key, revision=revision,
+                    verdict=existing_ca.get("verdict") or "recorded", next=revision + 1).envelope()]}
             return {"accepted": False, "errors": [
                 ReviewError("E_REVISION_CONFLICT", revision=current_revision).envelope()
             ]}
@@ -1512,8 +1519,17 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         elif value == "not_applicable":
             reason = answer.get("reason", "")
             allowed_reasons = output_item.get("allowed_na_reasons", [])
-            if reason not in allowed_reasons or _check_na_predicate(reason, map_doc, family) != "true":
-                advise("E_CHALLENGE_NA_REASON", reasons=", ".join(allowed_reasons))
+            if not allowed_reasons:
+                # BakerFi r5 read "Allowed: ." (an empty list): name the case instead.
+                advise("E_CHALLENGE_NA_REASON", item=item_id, reason=reason or "none",
+                       allowed="This item takes no not_applicable reason; answer present or absent.")
+            elif reason not in allowed_reasons:
+                advise("E_CHALLENGE_NA_REASON", item=item_id, reason=reason or "none",
+                       allowed=f"Allowed reasons for this item: {', '.join(allowed_reasons)}.")
+            elif _check_na_predicate(reason, map_doc, family) != "true":
+                advise("E_CHALLENGE_NA_REASON", item=item_id, reason=reason,
+                       allowed=(f"The contract map does not confirm {reason} for this job; answer present or"
+                                " absent with quotes or refs."))
 
         else:
             violations.append(ReviewError(
@@ -1550,12 +1566,22 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             **gate.result_fields(),
         }
     complete = not unverified
+    if unverified:
+        # The first answer freezes this revision even when some items stay unverified (BakerFi r5:
+        # one advisory E_CHALLENGE_SCOPE locked the revision with items_unverified and no word on it).
+        # Say it first, before the per-item warnings the cap may cut.
+        env = ReviewError("E_CHALLENGE_PARTIAL", ids=", ".join(unverified[:12]), revision=revision,
+                          next=revision + 1).envelope()
+        gate.warnings.insert(0, gate_policy.warning(env, code="E_CHALLENGE_PARTIAL", rule=None,
+                                                    field="answers", match=None, suggest=None))
     open_downgrade = any(it.get("kind") == "downgrade" and it["id"] not in verified_ids for it in items)
     stored_answers = [{**a, "verified": a.get("item_id") in verified_ids} for a in answers]
 
     # ── All checks passed: compute verdict ────────────────────────────────────
 
-    severity_before = draft["severity"] or "Informational"
+    # DG1 measures from the severity accepted at submit for this revision, the same input finalize
+    # reads (finding_revisions.computed_severity), so both stages floor from one value.
+    severity_before = rev.get("computed_severity") or draft["severity"] or "Informational"
 
     async with pool.connection() as conn, conn.transaction():
         # Re-lock draft to prevent concurrent answer submissions
@@ -1684,6 +1710,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 claimed_severity=content.get("claimed_severity"),
                 claimed_reason=content.get("severity_reason"),
                 severity_before=severity_before,
+                challenge_complete=complete,
             )
 
             try:
@@ -1696,7 +1723,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             new_status = "accepted"
             # A partial or partly unverified answer records what it verified but does not upgrade the
             # evidence level: reasoning_challenged needs every item answered and verified.
-            new_evidence = sev_result.evidence_level if complete else ev_level
+            new_evidence = sev_result.evidence_level   # stage_evidence: promoted only when complete
             # Every cause of the verdict, by name: the K caps compute_severity applied and the
             # basis fallbacks that changed the matrix. A downgrade without a named cause is a
             # server defect and never a verdict (Solana blind run 2026-10-26: Critical -> Low,

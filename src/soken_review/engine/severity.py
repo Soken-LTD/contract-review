@@ -258,6 +258,28 @@ class SeverityContext:
     # DG1: the severity accepted at submit for this revision; post_challenge and finalize never
     # print more than one step below it unless a kill item withdrew the finding.
     severity_before: str | None = None
+    # post_challenge: every checklist item was answered and verified. Only a complete answer promotes
+    # the evidence to reasoning_challenged; K8 reads the evidence the draft will carry after this
+    # phase, so the challenge verdict and finalize compute the same value (BakerFi r5: the answer
+    # printed High under K8 while finalize printed Critical from the stored, promoted evidence).
+    challenge_complete: bool = True
+
+
+def stage_evidence(phase: str, ctx: SeverityContext) -> str:
+    """The evidence level a draft carries after `phase` (04 section 9). One function for every stage.
+
+    E3 analyzer_and_reasoning: a same-category analyzer lead is linked.
+    E2 reasoning_challenged: no qualifying lead, the checklist answered completely and verified.
+    E1 reasoning_only: neither (submit, a partial answer, a draft that never took a challenge).
+    """
+    if phase == "submit":
+        return "reasoning_only" if not ctx.linked_lead_same_cat else "analyzer_and_reasoning"
+    prior = ctx.evidence_level or "reasoning_only"
+    if phase == "post_challenge":
+        if prior == "analyzer_and_reasoning" or ctx.linked_lead_same_cat:
+            return "analyzer_and_reasoning"
+        return "reasoning_challenged" if ctx.challenge_complete else prior
+    return prior
 
 
 @dataclass
@@ -387,9 +409,10 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
     # --- K8: post_challenge/finalize: Critical stays Critical ONLY with E2/E3 AND
     # attack_steps AND no open downgrade item. Cap to High when ANY condition is missing.
     # (04 §7.4 K8: "all three required" — was previously inverted using `and` instead of `or`)
+    ev = stage_evidence(phase, ctx)
     if phase in ("post_challenge", "finalize"):
         requires_k8 = sev == "Critical" and (
-            ctx.evidence_level not in ("reasoning_challenged", "analyzer_and_reasoning")
+            ev not in ("reasoning_challenged", "analyzer_and_reasoning")
             or not ctx.has_attack_steps
             or ctx.open_downgrade_item
         )
@@ -496,20 +519,7 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
         elif not reason:
             reason = "matrix cell, no reviewer proposal" if claimed is None else "matrix cell"
 
-    # --- evidence_level (04 §9 table) ---
-    # E3 analyzer_and_reasoning: a same-category analyzer lead is linked.
-    # E2 reasoning_challenged: no qualifying lead, challenge passed or downgraded. post_challenge
-    #    is reached only by answering the checklist, so a reasoning_only draft is promoted here;
-    #    before 2026-10-22 it stayed reasoning_only and K4 printed every challenged High as Low.
-    # E1 reasoning_only: neither (submit, and finalize of drafts that never took a challenge).
-    if phase == "submit":
-        ev = "reasoning_only" if not ctx.linked_lead_same_cat else "analyzer_and_reasoning"
-    elif phase == "post_challenge":
-        prior = ctx.evidence_level or "reasoning_only"
-        ev = "analyzer_and_reasoning" if (prior == "analyzer_and_reasoning" or ctx.linked_lead_same_cat) \
-            else "reasoning_challenged"
-    else:
-        ev = ctx.evidence_level or "reasoning_only"
+    # --- evidence_level (04 §9 table): stage_evidence, computed before K8 above ---
 
     # --- severity_rule ---
     rule_parts = [f"I{i}xL{l}={base}"]
