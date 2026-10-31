@@ -561,7 +561,7 @@
      "wait_seconds": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 45,
+      "maximum": 55,
       "default": 0,
       "description": "Seconds to wait for the job to become ready or stop, as review_status with wait_for settled; that status is returned in status and replaces the polling calls after start."
      }
@@ -719,7 +719,7 @@
   {
    "name": "review_status",
    "title": "Review job status",
-   "description": "Returns the state of a review job: current step, progress, source provenance, build and analyzer results, excluded files, finding drafts, open finalize checks and next_tools, the tools that move the job forward. Can wait up to 45 seconds: wait_for change (default) returns on any state change, wait_for settled returns when the job is ready, stopped or rendered, so one call replaces a polling loop.",
+   "description": "Returns the state of a review job: current step, progress, source provenance, build and analyzer results, excluded files, finding drafts, open finalize checks and next_tools, the tools that move the job forward. Can wait up to 55 seconds: wait_for change (default) returns on any state change, wait_for settled returns when the job is ready, stopped or rendered, so one call replaces a polling loop.",
    "annotations": {
     "title": "Review job status",
     "readOnlyHint": true,
@@ -737,7 +737,7 @@
      "wait_seconds": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 45,
+      "maximum": 55,
       "default": 0
      },
      "response_format": {
@@ -911,6 +911,10 @@
      },
      "analyzer_degraded": {
       "type": "boolean"
+     },
+     "analyzer_note": {
+      "type": "string",
+      "description": "Present when analyzer_degraded is true: which analyzer did not run fully and why, in plain words."
      },
      "build": {
       "type": "object",

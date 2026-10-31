@@ -208,7 +208,8 @@ def _sup(tmp_path: Path) -> Any:
 
 @pytest.mark.asyncio
 async def test_worker_repo_subdir_job_without_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """fetch keeps the workspace off the pin; a failed build still gives leads, a parsed map, nSLOC."""
+    """fetch keeps the workspace off the pin (but its root manifests, read-only); a failed build still
+    gives leads, a parsed map, nSLOC."""
     from unittest.mock import AsyncMock, patch
 
     _tree(tmp_path / "repo")
@@ -228,9 +229,19 @@ async def test_worker_repo_subdir_job_without_build(tmp_path: Path, monkeypatch:
         assert "_full_tree" not in cand_meta and "files" not in cand_meta
         ws = json.loads((out_dir / solana_steps._WORKSPACE_FILE).read_text())
         assert ws["subdir"] == "programs/locker" and "Cargo.lock" in ws["files"]
+        # MetaDAO 2026-10-31: the workspace root manifest (overflow-checks, profiles) is readable and
+        # quotable from the pin, out of scope; the build gets it from the workspace, never twice
+        from soken_review.pinning.store import PinnedSource
+
+        pin = PinnedSource.load(sup._pin_root, job_id)
+        entry = pin.get_entry("_workspace/Cargo.toml")
+        assert entry is not None and not entry.in_scope and entry.role == "dependency"
+        assert pin.read_text("_workspace/Cargo.toml") == ROOT_MANIFEST
+        assert pin.get_entry("src/lib.rs").in_scope
 
         def _failed_build(self: Any, cand: Candidate) -> BuildResult:
             assert "programs/locker/src/lib.rs" in cand.files and "Cargo.lock" in cand.files
+            assert not any("_workspace/" in p for p in cand.files)
             return BuildResult(candidate=cand, status="failed", reason="deps_failed", stderr_head="error: offline")
 
         with patch("soken_review.adapters.solana.SolanaAdapter.build", _failed_build):
@@ -250,3 +261,60 @@ async def test_worker_repo_subdir_job_without_build(tmp_path: Path, monkeypatch:
     assert status == {"map_status": "partial", "build_detail": "deps_failed: error: offline", "build_status": "failed"}
     doc = json.loads((sup._pin_root / job_id / "map" / "map.json").read_text())
     assert [f["span"] for f in doc["semantic"]["functions"] if f["is_entry"]] == ["locker.claim"]
+
+
+def test_workspace_manifests_only_for_a_subdir() -> None:
+    tree = {"Cargo.toml": ROOT_MANIFEST, "Cargo.lock": LOCK, "Anchor.toml": "[programs.mainnet]\n"}
+    got = solana_steps.workspace_manifests(tree, "programs/locker", {"src/lib.rs": LIB_RS})
+    assert got == {"_workspace/Cargo.toml": ROOT_MANIFEST, "_workspace/Anchor.toml": "[programs.mainnet]\n"}
+    assert solana_steps.workspace_manifests(tree, None, {}) == {}
+    assert solana_steps.workspace_manifests(None, "programs/locker", {}) == {}
+
+
+def test_only_the_synthetic_entries_leave_the_build_inputs() -> None:
+    from soken_review.pinning.store import PinnedSource
+
+    files = {"src/lib.rs": b"x", "_workspace/Cargo.toml": b"[workspace]", "_workspace/extra.rs": b"fn a() {}"}
+    synthetic = PinnedSource.from_files(files, in_scope={"_workspace/Cargo.toml": False},
+                                        roles={"_workspace/Cargo.toml": "dependency"})
+    assert solana_steps.synthetic_workspace_paths(synthetic) == {"_workspace/Cargo.toml"}
+    real = PinnedSource.from_files(files)          # the repo's own files under the prefix, in scope
+    assert solana_steps.synthetic_workspace_paths(real) == set()
+
+
+@pytest.mark.asyncio
+async def test_repo_files_under_the_reserved_prefix_are_kept_and_nothing_synthetic_is_pinned(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A subdir with its own `_workspace/` files: they are reviewed and built as they are; the
+    workspace manifests are not pinned (no shadowing, no drop) and the candidate says why."""
+    from unittest.mock import AsyncMock, patch
+
+    from soken_review.pinning.store import PinnedSource
+
+    _tree(tmp_path / "repo")
+    own = tmp_path / "repo" / "programs" / "locker" / "_workspace"
+    own.mkdir(parents=True)
+    (own / "Cargo.toml").write_text("[package]\nname = \"own\"\n")
+    (own / "helper.rs").write_text("pub fn helper() {}\n")
+    monkeypatch.setattr(fetch, "_SBX_ROOT", tmp_path / ".sbx")
+    monkeypatch.setattr(fetch, "_clone_repo",
+                        lambda url, commit, wd, subdir=None: fetch._walk_scope(tmp_path / "repo", subdir))
+    monkeypatch.setattr(fetch, "_fetch_osec_verify", lambda pid: [])
+    sup = _sup(tmp_path)
+    job_id = "job_REPOCLASH"
+    job = {"job_id": job_id, "chain": "solana", "source_kind": "repo", "address": None,
+           "source_args": {"repo_url": "https://github.com/o/r", "commit": "a" * 40, "subdir": "programs/locker"}}
+    out_dir = sup._job_dir(job_id)
+    with patch("soken_review.worker.solana_steps.JobRepo") as repo_cls:
+        repo_cls.return_value = AsyncMock()
+        await solana_steps._fetch_program(sup, {"id": 1, "job_id": job_id}, job, out_dir)
+    pin = PinnedSource.load(sup._pin_root, job_id)
+    assert pin.read_text("_workspace/Cargo.toml") == "[package]\nname = \"own\"\n"   # the repo's file
+    assert pin.get_entry("_workspace/helper.rs") is not None
+    assert solana_steps.synthetic_workspace_paths(pin) == set()
+    meta = json.loads((out_dir / "candidates.json").read_text())[0]
+    assert meta["workspace_manifests"]["pinned"] is False
+    assert "_workspace/helper.rs" in meta["workspace_manifests"]["paths"]
+    built = solana_steps.build_files({p: "\n".join(pin.read_all(p)) for p in pin.entries},
+                                     out_dir / solana_steps._WORKSPACE_FILE, {})
+    assert "programs/locker/_workspace/helper.rs" in built and "programs/locker/_workspace/Cargo.toml" in built

@@ -219,8 +219,10 @@ def _report_chain(job: dict[str, Any]) -> str:
 # Cover line for a job started without a deployment: a scope statement, not a finding about the
 # code (matrix run 2026-10-27, 1inch repo job: "Chain and network: Not deployed" read as a defect).
 NO_DEPLOYMENT_LABEL = "No deployment given; source review only"
-SOLANA_CONFIG_CLUSTER_LABEL = "Program id for {cluster} in Anchor.toml; not mainnet"
+SOLANA_CONFIG_CLUSTER_LABEL = "Program id for {cluster} in Anchor.toml; not on mainnet"
+SOLANA_CONFIG_CLUSTER_UNCHECKED_LABEL = "Program id for {cluster} in Anchor.toml; mainnet not checked"
 SOLANA_NOT_ON_MAINNET_LABEL = "Program id not deployed on Solana mainnet"
+SOLANA_MAINNET_UNCHECKED_LABEL = "Solana mainnet; deployment not checked"
 
 
 def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
@@ -236,16 +238,22 @@ def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
         return str(chain_id)[:60]
     chain = str((deployment or {}).get("chain") or job.get("chain") or "")
     if job.get("address") and chain == "solana":
-        # Pump Science blind run 2026-10-27: a declare_id! / [programs.localnet] id printed as
-        # "Solana mainnet". Mainnet only when the repository config does not tie the id to another
-        # cluster and the mainnet read found a program at it.
+        # The label comes from the supervisor's mainnet read, never from repository config alone.
+        # Pump Science blind run 2026-10-27: an id with no program on mainnet printed as "Solana
+        # mainnet". MetaDAO blind run 2026-10-31: the supplied mainnet id, live on mainnet, printed as
+        # "not mainnet" because Anchor.toml also listed it under [programs.localnet].
         cs = chain_state or {}
         clusters = [str(c) for c in cs.get("config_clusters") or []]
-        if clusters and "mainnet" not in clusters:
-            return SOLANA_CONFIG_CLUSTER_LABEL.format(cluster=clusters[0])[:60]
-        if cs.get("kind", "program") == "program" and not cs.get("deployed_program_hash") \
-                and cs.get("why") == "no_code":
-            return SOLANA_NOT_ON_MAINNET_LABEL
+        other = clusters[0] if clusters and "mainnet" not in clusters else None
+        why = str(cs.get("why") or "")
+        if cs.get("kind") == "mint" or cs.get("deployed_program_hash") or (cs.get("loader") and not why.startswith("read_failed")
+                                                and why != "no_code"):
+            return _CHAIN_NETWORK["solana"]          # a program account exists at the id on mainnet
+        if why == "no_code":
+            return (SOLANA_CONFIG_CLUSTER_LABEL.format(cluster=other) if other else SOLANA_NOT_ON_MAINNET_LABEL)[:60]
+        # no read, or the read failed: say so instead of guessing either way
+        return (SOLANA_CONFIG_CLUSTER_UNCHECKED_LABEL.format(cluster=other) if other
+                else SOLANA_MAINNET_UNCHECKED_LABEL)[:60]
     if job.get("address") and chain in _CHAIN_NETWORK:
         return _CHAIN_NETWORK[chain]
     return NO_DEPLOYMENT_LABEL
@@ -1295,7 +1303,11 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
 
     m = texts["method_steps"]
     tools_line = ", ".join(f"{n} {v}: {r['leads']:,} leads" for (n, v), r in sorted(per_tool.items())) or "No analyzer leads"
-    degraded = " One analyzer did not run." if job.get("analyzer_degraded") else ""
+    degraded = ""
+    if job.get("analyzer_degraded"):
+        from ..mapping.analyzer_note import job_analyzer_note
+
+        degraded = " " + job_analyzer_note(pin_root, job_id)
     # A failed build is one sentence (compiler, error class, consequence) on the cover, in the
     # summary and in the method table; review_status carries the same sentence before submitting.
     build_failure = job_build_failure(pin_root, job_id, map_status=job.get("map_status"), family=family)
