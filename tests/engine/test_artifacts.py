@@ -109,3 +109,28 @@ def test_no_semantic_layer_is_map_unavailable():
     # lexical layer still serves A1 and references (04 1.3 row 1)
     assert "1_000" in a1_literals(a, Q_SETFEE)[0]
     assert references(a, "feeBps") == ["src/Vault.sol:37", "src/Vault.sol:56"]
+
+
+def test_a1_literals_constant_initializer_and_percent_scale():
+    """r5 revert: "10 percent" of `MAX_LIQUIDATION_PENALTY_X32 = uint32(Q32 / 10)` quoted at a
+    use site was rejected as unsourced. The initializer literals and the scaled percent count."""
+    src = (
+        "contract V {\n"
+        "    uint256 constant Q32 = 2**32;\n"
+        "    uint32 public constant MAX_PENALTY_X32 = uint32(Q32 / 10);\n"
+        "    uint32 public constant FEE_X32 = 429496729;\n"
+        "    function f(uint32 p) external { require(p <= MAX_PENALTY_X32); }\n"
+        "    function g(uint32 p) external { require(p <= FEE_X32); }\n"
+        "}\n"
+    )
+    m = build_map({"src/V.sol": src}, None, list(family_categories("evm")))
+    a = Artifacts(map=m.doc, map_status=m.status, tokens=m.tokens, facts=[], flags=[])
+    q = [{"file": "src/V.sol", "start": 5, "end": 5, "role": "location"}]
+    values, _ = a1_literals(a, q)
+    assert "10" in values                       # literal of the MAX_PENALTY_X32 initializer
+    ctx = number_context(a, q)
+    assert lex_numbers("The penalty cap is 10 percent.", ctx) == []
+    assert [v.code for v in lex_numbers("The penalty cap is 25 percent.", ctx)] == ["E_NUMBER_UNSOURCED"]
+    # a folded constant used on the line: its Q32 percent is a code value
+    q_fee = [{"file": "src/V.sol", "start": 6, "end": 6, "role": "location"}]
+    assert "10" in a1_literals(a, q_fee)[0]
