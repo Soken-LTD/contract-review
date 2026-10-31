@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from functools import cache
 from importlib import metadata
 from typing import Any
 
@@ -43,6 +44,29 @@ def handler(name: str) -> Callable[[Handler], Handler]:
     return register
 
 
+@cache
+def _output_validators() -> dict[str, Draft202012Validator]:
+    return {tool["name"]: Draft202012Validator(tool["outputSchema"])
+            for tool in bundle_tools() if "outputSchema" in tool}
+
+
+def output_violations(name: str, body: Any, validators: dict[str, Draft202012Validator] | None = None) -> list[str]:
+    """Where `body` breaks the tool's bundled outputSchema, as `path: keyword` strings (no values).
+
+    Claude Code (2.1.309 and later) validates structuredContent against the declared outputSchema
+    and drops a result that does not match ("Structured content does not match the tool's output
+    schema"), so a mismatch is a lost result for the client, not a cosmetic issue. Tools without an
+    outputSchema, and non-object bodies, have nothing to check."""
+    validator = (validators if validators is not None else _output_validators()).get(name)
+    if validator is None or not isinstance(body, dict):
+        return []
+    out = []
+    for err in sorted(validator.iter_errors(body), key=lambda e: list(e.absolute_path)):
+        path = "/".join(str(p) for p in err.absolute_path) or "(root)"
+        out.append(f"{path}: {err.validator}")
+    return out
+
+
 def server_version() -> str:
     """`<package version>+schema.<schema_version>`: changes on every tool-list change, so a client that
     compares serverInfo across connects sees a new server."""
@@ -66,6 +90,10 @@ class SokenServer(MCPServer):
         self.validators = {
             name: Draft202012Validator(tool["inputSchema"]) for name, tool in self.contract.items()
         }
+        self.output_validators = {
+            name: Draft202012Validator(tool["outputSchema"])
+            for name, tool in self.contract.items() if "outputSchema" in tool
+        }
 
     async def list_tools(self) -> list[MCPTool]:
         return [
@@ -84,6 +112,20 @@ class SokenServer(MCPServer):
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context | None = None
     ) -> CallToolResult:
+        res = await self._call_tool(name, arguments)
+        if res.structured_content is not None:
+            # Safety net: a client that enforces outputSchema drops a non-conforming result, so name
+            # the tool and the failing paths in the journal. The result itself is never changed.
+            try:
+                bad = output_violations(name, res.structured_content, self.output_validators)
+            except Exception:   # the net never fails a call
+                logger.warning("output schema check failed for %s", name, exc_info=True)
+                bad = []
+            if bad:
+                logger.error("structured result of %s breaks its outputSchema: %s", name, "; ".join(bad[:10]))
+        return res
+
+    async def _call_tool(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
         tool = self.contract.get(name)
         if tool is None:
             return _error_result(ReviewError("E_INVALID_ARGUMENT", field="name", rule="known tool", value80=name[:80]))
