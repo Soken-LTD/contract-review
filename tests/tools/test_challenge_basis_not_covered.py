@@ -94,7 +94,8 @@ class TestSeverityReplay:
         ctx = self._ctx("analyzer_and_reasoning")
         ctx.claimed_severity, ctx.claimed_reason, ctx.severity_before = "High", self.REASON, "High"
         r = compute_severity(F01_MATRIX, "post_challenge", ctx)
-        assert r.severity == "High" and r.set_by == "reviewer" and r.caps_applied == ["RV1:reviewer=High"]
+        assert r.severity == "High" and r.set_by == "reviewer" and r.caps_applied == []
+        assert r.calibration == "Critical"
 
     def test_f02_passes_as_high(self):
         r = compute_severity(F02_MATRIX, "post_challenge", self._ctx())
@@ -181,10 +182,11 @@ async def test_answer_challenge_on_not_covered_scope_prints_the_reviewers_high_w
     # A complete answer promotes the evidence, so K8 no longer binds: the reviewer's High stands by
     # RV1, the same value finalize computes. The scope with no ranges names nothing (before
     # 2026-10-27 this list carried K10; before 2026-10-31 K8 read the pre-challenge evidence).
-    assert res["caps_applied"] == ["RV1:reviewer=High"], res
+    assert res["caps_applied"] == [], res
+    assert res["calibration"]["severity"] == "Critical" and res["calibration"]["differs"] is True
     assert res["severity_set_by"] == "reviewer"
     assert res["evidence_level"] == "reasoning_challenged"
-    assert res["severity_rule"].startswith("I4xL3=Critical caps=[RV1:reviewer=High]") and "basis=" not in res["severity_rule"]
+    assert res["severity_rule"].startswith("I4xL3=Critical set_by=reviewer") and "basis=" not in res["severity_rule"]
     assert "K10" not in res["severity_rule"]
 
     async with db_pool.connection() as conn:

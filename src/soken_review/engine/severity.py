@@ -9,11 +9,11 @@ Entry points:
 Plan: 04 §7.1 (matrix fields), §7.2 (impact level), §7.3 (likelihood/mapping),
 §7.4 (pipeline, caps K1-K11), §16 (worked example).
 
-Reviewer-first (2026-10-27, blind run 2026-10-26 judgement, section 6): the severity the client
-reads is the reviewer's `claimed_severity` unless a NAMED rule applies, and every rule that moves
-the severity away from the plain IxL cell is returned by id with a one-line reason. The rule
-registry the client can dispute is `contract/rubric/severity_rules.yaml`; `RULE_TEXT` below
-mirrors it (a test keeps the two in step).
+Thin server (CEO decision 2026-10-31, blind rounds 1 to 5): the severity the client reads is the
+reviewer's `claimed_severity`, always. The IxL cell and the named rules (K caps, K5, TR1, IRR1) are
+still computed and returned as the calibration (`calibration`, `calibration_rule`), which the report
+prints beside the finding when it differs; no rule changes the printed value. The rule registry is
+`contract/rubric/severity_rules.yaml`; `RULE_TEXT` below mirrors it (a test keeps the two in step).
 
 Ambiguity SF-001: severity_rule wire value format documented in docs/w0/submit-finalize-ambiguities.md.
 """
@@ -181,12 +181,12 @@ RULE_TEXT: dict[str, str] = {
     "K11": "generic category without a linked lead of the same category caps at High",
     "IRR1": "irreversible unbounded loss: uncommon_protocol_state counts as L2, not L1",
     "TR1": "retail token, owner is the threat: an irreversible owner path to a direct loss is reachable, K1 waived",
-    "RV1": "reviewer's claimed_severity within one step of the matrix outcome stands, reason recorded",
-    "DG1": "a challenge lowers at most one step below the accepted severity; a second step needs a kill item",
+    "RV1": "reviewer's claimed_severity is the printed severity; the matrix is a calibration note",
+    "DG1": "retired 2026-10-31: a challenge never moves the printed severity",
 }
 _MAX_SEVERITY_RULE = "category max_severity caps the finding"
 
-# One-step reviewer override, the only tolerance the engine grants without a matrix change.
+# Kept for importers; the thin server (2026-10-31) has no reviewer tolerance: the claim always stands.
 REVIEWER_STEP = 1
 # Minimum length of a `severity_reason` for RV1 (also enforced by the finding schema).
 REASON_MIN_CHARS = 20
@@ -292,8 +292,8 @@ class SeverityResult:
     i_level: int
     l_level: int
     base: str
-    # Who set the final severity: "reviewer" (claimed_severity stands), "matrix" (the IxL cell,
-    # or caps that did not move it), "cap" (a named rule bound the reviewer's or the cell's value).
+    # Who set the printed severity: "reviewer" (claimed_severity, always final) or "matrix" (no claim:
+    # the outcome accepted at submit). "cap" is no longer produced (thin server, 2026-10-31).
     set_by: str = "matrix"
     # The reviewer's reason when set_by == "reviewer", else the one-line text of the binding rules.
     reason: str = ""
@@ -301,8 +301,13 @@ class SeverityResult:
     computed: str = ""
     # submit only: the reviewer's claimed_severity is given and cannot stand silently; the caller
     # asks the reviewer to confirm `computed` or to reclassify (E_SEVERITY_CONFIRM).
+    # Retired with the thin server (2026-10-31): the server never asks the reviewer to confirm.
     confirm_needed: bool = False
     confirm_why: str = ""
+    # The matrix outcome after the K caps (and K5) and the rules that produced it. The report prints
+    # "Calibration: <calibration> (<calibration_rule>)" beside the finding when it differs from severity.
+    calibration: str = ""
+    calibration_rule: str = ""
     rules: list[str] = field(default_factory=list)   # same as caps_applied (name kept for callers)
 
 
@@ -319,16 +324,16 @@ _CELL_RULES = frozenset({"TR1", "IRR1"})
 
 
 def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -> SeverityResult:
-    """Compute severity per 04 §7.4 pipeline, reviewer-first.
+    """Compute the printed severity and the matrix calibration (04 §7.4, thin server 2026-10-31).
 
     matrix: dict with impact_class, magnitude, trigger, precondition, reversibility.
     phase: "submit" | "post_challenge" | "finalize"
     ctx: additional context fields.
 
-    Order: IxL cell -> profile rules (TR1, IRR1) -> hard caps (K1 K3 K6 K7 K11 K8 K10 K4, category
-    max) = `computed` -> reviewer's claimed_severity within one step (RV1), never above a cap ->
-    K5 (one step) -> DG1 floor (one step below the accepted severity). Every rule that moved the
-    value away from the cell is named in caps_applied and severity_rule.
+    Calibration: IxL cell -> profile rules (TR1, IRR1) -> caps (K1 K3 K6 K7 K11 K8 K10 K4, category
+    max) -> K5 = `calibration`. Printed: claimed_severity when given; otherwise the submit outcome
+    (kept by later phases through severity_before). Every rule that moved the calibration away from
+    the cell is named in caps_applied and severity_rule.
     """
     impact_class: str = matrix["impact_class"]
     magnitude: str = matrix["magnitude"]
@@ -367,24 +372,17 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
 
     base = base_severity(i, l)
     sev = base
-    ceiling_rank = _SEV_RANK["Critical"]
-    ceilings: list[tuple[str, int]] = []   # every cap that applies, bound or not (names the binding cap for RV1)
+
+    ceilings: list[tuple[str, int]] = []   # every cap that applies, moved or not (named when the claim is above)
 
     def cap(rule_id: str, ceiling: str) -> None:
-        nonlocal sev, ceiling_rank
-        ceiling_rank = min(ceiling_rank, _SEV_RANK[ceiling])
+        """A K cap on the calibration value (never on the printed severity)."""
+        nonlocal sev
         ceilings.append((rule_id, _SEV_RANK[ceiling]))
         capped = _min_sev(sev, ceiling)
         if capped != sev:
             rules.append(rule_id)
         sev = capped
-
-    def name_binding_caps() -> None:
-        # the reviewer asked for more than a cap allows: the cap is the reason, even when the cell
-        # was already under it and the cap never moved the value
-        for rule_id, rank in ceilings:
-            if rank == ceiling_rank and rule_id not in rules:
-                rules.append(rule_id)
 
     # --- K1: trigger privileged_role or upgrade_authority -> cap Medium ---
     if trigger in ("privileged_role", "upgrade_authority") and not owner_is_threat:
@@ -432,96 +430,39 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
     if ctx.category_max_severity is not None:
         cap(f"max_severity:{ctx.category_max_severity}", ctx.category_max_severity)
 
-    computed = sev
-
-    # --- RV1: the reviewer's proposal. It stands when it is within one step of the matrix outcome
-    # and a reason is recorded; a named cap still binds it from above. At submit a proposal that
-    # cannot stand is never resolved silently: confirm_needed asks the reviewer to confirm the
-    # computed value, keep theirs with a reason, or supply the mitigating classification.
-    set_by = "matrix"
-    reason = ""
-    confirm_needed = False
-    confirm_why = ""
-    claimed = ctx.claimed_severity
-    has_reason = bool(ctx.claimed_reason and len(ctx.claimed_reason.strip()) >= REASON_MIN_CHARS)
-    if claimed is not None and claimed in _SEV_RANK:
-        d = _step(claimed, computed)
-        if d == 0:
-            set_by = "reviewer"
-            reason = (ctx.claimed_reason or "").strip() or "reviewer and matrix agree"
-        elif abs(d) <= REVIEWER_STEP and has_reason:
-            if _SEV_RANK[claimed] > ceiling_rank:
-                # above a named cap: the cap wins and is the reason the client reads
-                set_by = "cap"
-                name_binding_caps()
-                rules.append(f"RV1:reviewer={claimed}")
-            else:
-                sev = claimed
-                set_by = "reviewer"
-                reason = ctx.claimed_reason.strip()  # type: ignore[union-attr]
-                rules.append(f"RV1:reviewer={claimed}")
-        else:
-            if phase == "submit":
-                # Advisory since 2026-10-27 (never-worse, gate_policy.yaml E_SEVERITY_CONFIRM): the
-                # submit is accepted; confirm_needed only tells the caller to return the warning. With
-                # a reason the proposal moves to the nearest value within one step (below), without one
-                # the computed value prints.
-                confirm_needed = True
-                if abs(d) <= REVIEWER_STEP:
-                    confirm_why = (f"claimed_severity {claimed} is one step from the computed {computed};"
-                                   f" a severity_reason of at least {REASON_MIN_CHARS} characters is needed")
-                else:
-                    confirm_why = (f"claimed_severity {claimed} is {abs(d)} steps from the computed {computed};"
-                                   " one step at most stands with a severity_reason")
-            # The matrix and the proposal differ by more than RV1 carries (or, after a challenge, the
-            # matrix moved under the reviewer): the proposal follows the matrix to the nearest value
-            # within one step when a reason was recorded.
-            if has_reason:
-                target_rank = max(_SEV_RANK[computed] - REVIEWER_STEP,
-                                  min(_SEV_RANK[computed] + REVIEWER_STEP, _SEV_RANK[claimed]))
-                if target_rank > ceiling_rank:
-                    target_rank = ceiling_rank
-                    name_binding_caps()
-                if target_rank != _SEV_RANK[sev]:
-                    sev = _RANK_SEV[target_rank]
-                    set_by = "reviewer" if target_rank == _SEV_RANK[claimed] else "cap"
-                    rules.append(f"RV1:reviewer={claimed}")
-                    if set_by == "reviewer":
-                        reason = ctx.claimed_reason.strip()  # type: ignore[union-attr]
-
-    # --- K5: a downgrade item answered present lowers one level (post_challenge/finalize).
-    # One step since 2026-10-27 (was two): the second step needs a kill item (DG1).
+    # --- K5: a downgrade item answered present lowers the calibration one level (post_challenge,
+    # finalize). A calibration note only: it never moves the printed severity (thin server, CEO 2026-10-31).
     if phase != "submit" and ctx.downgrade_items_present > 0:
         lowered = _lower_sev(sev, 1)
         if lowered != sev:
             rules.append("K5")
         sev = lowered
 
-    # --- DG1: a challenge lowers at most one step below the severity accepted at submit. Stacked
-    # downgrades (Apyee F-03: L3 present plus the MB6 fallback took a Low to Informational) are a
-    # second step without a kill item, so the floor holds them.
-    if phase != "submit" and ctx.severity_before in _SEV_RANK:
-        floor = _lower_sev(ctx.severity_before, 1)  # type: ignore[arg-type]
-        if _SEV_RANK[sev] < _SEV_RANK[floor]:
-            sev = floor
-            rules.append("DG1")
-            if set_by != "reviewer":
-                set_by = "cap"
+    computed = sev
 
-    if set_by != "reviewer":
-        named = [r for r in rules if not r.startswith("RV1")]
-        if any(r.partition(":")[0] not in _CELL_RULES for r in named):
-            set_by = "cap"                      # a cap, a step or a floor bound the cell or the reviewer's value
-            reason = explain_rules(named)
-        elif named:
-            set_by = "matrix"                   # TR1 or IRR1 shaped the cell itself; nothing bound it
-            reason = explain_rules(named)
-        elif not reason:
-            reason = "matrix cell, no reviewer proposal" if claimed is None else "matrix cell"
+    # --- Printed severity (thin server, CEO decision 2026-10-31, blind round 5): the reviewer's
+    # claimed_severity is final, always. The matrix cell and every K cap above are a calibration the
+    # report prints beside the finding when it differs; nothing here raises, lowers, caps or asks the
+    # reviewer to confirm. Without a claim the matrix outcome accepted at submit prints, and a later
+    # phase (a challenge, finalize) keeps it: challenge answers are evidence, never severity.
+    claimed = ctx.claimed_severity if ctx.claimed_severity in _SEV_RANK else None
+    if claimed is not None:
+        printed, set_by = claimed, "reviewer"
+        reason = (ctx.claimed_reason or "").strip() or "reviewer's severity"
+    elif phase != "submit" and ctx.severity_before in _SEV_RANK:
+        printed, set_by = str(ctx.severity_before), "matrix"
+        reason = "matrix outcome accepted at submit"
+    else:
+        printed, set_by = computed, "matrix"
+        reason = explain_rules(rules) if rules else "matrix cell, no reviewer proposal"
 
-    # --- evidence_level (04 §9 table): stage_evidence, computed before K8 above ---
+    # The calibration names the rules that moved it and, when the reviewer's claim is above it, the caps
+    # that would hold the matrix there even though the cell is already under them (Magnum r5: K7).
+    named = list(rules)
+    if claimed is not None and _SEV_RANK[claimed] > _SEV_RANK[computed]:
+        named += [rid for rid, rank in ceilings if rank < _SEV_RANK[claimed] and rid not in named]
+    calibration_rule = (f"I{i}xL{l}={base}; " + explain_rules(named, limit=180)) if named else f"matrix cell I{i}xL{l}={base}"
 
-    # --- severity_rule ---
     rule_parts = [f"I{i}xL{l}={base}"]
     if rules:
         rule_parts.append(f"caps=[{','.join(rules)}]")
@@ -529,7 +470,7 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
     severity_rule = " ".join(rule_parts)
 
     return SeverityResult(
-        severity=sev,
+        severity=printed,
         severity_rule=severity_rule,
         caps_applied=list(rules),
         evidence_level=ev,
@@ -539,7 +480,7 @@ def compute_severity(matrix: dict[str, Any], phase: str, ctx: SeverityContext) -
         set_by=set_by,
         reason=reason,
         computed=computed,
-        confirm_needed=confirm_needed,
-        confirm_why=confirm_why,
+        calibration=computed,
+        calibration_rule=calibration_rule,
         rules=list(rules),
     )

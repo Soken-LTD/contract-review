@@ -431,32 +431,6 @@ def test_deployed_stop_keeps_the_repo_suggestion():
     assert err["fix"] == load_errors()["E_SOURCE_NOT_FOUND"]["fix"]
 
 
-# ── documents hint ───────────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("state", ["awaiting_upload", "queued", "fetching", "building", "analyzing"])
-def test_pending_hint_says_set_section_waits_for_ready(state):
-    from soken_review.tools.start_status import NO_DOCUMENTS_HINT, no_documents_hint
-
-    hint = no_documents_hint(state)
-    assert hint and hint != NO_DOCUMENTS_HINT
-    assert "accepted only in the ready state" in hint and "review_add_context" in hint
-    assert "to record it, review_set_section" not in hint
-
-
-@pytest.mark.parametrize("state", ["finalized", "rendered", "insufficient_source", "failed"])
-def test_no_hint_where_neither_call_is_accepted(state):
-    from soken_review.tools.start_status import no_documents_hint
-
-    assert no_documents_hint(state) is None
-
-
-def test_ready_hint_is_the_full_one():
-    from soken_review.tools.start_status import NO_DOCUMENTS_HINT, no_documents_hint
-
-    assert no_documents_hint("ready") == NO_DOCUMENTS_HINT
-
-
 # ── review_start source.chain ────────────────────────────────────────────────────────────────
 
 ASYNC = pytest.mark.asyncio(loop_scope="session")
@@ -476,7 +450,7 @@ async def test_review_start_accepts_a_repo_chain_and_reports_it(db_pool) -> None
             body = res.structured_content
             assert body["accepted"] is True, body
             assert body["detected"]["chain"] == "ton"
-            assert "accepted only in the ready state" in body["next_action"]
+            assert "review_add_context" in body["documents_note"] and "next_action" not in body
             async with db_pool.connection() as conn:
                 row = await (await conn.execute("select chain, source_args from jobs where job_id = %s",
                                                 (body["job_id"],))).fetchone()

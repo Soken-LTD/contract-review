@@ -1698,6 +1698,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
 
         leads_reopened: list[str] = []
 
+        calibration: dict[str, Any] | None = None
         if kill_present is not None:
             # Verdict: withdrawn
             verdict = "withdrawn"
@@ -1808,6 +1809,9 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             except (KeyError, ValueError) as e:
                 raise ReviewError("E_INTERNAL", incident=f"severity_post_challenge:{e!s:.40}")
 
+            # Thin server (2026-10-31): an answer is evidence, never severity. The printed severity is
+            # the reviewer's claim (or the submit outcome); downgrade items and basis fallbacks move
+            # only the calibration printed beside it.
             severity_after = sev_result.severity
             verdict = "downgraded" if severity_after != severity_before else "passed"
             new_status = "accepted"
@@ -1830,15 +1834,19 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             await conn.execute(
                 """update finding_drafts set status = 'accepted', severity = %s, evidence_level = %s,
                        matrix_effective = %s, caps_applied = %s,
-                       severity_rule = %s, severity_set_by = %s, severity_reason = %s
+                       severity_rule = %s, severity_set_by = %s, severity_reason = %s,
+                       calibration_severity = %s, calibration_rule = %s
                    where job_id = %s and draft_key = %s""",
                 (severity_after,
                  new_evidence,
                  psycopg.types.json.Jsonb(matrix_effective),
                  caps_named,
                  severity_rule, sev_result.set_by, sev_result.reason[:200],
+                 sev_result.calibration, sev_result.calibration_rule[:200],
                  job_id, draft_key),
             )
+            calibration = {"severity": sev_result.calibration, "rule": sev_result.calibration_rule[:200],
+                           "differs": sev_result.calibration != severity_after}
             severity_set_by, severity_reason, matrix_cell = sev_result.set_by, sev_result.reason[:200], sev_result.base
 
         # Store challenge_answers
@@ -1877,6 +1885,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         "severity_set_by": severity_set_by,
         "severity_reason": severity_reason,
         "matrix_cell": matrix_cell,
+        **({"calibration": calibration} if calibration is not None else {}),
     }
 
 

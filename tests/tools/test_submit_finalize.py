@@ -646,8 +646,8 @@ async def test_finalize_blocked_by_f3_needs_challenge(db_pool):
         status, severity = await cur.fetchone()
         await cur.execute("select coverage_gaps from jobs where job_id = %s", (job_id,))
         stored = (await cur.fetchone())[0]
-    # K4 no longer caps an unchallenged draft: the submit severity stands (K8 caps a Critical at High)
-    want = "High" if submit_result["computed_severity"] == "Critical" else submit_result["computed_severity"]
+    # Thin server: the submit severity stands; K8 on an unchallenged Critical is a calibration note
+    want = submit_result["computed_severity"]
     assert status == "accepted" and severity == want, (status, severity)
     assert any(g["check"] == "F3" for g in stored)
 

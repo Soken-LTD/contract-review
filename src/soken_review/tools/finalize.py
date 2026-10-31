@@ -372,7 +372,8 @@ async def _assign_final_ids(
     Order: per severity (Critical->Informational), open finding_drafts by finding_no,
     then carried leads at that sev_rank (fixed, then not_reviewed), by lead_id.
     """
-    # Recompute effective severity at finalize phase via the full K-cap chain.
+    # Recompute the calibration at finalize phase via the full K-cap chain (thin server, 2026-10-31:
+    # the caps are calibration notes; the printed severity is the reviewer's claim or the submit outcome).
     # K4 (reasoning_only → Low), K8 (Critical without E3+attack_steps+no open downgrade → High),
     # K10 (map_unavailable → High), K11 (generic + no analyzer lead → High).
     # W0 defaults: downgrade_items_present=0, open_downgrade_item=False, scope_not_covered=False.
@@ -530,10 +531,12 @@ async def _assign_final_ids(
             finalize_caps = sev_result.caps_applied
             finalize_rule, finalize_set_by, finalize_reason = (
                 sev_result.severity_rule, sev_result.set_by, sev_result.reason[:200])
+            calib_sev, calib_rule = sev_result.calibration, sev_result.calibration_rule[:200]
         else:
             finalize_sev = stored_sev
             finalize_caps = []
             finalize_rule, finalize_set_by, finalize_reason = None, None, None
+            calib_sev, calib_rule = None, None
 
         effective_severities[d["draft_key"]] = finalize_sev
         # Update the draft with the recomputed severity, the rules that set it, who set it and why:
@@ -543,10 +546,12 @@ async def _assign_final_ids(
             """update finding_drafts set severity = %s, caps_applied = %s,
                    severity_rule = coalesce(%s, severity_rule),
                    severity_set_by = coalesce(%s, severity_set_by),
-                   severity_reason = coalesce(%s, severity_reason)
+                   severity_reason = coalesce(%s, severity_reason),
+                   calibration_severity = coalesce(%s, calibration_severity),
+                   calibration_rule = coalesce(%s, calibration_rule)
                where job_id = %s and draft_key = %s""",
             (finalize_sev, finalize_caps, finalize_rule, finalize_set_by, finalize_reason,
-             job_id, d["draft_key"]),
+             calib_sev, calib_rule, job_id, d["draft_key"]),
         )
 
     # Group drafts by effective severity

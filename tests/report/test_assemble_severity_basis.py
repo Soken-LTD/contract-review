@@ -114,3 +114,27 @@ async def test_rows_without_final_fields_fall_back_to_the_submit_rule(db_pool, t
     assert row[5] == "I2xL3=Medium caps=[K6]"
     assert row[6] == "reviewer"                        # claimed_severity Low equals the printed Low
     assert row[7].startswith("K6: ")
+
+
+@ASYNC
+async def test_calibration_prints_beside_the_finding_when_it_differs(db_pool, tmp_path, monkeypatch):
+    """Thin server (2026-10-31): the reviewer's Low prints; the matrix Medium prints beside it as
+    "Calibration: Medium (<rule>)" and never changes the counts."""
+    jid = await _job(db_pool, tmp_path, with_final_fields=True)
+    async with db_pool.connection() as conn:
+        await conn.execute("update finding_drafts set calibration_severity = 'Medium', calibration_rule = %s "
+                           "where job_id = %s", ("matrix cell I2xL3=Medium", jid))
+    report, html = await _render(db_pool, tmp_path, monkeypatch, jid)
+    f = report["findings"][0]
+    assert f["severity"] == "Low" and f["calibration"] == {"severity": "Medium", "rule": "matrix cell I2xL3=Medium"}
+    assert "Calibration: Medium (matrix cell I2xL3=Medium)" in html
+
+
+@ASYNC
+async def test_no_calibration_line_when_it_agrees(db_pool, tmp_path, monkeypatch):
+    jid = await _job(db_pool, tmp_path, with_final_fields=True)
+    async with db_pool.connection() as conn:
+        await conn.execute("update finding_drafts set calibration_severity = 'Low', calibration_rule = 'x' "
+                           "where job_id = %s", (jid,))
+    report, html = await _render(db_pool, tmp_path, monkeypatch, jid)
+    assert "calibration" not in report["findings"][0] and "Calibration:" not in html

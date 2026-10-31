@@ -63,16 +63,16 @@ async def test_submit_rejects_a_half_placeholder_with_the_double_brace_example(d
 
 
 @ASYNC
-async def test_submit_rejects_the_apad_owner_is_deployer_sentence_with_the_recorded_facts(db_pool):
+async def test_submit_warns_on_the_apad_owner_is_deployer_sentence_with_the_recorded_facts(db_pool):
+    """Thin server (2026-10-31): the reads can be wrong, so the claim is a warning naming the facts."""
     from soken_review.tools import submit as submit_mod
 
     job_id = await _job_with_apad_facts(db_pool)
     res = await submit_mod.handle_review_submit_finding(_submission(job_id, APAD_I002))
-    assert res["accepted"] is False
-    errs = [e for e in res["errors"] if e["code"] == "E_CLAIM_UNSUPPORTED"]
+    assert res["accepted"] is True, res
+    errs = [e for e in res["warnings"] if e["code"] == "E_CLAIM_UNSUPPORTED"]
     assert len(errs) == 1 and errs[0]["field"] == "description"
-    assert OWNER in errs[0]["what"] and "no deployer fact" in errs[0]["what"]
-    assert "{{fact:onchain.owner}}" in errs[0]["fix"]
+    assert OWNER in errs[0]["what"] and errs[0]["class"] == "advisory"
     # the same facts without the claim: the submission goes through
     ok = await submit_mod.handle_review_submit_finding(
         _submission(job_id, "The current owner is {{fact:onchain.owner}}, an externally owned account."))

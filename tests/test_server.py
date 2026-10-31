@@ -75,16 +75,15 @@ def test_violation_hint_names_unexpected_field():
     assert "items" in example  # allowed fields listed
 
 
-async def test_get_guide_missing_topic_names_the_field():
-    # End to end through the client: the exact call the web session made (no topic) now returns an
-    # actionable envelope naming 'topic', instead of an opaque "(root) breaks rule required".
+async def test_get_guide_without_topic_returns_the_default_guide():
+    # Thin server (2026-10-31): the exact call the web session made (no topic) returns topic start, the
+    # short default path, instead of an error.
     async with Client(SokenServer()) as client:
-        result = await client.call_tool("review_get_guide", {"job_id": "job_" + "A" * 26})  # valid id: only topic is missing
-    assert result.is_error
-    body = json.loads(result.content[0].text)
-    assert body["errors"][0]["code"] == "E_INVALID_ARGUMENT"
-    assert body["errors"][0]["field"] == "topic"
-    assert "topic" in body["errors"][0]["fix"]
+        result = await client.call_tool("review_get_guide", {"job_id": "job_" + "A" * 26})
+    assert not result.is_error
+    text = result.content[0].text
+    assert text.splitlines()[0].startswith("guide_version v0 topic start")
+    assert "review_submit_finding" in text and "claimed_severity" in text
 
 
 def test_json_string_is_parsed_for_object_and_array_properties():

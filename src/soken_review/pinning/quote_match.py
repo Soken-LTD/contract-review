@@ -107,8 +107,12 @@ def quote_match(
     end: int,
     text: str,
     context: Any | None = None,
+    check_trivial: bool = True,
 ) -> None:
     """Verify that `text` matches pinned lines [start, end] per 04 5.2.
+
+    `check_trivial=False` skips the E_QUOTE_TRIVIAL test and still verifies the match: the finding
+    submit treats a trivial quote that matches the pinned lines as a warning (gate_policy.yaml).
 
     `context` is the job's ContextStore (context ingestion spec 4): a `context/` path is matched
     against the stored document through the same routine, so provenance headers and document
@@ -160,7 +164,7 @@ def quote_match(
     segments = [s for s in segments if s]
 
     Q_flat = [l for seg in segments for l in seg]
-    if _is_trivial(Q_flat):
+    if check_trivial and _is_trivial(Q_flat):
         raise QuoteMatchError("E_QUOTE_TRIVIAL", path=path, range=f"{start}-{end}",
                               suggest=_suggest_line(source, path, start, end, entry.lines) or "a line inside the function")
 

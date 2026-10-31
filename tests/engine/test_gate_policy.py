@@ -93,7 +93,7 @@ def test_unlisted_rule_fails_closed_even_under_an_advisory_code():
     ("E_CODESPAN_NOT_IN_SOURCE", "T31", "advisory"),
     ("E_TEXT_CONTROL_CHAR", "step0", "blocking"),
     ("E_INJECTION_ECHO", "V4", "blocking"),
-    ("E_CLAIM_UNSUPPORTED", "C1", "blocking"),
+    ("E_CLAIM_UNSUPPORTED", "C1", "advisory"),
     ("E_CHALLENGE_SCOPE", None, "advisory"),
     ("E_SEVERITY_CONFIRM", None, "advisory"),
 ])

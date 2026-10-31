@@ -1320,6 +1320,17 @@
         },
         "documented_intent": {
           "$ref": "#/$defs/code_ref"
+        },
+        "calibration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["severity", "rule"],
+          "x-text-class": "server",
+          "description": "The matrix outcome when it differs from the printed severity, which is the reviewer's (thin server, 2026-10-31). Printed beside the finding as Calibration: <severity> (<rule>); it never changes the severity or the counts.",
+          "properties": {
+            "severity": {"$ref": "#/$defs/severity"},
+            "rule": {"type": "string", "maxLength": 200, "x-text-class": "server"}
+          }
         }
       },
       "allOf": [
