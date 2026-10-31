@@ -564,10 +564,39 @@ async def fetch_library_body(
     return None
 
 
+MAX_LIBRARY_SOURCES = 4
+
+
+def library_candidate_to_json(c: Candidate) -> dict[str, Any]:
+    """The JSON form of a library's verified-source candidate kept in the referencing candidate's
+    settings (`library_sources`); `library_candidate_from_json` reads it back."""
+    return {
+        "provider": c.provider, "files": dict(c.files), "sha256": c.sha256, "language": c.language,
+        "compiler_version": c.compiler.version if c.compiler else None,
+        "compiler_pinned_by": c.compiler.version_pinned_by if c.compiler else None,
+        "entry_contract": c.entry_contract, "source_url": c.source_url, "settings": dict(c.settings or {}),
+        "fetched_at": c.fetched_at,
+    }
+
+
+def library_candidate_from_json(d: dict[str, Any]) -> Candidate:
+    files = {str(k): str(v) for k, v in (d.get("files") or {}).items()}
+    return Candidate(
+        provider=str(d.get("provider") or "ton_verifier"), files=files, sha256=str(d.get("sha256") or ""),
+        language=str(d.get("language") or "func"),
+        compiler=Compiler(version=str(d["compiler_version"]), version_pinned_by=str(d.get("compiler_pinned_by") or "ton_verifier"))
+        if d.get("compiler_version") else None,
+        settings=dict(d.get("settings") or {}), std_json_input=None, entry_contract=d.get("entry_contract"),
+        source_url=d.get("source_url"), fetched_at=d.get("fetched_at"),
+    )
+
+
 async def resolve_library_refs(
     client: httpx.AsyncClient,
     candidate: Candidate,
     api_key: str | None = None,
+    *,
+    sources: dict[str, Candidate | None] | None = None,
 ) -> list[dict[str, Any]]:
     """Resolve the masterchain libraries a candidate's source references by hash.
 
@@ -580,6 +609,13 @@ async def resolve_library_refs(
 
     Writes `candidate.settings["library_refs"]` and returns it: one row per hash with `status`
     ok | not_found | unavailable and `verified_source` (a verifier URL) or None.
+
+    A library with a registry source item also gets that verified source (blind round 5b,
+    2026-10-31: the multisig v2 order contract, `order.func`, is a library whose source is verified
+    on its own and was outside the review). It goes to `candidate.settings["library_sources"]`
+    ({hash: candidate JSON}); the build step rebuilds it, compares the hash with the library body and
+    pins it under `_related/` with its own match tier. `sources` caches the fetch per hash across
+    the candidates of one job.
     """
     rows: list[dict[str, Any]] = []
     for lib_hash in trust_scan.library_refs(candidate.files):
@@ -603,7 +639,27 @@ async def resolve_library_refs(
                     row["verified_source"] = f"https://verifier.ton.org/{lib_hash}"
                     break
         rows.append(row)
+    lib_sources: dict[str, Any] = {}
+    for row in rows:
+        if not row.get("verified_source") or len(lib_sources) >= MAX_LIBRARY_SOURCES:
+            continue
+        lib_hash = row["hash"]
+        if sources is not None and lib_hash in sources:
+            lib_cand = sources[lib_hash]
+        else:
+            try:
+                lib_cand = await fetch_source_from_registry(client, lib_hash)
+            except (RuntimeError, httpx.HTTPError, ValueError) as exc:
+                logger.warning("ton library %s source unavailable: %s", lib_hash[:12], exc)
+                lib_cand = None
+            if sources is not None:
+                sources[lib_hash] = lib_cand
+        row["source_fetched"] = lib_cand is not None
+        if lib_cand is not None:
+            lib_sources[lib_hash] = library_candidate_to_json(lib_cand)
     candidate.settings = {**(candidate.settings or {}), "library_refs": rows}
+    if lib_sources:
+        candidate.settings["library_sources"] = lib_sources
     return rows
 
 
@@ -1053,6 +1109,10 @@ async def fetch_source_from_registry(
         settings: dict[str, Any] = {
             "entry": entry,
             "func_targets": _registry_func_targets(manifest, raw_files) if language == "func" else [],
+            # files the manifest marks as the standard library (units.stdlib_paths still checks them)
+            "stdlib_files": sorted(str(src.get("filename")) for src in (manifest.get("sources") or [])
+                                   if isinstance(src, dict) and src.get("isStdLib") is True
+                                   and str(src.get("filename")) in raw_files)[:8],
             "verifier": {
                 "verifier_id": verifier_id,
                 "code_hash": code_hash,
@@ -1572,6 +1632,7 @@ async def fetch_ton_sources(
                     read_status["ton_verifier"] = "ok" if vc is not None else "not_found"
             if vc is not None:
                 candidates.append(vc)
+        lib_cache: dict[str, Candidate | None] = {}
         for cand in candidates:
-            await resolve_library_refs(client, cand, api_key)
+            await resolve_library_refs(client, cand, api_key, sources=lib_cache)
     return candidates

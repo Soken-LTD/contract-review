@@ -1,0 +1,28 @@
+{
+ "settings": {
+  "entry": null,
+  "func_targets": [
+   "contracts/order.func"
+  ],
+  "verifier": {
+   "verifier_id": "orbs.com",
+   "code_hash": "6305a8061c856c2ccf05dcb0df5815c71475870567cab5f049e340bcf59251f3",
+   "hash_attested": true,
+   "ipfs_manifest_url": "ipfs://QmSvLEQuJ5DEALr5SvL8HxYpSzKznZ99vERRVg5mcoGksw",
+   "compiler": {
+    "name": "func",
+    "version": "0.4.4",
+    "params": null
+   },
+   "compiler_settings": {
+    "funcVersion": "0.4.4",
+    "commandLine": "func -o output.fif -SPA contracts/order.func"
+   },
+   "verification_date": 1712739600000,
+   "source_item_address": "EQDDggPu01W6_ZeMLeklqSt4X9mHuv4kIFvYSHfHKs9PtwG4"
+  }
+ },
+ "compiler": "0.4.4",
+ "entry": null,
+ "language": "func"
+}
