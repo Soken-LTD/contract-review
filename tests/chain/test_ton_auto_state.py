@@ -145,3 +145,64 @@ async def test_without_a_source_the_standard_list_finds_the_multisig():
     # the jetton, NFT and wallet methods answered with TVM exit 11 and recorded nothing
     assert not any(k.startswith(("chain.target.total_supply", "chain.target.seqno", "chain.target.owner"))
                    for k in keys)
+
+
+# ── security review PR #105: a declared getter cannot spoof a standard fact ─────────────────
+
+SPOOF_SRC = {
+    "multisig.fc": (
+        "(int, int, cell, cell) get_multisig_data() method_id { return (0, 2, null(), null()); }\n"
+        ";; contract-chosen names equal to standard fields and reserved keys\n"
+        "int threshold() method_id { return 1; }\n"
+        "int interface() method_id { return 1; }\n"
+        "int allow_arbitrary_order_seqno() method_id { return 0; }\n"
+        "int balance() method_id { return 1; }\n"
+    ),
+}
+
+
+def _spoof_rows() -> dict:
+    rows = json.loads(REC.read_text())
+    msig_key = next(k for k in rows if '"get_multisig_data"' in k)
+    answer = {"@extra": "x", "ok": True, "result": {
+        "@type": "smc.runResult", "exit_code": 0, "gas_used": 100,
+        "stack": [{"@type": "tvm.stackEntryNumber", "number": {"@type": "tvm.numberDecimal", "number": "1"}}]}}
+    for name in ("threshold", "interface", "allow_arbitrary_order_seqno", "balance"):
+        rows[msig_key.replace('"get_multisig_data"', f'"{name}"')] = answer
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_colliding_declared_getter_does_not_change_the_standard_fact():
+    declared = reads.ton_declared_getters(SPOOF_SRC)
+    assert declared[0] == "get_multisig_data" and "threshold" in declared and "interface" in declared
+    replay = Replay(_spoof_rows())
+    cj = reads.ChainJob(job_id="job_TONSPOOF", family="ton", chain_id=None, network="TON mainnet",
+                        pinned_block=None, address=ADDR)
+    async with ChainProxy(transport=replay, pace=False) as px:
+        out = reads.Out(job=cj, at=await reads.ton_resolve(px, cj, None))
+        await reads.ton_auto_state(px, out, ADDR, "target", declared)
+        await reads.ton_balances(px, out, "native", "target", [{"alias": "native", "address": ADDR}])
+    assert replay.missing == []
+    keys = [f["key"] for f in out.facts]
+    assert len(keys) == len(set(keys))                     # one fact per key
+    facts = {f["key"]: f for f in out.facts}
+    # the standard facts come from get_multisig_data and are unchanged
+    assert facts["chain.target.threshold"]["value"] == "2"
+    assert facts["chain.target.threshold"]["method"] == "runGetMethod get_multisig_data"
+    assert facts["chain.target.interface"]["value"] == "multisig_v2"
+    assert facts["chain.target.allow_arbitrary_order_seqno"]["value"] == "true"
+    assert facts["chain.target.balance.native"]["value"] == "75975802681"
+    # the contract's own getters are kept apart under chain.target.getter.*
+    for name in ("threshold", "interface", "allow_arbitrary_order_seqno", "balance"):
+        assert facts[f"chain.target.getter.{name}"]["value"] == "1"
+        assert facts[f"chain.target.getter.{name}"]["method"] == f"runGetMethod {name}"
+
+
+def test_out_fact_first_write_wins():
+    cj = reads.ChainJob(job_id="job_X", family="ton", chain_id=None, network="TON mainnet", pinned_block=None,
+                        address=ADDR)
+    out = reads.Out(job=cj, at=reads.At(block=1, head=1, block_time=None))
+    out.fact("chain.target.threshold", "2", method="a", source="a")
+    out.fact("chain.target.threshold", "1", method="b", source="b")
+    assert [(f["key"], f["value"]) for f in out.facts] == [("chain.target.threshold", "2")]

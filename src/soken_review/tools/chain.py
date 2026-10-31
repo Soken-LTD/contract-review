@@ -452,6 +452,8 @@ def chain_state(job: dict[str, Any]) -> dict[str, Any] | None:
         has_text = False
         for f in rows[:STATE_MAX_VALUES]:
             name = str(f["key"])[len(f"chain.{AUTO_ALIAS}."):]
+            if name in values:
+                continue                   # first write wins, never a silent overwrite
             raw = f.get("value")
             if f.get("class") == CHAIN_TEXT:
                 # chain-derived text (a token name, a revert string) keeps its untrusted marker; it was

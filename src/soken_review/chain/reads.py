@@ -77,6 +77,11 @@ class Out:
 
     def fact(self, key: str, value: Any, *, method: str, source: str, unit: str | None = None,
              text: bool = False) -> str:
+        """Record one fact. First write wins: a later fact with the same key in this call is dropped,
+        never a silent overwrite (security review PR #105: a contract-declared getter must not
+        replace a standard-interface fact)."""
+        if any(f["key"] == key for f in self.facts):
+            return key
         via = f" via {self.host}" if self.host else ""
         word = {"solana": "slot", "ton": "masterchain block"}.get(self.job.family, "block")
         self.facts.append(chain_fact(key, value, unit=unit, source=f"{source} at {word} {self.at.block:,}{via}",
@@ -976,6 +981,9 @@ TON_INTERFACES: tuple[tuple[str, str, tuple[str | None, ...]], ...] = (
 # (method, stack index) -> key width of a `uint<n> -> MsgAddressInt` dictionary at that index
 TON_ADDRESS_DICTS = {("get_multisig_data", 2): 8, ("get_multisig_data", 3): 8}
 TON_AUTO_MAX_METHODS = 8
+# A getter the source declares outside TON_INTERFACES is a contract-chosen name: its facts live under
+# chain.<alias>.getter.<name>, apart from the standard fields, so it cannot pose as one of them.
+TON_GETTER_NS = "getter"
 TON_AUTO_MAX_DICT = 10
 _TON_KNOWN = {m: (iface, names) for m, iface, names in TON_INTERFACES}
 _FUNC_GETTER = re.compile(r"([A-Za-z_][\w?!']{0,63})\s*\(\s*\)\s*(?:impure\s+)?(?:inline(?:_ref)?\s+)?method_id\b")
@@ -1032,7 +1040,9 @@ async def ton_auto_state(px: ChainProxy, out: Out, address: str, alias: str,
         known = _TON_KNOWN.get(m)
         result["methods"].append(m)
         if known is None:
-            _ton_values(out, f"{pre}.{field_key(m)}", entries, method, method)
+            # never a standard field or reserved key (interface, balance...): own sub-namespace, and
+            # Out.fact keeps the first write of any key
+            _ton_values(out, f"{pre}.{TON_GETTER_NS}.{field_key(m)}", entries, method, method)
             continue
         iface, names = known
         if len(entries) < len(names):
