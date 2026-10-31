@@ -12,8 +12,8 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "comma-separated targets (evm,evm-proxy,evm-repo,solana,solana-repo,ton,ton-repo,tron)"
-        default: "evm,evm-proxy,evm-repo,solana,solana-repo,ton,ton-repo,tron"
+        description: "comma-separated targets (evm,evm-proxy,evm-repo,solana,solana-repo,ton,ton-multisig,ton-repo,tron)"
+        default: "evm,evm-proxy,evm-repo,solana,solana-repo,ton,ton-multisig,ton-repo,tron"
   push:
     branches: [main, ci/client-path-e2e]
     paths:
