@@ -29,6 +29,8 @@ from typing import Any
 
 import httpx
 
+from soken_review.server import output_violations
+
 _HEADERS = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
             "MCP-Protocol-Version": "2025-11-25"}
 _TERMINAL = frozenset({"ready", "insufficient_source", "failed", "expired", "deleted"})
@@ -106,6 +108,11 @@ class McpClient:
             except ValueError:
                 env = {"code": "E_UNKNOWN", "what": text[:300]}
             raise ToolError(tool, env)
+        # Claude Code drops a structured result that breaks the tool's outputSchema (2026-10-31: every
+        # review_report lost its PDF link), so the client path must fail on it too.
+        bad = output_violations(tool, result.get("structuredContent"))
+        if bad:
+            raise ClientPathError(f"{tool}: structured result breaks its outputSchema: {'; '.join(bad[:10])}")
         if text.startswith("{"):
             return json.loads(text)
         return {"text": text}
