@@ -153,38 +153,77 @@ def test_related_rejections_name_the_field(src, scope, field):
 # ---------------------------------------------------------------------------- fetch_related
 
 
-def _cand(files: dict[str, str], provider: str = "sourcify", entry: str = "contracts/PriceFeed.sol:PriceFeed"):
+def _cand(files: dict[str, str], provider: str = "sourcify", entry: str = "contracts/PriceFeed.sol:PriceFeed",
+          *, chain_id: int = 56, address: str = PF, match: str | None = "exact_match"):
     return Candidate(provider=provider, files=files, sha256="a" * 64, language="solidity",
                      compiler=Compiler("0.8.28", "sourcify"), settings={}, std_json_input=None,
-                     entry_contract=entry, explorer_verified=False, sourcify_match="exact_match")
+                     entry_contract=entry, explorer_verified=False, sourcify_match=match,
+                     source_url=f"https://sourcify.dev/server/v2/contract/{chain_id}/{address.lower()}")
 
 
 @pytest.mark.asyncio
-async def test_fetch_related_pins_verified_sources_and_fails_soft():
+async def test_fetch_related_pins_only_sourcify_matches_on_this_chain():
     missing = "0x" + "12" * 20
-    unverified = "0x" + "34" * 20
-    broken = "0x" + "56" * 20
-    rpc = FakeRpc({PF: "0x6080", unverified: "0x6080", broken: "0x6080"})
+    plain, other_chain, bytecode_db, partial, broken = ("0x" + h * 20 for h in ("34", "56", "78", "9a", "bc"))
+    rpc = FakeRpc({a: "0x6080" for a in (PF, plain, other_chain, bytecode_db, partial, broken)})
 
     async def fake_fetch(chain_id, address, runtime_bytecode):
+        files = {"x.sol": "contract X {}\n"}
         if address == broken:
             raise RuntimeError("sourcify 502")
-        if address == unverified:
-            return [_cand({"x.sol": "x"}, provider="user")]
+        if address == plain:
+            return [_cand(files, provider="user", address=address)]
+        if address == other_chain:   # the same address verified on another chain only (fetch: _unverified)
+            return [_cand(files, chain_id=1, address=address)]
+        if address == bytecode_db:
+            return [_cand(files, provider="eth_bytecode_db", address=address, match=None)]
+        if address == partial:
+            return [_cand(files, address=address, match=None)]
         return [_cand({"contracts/PriceFeed.sol": "contract PriceFeed {}\n"})]
 
     entries = [{"name": "PriceFeed", "address": PF}, {"name": "Gone", "address": missing},
-               {"name": "Plain", "address": unverified}, {"name": "Broken", "address": broken}]
+               {"name": "Plain", "address": plain}, {"name": "Other", "address": other_chain},
+               {"name": "Bdb", "address": bytecode_db}, {"name": "Partial", "address": partial}]
     with patch.object(rel, "fetch_source", new=fake_fetch):
         files, langs, records = await rel.fetch_related(56, entries, rpc)
+        records += (await rel.fetch_related(56, [{"name": "Broken", "address": broken}], rpc))[2]
     assert files == {"_related/PriceFeed/contracts/PriceFeed.sol": "contract PriceFeed {}\n"}
     assert langs == {"_related/PriceFeed/contracts/PriceFeed.sol": "solidity"}
     by = {r["name"]: r for r in records}
     assert by["PriceFeed"]["status"] == "pinned" and by["PriceFeed"]["path"] == "_related/PriceFeed"
     assert by["Gone"]["status"] == "no_code" and "No contract code" in by["Gone"]["note"]
-    assert by["Plain"]["status"] == "no_verified_source" and "verified source" in by["Plain"]["note"]
+    for name in ("Plain", "Other", "Bdb", "Partial"):
+        assert by[name]["status"] == "unverified_source", name
+        assert "Sourcify match on this chain" in by[name]["note"] and "path" not in by[name]
     assert by["Broken"]["status"] == "fetch_failed"
-    assert all("—" not in r.get("note", "") for r in records)   # no em dashes in client text
+    assert all("\u2014" not in r.get("note", "") for r in records)   # no em dashes in client text
+
+
+# ---------------------------------------------------------------------------- proxy verification
+
+
+def test_verify_proxy_exact_clone_or_sourcify_match_only():
+    clone = "0x363d3d373d3d3d363d73" + IMPL[2:] + "5af43d82803e903d91602b57fd5bf3"
+    assert proxy_mod.verify_proxy({"pattern": 1, "proxy_bytecode": clone, "proxy": PROXY}, None)["by"] == "eip1167_runtime"
+    # a clone prefix and suffix around extra code is not the clone
+    padded = clone[:-30] + "ff" * 4 + clone[-30:]
+    assert proxy_mod.verify_proxy({"pattern": 1, "proxy_bytecode": padded, "proxy": PROXY}, None)["verified"] is False
+    rec = {"pattern": 2, "proxy_bytecode": PROXY_CODE, "proxy": PROXY}
+    assert proxy_mod.verify_proxy(rec, {"status": "pinned"}) == {"verified": True, "by": "sourcify_match"}
+    out = proxy_mod.verify_proxy(rec, {"status": "unverified_source"})
+    assert out["verified"] is False and PROXY in out["note"] and "not tier A" in out["note"]
+    assert proxy_mod.verify_proxy(rec, None)["verified"] is False
+
+
+def test_unverified_proxy_caps_the_unit_at_tier_b():
+    from soken_review.engine.provenance import DepResult, resolve_provenance
+    dep = DepResult("exact")
+    assert resolve_provenance(candidate=_cand({"a.sol": "x"}), address=PROXY, dep=dep,
+                              proxy={"runtime_matches_standard_proxy": False})["tier"] == "B"
+    assert resolve_provenance(candidate=_cand({"a.sol": "x"}), address=PROXY, dep=dep,
+                              proxy={"runtime_matches_standard_proxy": False})["label_reason"] == "proxy_unmatched"
+    assert resolve_provenance(candidate=_cand({"a.sol": "x"}), address=PROXY, dep=dep,
+                              proxy={"runtime_matches_standard_proxy": True})["tier"] == "A"
 
 
 # ---------------------------------------------------------------------------- facts and status
@@ -212,8 +251,10 @@ def test_status_carries_proxy_and_related_lines():
             {"name": "PriceFeed", "address": PF, "status": "pinned", "provider": "sourcify", "path": "_related/PriceFeed",
              "files": 1, "entry_contract": "x"}]}},
     ]
+    steps[2]["provenance"]["proxy_check"] = {"verified": False, "by": None, "note": "The proxy code at x is not verified"}
     proxy, related = _proxy_related_status(steps)
-    assert proxy == {"proxy": PROXY, "implementation": IMPL}
+    assert proxy == {"proxy": PROXY, "implementation": IMPL, "verified": False,
+                     "note": "The proxy code at x is not verified"}
     assert related == [{"name": "PriceFeed", "address": PF, "status": "pinned", "provider": "sourcify",
                         "path": "_related/PriceFeed", "files": 1}]
     assert _proxy_related_status([]) == (None, [])
@@ -283,7 +324,8 @@ async def test_fetch_reviews_the_implementation_and_pins_related(tmp_path: Path)
         "chain_id": 1, "address": PROXY, "bytecode": IMPL_CODE, "block": 100, "self_address": IMPL,
         "proxy": {"pattern_name": "eip1967_transparent", "proxy": PROXY, "implementation": IMPL,
                   "proxy_bytecode": PROXY_CODE}}))
-    impl_cand = _cand({"contracts/FiatToken.sol": "contract FiatToken {}\n"}, entry="contracts/FiatToken.sol:FiatToken")
+    impl_cand = _cand({"contracts/FiatToken.sol": "contract FiatToken {}\n"}, entry="contracts/FiatToken.sol:FiatToken",
+                      chain_id=1, address=IMPL)
     seen: list[str] = []
 
     async def fake_main(chain_id, address, runtime_bytecode, **_k):
@@ -292,7 +334,8 @@ async def test_fetch_reviews_the_implementation_and_pins_related(tmp_path: Path)
 
     async def fake_related(chain_id, address, runtime_bytecode):
         name = "AdminUpgradeabilityProxy" if address == PROXY else "PriceFeed"
-        return [_cand({f"contracts/{name}.sol": f"contract {name} {{}}\n"}, entry=f"contracts/{name}.sol:{name}")]
+        return [_cand({f"contracts/{name}.sol": f"contract {name} {{}}\n"}, entry=f"contracts/{name}.sol:{name}",
+                      chain_id=1, address=address)]
 
     job = {"job_id": jid, "chain": "evm", "chain_id": 1, "address": PROXY, "source_kind": "deployed",
            "source_args": {"kind": "deployed", "chain": "evm", "address": PROXY,
@@ -317,6 +360,10 @@ async def test_fetch_reviews_the_implementation_and_pins_related(tmp_path: Path)
     assert [(r["name"], r["status"], r.get("role")) for r in records] == [
         ("proxy", "pinned", "proxy"), ("PriceFeed", "pinned", None)]
     assert mark.await_args.kwargs["provenance"]["related"] == records
+    # the proxy's own source is a Sourcify match on this chain: the proxy runtime is verified
+    assert mark.await_args.kwargs["provenance"]["proxy_check"] == {"verified": True, "by": "sourcify_match"}
+    cs = json.loads((out_dir / "chain_state.json").read_text())
+    assert cs["proxy"]["verified"] is True and cs["proxy"]["verified_by"] == "sourcify_match"
 
     from soken_review.worker.supervisor import _reviewed_files
     assert set(_reviewed_files(pin_root, jid)) == {"contracts/FiatToken.sol"}   # the build sees the main code only
@@ -328,3 +375,50 @@ async def test_transparent_proxy_with_upgrade_selectors_and_admin_is_transparent
     rpc = FakeRpc({PROXY: code, IMPL: IMPL_CODE},
                   {proxy_mod.EIP1967_IMPL_SLOT: _word(IMPL), proxy_mod.EIP1967_ADMIN_SLOT: _word(ADMIN)})
     assert (await proxy_mod.resolve_proxy(rpc, PROXY, code))["pattern_name"] == "eip1967_transparent"
+
+
+@pytest.mark.asyncio
+async def test_fetch_with_an_unverified_proxy_records_it(tmp_path: Path) -> None:
+    store = FakeStore()
+    jid = "job_PROXYFE2"
+    store.add_job(jid, chain_id=1, address=PROXY)
+    step = store.add_step(jid, "fetch", container=False, units=0, ram_mb=0, max_attempts=3)
+    sup = _make_supervisor(store, tmp_path / "pins")
+    out_dir = tmp_path / "work" / jid
+    out_dir.mkdir(parents=True)
+    (out_dir / "chain_state.json").write_text(json.dumps({
+        "chain_id": 1, "address": PROXY, "bytecode": IMPL_CODE, "block": 100, "self_address": IMPL,
+        "proxy": {"pattern": 2, "pattern_name": "eip1967_transparent", "proxy": PROXY, "implementation": IMPL,
+                  "admin": ADMIN, "proxy_bytecode": PROXY_CODE}}))
+
+    async def fake_main(chain_id, address, runtime_bytecode, **_k):
+        return [_cand({"contracts/Impl.sol": "contract Impl {}\n"}, entry="contracts/Impl.sol:Impl", chain_id=1, address=IMPL)]
+
+    async def no_proxy_source(chain_id, address, runtime_bytecode):
+        return []   # a "proxy" with custom code and no verified source
+
+    job = {"job_id": jid, "chain": "evm", "chain_id": 1, "address": PROXY, "source_kind": "deployed",
+           "source_args": {"kind": "deployed", "chain": "evm", "address": PROXY}, "state": "fetching"}
+    with patch("soken_review.worker.supervisor.JobRepo", return_value=AsyncMock()), \
+         patch("soken_review.adapters.evm.fetch.fetch_source", new=fake_main), \
+         patch.object(rel, "fetch_source", new=no_proxy_source), \
+         patch("soken_review.worker.supervisor.RpcClientPool", return_value=FakeRpc({PROXY: PROXY_CODE})), \
+         patch("soken_review.worker.supervisor._rpc_urls", return_value=["https://rpc.test"]), \
+         patch.object(sup, "_get_job", new=AsyncMock(return_value=job)), \
+         patch.object(sup, "_mark_step", new=AsyncMock()) as mark, \
+         patch.object(sup, "_after_fetch", new=AsyncMock()):
+        sup._pool.connection = MagicMock(return_value=_conn_mock())
+        await sup._run_fetch(step.as_dict())
+    check = mark.await_args.kwargs["provenance"]["proxy_check"]
+    assert check["verified"] is False and "not tier A" in check["note"]
+    assert json.loads((out_dir / "chain_state.json").read_text())["proxy"]["verified"] is False
+
+    # the build's provenance decision: the implementation matches, the unit is still tier B
+    from soken_review.engine.provenance import DepResult
+    with patch("soken_review.worker.supervisor.evm_deployment_check", return_value=DepResult("exact")), \
+         patch("soken_review.worker.supervisor.JobRepo", return_value=AsyncMock()):
+        sup._pool.connection = MagicMock(return_value=_conn_mock())
+        build = MagicMock()
+        build.candidate = _cand({"contracts/Impl.sol": "x"}, chain_id=1, address=IMPL)
+        prov = await sup._resolve_provenance(jid, out_dir, build)
+    assert prov["tier"] == "B" and prov["label_reason"] == "proxy_unmatched"

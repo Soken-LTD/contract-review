@@ -28,7 +28,16 @@ _MAX_FILES_PER_RELATED = 200
 _ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 _INCLUDE_RE = re.compile(r"^related:(?:(?P<name>[^=\s]{1,40})=)?(?P<addr>\S+)$")
-_VERIFIED_PROVIDERS = ("sourcify", "eth_bytecode_db", "ipfs")
+_MATCHES = ("exact_match", "match")
+
+
+def _verified_here(cand: Any, chain_id: int, address: str) -> bool:
+    """A Sourcify exact or full match for this address on this chain (security review
+    2026-10-31). Sourcify rebuilt it and matched the deployed runtime there. Not accepted: another
+    chain's record (fetch marks it unverified, the code there can differ), a bytecode-database
+    similarity hit, or IPFS metadata, none of which is checked against this deployment here."""
+    return (cand.provider == "sourcify" and cand.sourcify_match in _MATCHES
+            and str(cand.source_url or "").lower().endswith(f"/v2/contract/{chain_id}/{address.lower()}"))
 
 
 class RelatedError(ValueError):
@@ -97,7 +106,7 @@ async def fetch_related(chain_id: int, entries: list[dict[str, str]], rpc: Any
     """Fetch and prefix the verified source of each related contract.
 
     Returns `(files, langs, records)`: pin paths under `_related/<name>/`, their language, and one
-    provenance record per entry (`status` pinned | no_code | no_verified_source | fetch_failed with
+    provenance record per entry (`status` pinned | no_code | unverified_source | fetch_failed with
     a plain-English `note`). One entry that fails never fails the others or the job."""
     files: dict[str, str] = {}
     langs: dict[str, str] = {}
@@ -120,11 +129,11 @@ async def fetch_related(chain_id: int, entries: list[dict[str, str]], rpc: Any
                                                      "it is not part of this review. Try again later.")
             records.append(rec)
             continue
-        cand = next((c for c in cands if c.provider in _VERIFIED_PROVIDERS and c.files), None)
+        cand = next((c for c in cands if _verified_here(c, chain_id, e["address"]) and c.files), None)
         if cand is None:
-            rec.update(status="no_verified_source",
-                       note=f"{e['name']} has no verified source on Sourcify or the bytecode database, "
-                            "so it is not part of this review. Verify it there and start a new job.")
+            rec.update(status="unverified_source",
+                       note=f"{e['name']} has no exact or full Sourcify match on this chain, so its source "
+                            "is not part of this review. Verify it on Sourcify and start a new job.")
             records.append(rec)
             continue
         prefix = f"{RELATED_PREFIX}{e['name']}/"

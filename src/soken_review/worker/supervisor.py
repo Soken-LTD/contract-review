@@ -851,6 +851,14 @@ class Supervisor:
             await repo.update_job_fields(job_id, source_pin=pin.source_pin)
 
         fetch_prov: dict[str, Any] = {"provider": best.provider, "sha256": best.sha256}
+        if cs.get("proxy"):
+            # Is the proxy runtime itself known code? Only then can the implementation review be
+            # tier A for this address (security review 2026-10-31); _resolve_provenance reads it.
+            check = _proxy_mod.verify_proxy(cs["proxy"], next(
+                (r for r in rel_records if r.get("role") == "proxy"), None))
+            cs["proxy"].update(verified=check["verified"], verified_by=check["by"])
+            cs_path.write_text(json.dumps(cs), encoding="utf-8")
+            fetch_prov["proxy_check"] = check
         if rel_records:
             # one provenance line per related contract (review_status `related`, report verification)
             fetch_prov["related"] = rel_records
@@ -1548,7 +1556,13 @@ class Supervisor:
                                                            onchain_runtime=cs.get("bytecode"),
                                                            address=self_address)
                     )
-            prov = resolve_provenance(candidate=build.candidate if build else None, address=address, dep=dep)
+            # A followed proxy whose own runtime is not verified caps the unit at tier B
+            # (04 3 unit_tier, label proxy_unmatched): the implementation may match, the code
+            # that runs at the address is not known (security review 2026-10-31).
+            proxy_unit = ({"runtime_matches_standard_proxy": bool(cs["proxy"].get("verified"))}
+                          if cs.get("proxy") else None)
+            prov = resolve_provenance(candidate=build.candidate if build else None, address=address, dep=dep,
+                                      proxy=proxy_unit)
             prov["block"] = cs.get("block")
             prov_path.write_text(json.dumps(prov, indent=2), encoding="utf-8")
         async with self._pool.connection() as conn:

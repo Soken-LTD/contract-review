@@ -607,6 +607,10 @@
           "$ref": "#/$defs/address",
           "description": "The deployed address is a proxy (address); this is the implementation whose source was reviewed"
         },
+        "proxy_verified": {
+          "type": "boolean",
+          "description": "With implementation: the proxy runtime itself is known code (exact EIP-1167 clone or a Sourcify exact or full match on this chain)"
+        },
         "proxy_pattern": {
           "type": "string",
           "pattern": "^[a-z0-9_]{1,40}$",
@@ -623,7 +627,7 @@
             "properties": {
               "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$", "x-text-class": "src"},
               "address": {"$ref": "#/$defs/address"},
-              "status": {"enum": ["pinned", "no_code", "no_verified_source", "fetch_failed"], "x-text-class": "kit"}
+              "status": {"enum": ["pinned", "no_code", "unverified_source", "fetch_failed"], "x-text-class": "kit"}
             }
           }
         }

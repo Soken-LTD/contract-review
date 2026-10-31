@@ -649,6 +649,8 @@ def check_proxy_job(sess: Session, spec: TargetSpec, status: dict[str, Any]) -> 
               str(proxy.get("proxy") or "").lower() == start_addr and impl.startswith("0x") and impl.lower() != start_addr,
               json.dumps(proxy)[:300])
     spec._implementation = impl  # type: ignore[attr-defined]  # read by check_report
+    res.check("proxy runtime verified (its own Sourcify match on this chain)", proxy.get("verified") is True,
+              str(proxy.get("note") or proxy.get("verified")))
     related = status.get("related") or []
     res.check("proxy source pinned as related `proxy`",
               any(r.get("role") == "proxy" and r.get("status") == "pinned" for r in related), json.dumps(related)[:300])

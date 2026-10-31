@@ -913,6 +913,10 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
     banner = (f'<div class="banner">{esc(t["public_review_banner"])}</div>' if m["profile"] == "public_review" else "")
     tierc = (f'<div class="banner tierc">{esc(t["tier_c_warning"].format(address=prov.get("address", ""), noun=m["deployed_noun"]))}</div>'
              if prov["tier"] == "C" else "")
+    if prov.get("implementation") and prov.get("proxy_verified") is False:
+        # the address is a proxy whose own code is not verified (security review 2026-10-31)
+        tierc += (f'<div class="banner tierc" data-block="proxy_unverified">'
+                  f'{esc(t["proxy_unverified_warning"].format(address=prov.get("address", "")))}</div>')
     # A failed build is stated on the cover and in the summary in the same sentence (meta.build_failure,
     # server text), not only in the per-card "Checked without a contract map" line.
     if m.get("build_failure"):

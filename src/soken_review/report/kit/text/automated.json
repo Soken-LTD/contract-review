@@ -151,10 +151,11 @@
   "disclaimer": "Disclaimer"
  },
  "upgrade_authority_not_checked": "Not checked in this review",
+ "proxy_unverified_warning": "The proxy code at {address} is not verified, so this review cannot confirm that it runs the reviewed implementation.",
  "related_status": {
   "pinned": "reviewed in this job",
   "no_code": "no contract code, not reviewed",
-  "no_verified_source": "no verified source, not reviewed",
+  "unverified_source": "source not verified on this chain, not reviewed",
   "fetch_failed": "source not fetched, not reviewed"
  },
  "dismissed_leads_reason_header": "Reason",
