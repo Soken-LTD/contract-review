@@ -856,7 +856,14 @@ def _error_detail_text(detail: Any) -> str:
 _KIND_MODE = {"repo": "repo", "upload": "repo", "files": "files"}
 
 
-def _error_texts(code: str, detail: Any, source_kind: str | None = None) -> dict[str, str]:
+# Chain -> family for the deployed-address texts (`what_deployed_<family>`): the plain E_SOURCE_NOT_FOUND
+# fix names an EVM Standard JSON input, which means nothing on TON or Solana (matrix r5 2026-10-31).
+_CHAIN_FAMILY = {"evm": "evm", "hyperevm": "evm", "tron": "tron", "solana": "solana", "ton": "ton",
+                 "sui": "move", "aptos": "move", "starknet": "starknet"}
+
+
+def _error_texts(code: str, detail: Any, source_kind: str | None = None,
+                 chain: str | None = None) -> dict[str, str]:
     """`what` and `fix` of a status error from contract/errors.yaml (03 section 7), so a stopped
     job always tells the client what to do next. A template is used only when every placeholder
     it names is present in the stored detail; otherwise that text is left out rather than sent
@@ -864,7 +871,9 @@ def _error_texts(code: str, detail: Any, source_kind: str | None = None) -> dict
 
     Mode texts, most specific first: the detail's `mode`, then `<kind mode>_<repo_family>` (why
     the repository was not recognised), then the start kind's mode (`repo`, `files`), then the
-    plain text. `{enabled}` is the list of chains this deployment reviews."""
+    plain text. A job without a start-kind mode (a deployed address) uses `deployed_<family>_<why>`
+    then `deployed_<family>` for its chain family before the plain text. `{enabled}` is the list
+    of chains this deployment reviews."""
     import string
 
     from ..contract import load_errors
@@ -884,6 +893,11 @@ def _error_texts(code: str, detail: Any, source_kind: str | None = None) -> dict
     modes = [m for m in (fields.get("mode"),
                          f"{base}_{fields['repo_family']}" if base and fields.get("repo_family") else None,
                          base) if m]
+    family = _CHAIN_FAMILY.get(chain or "")
+    if base is None and family:
+        if fields.get("why"):
+            modes.append(f"deployed_{family}_{fields['why']}")
+        modes.append(f"deployed_{family}")
     out: dict[str, str] = {}
     for key in ("what", "fix"):
         for template in [*(row.get(f"{key}_{m}") for m in modes), row.get(key)]:
@@ -965,7 +979,8 @@ def _build_status_response(
     # a validating MCP client rejects the whole status response.
     if job.get("error_code"):
         err = {"code": job["error_code"]}
-        err.update(_error_texts(job["error_code"], job.get("error_detail"), job.get("source_kind")))
+        err.update(_error_texts(job["error_code"], job.get("error_detail"), job.get("source_kind"),
+                                job.get("chain")))
         if job.get("error_detail") is not None:
             err["detail"] = _error_detail_text(job["error_detail"])
         if job["error_code"] == "E_RENDER_FAILED" and state == "render_failed":
