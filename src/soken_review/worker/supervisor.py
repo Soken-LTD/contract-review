@@ -63,6 +63,7 @@ from ..sandbox.output import UnsafeOutput, read_output_files
 from ..sandbox.profile import HostCapacityError, configure_host_capacity
 from ..tools.git_probe import _SHA1_RE as _COMMIT_SHA1_RE
 from ..tools.git_probe import resolve_ref as _resolve_ref
+from ..tools.git_probe import unpinned_ref_detail as _unpinned_ref_detail
 from . import move_steps as _move
 from . import solana_steps as _solana_steps
 from . import ton_pipeline
@@ -938,7 +939,16 @@ class Supervisor:
                 expected_sha = await _resolve_ref(repo_url, ref)
             except ReviewError as exc:
                 ec = exc.code if hasattr(exc, "code") else "E_COMMIT_NOT_FOUND"
-                await self._mark_step(step_id, "failed", error_code=ec)
+                if ec == "E_UNPINNED_REF":
+                    # a ref that names nothing never resolves on retry: stop the job and say
+                    # which branch exists (the default branch) instead of leaving the step failed
+                    async with self._pool.connection() as conn:
+                        repo = JobRepo(conn)
+                        async with conn.transaction():
+                            await repo.complete_step(step_id, "done", error_code=ec)
+                            await _fail_job(repo, job_id, ec, _unpinned_ref_detail(exc, ref))
+                else:
+                    await self._mark_step(step_id, "failed", error_code=ec)
                 logger.info("job %s: ref resolution failed for %r: %s", job_id[-8:], ref, exc)
                 return None
         # If neither commit nor ref, expected_sha remains None (plain HEAD fetch).

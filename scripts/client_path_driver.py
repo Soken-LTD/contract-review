@@ -160,6 +160,7 @@ class TargetSpec:
     # pins the proxy source as related `proxy`, and the cover names both (matrix run 2026-10-31, Venus)
     expect_proxy: bool = False
     expect_facts: tuple[str, ...] = ()        # fact keys the job must hold (read at the start address)
+    expect_library_ref: str | None = None      # TON: a library hash the report's verification table names
 
 
 @dataclass
@@ -601,6 +602,11 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
         meta = report.get("meta") or {}
         prov = meta.get("provenance") or {}
         (out_dir / f"{spec.name}-report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+        if spec.expect_library_ref:
+            # multisig v2: the order code is a masterchain library the code names by hash
+            text = json.dumps(report.get("verification") or [], ensure_ascii=False)
+            res.check("verification names the library reference", spec.expect_library_ref in text
+                      and "Library reference" in text, f"library {spec.expect_library_ref[:12]}")
         res.check("report.json cover matches review_report", meta.get("chain") == rep.get("chain")
                   and meta.get("network") == rep.get("network") and prov.get("tier") == tier,
                   f"meta chain {meta.get('chain')} network {meta.get('network')} tier {prov.get('tier')} label {prov.get('label')!r}")
@@ -761,6 +767,8 @@ WETH9 = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 EIGEN_STETH = "0x93c4b944D05dfe6df7645A86cd2206016c51564D"
 FORTON = "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ"
 CRS = "TRegosVaS1o3DHG85nnW8xYzczPm3xL76K"
+TON_MULTISIG = "EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-"
+TON_ORDER_LIB = "6305a8061c856c2ccf05dcb0df5815c71475870567cab5f049e340bcf59251f3"
 APYEE_COMMIT = "ffc81631af65010c8afe66e1bee09f94d2d1ea79"
 LOCKER_COMMIT = "4f400beb3a7b912888fba214d8553f5368eab18c"
 LOCKER_PROGRAM = "Fvm8Z25vd1Yauj6GB4jsrW7jJyUdNYGeDCWYqcuTtDek"
@@ -821,6 +829,16 @@ TARGETS: dict[str, TargetSpec] = {
         name="ton", start={"source": {"kind": "deployed", "chain": "ton", "address": FORTON}},
         probe_url="https://toncenter.com/api/v2/getAddressInformation?address=" + FORTON,
         chain="ton", network="TON mainnet", tiers=("A",), stale_walks=True, address_in_cover=FORTON, ready_timeout_s=900),
+    "ton-multisig": TargetSpec(
+        # Matrix r5 2026-10-31: multisig v2, verified as FunC 0.4.4. Its auto/order_code.func builds a
+        # library reference cell (the order code is a masterchain library), its types.func holds a
+        # 2**256 - 1 mask, the manifest names funcVersion and a command-line file order, and only the
+        # 0.4.4-newops.1 build assembles its stdlib. Each stopped the job in insufficient_source; now
+        # the library is read from the chain by hash and the rebuild matches: tier A.
+        name="ton-multisig", start={"source": {"kind": "deployed", "chain": "ton", "address": TON_MULTISIG}},
+        probe_url="https://toncenter.com/api/v2/getAddressInformation?address=" + TON_MULTISIG,
+        chain="ton", network="TON mainnet", tiers=("A",), address_in_cover=TON_MULTISIG,
+        expect_library_ref=TON_ORDER_LIB, ready_timeout_s=900),
     "ton-repo": TargetSpec(
         # Hipo blind run 2026-10-27: a public TON FunC Blueprint repository, started by a third party
         # with repo and commit only (no chain, no deployment), ended insufficient_source on every

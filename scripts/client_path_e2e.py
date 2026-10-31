@@ -5,13 +5,14 @@ driven through the MCP tools over HTTP for fixture jobs on every released family
     uv run python scripts/client_path_e2e.py up                      # Postgres (tmpfs), egress, server, worker
     uv run python scripts/client_path_e2e.py run --targets evm,ton   # drive the targets, print the table
     uv run python scripts/client_path_e2e.py down
-    uv run python scripts/client_path_e2e.py all --targets evm,evm-proxy,evm-repo,solana,solana-repo,ton,ton-repo,tron
+    uv run python scripts/client_path_e2e.py all --targets evm,evm-proxy,evm-repo,solana,solana-repo,ton,ton-multisig,ton-repo,tron
 
 Targets (scripts/client_path_driver.py TARGETS): evm (WETH9 on mainnet: full reviewer flow with a
 Medium finding, challenge, every section, the stale-client JSON-string invariant_walks, PDF), evm-proxy
 (EigenLayer stETH strategy, EIP-1967: one job on a proxy reviews the implementation, reads state at the
 proxy, one PDF), evm-repo
-(Apyee v2.0.0, Hardhat with npm deps), solana (agent-loans programs/locker repo), ton (Forton tier A), ton-repo (HipoFinance FunC repo, family
+(Apyee v2.0.0, Hardhat with npm deps), solana (agent-loans programs/locker repo), ton (Forton tier A), ton-multisig (multisig v2: masterchain library reference,
+tier A), ton-repo (HipoFinance FunC repo, family
 detected from the tree, third party, no deployment), solana-repo (Pump Science Anchor workspace, repo only),
 tron (CRS token). Images come from images.lock.json by digest (`SOKEN_IMAGE_*` overrides for a local
 build); Postgres runs in Docker on tmpfs unless SOKEN_DATABASE_URL points at one.
@@ -43,7 +44,7 @@ from client_path_driver import TARGETS, TargetResult, run_target
 PG_IMAGE = "postgres:16"
 PG_NAME = "soken-pg-cpe"
 PG_PORT = 5439
-DEFAULT_TARGETS = "evm,evm-proxy,evm-repo,solana,solana-repo,ton,ton-repo,tron"
+DEFAULT_TARGETS = "evm,evm-proxy,evm-repo,solana,solana-repo,ton,ton-multisig,ton-repo,tron"
 # egress family per target (sandbox/egress.py): only repo fetch and deps containers have a network
 EGRESS = {"evm-repo": "evm", "solana": "solana", "ton-repo": "evm", "solana-repo": "solana"}
 
