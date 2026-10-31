@@ -70,11 +70,21 @@ class TestSeverityReplay:
                                map_unavailable=False, category_generic=False, category_max_severity=None,
                                linked_lead_same_cat=False, token_review=False, has_location_quote=True)
 
-    def test_f01_unchallenged_evidence_is_high_under_k8_only(self):
-        r = compute_severity(F01_MATRIX, "post_challenge", self._ctx())
+    def test_f01_partial_answer_is_high_under_k8_only(self):
+        # A partial answer keeps the prior evidence (reasoning_only), so K8 caps the Critical.
+        ctx = self._ctx()
+        ctx.challenge_complete = False
+        r = compute_severity(F01_MATRIX, "post_challenge", ctx)
         assert r.base == "Critical" and r.severity == "High"
-        assert r.caps_applied == ["K8"]
+        assert r.caps_applied == ["K8"] and r.evidence_level == "reasoning_only"
         assert r.severity_rule.startswith("I4xL3=Critical caps=[K8]")
+
+    def test_f01_complete_answer_promotes_evidence_and_k8_does_not_cap(self):
+        # BakerFi r5: the answer printed High under K8 while finalize printed Critical from the stored,
+        # promoted evidence. K8 reads the evidence the draft carries after this phase.
+        r = compute_severity(F01_MATRIX, "post_challenge", self._ctx())
+        assert r.evidence_level == "reasoning_challenged"
+        assert r.severity == "Critical" and "K8" not in r.caps_applied
 
     def test_f01_with_analyzer_evidence_prints_the_cell_no_cap_from_the_scope(self):
         r = compute_severity(F01_MATRIX, "post_challenge", self._ctx("analyzer_and_reasoning"))
@@ -168,11 +178,13 @@ async def test_answer_challenge_on_not_covered_scope_prints_the_reviewers_high_w
     assert res["severity_before"] == "High"
     assert res["severity_after"] == "High", res
     assert res["verdict"] == "passed"
-    # K8 (Critical needs challenged evidence) is the only rule between the cell and the reviewer's
-    # High; the scope with no ranges names nothing. Before 2026-10-27 this list carried K10.
-    assert res["caps_applied"] == ["K8"], res
+    # A complete answer promotes the evidence, so K8 no longer binds: the reviewer's High stands by
+    # RV1, the same value finalize computes. The scope with no ranges names nothing (before
+    # 2026-10-27 this list carried K10; before 2026-10-31 K8 read the pre-challenge evidence).
+    assert res["caps_applied"] == ["RV1:reviewer=High"], res
     assert res["severity_set_by"] == "reviewer"
-    assert res["severity_rule"].startswith("I4xL3=Critical caps=[K8]") and "basis=" not in res["severity_rule"]
+    assert res["evidence_level"] == "reasoning_challenged"
+    assert res["severity_rule"].startswith("I4xL3=Critical caps=[RV1:reviewer=High]") and "basis=" not in res["severity_rule"]
     assert "K10" not in res["severity_rule"]
 
     async with db_pool.connection() as conn:
