@@ -676,6 +676,13 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
             "select 1 from sections where job_id = %s and section = 'context_notes' limit 1",
             (job_id,))).fetchone()) is not None
 
+    if job["state"] == "ready":
+        # Start the one-time chain snapshot (chain.target.* facts) as soon as the job is ready, so a
+        # client without the chain tools finds owner, roles, paused and balance in review_facts.
+        from .chain import auto_snapshot
+
+        await auto_snapshot(job_id, wait=False)
+
     # Publish info (CEO 2026-10-24): show the public URL (or "publishing") for rendered jobs.
     from .report import _publish_info
     pub_status, pub_url = await _publish_info(job.get("report_id"))

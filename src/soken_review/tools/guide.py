@@ -288,7 +288,23 @@ async def _get_guide(args: dict[str, Any]) -> str:
     chain: str | None = args.get("chain")
     if chain is None and args.get("job_id"):
         chain = _job_chain(args["job_id"])
+    if "checklist" in topics and "invariants" not in topics and args.get("job_id") and _job_has_walks(args["job_id"]):
+        # A tool list from before the invariants topic cannot ask for it (blind round 5): the checklist of
+        # a job with invariant walks carries them as a second block, so F9 is answerable from any list.
+        topics.append("invariants")
     return "\n\n".join(_render_topic(topic, chain, args.get("job_id")) for topic in dict.fromkeys(topics))
+
+
+def _job_has_walks(job_id: str) -> bool:
+    from ..mapping.lifecycle import load_lifecycle
+
+    try:
+        from .read import _get_ctx
+
+        lc = load_lifecycle(_get_ctx().get_pin_root(), job_id)
+    except Exception:  # noqa: BLE001 - a guide read never fails on job lookup
+        return False
+    return bool((lc or {}).get("walks"))
 
 
 def _render_topic(topic: str, chain: str | None, job_id: str | None = None) -> str:

@@ -676,6 +676,9 @@ async def _facts(args: dict[str, Any]) -> str:
     cursor: str | None = args.get("cursor")
     page_size: int = max(1, min(int(args.get("page_size", 100)), 200))
     _check_job_readable(job_id)
+    from . import chain as _chain
+
+    await _chain.auto_snapshot(job_id, wait=True)   # chain.target.* for clients without the chain tools
     facts = load_facts(_get_ctx().get_pin_root(), job_id)
     if facts is None:
         raise ReviewError("E_INTERNAL", incident=f"facts-missing-{job_id[-8:]}")

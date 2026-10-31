@@ -8,11 +8,14 @@ and `2025-03-26` is served (03: not served). The 2026-07-28 leg is left to the S
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .quota import CLIENT_IP
+
+request_log = logging.getLogger("soken_review.requests")
 
 MODERN = "2026-07-28"
 HANDSHAKE_ERA = ("2025-11-25", "2025-06-18")
@@ -60,6 +63,8 @@ class ProtocolRules:
             return
         version = _header(scope, b"mcp-protocol-version")
         message = _parse(body)
+        if message is not None:
+            request_log.info("%s", describe_request(message, version, _header(scope, b"user-agent")))
 
         if version is None:
             if message is not None and (message.get("method") == "initialize" or _is_modern(message)):
@@ -75,6 +80,26 @@ class ProtocolRules:
             )
             return
         await self.app(scope, receive, send)
+
+
+def describe_request(message: dict[str, Any], version: str | None, agent: str | None) -> str:
+    """One log line per MCP request: method, tool name, protocol version, client name and version,
+    user agent. No arguments, no ids, no addresses. The record of how often a client fetches
+    tools/list against how often it calls tools (client_refresh: is a cached list ever refreshed?)."""
+    params = message.get("params") if isinstance(message.get("params"), dict) else {}
+    meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+    info = params.get("clientInfo") if message.get("method") == "initialize" else meta.get(
+        "io.modelcontextprotocol/clientInfo")
+    info = info if isinstance(info, dict) else {}
+    proto = version or meta.get("io.modelcontextprotocol/protocolVersion") or params.get("protocolVersion") or "-"
+    parts = {
+        "method": message.get("method") or "-",
+        "tool": params.get("name") if message.get("method") == "tools/call" else None,
+        "proto": proto,
+        "client": f"{info.get('name')}/{info.get('version')}" if info.get("name") else None,
+        "ua": agent,
+    }
+    return "mcp_request " + " ".join(f"{k}={str(v)[:60].replace(' ', '_')}" for k, v in parts.items() if v)
 
 
 def _is_modern(message: dict[str, Any]) -> bool:

@@ -29,6 +29,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -583,6 +584,65 @@ async def _demote_leads_to_open(
 
 # ── Main handler ──────────────────────────────────────────────────────────────
 
+_SEVERITY_LINE = re.compile(
+    r"^\s*severity\s*(?::|-)\s*(critical|high|medium|low|informational)\b[.;,]?\s*"
+    r"(?:(?:severity\s+)?reason\s*(?::|-)\s*(?P<reason>.+?))?\s*$", re.IGNORECASE | re.DOTALL)
+_REASON_LINE = re.compile(r"^\s*severity\s+reason\s*(?::|-)\s*(?P<reason>.+?)\s*$", re.IGNORECASE | re.DOTALL)
+_REASON_MAX = 200
+
+
+def lift_severity_line(args: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Read the reviewer's severity from a body paragraph when the arguments do not carry it.
+
+    A client whose tool list predates `severity_reason` (or `claimed_severity`) cannot send them, and
+    the matrix then replaced the reviewer's severity without a word (blind round 5, BakerFi: five
+    findings). A `p` block "Severity: High. Reason: ..." (or "Severity reason: ...") in description,
+    impact or recommendation is the same claim through a field every schema has: it fills the missing
+    argument, the same RV1 rules apply, and the block leaves the printed body when its section keeps
+    another block. Explicit arguments always win; nothing is lifted when both are present."""
+    if args.get("claimed_severity") and args.get("severity_reason"):
+        return args, None
+    body = args.get("body")
+    if not isinstance(body, dict):
+        return args, None
+    for section in ("impact", "description", "recommendation"):
+        blocks = body.get(section)
+        if not isinstance(blocks, list):
+            continue
+        for i, block in enumerate(blocks):
+            text = block.get("p") if isinstance(block, dict) else None
+            if not isinstance(text, str):
+                continue
+            m = _SEVERITY_LINE.match(text)
+            sev, reason = (m.group(1).capitalize(), m.group("reason")) if m else (None, None)
+            if m is None:
+                r = _REASON_LINE.match(text)
+                if r is None:
+                    continue
+                reason = r.group("reason")
+            out = dict(args)
+            lifted: dict[str, Any] = {"field": f"body.{section}[{i}]"}
+            if sev and not args.get("claimed_severity"):
+                out["claimed_severity"] = sev
+                lifted["claimed_severity"] = sev
+            if reason and not args.get("severity_reason"):
+                reason = " ".join(reason.split())
+                if len(reason) > _REASON_MAX:
+                    reason = reason[:_REASON_MAX].rsplit(" ", 1)[0]
+                    lifted["note"] = f"reason cut to {_REASON_MAX} characters"
+                out["severity_reason"] = reason
+                lifted["severity_reason"] = reason
+            if len(lifted) == 1:
+                return args, None
+            if len(blocks) > 1:
+                out["body"] = {**body, section: [b for j, b in enumerate(blocks) if j != i]}
+            else:
+                lifted["note"] = (lifted.get("note", "") + "; " if lifted.get("note") else "") + \
+                    "the paragraph stays in the body because the section has no other block"
+            return out, lifted
+    return args, None
+
+
 @handler("review_submit_finding")
 async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
     """Submit or revise a finding, then attach the disproof checklist when the draft needs it.
@@ -593,7 +653,10 @@ async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
     checks). Any failure to compute it leaves the result as before: next_tools still names
     review_challenge.
     """
+    args, lifted = lift_severity_line(args)
     result = await _submit_finding(args)
+    if lifted:
+        result["severity_from_body"] = lifted
     if result.get("accepted") and result.get("status") == "needs_challenge":
         from .challenge import handle_review_challenge
 
