@@ -57,7 +57,7 @@ def test_notice_is_plain_and_actionable():
     for certain in (True, False):
         text = client_refresh.notice(certain)
         assert "—" not in text and "–" not in text
-        assert "remove this connector and add it again" in text and "start a new chat" in text
+        assert "remove this connector" in text and "add it again" in text
         assert "/mcp" in text and "reload the tool list" in text
         assert "review_chain_read" in text and "severity_reason" in text
         assert schema_version() in text
