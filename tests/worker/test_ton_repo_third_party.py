@@ -557,8 +557,17 @@ def test_anchor_clusters_of_reads_the_program_sections():
 
 
 @pytest.mark.parametrize(("cs", "want"), [
-    ({"kind": "program", "deployed_program_hash": "ab" * 32, "config_clusters": ["localnet"]},
-     "Program id for localnet in Anchor.toml; not mainnet"),
+    # MetaDAO 2026-10-31: the id is live on mainnet; Anchor.toml listing it for localnet changes nothing
+    ({"kind": "program", "deployed_program_hash": "ab" * 32, "config_clusters": ["localnet"]}, "Solana mainnet"),
+    ({"kind": "program", "deployed_program_hash": None, "why": "no_code", "config_clusters": ["localnet"]},
+     "Program id for localnet in Anchor.toml; not on mainnet"),
+    ({"kind": "program", "why": "read_failed:timeout", "config_clusters": ["localnet"]},
+     "Program id for localnet in Anchor.toml; mainnet not checked"),
+    ({"kind": "program", "why": "read_failed:timeout"}, "Solana mainnet; deployment not checked"),
+    ({"kind": "program"}, "Solana mainnet; deployment not checked"),
+    ({"kind": "mint", "slot": 5, "program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"}, "Solana mainnet"),
+    ({"kind": "program", "loader": "BPFLoader1111111111111111111111111111111111", "why": "loader_unsupported"},
+     "Solana mainnet"),
     ({"kind": "program", "deployed_program_hash": None, "why": "no_code"}, "Program id not deployed on Solana mainnet"),
     ({"kind": "program", "deployed_program_hash": "ab" * 32, "config_clusters": ["localnet", "mainnet"]}, "Solana mainnet"),
     ({"kind": "program", "deployed_program_hash": "ab" * 32}, "Solana mainnet"),
