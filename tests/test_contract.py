@@ -15,8 +15,9 @@ TOOL_ORDER = [
     "review_submit_finding", "review_withdraw_finding", "review_challenge",
     "review_answer_challenge", "review_set_section", "review_add_context", "review_finalize", "review_report",
     "review_delete_job", "review_publish", "review_chain_read", "review_chain_roles", "review_chain_balances",
+    "review_verify_on_fork",
 ]
-TOOL_COUNT = 22
+TOOL_COUNT = 23
 
 # 03 section 2: (readOnly, destructive, idempotent, openWorld)
 HINTS = {
@@ -34,6 +35,8 @@ HINTS = {
     "review_chain_read": (False, False, True, True),
     "review_chain_roles": (False, False, True, True),
     "review_chain_balances": (False, False, True, True),
+    # records a run on the job (a new run per call), reads a public chain through the read-only proxy
+    "review_verify_on_fork": (False, False, False, True),
 }
 READ_ONLY = (True, False, True, False)
 

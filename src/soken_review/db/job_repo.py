@@ -483,6 +483,8 @@ class JobRepo:
                       select 1 from job_steps p
                       where p.job_id = q.job_id and p.id <> q.id and p.status in ('queued','running')
                         and p.step <> 'render' and q.step <> 'render' and p.enqueued_at < q.enqueued_at)
+                    and (q.step <> 'verify_fork' or not exists (
+                      select 1 from job_steps f where f.step = 'verify_fork' and f.status = 'running'))
                   order by q.priority, q.enqueued_at
                   for update skip locked limit 1)
                 returning s.*

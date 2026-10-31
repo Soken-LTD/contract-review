@@ -195,6 +195,9 @@ codes:
   E_COVERAGE_NA_UNCONFIRMED:
     class: advisory
     why: "A not-applicable claim the map cannot confirm is dropped and prints as not covered; the rest of the section is stored."
+  E_FORK_PENDING:
+    class: blocking
+    why: "A fork run of the job is still queued or running; the report evidence must not change after finalize. It ends within minutes and never blocks once ended."
   E_JOB_NOT_READY:
     class: blocking
     why: "The source is not pinned yet, so nothing can be checked against it."

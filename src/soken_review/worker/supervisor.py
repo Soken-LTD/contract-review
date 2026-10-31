@@ -255,6 +255,14 @@ class Supervisor:
             # Solana jobs built before the provenance step (2026-10-26) have no tier; set it once
             # from their job directories so finalize check F1 can close without a new job.
             await _solana_steps.backfill_tiers(self)
+            # Fork runs whose step died with an earlier worker (restart, lost lease) end as errors.
+            try:
+                from ..sandbox import fork_verify
+
+                async with self._pool.connection() as conn:
+                    await fork_verify.reap_dead_runs(conn)
+            except Exception:
+                logger.exception("fork run reaper failed")
             while True:
                 await self._seed_loop()
                 step = await self._try_claim()
@@ -374,6 +382,12 @@ class Supervisor:
                 # Project documents (context ingestion spec 3): family-independent, runs at `ready`
                 # and never gates it; failures are per document.
                 await self._run_context(step)
+            elif step_name == "verify_fork":
+                # review_verify_on_fork: family-independent, runs at `ready`, never gates the job; a
+                # run failure is the run's result (fork_runs), the step itself ends done.
+                from ..sandbox import fork_verify
+
+                await fork_verify.run_step(self._pool, self._pin_root, step)
             elif step_name == "render":
                 # Bug 1 fix (2026-10-25): render is family-agnostic and must run the generic handler
                 # regardless of chain.  Previously this check appeared AFTER the family-dispatch
@@ -410,7 +424,7 @@ class Supervisor:
             else:
                 logger.warning("no handler for step %s; marking done", step_name)
                 await self._mark_step(step_id, "done")
-            if step_name != "context":
+            if step_name not in ("context", "verify_fork"):
                 await self._maybe_queue_context(job_id)
         except RpcAllEndpointsFailed:
             # All RPC endpoints failed — transient; retry up to max_attempts (09 3.6).
@@ -445,9 +459,13 @@ class Supervisor:
                     await _fail_job(repo, job_id, "E_HOST_CAPACITY", exc.detail())
         except Exception:
             logger.exception("step %s/%s failed for job %s", step_name, step["seq"], job_id[-8:])
-            if step_name in ("render", "context"):
+            if step_name in ("render", "context", "verify_fork"):
                 # Non-gating steps: mark the step failed but leave the job state unchanged.
                 await self._mark_step(step_id, "failed", error_code="E_INTERNAL")
+                if step_name == "verify_fork":
+                    from ..sandbox import fork_verify
+
+                    await fork_verify.fail_runs_of_step(self._pool, step_id)
             else:
                 # Any other step failure → fail the job so it never gets stuck in a
                 # non-terminal state with no runnable steps (e.g. map raises FileNotFoundError

@@ -6,6 +6,9 @@
  "generated_by": "Generated with SOKEN LTD tooling at the request of the party named on the cover",
  "requested_by_line": "Role declared by the requester, not verified by SOKEN LTD: {label}",
  "attack_steps_owner_only": "Step-by-step exploit sequence available to the code owner.",
+ "fork_verified_line": "Verified by a test on a local fork of {network} at block {block}: {tests}",
+ "fork_exercised_line": "Exercised by a test on a local fork of {network} at block {block}: {tests}",
+ "fork_test_owner_only": "The test source is available to the code owner.",
  "public_review_banner": "Ownership of this code is not proven. Automated output, not confirmed by SOKEN LTD.",
  "authorship_box": "Findings were written by the requester's language model session and checked by automated rules only. SOKEN LTD has not confirmed them.",
  "tier_labels": {
@@ -38,7 +41,8 @@
  "evidence_chips": {
   "analyzer_and_reasoning": "Analyzer + reasoning",
   "reasoning_challenged": "Reasoning, self-challenged",
-  "reasoning_only": "Reasoning only"
+  "reasoning_only": "Reasoning only",
+  "test_verified": "Test on a local fork"
  },
  "evidence_compact": "Code quote omitted to keep the report within its page limit. The location above is quote-matched.",
  "figures_title": "Figures used",
@@ -76,6 +80,7 @@
   "severity_basis": "Severity basis",
   "challenge": "Challenge",
   "analyzer_lead": "Analyzer lead: {analyzer} {rule_id}",
+  "fork_test": "Fork test",
   "disclaimer_ref": "See the Disclaimer, section {n}.",
   "company_line": "SOKEN LTD, 86-90 Paul Street, London EC2A 4NE, Companies House 15253906",
   "page": "Page {n} of {total}"

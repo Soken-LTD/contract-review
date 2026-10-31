@@ -920,6 +920,24 @@ def chain_figures(content: dict[str, Any], facts: list[dict[str, Any]], printabl
     return rows
 
 
+def fork_evidence(row: dict[str, Any] | None, base_level: str) -> dict[str, Any] | None:
+    """evidence.fork_test of a finding with a passing fork run, or None; `kind` verified raises the level,
+    touched (the cited contract did not execute) is printed as exercised only. The passed test names are the
+    reviewer's identifiers (src class); the source is kept whole and printed for the owner only."""
+    if not row:
+        return None
+    result = row.get("result") or {}
+    if isinstance(result, str):
+        result = json.loads(result)
+    names = [str(t.get("name"))[:200] for t in result.get("tests") or [] if t.get("status") == "passed"][:3]
+    if not names:
+        return None
+    return {"run_id": row["run_id"], "kind": row.get("kind") or "touched",
+            "network": str(row["network"])[:120], "block": int(row["block"]),
+            "tests": names, "test_path": str(row["test_path"])[:100], "test_sha256": row["test_sha256"],
+            "base_level": base_level, "source": str(row.get("test_source") or "")[:65536]}
+
+
 def pass_label(tool: str, limit: int = 40) -> str:
     """A server pass name as printed in the report: `soken-lifecycle@1` and `soken-lifecycle:STALE`
     become `lifecycle 1` and `lifecycle:STALE`. The printed strings are server text, and gate T25
@@ -1104,6 +1122,11 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     flinks = await _rows(conn, """select l.* from finding_leads l join finding_drafts d
         on d.job_id = l.job_id and d.draft_key = l.draft_key and d.current_revision = l.revision
         where l.job_id = %s""", (job_id,))
+    # review_verify_on_fork: a passing run of the current revision that exercised the cited contract and
+    # ended before finalize raises the printed evidence level (engine/fork_evidence.py).
+    from ..engine.fork_evidence import verified_runs
+
+    fork_of = await verified_runs(conn, job_id)
     by_key_ranges: dict[str, list[dict[str, Any]]] = {}
     for q in ranges:
         by_key_ranges.setdefault(q["draft_key"], []).append(q)
@@ -1185,6 +1208,11 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         figs = chain_figures(c, facts, printable_facts)
         if figs:
             f["evidence"]["figures"] = figs
+        fork = fork_evidence(fork_of.get(d["draft_key"]), level)
+        if fork is not None:
+            f["evidence"]["fork_test"] = fork
+            if fork["kind"] == "verified":
+                f["evidence_level"] = "test_verified"
         if c.get("attack_steps"):
             f["attack_steps"] = [{"text": _sub_findings(s["text"], keymap), "ref": _parse_ref(s["ref"])}
                                  for s in c["attack_steps"]][:10]

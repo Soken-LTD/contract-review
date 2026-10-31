@@ -42,7 +42,7 @@
     "doc-fetch": {
       "repository": "ghcr.io/soken-ltd/doc-fetch",
       "tag": "0.1.0-dev",
-      "digest": "sha256:a5e77921b471ad8942e2372d41fa2bd19b5791fa844bce0e35603346e6a746c2",
+      "digest": "sha256:2e0ef763b3169645c0377ca8baee2c2f67f9cbee580a2dc87ec686e0d0c81c48",
       "tools": {
         "python3": "3.13",
         "trafilatura": "2.3.1",
@@ -54,27 +54,28 @@
       ],
       "note": "soken-doc-fetch: sandboxed project-document fetcher (context ingestion spec 2026-10-23 section 3, sandbox/doc_fetch.py, context/fetcher.py) on Debian trixie; no browser, no JS. Zero digest = not built; locked_image('doc-fetch') fails closed (every requested document records error unreachable) until the CI push; the stand uses SOKEN_IMAGE_DOC_FETCH. Build: docker build -f docker/doc-fetch/Dockerfile -t ghcr.io/soken-ltd/doc-fetch:0.1.0-dev .",
       "built": {
-        "commit": "380d43a00eef0b47c04edcf4a1b3a4d13d85efb7",
-        "run_id": "41185099990",
+        "commit": "bd3eaebf496a2e46b891153ab3e4ff5cbf1405ef",
+        "run_id": "39910901988",
         "trivy_critical": 0
       }
     },
     "evm-analyze": {
       "repository": "ghcr.io/soken-ltd/evm-analyze",
       "tag": "0.1.0-dev",
-      "digest": "sha256:2baaf67e68d26b0f708f20bfb500aac074ccd7604b7c7a6104dc86f43b643443",
+      "digest": "sha256:2208896b70f3257efed54adb558289f870320640c0a8ed12c43862d776d2cf87",
       "tools": {
         "slither": "0.11.6",
         "aderyn": "0.6.8",
-        "forge": "1.8.5"
+        "forge": "1.8.5",
+        "forge-std": "1.16.2"
       },
       "platforms": [
         "linux/amd64"
       ],
       "note": "Pre-CI digest (no forge). LOCAL arm64 build verified 2026-10-14: forge sha256 gate passes (foundry_v1.8.5_linux_arm64.tar.gz: OK, forge Version 1.8.5). Replace digest after CI push with: docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/soken-ltd/evm-analyze:<tag>. B4 enabled when CI digest is recorded.",
       "built": {
-        "commit": "81b357ad78c4814614a421d491e1131456a782e1",
-        "run_id": "39909694496",
+        "commit": "3118ee97dc6953845a307e1016c52a7167c0bcbe",
+        "run_id": "41180778836",
         "trivy_critical": 2
       }
     },
@@ -99,7 +100,7 @@
     "hyperevm-analyze": {
       "repository": "ghcr.io/soken-ltd/hyperevm-analyze",
       "tag": "0.1.0-dev",
-      "digest": "sha256:7f8866bf51e3acd566aad21ddbdca2b1eafcf8535c7294732c3bc20c20191d75",
+      "digest": "sha256:e6451571b009c0d75458a492272e283762d87c736d0d577caa4df1addf50b130",
       "tools": {
         "slither": "0.11.6",
         "aderyn": "0.6.8",
@@ -110,8 +111,8 @@
       ],
       "note": "Extends evm-analyze with HL-* Slither detectors (slither_plugins, plan-v4 05 8.2). Digest placeholder; replace after CI build.",
       "built": {
-        "commit": "81b357ad78c4814614a421d491e1131456a782e1",
-        "run_id": "39909694496",
+        "commit": "3118ee97dc6953845a307e1016c52a7167c0bcbe",
+        "run_id": "41180778836",
         "trivy_critical": 2
       }
     },
@@ -135,7 +136,7 @@
     "soken-render": {
       "repository": "ghcr.io/soken-ltd/soken-render",
       "tag": "0.1.0-dev",
-      "digest": "sha256:e6ec37390af0931cdf8ca7f0eb68d523bb1a8957ae45bb8c3bef885a96e033f4",
+      "digest": "sha256:35ea9a7f33ab73c2344e2369e719ddadbd403bde32119095d08fb96df23b5c9a",
       "tools": {
         "python": "3.12",
         "node": "22",
@@ -150,8 +151,8 @@
       ],
       "note": "08 3.2 render sandbox (docker/soken-render/Dockerfile, root context). Digest placeholder until the CI push; render_image() fails closed while unpinned (SOKEN_IMAGE_SOKEN_RENDER for local images). chrome-headless-shell zip sha256 39dcb8c4... pinned in the Dockerfile.",
       "built": {
-        "commit": "380d43a00eef0b47c04edcf4a1b3a4d13d85efb7",
-        "run_id": "41185099990",
+        "commit": "cce03e62a31eba9527f229b66292ce7e5af24859",
+        "run_id": "41184982029",
         "trivy_critical": 3
       }
     },
@@ -295,7 +296,7 @@
     "tron-analyze": {
       "repository": "ghcr.io/soken-ltd/tron-analyze",
       "tag": "0.1.0-dev",
-      "digest": "sha256:816a4658637ffa506ce3dfe4da321d5a1ca891df610d0d2019464d8b10875dd4",
+      "digest": "sha256:bb9896e12a01b960a793cbc5e7ffb94f067663fd5c88754324a6b7c22371b19e",
       "tools": {
         "slither": "0.11.6",
         "aderyn": "0.6.8",
@@ -306,8 +307,8 @@
       ],
       "note": "Extends evm-analyze with TRON Slither shim (apply_tron_shim via make_plugin entry point, plan-v4 05 8.2 F23). Digest placeholder; replace after CI build. Build: docker build --build-context plugins=slither_plugins -f docker/tron-analyze/Dockerfile -t ghcr.io/soken-ltd/tron-analyze:0.1.0-dev .",
       "built": {
-        "commit": "81b357ad78c4814614a421d491e1131456a782e1",
-        "run_id": "39909694496",
+        "commit": "3118ee97dc6953845a307e1016c52a7167c0bcbe",
+        "run_id": "41180778836",
         "trivy_critical": 2
       }
     }
