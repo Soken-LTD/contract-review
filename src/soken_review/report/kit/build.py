@@ -382,13 +382,22 @@ def eval_calc(body: str, facts: dict[str, Any]) -> tuple[str, list[str]]:
 def expand(text: str, facts: dict[str, Any]) -> str:
     """Placeholders expanded to their server values. Every profile prints every value as is (CEO
     2026-10-28: findings are never hidden, amount_at_risk facts included)."""
+    seen: set[str] = set()
+
     def sub(m: re.Match) -> str:
         kind, body = m.group(1), m.group(2)
         if kind == "fact":
             f = facts.get(body)
             if f is None:
                 raise BuildError("schema", f"fact {body} not in facts")
-            return f["value"] + (f" {f['unit']}" if f.get("unit") else "")
+            # chain text prints as a quoted literal; the network and block of chain facts print once per
+            # string (several values read at one block share one label)
+            value = f'"{f["value"]}"' if f.get("literal") else f["value"]
+            out = value + (f" {f['unit']}" if f.get("unit") else "")
+            if f.get("at") and f["at"] not in seen:
+                seen.add(f["at"])
+                out += f" ({f['at']})"
+            return out
         if kind == "calc":
             return eval_calc(body, facts)[0]
         raise BuildError("schema", f"unexpanded finding placeholder {body}")

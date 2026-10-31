@@ -800,11 +800,49 @@ def report_facts(facts: list[dict[str, Any]], prefix: str = "") -> dict[str, dic
         if re.fullmatch(r"[0-9]{5,}", value):  # plain integers print grouped (calc operands strip the commas)
             value = f"{int(value):,}"[:80]
         unit = f.get("unit")
+        chain_tool = f.get("origin") == "chain_tool"
+        if chain_tool and value and check_text(value, "server"):
+            # text read from the chain that fails the server gate is replaced, not dropped: a dropped
+            # fact would fail the whole render on an unresolved placeholder (never-worse)
+            value = "[chain text not printable]"
         if not value or check_text(value, "server") or (unit is not None and check_text(str(unit)[:40], "server")):
             continue
-        out[key] = {"value": value, "unit": str(unit)[:40] if unit is not None else None,
-                    "amount_at_risk": "amount_at_risk" in (f.get("tags") or [])}
+        rec: dict[str, Any] = {"value": value, "unit": str(unit)[:40] if unit is not None else None,
+                               "amount_at_risk": "amount_at_risk" in (f.get("tags") or [])}
+        if chain_tool:
+            from ..chain.facts import at_text
+
+            at = at_text(f)
+            if at and not check_text(at[:80], "server"):
+                rec["at"] = at[:80]
+            if f.get("class") == "chain_text":
+                rec["literal"] = True
+        out[key] = rec
     return out
+
+
+_FACT_REF_RE = re.compile(r"(?<![a-z0-9_.])fact:([a-z][a-z0-9_.]{0,79})")
+
+
+def chain_figures(content: dict[str, Any], facts: list[dict[str, Any]], printable: dict[str, Any]) -> list[dict[str, Any]]:
+    """Figures used rows (04 6.4 `figure`) for the chain facts a finding cites: value, the read
+    and its block, so every chain number in a finding prints with where and when it was read."""
+    by_key = {f.get("key"): f for f in facts if f.get("origin") == "chain_tool"}
+    seen: list[str] = []
+    for key in _FACT_REF_RE.findall(json.dumps(content, ensure_ascii=False)):
+        key = key.rstrip(".")
+        if key in by_key and key in printable and key not in seen:
+            seen.append(key)
+    rows = []
+    for key in seen[:30]:
+        f, p = by_key[key], printable[key]
+        block = f.get("block")
+        if not isinstance(block, int) or isinstance(block, bool):
+            continue
+        shown = (f'"{p["value"]}"' if p.get("literal") else p["value"]) + (f" {p['unit']}" if p.get("unit") else "")
+        rows.append({"figure": shown[:80], "operands": [{"value": p["value"][:80], "source": {
+            "fact": key, "method": str(f.get("method") or "chain read")[:60], "block_or_slot": int(block)}}]})
+    return rows
 
 
 def pass_label(tool: str, limit: int = 40) -> str:
@@ -1010,6 +1048,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         if d["final_id"] != want:
             raise AssemblyError("schema", f"final id {d['final_id']} out of order, expected {want} (03 4.14)")
     findings = []
+    printable_facts = report_facts(facts)
     for d in accepted:
         c = d["content"]
         sev = d["severity"]
@@ -1068,6 +1107,9 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         }
         if further:
             f["evidence"]["further"] = further
+        figs = chain_figures(c, facts, printable_facts)
+        if figs:
+            f["evidence"]["figures"] = figs
         if c.get("attack_steps"):
             f["attack_steps"] = [{"text": _sub_findings(s["text"], keymap), "ref": _parse_ref(s["ref"])}
                                  for s in c["attack_steps"]][:10]

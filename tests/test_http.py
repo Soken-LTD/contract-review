@@ -36,7 +36,7 @@ def test_later_request_without_version_header_is_400(client):
 def test_supported_versions_list_19_tools(client, version):
     r = client.post("/mcp", headers={**H, "MCP-Protocol-Version": version}, json=LIST)
     assert r.status_code == 200
-    assert len(r.json()["result"]["tools"]) == 19
+    assert len(r.json()["result"]["tools"]) == 22
 
 
 def test_2025_03_26_is_not_served(client):

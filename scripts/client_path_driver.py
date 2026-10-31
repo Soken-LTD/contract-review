@@ -155,6 +155,7 @@ class TargetSpec:
     ready_timeout_s: float = 1200.0
     render_timeout_s: float = 600.0
     address_in_cover: str | None = None
+    chain_read: dict[str, Any] | None = None   # review_chain_read step: {items, cite}; the finding cites `cite`
 
 
 @dataclass
@@ -363,7 +364,37 @@ def locate_block(lines: dict[int, str], opener: str) -> tuple[int, int]:
     return start, min(start + 12, max(lines))
 
 
-def submit_finding(sess: Session, spec: FindingSpec, units: list[dict[str, Any]]) -> dict[str, Any]:
+def chain_read_step(sess: Session, spec: dict[str, Any]) -> str | None:
+    """review_chain_read at the pinned block (latest when the free pool cannot serve it, recorded as a
+    gap); returns the fact key the finding cites, None when no free source answered."""
+    cite = spec["cite"]
+    out = sess.c.call("review_chain_read", job_id=sess.job_id, block="pinned", items=spec["items"])
+    item = (out.get("items") or [{}])[0] if out.get("accepted") else {}
+    pinned_ok = bool(item.get("ok")) and cite in (out.get("fact_keys") or [])
+    sess.res.gap("review_chain_read served the pinned block from the free pool", pinned_ok,
+                 json.dumps({"block": out.get("block"), "item": item, "errors": out.get("errors")})[:380])
+    if not pinned_ok:
+        out = sess.c.call("review_chain_read", job_id=sess.job_id, block="latest", items=spec["items"])
+        item = (out.get("items") or [{}])[0] if out.get("accepted") else {}
+    block = (out.get("block") or {}).get("resolved")
+    ok = bool(out.get("accepted")) and bool(item.get("ok")) and cite in (out.get("fact_keys") or []) \
+        and isinstance(block, int)
+    sess.res.check("review_chain_read returned the fact with its block", ok,
+                   json.dumps({"block": out.get("block"), "value": item.get("value"), "budget": out.get("budget"),
+                               "capability": (out.get("capability") or {}).get("history"),
+                               "errors": out.get("errors")})[:380])
+    if not ok:
+        return None
+    sess.res.check("chain value is a positive integer", str(item.get("value", "")).isdigit() and int(item["value"]) > 0,
+                   str(item.get("value")))
+    listed = {k for k, _ in sess.facts()}
+    sess.res.check("review_facts lists the chain fact", cite in listed, f"{len(listed)} facts")
+    spec["_block"] = block
+    return cite
+
+
+def submit_finding(sess: Session, spec: FindingSpec, units: list[dict[str, Any]],
+                   prefer_key: str | None = None) -> dict[str, Any]:
     path = next((u["file"] for u in units if spec.file_hint in u["file"]), None)
     if path is None:
         raise ClientPathError(f"no in-scope unit matches {spec.file_hint!r}: {[u['file'] for u in units]}")
@@ -372,8 +403,9 @@ def submit_finding(sess: Session, spec: FindingSpec, units: list[dict[str, Any]]
     quote = sess.quote(path, start, end)
     facts = sess.facts()
     keys = [k for k, _ in facts]
-    key = next((k for pref in ("chain.chain_id", "chain.", "deploy.", "source.") for k in keys if k.startswith(pref)),
-               keys[0] if keys else None)
+    key = prefer_key if prefer_key in keys else next(
+        (k for pref in ("chain.chain_id", "chain.", "deploy.", "source.") for k in keys if k.startswith(pref)),
+        keys[0] if keys else None)
     sess.res.check("facts listed", key is not None, f"{len(facts)} facts, placeholder key {key}")
     description = spec.description.replace("{fact}", f"{{{{fact:{key}}}}}" if key else "")
     args = {
@@ -577,6 +609,15 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
         res.check("report.facts carries the fact set, not context.* only",
                   bool(facts) and any(not k.startswith("context.") for k in facts),
                   f"{len(facts)} fact keys, first {sorted(facts)[:4]}")
+        if spec.chain_read and spec.chain_read.get("_block"):
+            key, block = spec.chain_read["cite"], spec.chain_read["_block"]
+            rec = (raw_facts or {}).get(key) if isinstance(raw_facts, dict) else None
+            res.check("report prints the chain fact with its network and block",
+                      bool(rec) and f"block {block:,}" in str(rec.get("at")), json.dumps(rec)[:200])
+            figs = [op["source"] for f in report.get("findings") or [] for g in (f.get("evidence") or {}).get("figures") or []
+                    for op in g.get("operands") or [] if "fact" in op.get("source", {})]
+            res.check("finding Figures used row names the chain read and its block",
+                      any(src.get("fact") == key and src.get("block_or_slot") == block for src in figs), json.dumps(figs)[:300])
         if spec.finding:
             sevs = [f.get("severity") for f in report.get("findings") or []]
             res.check(f"a {spec.finding.expect_severity} finding is printed", spec.finding.expect_severity in sevs,
@@ -644,8 +685,9 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
             tools = {t for l in leads for t in l["tools"]}
             res.check(f"{spec.expect_lead_tool} leads > 0", spec.expect_lead_tool in tools, f"tools {sorted(tools)}")
         draft_key = None
+        cite = chain_read_step(sess, spec.chain_read) if spec.chain_read else None
         if spec.finding:
-            sub = submit_finding(sess, spec.finding, units)
+            sub = submit_finding(sess, spec.finding, units, prefer_key=cite)
             draft_key = sub["draft_key"]
             if sub.get("status") == "needs_challenge":
                 answer_challenge(sess, draft_key, sub["_quote"])
@@ -691,7 +733,7 @@ WETH9_FINDING = FindingSpec(
     description=("The withdraw function burns the caller balance and then sends the ether through transfer, which "
                  "forwards a fixed small gas stipend. A holder that is a contract with a receive path heavier than "
                  "that stipend sees the send revert on each call and keeps a token balance it can only move by "
-                 "transferring the token to another account. Pinned chain id: {fact}."),
+                 "transferring the token to another account. Wrapped ether outstanding on chain: {fact}."),
     impact=("The affected holder keeps the wrapped balance but the ether behind it stays in the contract until "
             "the token is moved elsewhere, which adds a dependency on a second account and delays access."),
     recommendation=("Send the ether with a call that forwards the remaining gas and checks the result, "
@@ -706,7 +748,10 @@ TARGETS: dict[str, TargetSpec] = {
         name="evm", start={"source": {"kind": "deployed", "chain": "evm", "chain_id": 1, "address": WETH9}},
         probe_url=f"https://sourcify.dev/server/v2/contract/1/{WETH9}",
         chain="evm", network="Ethereum Mainnet (1)", tiers=("A", "B"), finding=WETH9_FINDING, stale_walks=True,
-        address_in_cover=WETH9, ready_timeout_s=900),
+        address_in_cover=WETH9, ready_timeout_s=900,
+        chain_read={"cite": "chain.weth.total_supply",
+                    "items": [{"alias": "weth", "address": WETH9, "kind": "call", "fn": "totalSupply()",
+                               "returns": "uint256", "unit": "wei", "field": "total_supply"}]}),
     "evm-repo": TargetSpec(
         name="evm-repo",
         start={"source": {"kind": "repo", "repo_url": "https://github.com/apyee-finance/apyee-protocol",
