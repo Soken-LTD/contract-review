@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      TARGETS: ${{ inputs.targets || 'evm,evm-repo,solana,solana-repo,ton,ton-repo,tron' }}
+      TARGETS: ${{ inputs.targets || 'evm,evm-repo,solana,solana-repo,ton,ton-multisig,ton-repo,tron' }}
       SOKEN_SANDBOX_RUNTIME: runc
       SOKEN_SANDBOX_DEV_PERMS: "1"
       SOKEN_RUSTSEC_DB: ${{ github.workspace }}/.sbx/rustsec-db
@@ -76,7 +76,7 @@ jobs:
           mkdir -p "$SOKEN_RUSTSEC_DB"
           uv run python -m soken_review.adapters.solana.rustsec fetch
       - name: Stack up, drive the targets over HTTP, stack down
-        run: uv run python scripts/client_path_e2e.py all --targets "$TARGETS" --parallel 7 --out out
+        run: uv run python scripts/client_path_e2e.py all --targets "$TARGETS" --parallel 8 --out out
       - name: Stack logs (always)
         if: always()
         run: |
