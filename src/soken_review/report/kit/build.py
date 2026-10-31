@@ -1167,12 +1167,19 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
         ret = a["code_returned"] + (f' ({a["units_returned"]} of {a["units_total"]})' if a["code_returned"] == "Partly" else "")
         note = f'<br><span class="nofind">{inl(a["note"], ctx)}</span>' if a.get("note") else ""
         arows += f'<tr><td>{esc(a["area"])}</td><td>{esc(ret)}</td><td>{esc(res)}{note}</td></tr>'
+    # Rule tiers (learning-loop P1): a lower-priority column and one sentence only when a tier moved a lead.
+    tiers_cov = cov.get("rule_tiers")
+    lp_head = f'<th class="num">{esc(t["lower_priority_header"])}</th>' if tiers_cov else ""
     lrows = "".join(f'<tr><td>{esc(x["analyzer"])}</td><td>{esc(x["version"])}</td><td class="num">{x["leads"]:,}</td>'
-                    f'<td class="num">{x["promoted"]:,}</td><td class="num">{x["dismissed"]:,}</td></tr>' for x in cov["leads"])
+                    f'<td class="num">{x["promoted"]:,}</td><td class="num">{x["dismissed"]:,}</td>'
+                    + (f'<td class="num">{x.get("lower_priority", 0):,}</td>' if tiers_cov else "") + '</tr>'
+                    for x in cov["leads"])
+    tiers_note = (f'<p class="nofind">{esc(t["rule_tiers_note"].format(n=f"{tiers_cov["lower_priority"]:,}", version=tiers_cov["version"]))}</p>'
+                  if tiers_cov else "")
     cov_html = (tbl('<th style="width:40%">Area</th><th style="width:22%">Code returned</th><th>Result</th>', arows, name="coverage_areas")
                 + nohigh + titled("<h3>Analyzer leads</h3>",
                                   tbl('<th>Analyzer</th><th>Version</th><th class="num">Leads</th><th class="num">Promoted</th>'
-                                      '<th class="num">Dismissed</th>', lrows, name="analyzer_leads")))
+                                      '<th class="num">Dismissed</th>' + lp_head, lrows, name="analyzer_leads")) + tiers_note)
     if cov["withdrawn"]:
         wrows = "".join(
             f'<tr><td>{esc(w["candidate"])}</td><td>{esc(w["category"])}</td>'

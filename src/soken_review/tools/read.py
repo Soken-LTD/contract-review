@@ -19,6 +19,7 @@ import fnmatch
 import hashlib
 import hmac as _hmac
 import json
+import logging
 import os
 import secrets
 from typing import Any
@@ -31,6 +32,7 @@ from ..db.leads_repo import clamp_lead_severity, lead_states
 from ..db.pool import get_pool
 from ..engine.injection import escape_invisible
 from ..errors import ReviewError
+from ..learning import tiers as _tiers
 from ..mapping.build import load_map, load_map_status
 from ..mapping.facts import load_facts
 from ..mapping.lifecycle import load_lifecycle, map_pointer
@@ -39,6 +41,8 @@ from ..pinning.store import PinnedSource
 from ..server import handler
 from . import map_view
 from .context import JobContext
+
+logger = logging.getLogger(__name__)
 
 # ── module-level context (injected by orchestrator or tests) ─────────────────
 
@@ -426,6 +430,7 @@ async def _leads(args: dict[str, Any]) -> str:
     response_format: str = args.get("response_format", "concise")
     cursor: str | None = args.get("cursor")
     page_size: int = args.get("page_size", 25)
+    include_collapsed: bool = bool(args.get("include_collapsed", False))
 
     _check_job_readable(job_id)
 
@@ -435,10 +440,16 @@ async def _leads(args: dict[str, Any]) -> str:
         "detector": detector or "",
         "path_glob": path_glob or "",
     }
+    if include_collapsed:
+        filters["include_collapsed"] = True
     offset = _parse_cursor(cursor, job_id, "review_leads", filters) if cursor else 0
 
     leads = _load_leads(job_id)
-    await _overlay_lead_states(job_id, leads)
+    version = await _overlay_lead_states(job_id, leads)
+    # Rule tiers (learning-loop design 2.2): order, shown severity and the collapsed set come from
+    # the active policy file; the baseline returns the leads unchanged. Nothing is dropped: a
+    # collapsed lead is counted in the header and listed with include_collapsed or a detector filter.
+    leads, tier_summary = _tiers.apply_tiers(leads, version, job_id)
 
     # Stats over all leads (before filtering)
     all_open = [l for l in leads if l.get("state") == "open"]
@@ -447,6 +458,9 @@ async def _leads(args: dict[str, Any]) -> str:
 
     # Apply filters
     filtered = [l for l in leads if _lead_matches(l, status_filter, origin_filter, detector, path_glob)]
+    collapsed_hidden = not include_collapsed and not detector
+    if collapsed_hidden:
+        filtered = [l for l in filtered if _tiers.listed_by_default(l.get("tier", "normal"))]
     total = len(filtered)
     total_all = len(leads)
 
@@ -460,7 +474,10 @@ async def _leads(args: dict[str, Any]) -> str:
         f"(High and Medium open {hm_open}, carried open {carried_open}), page {page_num}"
     )
     out = [header]
-    total_chars = len(header)
+    tier_line = _tiers.header_line(tier_summary, collapsed_hidden)
+    if tier_line:
+        out.append(tier_line)
+    total_chars = sum(len(x) + 1 for x in out)
 
     for lead in page:
         line = _format_lead(lead, response_format)
@@ -538,23 +555,36 @@ def _format_lead(lead: dict, fmt: str) -> str:
         msg = f"{tools[0]} rule {rule_id}; the detector gave no message"
     msg = msg[:400] if fmt == "detailed" else msg[:160]
     line += f' {rule_id} [{"+".join(tools)}] "{msg}"'
+    suffix = _tiers.lead_suffix(lead)
+    if suffix:
+        line += f" ({suffix})"
 
     return line
 
 
-async def _overlay_lead_states(job_id: str, leads: list[dict]) -> None:
-    """Replace each lead's `state` with the ``leads`` table row when a database is configured.
+async def _overlay_lead_states(job_id: str, leads: list[dict]) -> str:
+    """Replace each lead's `state` with the ``leads`` table row when a database is configured,
+    and return the rule tier policy version to apply (recorded on the job for the ledger).
 
     leads.json is written once by the analyze step and never updated; promotions and dismissals
     live in the table (03 3.6), so without this overlay a promoted lead kept showing as `open`.
-    Without a pool (unit tests, MemoryJobContext) the file's own states are used unchanged.
+    Without a pool (unit tests, MemoryJobContext) the file's own states are used unchanged and
+    the configured default policy applies.
     """
     try:
         pool = get_pool()
     except RuntimeError:
-        return
+        return _tiers.resolve_version(None)
     async with pool.connection() as conn:
         states = await lead_states(conn, job_id)
+        version = await _tiers.active_version(conn)
+        try:
+            await conn.execute(
+                "update jobs set learning_policy_version = %s"
+                " where job_id = %s and learning_policy_version is distinct from %s",
+                (version, job_id, version))
+        except Exception as exc:  # noqa: BLE001  # recording the version never breaks listing
+            logger.warning("job %s: learning policy version not recorded: %s", job_id[-8:], type(exc).__name__)
     for lead in leads:
         row = states.get(lead.get("id", ""))
         if row is not None:
@@ -563,6 +593,7 @@ async def _overlay_lead_states(job_id: str, leads: list[dict]) -> None:
                 lead["reason"] = row["reason"]
             if row.get("state_ref"):
                 lead["state_ref"] = row["state_ref"]
+    return version
 
 
 def _load_leads(job_id: str) -> list[dict]:
