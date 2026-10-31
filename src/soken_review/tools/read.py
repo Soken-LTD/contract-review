@@ -103,6 +103,27 @@ def _check_job_readable(job_id: str) -> None:
         raise ReviewError("E_JOB_NOT_READY", state=state, eta_s=0)
 
 
+_MAP_SERVED_STATUSES = frozenset({"full", "partial"})
+
+
+def _map_ready_early(job_id: str, root: Any) -> str | None:
+    """Readable check for review_contract_map. The map is written before analysis finishes, and
+    review_status shows `map_status full` from then on; the map is served in that window too (r5
+    2026-10-31: E_JOB_NOT_READY while status already said full). Returns the in-progress state
+    when served early, None when the job is readable as usual."""
+    try:
+        _check_job_readable(job_id)
+        return None
+    except ReviewError as err:
+        if err.code != "E_JOB_NOT_READY":
+            raise
+        if load_map_status(root, job_id).get("map_status") not in _MAP_SERVED_STATUSES:
+            raise
+        if load_map(root, job_id)[0] is None:
+            raise
+        return _get_ctx().get_job_state(job_id)
+
+
 def _load_pin(job_id: str) -> PinnedSource:
     root = _get_ctx().get_pin_root()
     pin_dir = root / job_id / "pin"
@@ -624,14 +645,16 @@ async def _contract_map(args: dict[str, Any]) -> str:
     detailed = args.get("response_format") == "detailed"
     cursor: str | None = args.get("cursor")
     page_size: int = max(1, min(int(args.get("page_size", 10)), 30))
-    _check_job_readable(job_id)
     root = _get_ctx().get_pin_root()
+    early_state = _map_ready_early(job_id, root)
     doc, status = load_map(root, job_id)
     if doc is None:
         raise ReviewError("E_INTERNAL", incident=f"map-missing-{job_id[-8:]}")
     pointer = map_pointer(load_lifecycle(root, job_id))
     if not doc.get("semantic"):
         lines = map_view.render_lexical(doc, status, load_map_status(root, job_id).get("build_detail"))
+        if early_state:
+            lines = [*lines, f"job still {early_state}, leads and facts arrive at ready"]
         return "\n".join([*lines, pointer] if pointer else lines)
 
     filters = {"contract": contract or "", "detailed": detailed, "page_size": page_size}
@@ -641,6 +664,8 @@ async def _contract_map(args: dict[str, Any]) -> str:
     facts = load_facts(root, job_id) or []
     page = units[offset : offset + page_size]
     out = [f"contract map {status}, units {len(units)}, page {offset // page_size + 1}"]
+    if early_state:
+        out[0] += f"; job still {early_state}, leads and facts arrive at ready"
     extras = doc["semantic"].get("chain_extras") or {}
     if any(isinstance(v, dict) and v.get("layer") == "parsed" for v in extras.values()):   # Solana, TON
         # Parsed from source (no compiler resolution); the build outcome is stated, never implied.
@@ -676,6 +701,9 @@ async def _facts(args: dict[str, Any]) -> str:
     cursor: str | None = args.get("cursor")
     page_size: int = max(1, min(int(args.get("page_size", 100)), 200))
     _check_job_readable(job_id)
+    from . import chain as _chain
+
+    await _chain.auto_snapshot(job_id, wait=True)   # chain.target.* for clients without the chain tools
     facts = load_facts(_get_ctx().get_pin_root(), job_id)
     if facts is None:
         raise ReviewError("E_INTERNAL", incident=f"facts-missing-{job_id[-8:]}")

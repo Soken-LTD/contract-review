@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 import psycopg_pool
 
 from .. import quota
+from ..adapters.evm import related_sources as _related_sources
 from ..context.items import check_cap, status_counts, validate_items
 from ..context.store import ContextStore
 from ..contract import schema_version
@@ -232,6 +233,35 @@ _LIMITS_PLUGIN = {"max_nsloc": 10000, "ready_ttl_hours": 24}
 _MCP_TERMS_URL = "https://soken.dev/mcp/terms.html"
 
 
+def _related_args(source: dict[str, Any], scope: dict[str, Any] | None, address: str | None,
+                  chain: str | None) -> tuple[list[dict[str, str]], list[str]]:
+    """Related deployed contracts of a deployed job (adapters/evm/related_sources): `source.related`
+    or `scope.include` entries `related:0xADDR` / `related:Name=0xADDR` (the shape an older tool
+    list can send). EVM chains only."""
+    wanted = bool(source.get("related")) or any(
+        isinstance(i, str) and i.strip().startswith("related:") for i in ((scope or {}).get("include") or []))
+    if not wanted:
+        return [], list((scope or {}).get("include") or [])
+    if FAMILY_OF_CHAIN.get(chain or "") != "evm" or chain == "tron":
+        raise ReviewError("E_INVALID_ARGUMENT", field="source.related",
+                          rule="related contracts are supported on EVM chains", value80=str(chain)[:80],
+                          example="start one job per contract on this chain")
+    try:
+        return _related_sources.parse_related(source, scope, address)
+    except _related_sources.RelatedError as exc:
+        raise ReviewError("E_INVALID_ARGUMENT", field=exc.field, rule=exc.rule, value80=exc.value[:80],
+                          example='{"address": "0x7366388273111e035bbc555cd0f44a5bb3067c32", "name": "PriceFeed"}'
+                          ) from exc
+
+
+def _no_related(scope: dict[str, Any] | None) -> None:
+    if any(isinstance(i, str) and i.strip().startswith("related:") for i in ((scope or {}).get("include") or [])):
+        raise ReviewError("E_INVALID_ARGUMENT", field="scope.include",
+                          rule="related contracts need a deployed source (source.kind deployed)",
+                          value80="related:", example='{"kind": "deployed", "chain": "evm", "chain_id": 56, '
+                                                       '"address": "0x...", "related": [{"address": "0x..."}]}')
+
+
 @handler("review_start")
 async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
     """Create a job (03 §4.1). Returns accepted output or rejection envelope.
@@ -270,6 +300,11 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             _validate_address(address, chain)
             _require_rpc_chain(chain, chain_id)
             has_deployment = True
+            related, include_rest = _related_args(source, args.get("scope"), address, chain)
+            if related:
+                # stored with the source (source_args); the fetch step pins their verified source
+                source = {**source, "related": related}
+                args = {**args, "scope": {**(args.get("scope") or {}), "include": include_rest}}
 
         elif kind in ("repo", "upload"):
             # Repo mode `source.chain` (Hipo blind run 2026-10-27): the chain the code is written
@@ -299,7 +334,10 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             elif hint:
                 detected_chain = hint
 
+            _no_related(args.get("scope"))
+
         elif kind == "files":
+            _no_related(args.get("scope"))
             detected_lang = source["language"]
             require_enabled(language=detected_lang)
             # Inline size checks (03 §4.1, limits.yaml inline.*)
@@ -466,6 +504,9 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
         "resume_phrase": f"Resume Soken review {job_id}",
         "limits": limits,
     }
+    if source.get("related"):
+        # the related contracts this job pins beside the main one (status `related` has the outcome)
+        result["related"] = source["related"]
 
     if kind == "files":
         # files_received: sha256 and line count per file (03 §4.1)
@@ -599,8 +640,12 @@ _STATE_PERCENT: dict[str, int] = {
     "deleted": 100,
 }
 
-# Long-poll timeout (max 45 s per 03 §4.2; first-byte timer 60 s per plan)
-_MAX_WAIT = 45
+# Long-poll timeout. 55 s (was 45, 03 §4.2): a fifteen-minute Solana build cost 25 status calls in the
+# MetaDAO blind run 2026-10-31. The bound is the client, not the stack: nginx proxy_read_timeout is
+# 300 s on the stand and uvicorn has none, but the MCP TypeScript SDK (Claude Code, many proxies)
+# times a request out at 60 s by default, so the wait stays under that with a margin for the
+# round trip.
+_MAX_WAIT = 55
 _POLL_INTERVAL = 0.5  # seconds between DB checks
 
 
@@ -675,6 +720,13 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
         context_notes_recorded = (await (await conn.execute(
             "select 1 from sections where job_id = %s and section = 'context_notes' limit 1",
             (job_id,))).fetchone()) is not None
+
+    if job["state"] == "ready":
+        # Start the one-time chain snapshot (chain.target.* facts) as soon as the job is ready, so a
+        # client without the chain tools finds owner, roles, paused and balance in review_facts.
+        from .chain import auto_snapshot
+
+        await auto_snapshot(job_id, wait=False)
 
     # Publish info (CEO 2026-10-24): show the public URL (or "publishing") for rendered jobs.
     from .report import _publish_info
@@ -784,10 +836,18 @@ def _compute_eta(state: str, steps: list[dict[str, Any]], medians: dict[str, flo
         run = next((s for s in running if s["step"] == name and s.get("seq", 0) == seq), None)
         if run is not None and run.get("started_at") is not None:
             elapsed = (now - run["started_at"]).total_seconds()
-            # A step past its median is still running: the remaining time is unknown, so the
-            # estimate keeps a floor instead of the "3 s" it repeated for four minutes on a Solana
-            # build (2026-10-26, median from no-op mint builds).
-            expected = expected - elapsed if elapsed < expected else max(_ETA_FLOOR_S, 0.25 * expected)
+            # A step past its median is still running. Until the 90th percentile the remaining time
+            # is what is left of it; past that it is unknown and the estimate keeps a floor instead
+            # of the "3 s" it repeated for four minutes on a Solana build (2026-10-26). MetaDAO
+            # 2026-10-31: without the p90 the ETA sat at the same floor for four polls of a build
+            # that ran 806 s against a 723 s median.
+            p90 = medians.get(f"{name}.p90")
+            if elapsed < expected:
+                expected -= elapsed
+            elif p90 is not None and elapsed < p90:
+                expected = max(_ETA_FLOOR_S, p90 - elapsed)
+            else:
+                expected = max(_ETA_FLOOR_S, 0.25 * expected)
         total += expected
     return round(total)
 
@@ -856,7 +916,14 @@ def _error_detail_text(detail: Any) -> str:
 _KIND_MODE = {"repo": "repo", "upload": "repo", "files": "files"}
 
 
-def _error_texts(code: str, detail: Any, source_kind: str | None = None) -> dict[str, str]:
+# Chain -> family for the deployed-address texts (`what_deployed_<family>`): the plain E_SOURCE_NOT_FOUND
+# fix names an EVM Standard JSON input, which means nothing on TON or Solana (matrix r5 2026-10-31).
+_CHAIN_FAMILY = {"evm": "evm", "hyperevm": "evm", "tron": "tron", "solana": "solana", "ton": "ton",
+                 "sui": "move", "aptos": "move", "starknet": "starknet"}
+
+
+def _error_texts(code: str, detail: Any, source_kind: str | None = None,
+                 chain: str | None = None) -> dict[str, str]:
     """`what` and `fix` of a status error from contract/errors.yaml (03 section 7), so a stopped
     job always tells the client what to do next. A template is used only when every placeholder
     it names is present in the stored detail; otherwise that text is left out rather than sent
@@ -864,7 +931,9 @@ def _error_texts(code: str, detail: Any, source_kind: str | None = None) -> dict
 
     Mode texts, most specific first: the detail's `mode`, then `<kind mode>_<repo_family>` (why
     the repository was not recognised), then the start kind's mode (`repo`, `files`), then the
-    plain text. `{enabled}` is the list of chains this deployment reviews."""
+    plain text. A job without a start-kind mode (a deployed address) uses `deployed_<family>_<why>`
+    then `deployed_<family>` for its chain family before the plain text. `{enabled}` is the list
+    of chains this deployment reviews."""
     import string
 
     from ..contract import load_errors
@@ -884,6 +953,11 @@ def _error_texts(code: str, detail: Any, source_kind: str | None = None) -> dict
     modes = [m for m in (fields.get("mode"),
                          f"{base}_{fields['repo_family']}" if base and fields.get("repo_family") else None,
                          base) if m]
+    family = _CHAIN_FAMILY.get(chain or "")
+    if base is None and family:
+        if fields.get("why"):
+            modes.append(f"deployed_{family}_{fields['why']}")
+        modes.append(f"deployed_{family}")
     out: dict[str, str] = {}
     for key in ("what", "fix"):
         for template in [*(row.get(f"{key}_{m}") for m in modes), row.get(key)]:
@@ -951,8 +1025,17 @@ def _build_status_response(
         }
 
     # Build status (03 §4.2)
+    # A followed proxy and the related contracts (adapters/evm/related_sources): which address
+    # holds the state and which source is reviewed, one line per related contract.
+    proxy, related = _proxy_related_status(_steps)
+    if proxy:
+        out["proxy"] = proxy
+    if related:
+        out["related"] = related
     out["map_status"] = job.get("map_status", "none")
     out["analyzer_degraded"] = job.get("analyzer_degraded", False)
+    if out["analyzer_degraded"]:
+        out["analyzer_note"] = _analyzer_note(job)
     # A failed build in one sentence (compiler, error class, consequence): the same sentence the
     # report prints on its cover and in its summary, so the reviewer reads it before submitting.
     build_failure = _build_failure_note(job)
@@ -965,7 +1048,8 @@ def _build_status_response(
     # a validating MCP client rejects the whole status response.
     if job.get("error_code"):
         err = {"code": job["error_code"]}
-        err.update(_error_texts(job["error_code"], job.get("error_detail"), job.get("source_kind")))
+        err.update(_error_texts(job["error_code"], job.get("error_detail"), job.get("source_kind"),
+                                job.get("chain")))
         if job.get("error_detail") is not None:
             err["detail"] = _error_detail_text(job["error_detail"])
         if job["error_code"] == "E_RENDER_FAILED" and state == "render_failed":
@@ -1038,6 +1122,24 @@ _PIN_NOTES = {
 
 
 _SCOPE_REASONS = frozenset({"test_or_mock_dir", "mock_name", "test_harness"})
+
+
+def _proxy_related_status(steps: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    def last(name: str, key: str) -> Any:
+        done = [s for s in steps if s.get("step") == name and s.get("status") == "done"
+                and isinstance(s.get("provenance"), dict) and s["provenance"].get(key)]
+        return done[-1]["provenance"][key] if done else None
+
+    proxy = last("chain_state", "proxy")
+    check = last("fetch", "proxy_check")
+    if isinstance(proxy, dict) and isinstance(check, dict):
+        # verified or not, and why not, in the client's words (security review 2026-10-31)
+        proxy = {**proxy, "verified": bool(check.get("verified")),
+                 **({"note": check["note"]} if check.get("note") else {})}
+    related = last("fetch", "related")
+    keep = ("name", "address", "role", "status", "provider", "match", "path", "files", "note")
+    rows = [{k: r[k] for k in keep if r.get(k) is not None} for r in (related or []) if isinstance(r, dict)]
+    return (proxy if isinstance(proxy, dict) else None), rows
 
 
 def _scope_excluded_status(steps: list[dict[str, Any]], *, detailed: bool) -> dict[str, Any] | None:
@@ -1208,6 +1310,20 @@ def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[di
         if check.get("open") and tool and tool not in out:
             out.append(tool)
     return out[:3]
+
+
+def _analyzer_note(job: dict[str, Any]) -> str:
+    """`analyzer_note` of review_status: why an analyzer did not run fully (mapping.analyzer_note).
+    Always a sentence: without a pin root or a work record it says the cause was not recorded."""
+    from ..mapping.analyzer_note import job_analyzer_note, note_from
+
+    try:
+        from .read import _get_ctx
+
+        return job_analyzer_note(_get_ctx().get_pin_root(), job["job_id"])
+    except Exception as exc:  # noqa: BLE001  # the sentence is an aid; status never fails on it
+        logger.debug("_analyzer_note: %s", type(exc).__name__)
+        return note_from(None)
 
 
 def _build_failure_note(job: dict[str, Any]) -> str | None:

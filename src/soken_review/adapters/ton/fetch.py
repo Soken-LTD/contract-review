@@ -66,6 +66,7 @@ from urllib.parse import urlparse
 import httpx
 
 from soken_review.adapters.base import Candidate, Compiler
+from soken_review.adapters.ton import trust_scan
 from soken_review.adapters.ton.cell import BocError, root_hash, root_info
 from soken_review.adapters.ton.units import filter_candidate_files, safe_store_path
 
@@ -97,10 +98,27 @@ _IPFS_GATEWAYS: tuple[str, ...] = (
     "https://files.orbs.network/ipfs/",
     "https://gateway.pinata.cloud/ipfs/",
     "https://ipfs.ton.live/ipfs/",
+    "https://ipfs.filebase.io/ipfs/",
 )
 
 _MAX_MANIFEST_BYTES = 1 * 1024 * 1024    # 1 MiB for the sources JSON manifest
 _IPFS_PER_S = 2.0                         # matches outbound.ipfs in limits.yaml
+_IPFS_RETRIES = 3                         # 429 from one gateway, then the next gateway
+_IPFS_RETRY_CAP_S = 5.0
+
+
+def _retry_after_s(header: str | None) -> float:
+    """Retry-After in seconds when numeric, else 0."""
+    try:
+        return max(0.0, float(header)) if isinstance(header, str) else 0.0
+    except ValueError:
+        return 0.0
+
+
+def _retry_after(header: str | None, retry: int) -> float:
+    """Seconds to wait before retrying a throttled gateway: Retry-After when numeric, capped."""
+    wait = _retry_after_s(header) or 1.0 * (retry + 1)
+    return min(wait, _IPFS_RETRY_CAP_S)
 
 # Source file extensions from the IPFS manifest that are kept in the Candidate.
 # ABI (.abi), package (.pkg) and binary blob extensions are excluded.
@@ -119,6 +137,10 @@ _VERIFIER_DOWNLOAD_ALLOWLIST: frozenset[str] = frozenset([
     "files.orbs.network",
     "gateway.pinata.cloud",
     "ipfs.ton.live",
+    # Every IPFS body is checked against its CID here, so a gateway is a mirror, not a trust
+    # anchor. files.orbs.network throttles with Retry-After 900 and pinata refuses some text
+    # files as HTML (matrix r5 2026-10-31: multisig v2 auto/order_code.func came from neither).
+    "ipfs.filebase.io",
 ])
 
 # Reserved / internal IP ranges that must never be contacted (SSRF)
@@ -542,6 +564,55 @@ async def fetch_library_body(
     return None
 
 
+async def resolve_library_refs(
+    client: httpx.AsyncClient,
+    candidate: Candidate,
+    api_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve the masterchain libraries a candidate's source references by hash.
+
+    A FunC source can embed a library reference cell (`auto/order_code.func` in multisig v2:
+    the order contract code is a masterchain library the multisig deploys by hash). The cell
+    is a hash only, so the rebuild matches the deployed code without the library body; the
+    trust scan accepts the idiom only for a hash read here from the chain, where
+    `fetch_library_body` hashes the returned body itself. Each library is also looked up in the
+    sources registry, so the report can say whether its own source is verified.
+
+    Writes `candidate.settings["library_refs"]` and returns it: one row per hash with `status`
+    ok | not_found | unavailable and `verified_source` (a verifier URL) or None.
+    """
+    rows: list[dict[str, Any]] = []
+    for lib_hash in trust_scan.library_refs(candidate.files):
+        row: dict[str, Any] = {"hash": lib_hash, "status": "not_found", "verified_source": None}
+        try:
+            body = await fetch_library_body(client, lib_hash, api_key)
+        except (TonReadError, httpx.HTTPError) as exc:
+            row["status"] = "unavailable"
+            logger.warning("ton library %s unavailable: %s", lib_hash[:12], exc)
+        else:
+            if body is not None:
+                row["status"] = "ok"
+                row["body_bytes"] = len(body)
+        if row["status"] == "ok":
+            for verifier_id in _REGISTRY_VERIFIER_IDS:
+                try:
+                    item = await _registry_get_source_item_address(client, lib_hash, verifier_id)
+                except RuntimeError:
+                    break
+                if item:
+                    row["verified_source"] = f"https://verifier.ton.org/{lib_hash}"
+                    break
+        rows.append(row)
+    candidate.settings = {**(candidate.settings or {}), "library_refs": rows}
+    return rows
+
+
+def resolved_library_hashes(candidate: Candidate) -> list[str]:
+    """Hashes of the libraries `resolve_library_refs` read from the chain with a verified body."""
+    rows = (candidate.settings or {}).get("library_refs") or []
+    return [r["hash"] for r in rows if isinstance(r, dict) and r.get("status") == "ok" and r.get("hash")]
+
+
 def _b64_bytes(b64: str | None) -> bytes | None:
     if not b64:
         return None
@@ -724,9 +795,18 @@ async def _ipfs_fetch_bytes(
         if _validate_download_url(url) is None:
             continue
         try:
-            await _limiter("ipfs", _IPFS_PER_S).wait()
-            r = await client.get(url, follow_redirects=False)
-            if r.status_code == 200:
+            r = None
+            for retry in range(_IPFS_RETRIES):
+                await _limiter("ipfs", _IPFS_PER_S).wait()
+                r = await client.get(url, follow_redirects=False)
+                # 429 only: one missing source costs the whole match (matrix r5 2026-10-31:
+                # files.orbs.network throttled one manifest entry). A 5xx goes to the next gateway.
+                if r.status_code != 429 or retry == _IPFS_RETRIES - 1:
+                    break
+                if _retry_after_s(r.headers.get("retry-after")) > _IPFS_RETRY_CAP_S:
+                    break        # throttled for longer than a job waits: the next gateway
+                await asyncio.sleep(_retry_after(r.headers.get("retry-after"), retry))
+            if r is not None and r.status_code == 200:
                 if len(r.content) > max_bytes:
                     logger.warning("_ipfs_fetch_bytes: %s over cap (%d > %d)", cid[:20], len(r.content), max_bytes)
                     return None
@@ -881,6 +961,22 @@ async def _registry_download_files(
     return result
 
 
+def _registry_func_targets(manifest: dict[str, Any], files: dict[str, str]) -> list[str]:
+    """FunC sources in the order the verifier compiled them: `compilerSettings.commandLine`
+    (`func -o output.fif -SPA a.fc b.fc ...`), else the manifest `sources` flagged
+    `includeInCommand`, in manifest order. Only downloaded files are named; an empty list leaves
+    the build on its entry heuristic."""
+    command = (manifest.get("compilerSettings") or {}).get("commandLine")
+    order: list[str] = []
+    if isinstance(command, str):
+        order = [tok for tok in command.split() if tok.lower().endswith((".fc", ".func"))]
+    if not order:
+        order = [e["filename"] for e in manifest.get("sources") or []
+                 if isinstance(e, dict) and isinstance(e.get("filename"), str) and e.get("includeInCommand")]
+    targets = [p for p in order if p in files]
+    return targets if targets and len(targets) == len(order) else []
+
+
 async def fetch_source_from_registry(
     client: httpx.AsyncClient,
     code_hash: str,
@@ -935,7 +1031,10 @@ async def fetch_source_from_registry(
             logger.debug("registry: unsupported compiler %r for %s", language_raw, code_hash[:12])
             continue
         compiler_settings = manifest.get("compilerSettings") or {}
-        version = compiler_settings.get("tactVersion") or compiler_settings.get("compilerVersion")
+        # FunC manifests name the compiler `funcVersion` (multisig v2: 0.4.4); without it the
+        # rebuild used the image default and could never match (matrix r5 2026-10-31).
+        version = (compiler_settings.get("tactVersion") or compiler_settings.get("compilerVersion")
+                   or compiler_settings.get("funcVersion"))
         entry = _registry_find_entrypoint(manifest, list(raw_files))
         if entry is None and language == "tact":
             logger.debug("registry: no entrypoint found for tact contract %s", code_hash[:12])
@@ -953,6 +1052,7 @@ async def fetch_source_from_registry(
         # accept a toolchain-gap candidate as tier B without trusting a container hash.
         settings: dict[str, Any] = {
             "entry": entry,
+            "func_targets": _registry_func_targets(manifest, raw_files) if language == "func" else [],
             "verifier": {
                 "verifier_id": verifier_id,
                 "code_hash": code_hash,
@@ -1472,4 +1572,6 @@ async def fetch_ton_sources(
                     read_status["ton_verifier"] = "ok" if vc is not None else "not_found"
             if vc is not None:
                 candidates.append(vc)
+        for cand in candidates:
+            await resolve_library_refs(client, cand, api_key)
     return candidates

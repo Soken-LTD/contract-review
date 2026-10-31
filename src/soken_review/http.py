@@ -8,11 +8,16 @@ and `2025-03-26` is served (03: not served). The 2026-07-28 leg is left to the S
 from __future__ import annotations
 
 import json
+import logging
+import re
+from functools import cache
 from typing import Any
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .quota import CLIENT_IP
+
+request_log = logging.getLogger("soken_review.requests")
 
 MODERN = "2026-07-28"
 HANDSHAKE_ERA = ("2025-11-25", "2025-06-18")
@@ -60,6 +65,8 @@ class ProtocolRules:
             return
         version = _header(scope, b"mcp-protocol-version")
         message = _parse(body)
+        if message is not None:
+            request_log.info("%s", describe_request(message, version, _header(scope, b"user-agent")))
 
         if version is None:
             if message is not None and (message.get("method") == "initialize" or _is_modern(message)):
@@ -75,6 +82,49 @@ class ProtocolRules:
             )
             return
         await self.app(scope, receive, send)
+
+
+_LOG_UNSAFE = re.compile(r"[^\x21-\x7e]")
+_LOG_CAP = 60
+_METHODS = frozenset({"initialize", "notifications/initialized", "ping", "tools/list", "tools/call", "server/discover",
+                      "subscriptions/listen", "resources/list", "prompts/list", "notifications/cancelled"})
+
+
+@cache
+def _tool_names() -> frozenset[str]:
+    from .contract import bundle_tools
+
+    return frozenset(t["name"] for t in bundle_tools())
+
+
+def _safe(value: Any) -> str:
+    """A client-controlled value as one printable token: no spaces, no control or non-ASCII characters
+    (a log line cannot be split or forged), at most _LOG_CAP characters."""
+    return _LOG_UNSAFE.sub("_", str(value))[:_LOG_CAP]
+
+
+def describe_request(message: dict[str, Any], version: str | None, agent: str | None) -> str:
+    """One log line per MCP request: method, tool name, protocol version, client name and version,
+    user agent. No arguments, no ids, no addresses. Unknown methods and tools print as "unknown".
+    The record of how often a client fetches tools/list against how often it calls tools
+    (client_refresh: is a cached list ever refreshed?)."""
+    params = message.get("params") if isinstance(message.get("params"), dict) else {}
+    meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+    method = message.get("method")
+    info = params.get("clientInfo") if method == "initialize" else meta.get("io.modelcontextprotocol/clientInfo")
+    info = info if isinstance(info, dict) else {}
+    proto = version or meta.get("io.modelcontextprotocol/protocolVersion") or params.get("protocolVersion") or "-"
+    tool = None
+    if method == "tools/call":
+        tool = params.get("name") if params.get("name") in _tool_names() else "unknown"
+    parts = {
+        "method": (method if method in _METHODS else "unknown") if method else "-",
+        "tool": tool,
+        "proto": proto,
+        "client": f"{info.get('name')}/{info.get('version')}" if info.get("name") else None,
+        "ua": agent,
+    }
+    return "mcp_request " + " ".join(f"{k}={_safe(v)}" for k, v in parts.items() if v)
 
 
 def _is_modern(message: dict[str, Any]) -> bool:

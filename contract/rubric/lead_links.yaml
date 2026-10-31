@@ -1,0 +1,28 @@
+# rubric/lead_links.yaml: the duplicate_of rules of review_dismiss_lead (04 section 10). Reference data:
+# tools/dismiss.py names the failing rule in E_DUPLICATE_TARGET with its text and fix from here, and
+# review_get_guide topic challenge_rules prints the list. Rule ids are the ones the server returns.
+intro: >-
+  duplicate_of closes an analyzer lead as a duplicate of a finding draft (draft_key) or of a lead that
+  a draft already promoted (LEAD-nnnn). Every rule below must hold; the first one that fails is named.
+rules:
+  - id: target_not_found
+    text: the target is neither a draft key of this job nor a lead id of this job.
+    fix: Name a draft_key from review_status drafts, or a LEAD id from review_leads.
+  - id: D2_target_not_live
+    text: a draft target must be live, status accepted or needs_challenge (not withdrawn or needs_text).
+    fix: Pick a live draft, or dismiss the lead with another reason.
+  - id: D2_target_not_promoted
+    text: a lead target must be promoted, that is linked to a draft through its lead_ids.
+    fix: Link the target lead to a draft first (lead_ids on review_submit_finding), or name the draft itself.
+  - id: D1_category_mismatch
+    text: the target's category (the draft's current revision, or the target lead's category) must equal the dismissed lead's category.
+    fix: Name a target of the same category, link the lead to that draft through lead_ids instead, or dismiss it with another reason.
+  - id: D4_target_lower_severity
+    text: the target's severity must be equal to or higher than the dismissed lead's analyzer severity.
+    fix: Name a target of equal or higher severity, or link the lead through lead_ids so the finding carries it.
+  - id: D3_no_overlap
+    text: the dismissed lead's lines must overlap a location quote of the target draft (same file, intersecting lines), or the target lead's lines.
+    fix: Add a location quote that covers the lead's lines to the target draft (a new revision), or dismiss the lead with another reason.
+  - id: target_rev_missing
+    text: the target draft has no stored current revision (a server fault).
+    fix: Resubmit the target draft, then retry the dismissal.

@@ -55,6 +55,7 @@ from psycopg.rows import dict_row
 
 from ..context.store import ContextStore, is_context_path
 from ..db.pool import get_pool
+from ..engine import gate_policy
 from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
@@ -213,7 +214,9 @@ def _basis_items(matrix: dict[str, Any]) -> list[dict[str, Any]]:
             "condition": (
                 "An admin function in the map can restore the affected state."
             ),
-            "scope": "entry_function",
+            # the admin functions are other entries writing the same state: entry_function alone
+            # rejected their quotes as out of scope (r5 2026-10-31, magnum)
+            "scope": "shared_state_writers",
             "expect": "absent",
             "fallback_field": "reversibility",
             "fallback_value": "admin_reversible",
@@ -602,11 +605,56 @@ def _resolve_scope(
         # The `#[derive(Accounts)]` struct(s) of the instruction(s) in scope, alone. Without one (a
         # native program parses accounts in the handler body) the entry ranges are the parsing block.
         return structs, False, "semantic"
+    if scope_name == "shared_state_writers" and not nc:
+        writers = _shared_state_writer_ranges(map_doc, location_quotes, ranges)
+        if writers is not None:
+            return writers, False, "semantic"
     # entry_function, and the named scopes without a dedicated resolver (shared_state_writers,
     # handler, module, account_struct without a struct): the entry_function ranges, which hold the
     # instruction, its guards and its callees. Narrower than scopes.yaml describes for those three,
     # but real ranges from the map; an empty scope could never be answered (2026-10-26).
     return ranges, nc, "not_covered" if nc else "semantic"
+
+
+def _shared_state_writer_ranges(map_doc: dict, location_quotes: list[dict[str, Any]],
+                                base: list[str]) -> list[str] | None:
+    """scopes.yaml shared_state_writers: the entry_function ranges plus every external or public
+    function that reads or writes a state variable the location's functions write (their reads
+    when they write none), bodies only. None when the extra bodies would pass the line cap; the
+    caller then keeps the entry_function ranges."""
+    if not location_quotes:
+        return None
+    loc = location_quotes[0]
+    path, start, end = loc.get("file", ""), int(loc.get("start", 0)), int(loc.get("end", 0))
+    spans = {sp["id"]: sp for sp in map_doc.get("spans", []) or [] if sp.get("id")}
+    functions = (map_doc.get("semantic") or {}).get("functions", []) or []
+
+    def holds(fn: dict) -> bool:
+        sp = spans.get(fn.get("span", ""))
+        return bool(sp) and sp.get("file") == path and not (sp.get("end", 0) < start or sp.get("start", 0) > end)
+
+    covering = [fn for fn in functions if holds(fn)]
+    state = {w.get("var") for fn in covering for w in fn.get("writes") or []} - {None}
+    if not state:
+        state = {r.get("var") for fn in covering for r in fn.get("reads") or []} - {None}
+    if not state:
+        return None
+    extra: list[str] = []
+    for fn in functions:
+        if fn in covering or not (fn.get("is_entry") or fn.get("visibility") in ("external", "public")):
+            continue
+        touched = {w.get("var") for w in fn.get("writes") or []} | {r.get("var") for r in fn.get("reads") or []}
+        sp = spans.get(fn.get("span", ""))
+        if sp and touched & state:
+            extra.append(f"{sp['file']}:{sp['start']}-{sp['end']}")
+    if not extra:
+        return None
+    merged = sorted(set(base) | set(extra), key=lambda r: (_parse_range_ref(r) or ("", 0, 0))[:2])
+    lines = 0
+    for r in merged:
+        t = _parse_range_ref(r)
+        lines += (t[2] - t[1] + 1) if t else 0
+    return merged if lines <= _SCOPE_LINE_CAP else None
 
 
 # Scope names of rubric/enums.yaml `challenge_scope`; anything else is a rubric error -> not_covered.
@@ -697,6 +745,21 @@ def _resolve_entry_function_scope(
         for ins in instructions:
             if ins.get("context") == held and ins["span"] in fn_by_span and ins["span"] not in covering:
                 covering.append(ins["span"])
+    if contexts:
+        # The methods of `impl <Struct>` (validate, handle) run the instruction whose Accounts struct
+        # it is: with the location in the struct, in a handler, or in the program wrapper, they are
+        # the instruction's body (MetaDAO 2026-10-31: the scope was the struct alone, every quote
+        # from the handler came back unverified).
+        names = set(ctx_names)
+        for sid in list(covering):
+            unit = sid.split("@", 1)[0].rsplit(".", 1)[0]
+            if unit in contexts:
+                names.add(unit)
+            names.update(i["context"] for i in instructions if i["span"] == sid and i.get("context") in contexts)
+        for sid in fn_by_span:
+            if sid not in covering and sid.split("@", 1)[0].rsplit(".", 1)[0] in names:
+                covering.append(sid)
+        ctx_names.extend(sorted(names - set(ctx_names)))
 
     if not covering:
         return [], True, []
@@ -757,7 +820,7 @@ def _resolve_entry_function_scope(
             for call in (fn_by_span.get(sid) or {}).get("calls", []) or []:
                 if call.get("kind") not in _TRAVERSABLE_CALL_KINDS:
                     continue
-                for callee in fn_by_name.get(call.get("target", ""), []):
+                for callee in _call_targets(call, fn_by_name):
                     csid = callee.get("span", "")
                     if not csid or csid in seen:
                         continue
@@ -794,6 +857,17 @@ def _function_indexes(functions: list[dict], span_meta: dict[str, dict[str, Any]
     return fn_by_span, fn_by_name
 
 
+def _call_targets(call: dict[str, Any], fn_by_name: dict[str, list[dict]]) -> list[dict]:
+    """Functions a call edge may reach. A Solana `Type::name(...)` call carries `qualifier`: only the
+    function of that impl (span id `Type.name`) is the target, not every `name` in the program
+    (MetaDAO 2026-10-31: each instruction's `handle` called every other `handle`)."""
+    cands = fn_by_name.get(call.get("target", ""), [])
+    q = call.get("qualifier")
+    if not q:
+        return cands
+    return [c for c in cands if str(c.get("span", "")).split("@", 1)[0].rsplit(".", 1)[0] == q]
+
+
 def _caller_index(functions: list[dict], fn_by_name: dict[str, list[dict]]) -> dict[str, set[str]]:
     """callee span id -> span ids of functions that call it over a traversable edge."""
     callers: dict[str, set[str]] = {}
@@ -802,7 +876,7 @@ def _caller_index(functions: list[dict], fn_by_name: dict[str, list[dict]]) -> d
         for call in fn.get("calls", []) or []:
             if call.get("kind") not in _TRAVERSABLE_CALL_KINDS:
                 continue
-            for callee in fn_by_name.get(call.get("target", ""), []):
+            for callee in _call_targets(call, fn_by_name):
                 csid = callee.get("span", "")
                 if csid and sid and csid != sid:
                     callers.setdefault(csid, set()).add(sid)
@@ -1111,7 +1185,19 @@ async def handle_review_challenge(args: dict[str, Any]) -> dict[str, Any]:
     }
     if draft_status != "needs_challenge":
         out["note"] = _CHALLENGE_STATUS_NOTE.get(draft_status, "")
+    notice = _category_notice(family, category, is_generic)
+    if notice:
+        out["checklist_notice"] = notice
     return out
+
+
+def _category_notice(family: str, category: str, is_generic: bool) -> str | None:
+    """Which checklist the category uses and what it fits (rubric/category_fit.yaml): the category
+    silently picked the kill items before (r5 2026-10-31: an accounting bug met P1)."""
+    from ..engine.category_fit import checklist_notice
+    kills = [str(i["id"]) for i in _checklist_items_for_category(family, category, is_generic)
+             if i.get("kind") == "kill" and i.get("id")]
+    return checklist_notice(category, kills, generic=is_generic)
 
 
 _CHALLENGE_STATUS_NOTE = {
@@ -1120,6 +1206,11 @@ _CHALLENGE_STATUS_NOTE = {
                  "with changed text opens a new revision and a new challenge."),
     "withdrawn": "This draft is withdrawn; resubmit it to open a new revision and a new challenge.",
 }
+
+
+def _kill_hint(category: str, kill_item: Any) -> str | None:
+    from ..engine.category_fit import kill_hint
+    return kill_hint(category, str(kill_item))
 
 
 # ── review_answer_challenge handler ──────────────────────────────────────────
@@ -1292,7 +1383,13 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                     "severity_reason": draft.get("severity_reason") or "",
                     "matrix_cell": None,
                 }
-            # Different answers for same revision = reject (revision already answered)
+            # Different answers for an answered revision. The current one is frozen (the client sent
+            # the right number, BakerFi r5 read "Revision is now 0. Resend with revision 0."): say so,
+            # and how to answer again. An older revision is a stale number.
+            if revision == current_revision:
+                return {"accepted": False, "errors": [ReviewError(
+                    "E_REVISION_ANSWERED", draft=draft_key, revision=revision,
+                    verdict=existing_ca.get("verdict") or "recorded", next=revision + 1).envelope()]}
             return {"accepted": False, "errors": [
                 ReviewError("E_REVISION_CONFLICT", revision=current_revision).envelope()
             ]}
@@ -1512,8 +1609,17 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         elif value == "not_applicable":
             reason = answer.get("reason", "")
             allowed_reasons = output_item.get("allowed_na_reasons", [])
-            if reason not in allowed_reasons or _check_na_predicate(reason, map_doc, family) != "true":
-                advise("E_CHALLENGE_NA_REASON", reasons=", ".join(allowed_reasons))
+            if not allowed_reasons:
+                # BakerFi r5 read "Allowed: ." (an empty list): name the case instead.
+                advise("E_CHALLENGE_NA_REASON", item=item_id, reason=reason or "none",
+                       allowed="This item takes no not_applicable reason; answer present or absent.")
+            elif reason not in allowed_reasons:
+                advise("E_CHALLENGE_NA_REASON", item=item_id, reason=reason or "none",
+                       allowed=f"Allowed reasons for this item: {', '.join(allowed_reasons)}.")
+            elif _check_na_predicate(reason, map_doc, family) != "true":
+                advise("E_CHALLENGE_NA_REASON", item=item_id, reason=reason,
+                       allowed=(f"The contract map does not confirm {reason} for this job; answer present or"
+                                " absent with quotes or refs."))
 
         else:
             violations.append(ReviewError(
@@ -1550,12 +1656,22 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             **gate.result_fields(),
         }
     complete = not unverified
+    if unverified:
+        # The first answer freezes this revision even when some items stay unverified (BakerFi r5:
+        # one advisory E_CHALLENGE_SCOPE locked the revision with items_unverified and no word on it).
+        # Say it first, before the per-item warnings the cap may cut.
+        env = ReviewError("E_CHALLENGE_PARTIAL", ids=", ".join(unverified[:12]), revision=revision,
+                          next=revision + 1).envelope()
+        gate.warnings.insert(0, gate_policy.warning(env, code="E_CHALLENGE_PARTIAL", rule=None,
+                                                    field="answers", match=None, suggest=None))
     open_downgrade = any(it.get("kind") == "downgrade" and it["id"] not in verified_ids for it in items)
     stored_answers = [{**a, "verified": a.get("item_id") in verified_ids} for a in answers]
 
     # ── All checks passed: compute verdict ────────────────────────────────────
 
-    severity_before = draft["severity"] or "Informational"
+    # DG1 measures from the severity accepted at submit for this revision, the same input finalize
+    # reads (finding_revisions.computed_severity), so both stages floor from one value.
+    severity_before = rev.get("computed_severity") or draft["severity"] or "Informational"
 
     async with pool.connection() as conn, conn.transaction():
         # Re-lock draft to prevent concurrent answer submissions
@@ -1684,6 +1800,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
                 claimed_severity=content.get("claimed_severity"),
                 claimed_reason=content.get("severity_reason"),
                 severity_before=severity_before,
+                challenge_complete=complete,
             )
 
             try:
@@ -1696,7 +1813,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
             new_status = "accepted"
             # A partial or partly unverified answer records what it verified but does not upgrade the
             # evidence level: reasoning_challenged needs every item answered and verified.
-            new_evidence = sev_result.evidence_level if complete else ev_level
+            new_evidence = sev_result.evidence_level   # stage_evidence: promoted only when complete
             # Every cause of the verdict, by name: the K caps compute_severity applied and the
             # basis fallbacks that changed the matrix. A downgrade without a named cause is a
             # server defect and never a verdict (Solana blind run 2026-10-26: Critical -> Low,
@@ -1752,6 +1869,7 @@ async def handle_review_answer_challenge(args: dict[str, Any]) -> dict[str, Any]
         "status": new_status,
         "evidence_level": new_evidence,
         "kill_item": kill_present,
+        **({"checklist_notice": hint} if kill_present and (hint := _kill_hint(category, kill_present)) else {}),
         "leads_reopened": leads_reopened,
         "severity_rule": severity_rule,
         "caps_applied": caps_named,

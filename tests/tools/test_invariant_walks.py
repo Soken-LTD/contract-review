@@ -186,3 +186,18 @@ def test_guide_topics_include_invariants():
     guide = {t["name"]: t for t in bundle_tools()}["review_get_guide"]
     assert "invariants" in guide["inputSchema"]["properties"]["topics"]["items"]["enum"]
     assert "invariants" in guide["description"]
+
+
+@ASYNC
+async def test_walks_answered_through_coverage_rows_close_f9(db_pool):
+    """A tool list from before section invariant_walks (blind round 5): the answer rides on coverage rows."""
+    ss, job_id = await _wired(db_pool)
+    async with db_pool.connection() as conn:
+        await conn.execute("insert into job_reads (job_id, path, start_line, end_line) values (%s, 'src/Vault.sol', 1, 9)",
+                           (job_id,))
+    res = await ss.handle_review_set_section({"job_id": job_id, "section": "coverage", "coverage": {"rows": [
+        {"area_id": "IW-VS-1", "reason": "nr_holds", "note": NOTE + " Refs src/Vault.sol:5-8."},
+        {"area_id": "IW-VS-4", "reason": "nr_not_applicable", "note": NOTE}]}})
+    assert res["accepted"] and res["walks_open"] == [], res
+    assert res["routed_to_invariant_walks"] == ["IW-VS-1", "IW-VS-4"]
+    assert (await _f9(db_pool, job_id))["open"] == 0

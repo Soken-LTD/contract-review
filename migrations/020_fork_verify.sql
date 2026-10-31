@@ -1,4 +1,4 @@
--- Migration 019: review_verify_on_fork (fork verification of a finding, chain access design 1.7, P4 on EVM).
+-- Migration 020: review_verify_on_fork (fork verification of a finding, chain access design 1.7, P4 on EVM).
 -- job_steps gains the `verify_fork` step: one container run of a reviewer's Foundry test against a local
 -- fork of chain state, reached only through the read-only chain proxy. The worker claims one such step
 -- at a time (job_repo.claim_step); the rest stay queued.

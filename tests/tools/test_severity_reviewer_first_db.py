@@ -155,3 +155,22 @@ async def test_a_challenge_lowers_at_most_one_step_and_names_dg1(db_pool):
     row = await _draft_row(db_pool, job_id, "draft-dg1-001")
     assert row and row["severity"] == "Medium" and row["severity_set_by"] == "cap"
     assert row["severity_rule"] == ans["severity_rule"]
+
+
+@ASYNC
+async def test_stale_client_states_severity_in_a_body_paragraph(db_pool):
+    """Blind round 5 (BakerFi): a tool list without severity_reason let the matrix replace the reviewer's
+    severity on five findings. "Severity: X. Reason: ..." in the body is the same claim, same RV1 rules."""
+    import copy
+
+    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
+    submit_mod, _ = await _modules(db_pool, pin_root)
+    args = {**copy.deepcopy(_VALID_SUBMISSION), "job_id": job_id, "draft_key": "draft-rv1-body"}
+    args.pop("claimed_severity", None)
+    args["body"]["impact"] = [*args["body"]["impact"], {"p": f"Severity: High. Reason: {REASON}"}]
+    res = await submit_mod.handle_review_submit_finding(args)
+    assert res["accepted"] is True, res
+    assert res["severity_from_body"] == {"field": "body.impact[1]", "claimed_severity": "High", "severity_reason": REASON}
+    assert res["computed_severity"] == "High" and res["severity_set_by"] == "reviewer"
+    row = await _draft_row(db_pool, job_id, "draft-rv1-body")
+    assert row and row["severity"] == "High" and row["severity_reason"] == REASON

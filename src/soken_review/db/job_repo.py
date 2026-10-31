@@ -576,7 +576,8 @@ class JobRepo:
             return await cur.fetchall()  # type: ignore[return-value]
 
     async def step_medians(self, chain: str | None, limit_jobs: int = 50) -> dict[str, float]:
-        """Median seconds per step over the last `limit_jobs` finished jobs of the chain (03 3.1 ETA).
+        """Median seconds per step over the last `limit_jobs` finished jobs of the chain (03 3.1 ETA),
+        plus the 90th percentile under the key `<step>.p90`.
 
         Steps under one second are restarts and no-op steps (a mint job's build, a skipped
         chain_state), not measurements: on the stand they pulled the Solana build median to 3 s
@@ -589,7 +590,9 @@ class JobRepo:
                        and exists (select 1 from job_steps s where s.job_id = j.job_id and s.status = 'done')
                      order by j.created_at desc limit %s)
                    select s.step, percentile_cont(0.5) within group (
-                            order by extract(epoch from (s.finished_at - s.started_at))) as median_s
+                            order by extract(epoch from (s.finished_at - s.started_at))) as median_s,
+                          percentile_cont(0.9) within group (
+                            order by extract(epoch from (s.finished_at - s.started_at))) as p90_s
                    from job_steps s join recent r on r.job_id = s.job_id
                    where s.status = 'done' and s.started_at is not null and s.finished_at is not null
                      and extract(epoch from (s.finished_at - s.started_at)) >= 1
@@ -597,7 +600,10 @@ class JobRepo:
                 (chain, limit_jobs),
             )
             rows = await cur.fetchall()
-        return {r["step"]: float(r["median_s"]) for r in rows if r["median_s"] is not None}
+        out = {r["step"]: float(r["median_s"]) for r in rows if r["median_s"] is not None}
+        # `<step>.p90`: how long a step that is past its median may still run (status ETA)
+        out.update({f"{r['step']}.p90": float(r["p90_s"]) for r in rows if r["p90_s"] is not None})
+        return out
 
 
 def _sha256_json(doc: Any) -> str:

@@ -22,5 +22,14 @@ async def test_not_ready_envelope_names_the_state(monkeypatch, state):
         await report.handle_review_report({"job_id": "job_X", "wait_seconds": 0})
     env = exc.value.envelope()
     assert env["code"] == "E_JOB_NOT_READY"
-    assert env["what"] == f"Job is {state}, eta 0 s."
+    # MetaDAO 2026-10-31: "eta 0 s" read as nearly done; an unknown ETA now says where to look
+    want = "the report exists after review_finalize" if state == "ready" else "review_status shows the time left"
+    assert env["what"] == f"Job is {state}; {want}."
+    assert "eta 0" not in env["what"]
     assert "{" not in env["what"] and " , " not in env["what"]
+
+
+def test_a_known_eta_is_quoted():
+    env = ReviewError("E_JOB_NOT_READY", state="building", eta_s=120).envelope()
+    assert env["what"] == "Job is building; about 120 s left."
+    assert "wait_seconds 55" in env["fix"]

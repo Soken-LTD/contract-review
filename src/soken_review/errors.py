@@ -26,6 +26,13 @@ class ReviewError(Exception):
 
             text, reword = rule_help(str(fields["rule"]))
             self.fields = {**fields, "rule_text": text, "reword": reword}
+        if code == "E_JOB_NOT_READY" and "eta_text" not in self.fields:
+            # Most callers know only the state, and sent eta 0: "eta 0 s" read as "nearly done" while a
+            # Solana build had ten minutes left (MetaDAO blind run 2026-10-31). An unknown ETA says so.
+            eta = self.fields.get("eta_s")
+            text = f"about {int(eta)} s left" if isinstance(eta, (int, float)) and eta > 0 \
+                else "review_status shows the time left"
+            self.fields = {**self.fields, "eta_text": text}
         super().__init__(code)
 
     @property

@@ -327,3 +327,104 @@ async def handle_chain_balances(args: dict[str, Any]) -> dict[str, Any]:
         return {"token": info}
 
     return await _run(args, max(1, (len(holders) + 9) // 10), body)
+
+
+# ── automatic snapshot (stale clients) ─────────────────────────────────────
+
+AUTO_ALIAS = "target"
+AUTO_FILE = "chain_auto.json"
+AUTO_RETRY_S = 600
+AUTO_WAIT_S = 25.0
+_auto_tasks: dict[str, asyncio.Task[Any]] = {}
+
+
+def _auto_marker(job_id: str) -> Path:
+    return _pin_root() / job_id / AUTO_FILE
+
+
+def _auto_due(job_id: str) -> bool:
+    try:
+        rec = json.loads(_auto_marker(job_id).read_text())
+    except (OSError, ValueError):
+        return True
+    if rec.get("ok"):
+        return False
+    import time
+
+    return time.time() - float(rec.get("at") or 0) > AUTO_RETRY_S
+
+
+def _auto_mark(job_id: str, ok: bool, detail: str = "") -> None:
+    import time
+
+    p = _auto_marker(job_id)
+    if not p.parent.is_dir():   # never create a job directory: only a pinned job has one
+        return
+    try:
+        p.write_text(json.dumps({"at": time.time(), "ok": ok, "detail": detail[:200]}))
+    except OSError:
+        pass
+
+
+async def _auto_body(job_id: str) -> None:
+    job = await _job_row(job_id)
+    address = str(job.get("address") or "")
+    family = chain_job(job, _pin_root(), None).family
+    if not address:
+        _auto_mark(job_id, True, "no deployment")
+        return
+    check_address(family, address, "address")
+
+    async def body(px: ChainProxy, out: reads.Out) -> dict[str, Any]:
+        if family == "evm":
+            await reads.evm_roles(px, out, address, AUTO_ALIAS, [])
+        elif family == "tron":
+            await reads.tron_roles(px, out, address, AUTO_ALIAS, [])
+        elif family == "solana":
+            await reads.solana_roles(px, out, address, AUTO_ALIAS)
+        else:
+            await reads.ton_roles(px, out, address, AUTO_ALIAS, [])
+        if family in ("evm", "tron"):
+            await reads.READERS[family](px, out, [{"alias": AUTO_ALIAS, "kind": "call", "address": address,
+                                                   "fn": "paused()", "returns": "bool"}])
+        await reads.BALANCES[family](px, out, "native", "native", [{"alias": AUTO_ALIAS, "address": address}])
+        return {}
+
+    res = await _run({"job_id": job_id}, 32, body)
+    _auto_mark(job_id, bool(res.get("accepted")),
+               "" if res.get("accepted") else str((res.get("errors") or [{}])[0].get("code") or ""))
+
+
+async def auto_snapshot(job_id: str, wait: bool) -> None:
+    """Read the deployment's owner and admin holders, proxy slots, roles, paused flag and native balance
+    once per job, as `chain.target.*` facts, so review_facts carries them for a client whose tool list
+    predates review_chain_read and friends (blind round 5: no MCP arm could call them). Advisory like the
+    tools: budget-metered, never fails the caller, retried after AUTO_RETRY_S when the chain was down.
+    `wait` blocks up to AUTO_WAIT_S (review_facts); otherwise it only starts the read (review_status)."""
+    try:
+        if not _auto_due(job_id):
+            return
+    except ReviewError:
+        return
+    task = _auto_tasks.get(job_id)
+    if task is None or task.done():
+        async def run() -> None:
+            try:
+                await _auto_body(job_id)
+            except (_Reject, ReviewError) as exc:
+                code = exc.err.code if isinstance(exc, _Reject) else exc.code
+                if code not in ("E_JOB_NOT_READY",):
+                    _auto_mark(job_id, code in ("E_CHAIN_UNSUPPORTED", "E_JOB_FROZEN", "E_INVALID_ARGUMENT"), code)
+            except Exception as exc:  # noqa: BLE001 - advisory; logged, never raised to the caller
+                logger.warning("chain auto snapshot failed for %s: %s", job_id[-8:], type(exc).__name__)
+                _auto_mark(job_id, False, type(exc).__name__)
+            finally:
+                _auto_tasks.pop(job_id, None)
+
+        task = asyncio.create_task(run())
+        _auto_tasks[job_id] = task
+    if wait:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=AUTO_WAIT_S)
+        except TimeoutError:
+            pass

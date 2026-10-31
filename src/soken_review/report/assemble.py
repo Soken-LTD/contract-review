@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from ..adapters.evm import proxy as _proxy_mod
 from ..adapters.evm.build_scope import subject_unit
 from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
@@ -219,8 +220,10 @@ def _report_chain(job: dict[str, Any]) -> str:
 # Cover line for a job started without a deployment: a scope statement, not a finding about the
 # code (matrix run 2026-10-27, 1inch repo job: "Chain and network: Not deployed" read as a defect).
 NO_DEPLOYMENT_LABEL = "No deployment given; source review only"
-SOLANA_CONFIG_CLUSTER_LABEL = "Program id for {cluster} in Anchor.toml; not mainnet"
+SOLANA_CONFIG_CLUSTER_LABEL = "Program id for {cluster} in Anchor.toml; not on mainnet"
+SOLANA_CONFIG_CLUSTER_UNCHECKED_LABEL = "Program id for {cluster} in Anchor.toml; mainnet not checked"
 SOLANA_NOT_ON_MAINNET_LABEL = "Program id not deployed on Solana mainnet"
+SOLANA_MAINNET_UNCHECKED_LABEL = "Solana mainnet; deployment not checked"
 
 
 def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
@@ -236,16 +239,22 @@ def _network_label(job: dict[str, Any], chain_state: dict[str, Any] | None,
         return str(chain_id)[:60]
     chain = str((deployment or {}).get("chain") or job.get("chain") or "")
     if job.get("address") and chain == "solana":
-        # Pump Science blind run 2026-10-27: a declare_id! / [programs.localnet] id printed as
-        # "Solana mainnet". Mainnet only when the repository config does not tie the id to another
-        # cluster and the mainnet read found a program at it.
+        # The label comes from the supervisor's mainnet read, never from repository config alone.
+        # Pump Science blind run 2026-10-27: an id with no program on mainnet printed as "Solana
+        # mainnet". MetaDAO blind run 2026-10-31: the supplied mainnet id, live on mainnet, printed as
+        # "not mainnet" because Anchor.toml also listed it under [programs.localnet].
         cs = chain_state or {}
         clusters = [str(c) for c in cs.get("config_clusters") or []]
-        if clusters and "mainnet" not in clusters:
-            return SOLANA_CONFIG_CLUSTER_LABEL.format(cluster=clusters[0])[:60]
-        if cs.get("kind", "program") == "program" and not cs.get("deployed_program_hash") \
-                and cs.get("why") == "no_code":
-            return SOLANA_NOT_ON_MAINNET_LABEL
+        other = clusters[0] if clusters and "mainnet" not in clusters else None
+        why = str(cs.get("why") or "")
+        if cs.get("kind") == "mint" or cs.get("deployed_program_hash") or (cs.get("loader") and not why.startswith("read_failed")
+                                                and why != "no_code"):
+            return _CHAIN_NETWORK["solana"]          # a program account exists at the id on mainnet
+        if why == "no_code":
+            return (SOLANA_CONFIG_CLUSTER_LABEL.format(cluster=other) if other else SOLANA_NOT_ON_MAINNET_LABEL)[:60]
+        # no read, or the read failed: say so instead of guessing either way
+        return (SOLANA_CONFIG_CLUSTER_UNCHECKED_LABEL.format(cluster=other) if other
+                else SOLANA_MAINNET_UNCHECKED_LABEL)[:60]
     if job.get("address") and chain in _CHAIN_NETWORK:
         return _CHAIN_NETWORK[chain]
     return NO_DEPLOYMENT_LABEL
@@ -366,16 +375,35 @@ def _build_verification_blocks(
 
     # Table 1: Deployment — address, chain/network, block, on-chain code hash, entry contract
     dep_rows: list[list[Any]] = []
+    proxy = (chain_state or {}).get("proxy") or {}
+    impl = str(proxy.get("implementation") or "")
     if address:
-        dep_rows.append(["Address", {"addr": address}])
+        dep_rows.append(["Proxy address" if impl else "Address", {"addr": address}])
+    if impl and _ADDR_OK.match(impl):
+        # one job for a proxy: the implementation source was rebuilt and compared; state was read
+        # at the proxy address above
+        if re.fullmatch(r"[a-z0-9_]{1,40}", str(proxy.get("pattern_name") or "")):
+            dep_rows.append(["Proxy pattern", str(proxy["pattern_name"])])
+        dep_rows.append(["Implementation", {"addr": impl}])
+        for label, key in (("Proxy admin", "admin"), ("Beacon", "beacon")):
+            if proxy.get(key) and _ADDR_OK.match(str(proxy[key])):
+                dep_rows.append([label, {"addr": str(proxy[key])}])
     dep_rows.append(["Chain / network", network])
     if block is not None:
         dep_rows.append([unit_label, int(block)])
     if code_hash:
-        dep_rows.append(["On-chain code hash", code_hash])
+        dep_rows.append(["Implementation code hash" if impl else "On-chain code hash", code_hash])
     if entry_contract:
         # Contract names come from the source tree: a `src` cell, never server text (text classes).
         dep_rows.append(["Entry contract", {"src": entry_contract[:300]}])
+    for lib in (deployment.get("library_refs") or [])[:4]:
+        # TON: a masterchain library the code references by hash (multisig v2 order code)
+        if not isinstance(lib, dict) or not lib.get("hash"):
+            continue
+        state = "read from the chain" if lib.get("status") == "ok" else "not found on the chain"
+        src = ("source verified on verifier.ton.org" if lib.get("verified_source")
+               else "its source is not part of this review")
+        dep_rows.append(["Library reference", f"{str(lib['hash'])[:64]} ({state}; {src})"])
     if dep_rows:
         blocks.append({"table": {"head": ["Field", "Value"], "rows": dep_rows}})
 
@@ -424,7 +452,49 @@ def _build_verification_blocks(
 
 
 # ------------------------------------------------------------------ provenance (08 1.4 label_key)
+_ADDR_OK = re.compile(r"^[0-9A-Za-z:_.-]{20,130}$")
+
+
 def provenance(
+    job: dict[str, Any],
+    cands: list[dict[str, Any]],
+    chain_state: dict[str, Any] | None,
+    deployment: dict[str, Any] | None = None,
+    *,
+    today: date | None = None,
+    related: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """`_provenance_tier` plus the proxy and related-contract lines of the cover: the deployed
+    address is a proxy (implementation reviewed, state read at the proxy) and the related
+    contracts pinned in the same job (adapters/evm/related_sources)."""
+    prov = _provenance_tier(job, cands, chain_state, deployment, today=today)
+    proxy = (chain_state or {}).get("proxy") or {}
+    impl = str(proxy.get("implementation") or "")
+    if impl and _ADDR_OK.match(impl):
+        verified = proxy.get("verified") is True
+        prov["implementation"] = impl
+        prov["proxy_verified"] = verified
+        prov["upgradeable"] = True
+        pattern = str(proxy.get("pattern_name") or "")
+        if re.fullmatch(r"[a-z0-9_]{1,40}", pattern):
+            prov["proxy_pattern"] = pattern
+        admin = str(proxy.get("admin") or "")
+        if (prov["tier"] == "A" and verified and proxy.get("pattern") in _proxy_mod.ADMIN_SLOT_PATTERNS
+                and admin and _ADDR_OK.match(admin)):
+            # the admin slot read at the pinned block, printed only for a verified proxy runtime of
+            # a pattern that reads that slot (security review 2026-10-31); else NotChecked stays
+            prov["upgrade_authority"] = {"addr": admin}
+    rows = [{"name": str(r["name"]), "address": str(r["address"]), "status": str(r["status"])}
+            for r in (related or []) if isinstance(r, dict) and r.get("role") != "proxy"
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,40}", str(r.get("name") or ""))
+            and _ADDR_OK.match(str(r.get("address") or ""))
+            and r.get("status") in ("pinned", "no_code", "unverified_source", "fetch_failed")]
+    if rows:
+        prov["related"] = rows[:6]
+    return prov
+
+
+def _provenance_tier(
     job: dict[str, Any],
     cands: list[dict[str, Any]],
     chain_state: dict[str, Any] | None,
@@ -500,7 +570,12 @@ def provenance(
     # Tier B (default): the label names the real source kind. Deployed address with explorer or
     # Sourcify source: third party; deployed address with other source: not checked; repository
     # at a resolved commit: commit; anything else (upload, inline files): supplied by the requester.
-    if address and (deployment or {}).get("unlinked_reason"):
+    proxy_rec = (chain_state or {}).get("proxy") or {}
+    impl_matched = ((deployment or {}).get("dep") or {}).get("match") in ("exact", "metadata_only")
+    if address and proxy_rec.get("implementation") and proxy_rec.get("verified") is not True and impl_matched:
+        # a followed proxy whose own runtime is not verified (supervisor _resolve_provenance caps it)
+        key = "tier_b_proxy_unmatched"
+    elif address and (deployment or {}).get("unlinked_reason"):
         # TON SOURCE_UNLINKED: the requester's source was reviewed, the deployment was not matched
         # to it; the cover says so in words (security review 2026-10-27), not only the method row.
         key = "tier_b_unmatched"
@@ -1156,14 +1231,21 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     scope_files, oos = [], []
     dep_groups: dict[str, int] = {}
     entry_file = (cands[0].get("entry_contract") or "").rsplit(":", 1)[0] if cands else ""
+    # Address column: behind a followed proxy the reviewed entry file is the implementation's; a
+    # related contract's entry file carries its own address (adapters/evm/related_sources).
+    related = _json(work / "related_sources.json", [])
+    entry_addr = {entry_file: ((chain_state or {}).get("proxy") or {}).get("implementation") or job.get("address")}
+    for r in related if isinstance(related, list) else []:
+        if isinstance(r, dict) and r.get("status") == "pinned" and r.get("path") and r.get("entry_contract"):
+            entry_addr[f"{r['path']}/{str(r['entry_contract']).rsplit(':', 1)[0]}"] = r.get("address")
     # files the scope rules or the build left out are listed once, with their reason (below)
     excluded_paths = {str(r.get("path")) for r in ((cands[0].get("scope_excluded") if cands else None) or [])
                       if isinstance(r, dict)}
     for path, e in sorted(pin.entries.items()):
         if e.in_scope and e.role == "source":
             row: dict[str, Any] = {"name": _unit_of(path), "file": path, "nsloc": count_nsloc("\n".join(pin.read_all(path)))}
-            if job.get("address") and path == entry_file:
-                row["addr"] = job["address"]
+            if job.get("address") and entry_addr.get(path):
+                row["addr"] = entry_addr[path]
             scope_files.append(row)
         elif not e.in_scope and e.role == "dependency":
             dep_groups[_dependency_package(path)] = dep_groups.get(_dependency_package(path), 0) + 1
@@ -1267,7 +1349,11 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
 
     m = texts["method_steps"]
     tools_line = ", ".join(f"{n} {v}: {r['leads']:,} leads" for (n, v), r in sorted(per_tool.items())) or "No analyzer leads"
-    degraded = " One analyzer did not run." if job.get("analyzer_degraded") else ""
+    degraded = ""
+    if job.get("analyzer_degraded"):
+        from ..mapping.analyzer_note import job_analyzer_note
+
+        degraded = " " + job_analyzer_note(pin_root, job_id)
     # A failed build is one sentence (compiler, error class, consequence) on the cover, in the
     # summary and in the method table; review_status carries the same sentence before submitting.
     build_failure = job_build_failure(pin_root, job_id, map_status=job.get("map_status"), family=family)
@@ -1288,7 +1374,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     subj_cands = subject_candidates(job, cands, pin)
     subj = pick_subject(subj_cands)
     days = int(_limits()["report"]["default_days"])
-    prov = provenance(job, cands, chain_state, deployment, today=today)
+    prov = provenance(job, cands, chain_state, deployment, today=today, related=related)
     meta: dict[str, Any] = {
         "report_type": "automated", "kind": texts["sub_line"], "subject": subj["value"], "subject_source": subj["source"],
         "chain": chain, "network": network[:60], "chain_id": chain_id, "explorer": None,

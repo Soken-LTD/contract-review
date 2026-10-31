@@ -120,6 +120,9 @@
   "aderyn": {
     "CentralizationRisk": "evm.centralization",
     "Reentrancy": "evm.reentrancy",
+    "reentrancy-state-change": "evm.reentrancy",
+    "state-change-after-external-call": "evm.reentrancy",
+    "reentrancy": "evm.reentrancy",
     "UncheckedReturn": "evm.unchecked_call",
     "UncheckedLowLevelCall": "evm.unchecked_call",
     "WeakRandomness": "evm.randomness",

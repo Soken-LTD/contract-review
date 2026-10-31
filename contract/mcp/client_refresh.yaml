@@ -1,0 +1,52 @@
+# Texts for a client whose cached tool list is older than the served schema (soken_review.client_refresh).
+#
+# Clients cache tools/list: claude.ai keeps the list per connector, and in the 2026-10-31 blind round 5 every
+# MCP arm ran on a list from 2026-10-23 or 2026-10-24, so review_chain_read, severity_reason, invariant_walks
+# and the invariants topic never reached the model. The server cannot see which list a client holds; it can see
+# (a) an object argument that arrived as a JSON string (the client had no type for it: certain), and (b) a job
+# on which no tool added since the baseline (client_baseline.json) was ever called (likely). The notice names
+# what is missing, from the diff of the current bundle against the baseline, and how to refresh.
+#
+# Placeholders: {schema_version} {baseline_date} {probe} {tools} {fields}.
+
+lead_certain: >-
+  Your tool list predates the current schema (schema_version {schema_version}).
+lead_likely: >-
+  Your tool list may be older than this server (schema_version {schema_version}). If you do not see {probe}
+  in your tools, it is.
+missing: >-
+  A list from {baseline_date} lacks the tools {tools} and the arguments {fields}.
+refresh: >-
+  To refresh it in claude.ai, and in Claude Code sessions that use the claude.ai connector, remove this connector
+  in Settings, Connectors and add it again (a new chat alone kept the old list on 2026-10-31). A server added
+  to Claude Code directly: run /mcp and reconnect it. Other clients reload the tool list on reconnect.
+works_now: >-
+  Until then: the server accepts those arguments even if your list does not show them. Or write a body
+  paragraph "Severity: High. Reason: ..." to keep your severity; answer an invariant walk as a coverage row
+  (area_id the walk id, reason nr_holds, nr_violated or nr_not_applicable, refs path:start-end in the note);
+  topic checklist with job_id lists the walks; review_facts has the deployment's owner, roles, paused and
+  balance under chain.target.
+
+# Server instructions (initialize result and server/discover): read by the client when it connects, so a
+# client that reconnects sees them even when its tool list is cached elsewhere.
+instructions: >-
+  SOKEN contract review. Start with review_get_guide, then review_start. This server has {tool_count} tools
+  (schema_version {schema_version}), including {probe}. If your tool list lacks them, it is cached from an
+  older version: in claude.ai (also when Claude Code uses the claude.ai connector) remove the connector and
+  add it again; for a server added to Claude Code directly run /mcp and reconnect. Results carry
+  client_notice when the server sees an old tool list; follow it.
+
+# Arguments and values named first in the notice (the rest are counted): the ones a review depends on.
+priority: [review_submit_finding.severity_reason, review_set_section.invariant_walks,
+           review_get_guide.topic invariants, review_get_guide.topic chain]
+max_listed: 4
+
+# Which tools are worth naming as the probe: the newest tools a model can check for by name.
+probe_tools: [review_chain_read, review_chain_roles, review_chain_balances]
+
+# Per job: how many times a likely-stale notice rides on a result, and on which tools.
+max_notices_per_job: 4
+notice_tools: [review_start, review_status, review_finalize, review_contract_map]
+# Rejection or warning codes caused by a missing schema element: the notice rides on them while the job is
+# not proven fresh, within the same cap.
+notice_codes: [E_SEVERITY_CONFIRM, E_SECTION_INVALID]

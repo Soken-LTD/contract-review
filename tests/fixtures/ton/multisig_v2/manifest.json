@@ -1,0 +1,76 @@
+{
+ "compilerSettings": {
+  "funcVersion": "0.4.4",
+  "commandLine": "func -o output.fif -SPA imports/stdlib.fc op-codes.func multisig.func errors.func messages.func auto/order_code.func order_helpers.func types.func"
+ },
+ "compiler": "func",
+ "hash": "09FNqaYn8Ow1MzQYKXYq+SuVQLIb8DZl+sCcK0bqu6w=",
+ "verificationDate": 1712768400000,
+ "sources": [
+  {
+   "url": "ipfs://QmS4gjm7pkpYMcHyPX662Jrjyubyr5dvhMaVbwk2MmaCeV",
+   "filename": "imports/stdlib.fc",
+   "hasIncludeDirectives": false,
+   "isEntrypoint": false,
+   "isStdLib": true,
+   "includeInCommand": true
+  },
+  {
+   "url": "ipfs://Qmasjs6KaMvzrgphehwD2Hodrj8mMCLUf7FLRCnyUY4EVf",
+   "filename": "op-codes.func",
+   "hasIncludeDirectives": false,
+   "isEntrypoint": false,
+   "isStdLib": false,
+   "includeInCommand": true
+  },
+  {
+   "url": "ipfs://QmYSDnLJHBJV8WDqtScZVSrQeNiWu77aw9iKepWFPYUCTv",
+   "filename": "multisig.func",
+   "hasIncludeDirectives": true,
+   "isEntrypoint": true,
+   "isStdLib": false,
+   "includeInCommand": true
+  },
+  {
+   "url": "ipfs://QmZZEHyJxkpcCJ25BzeCCaxazK2ALuRvyWrGg2DF9HPo2Y",
+   "filename": "errors.func",
+   "hasIncludeDirectives": false,
+   "isEntrypoint": false,
+   "isStdLib": false,
+   "includeInCommand": true
+  },
+  {
+   "url": "ipfs://QmV1UB85SjH817grVjufkmVGSLx3Ccrn3D5jaaY6buTE9K",
+   "filename": "messages.func",
+   "hasIncludeDirectives": true,
+   "isEntrypoint": false,
+   "isStdLib": false,
+   "includeInCommand": true
+  },
+  {
+   "url": "ipfs://QmbFA7qr8uU2wveZB2xyoWBQkusAUBeFfNaDH2Ne8acLQ7",
+   "filename": "auto/order_code.func",
+   "hasIncludeDirectives": false,
+   "isEntrypoint": false,
+   "isStdLib": false,
+   "includeInCommand": true
+  },
+  {
+   "url": "ipfs://Qmd2ovk4ytqh99GQHFAV8RWd6BkHKBtzeEHydgEBSWy92W",
+   "filename": "order_helpers.func",
+   "hasIncludeDirectives": true,
+   "isEntrypoint": false,
+   "isStdLib": false,
+   "includeInCommand": true
+  },
+  {
+   "url": "ipfs://QmUDKbhswajF4opYGjJWDnBYZFWYHsJTFtktf2nBnaB7Nc",
+   "filename": "types.func",
+   "hasIncludeDirectives": true,
+   "isEntrypoint": false,
+   "isStdLib": false,
+   "includeInCommand": true
+  }
+ ],
+ "knownContractAddress": "EQBo6F4lFhRC1eXxTY77-ll4UKLmzCg34JbScMOyh9vUlaRv"
+}

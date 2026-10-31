@@ -129,3 +129,23 @@ async def test_map_artifacts_on_disk(root: Path):
     doc = json.loads((root / JOB / "map" / "map.json").read_text())
     assert [u["id"] for u in doc["semantic"]["units"]] == ["src/Vault.sol:Vault"]
     assert json.loads((root / JOB / "flags.json").read_text()) == []
+
+
+async def test_contract_map_served_while_analyzing_when_map_full(root: Path):
+    """r5 2026-10-31: status showed map_status full in state analyzing, the map answered
+    E_JOB_NOT_READY. The map is served once written, with the state named."""
+    from soken_review.tools import read as read_mod
+    read_mod._get_ctx().set_state(JOB, "analyzing")
+    text = await _call("review_contract_map", {"job_id": JOB, "contract": "Vault"})
+    first = text.splitlines()[0]
+    assert first.startswith("contract map full, units 1, page 1")
+    assert "job still analyzing" in first
+
+
+async def test_contract_map_not_ready_without_map(tmp_path: Path):
+    ctx = MemoryJobContext(tmp_path)
+    ctx.set_state(JOB, "building")
+    set_context(ctx)
+    async with Client(SokenServer()) as c:
+        r = await c.call_tool("review_contract_map", {"job_id": JOB})
+    assert "E_JOB_NOT_READY" in r.content[0].text

@@ -150,7 +150,7 @@ async def _pin_repo_commit(sup: Supervisor, step: dict[str, Any], job: dict[str,
     if src.get("kind") != "repo" or job.get("resolved_commit"):
         return job
     from ..errors import ReviewError
-    from ..tools.git_probe import _SHA1_RE, ls_remote, resolve_ref
+    from ..tools.git_probe import _SHA1_RE, ls_remote, resolve_ref, unpinned_ref_detail
 
     commit = str(src.get("commit") or "").lower()
     sha: str | None = commit if _SHA1_RE.match(commit) else None
@@ -165,7 +165,7 @@ async def _pin_repo_commit(sup: Supervisor, step: dict[str, Any], job: dict[str,
                 heads = [ln.split("\t", 1)[0].strip() for ln in out.splitlines() if ln.endswith("\tHEAD")]
                 sha = heads[0] if heads and _SHA1_RE.match(heads[0]) else None
         except ReviewError as exc:
-            await _terminal(sup, step, "failed", exc.code, detail={"stage": "repo_ref", "ref": str(src.get("ref") or "HEAD")[:80]})
+            await _terminal(sup, step, "failed", exc.code, detail=unpinned_ref_detail(exc, str(src.get("ref") or "HEAD")))
             return None
     if sha is None:
         return job          # a short commit: the archive fetch takes it as given
@@ -344,6 +344,11 @@ async def _build(sup: Supervisor, step: dict[str, Any], job: dict[str, Any]) -> 
 
     out, results = await asyncio.get_event_loop().run_in_executor(None, _resolve, out_dir, cs, cands)
     prov = {**out.to_json(), "mc_seqno": cs.get("mc_seqno"), "address": next(iter(cs["accounts"]), None)}
+    if out.src is not None and 0 <= out.src < len(cands):
+        # masterchain libraries the reviewed source references by hash (fetch.resolve_library_refs)
+        libs = (cands[out.src].settings or {}).get("library_refs")
+        if libs:
+            prov["library_refs"] = libs
     _write_json(out_dir / "provenance.json", prov)
     # The report assembly reads deployment.json (never provenance.json): tier A renders from it
     cand_summary = summary[out.src] if out.src is not None and 0 <= out.src < len(summary) else None

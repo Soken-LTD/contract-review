@@ -37,6 +37,16 @@ def test_eta_keeps_a_floor_when_the_running_step_is_past_its_median():
     assert 111 <= eta_fresh <= 115
 
 
+def test_eta_past_the_median_counts_down_to_the_p90():
+    """MetaDAO 2026-10-31: a Solana build ran 806 s against a 723 s median; the ETA sat at one floor
+    value for four polls. Between the median and the p90 it now counts down the p90."""
+    med = {"build": 723.0, "build.p90": 900.0, "analyze": 194.0, "map": 3.0, "chain_state": 1.0}
+    early, late = _compute_eta("building", _steps(760), med), _compute_eta("building", _steps(820), med)
+    assert early > late                                   # it moves between polls
+    assert 140 + 194 <= early <= 140 + 194 + 5             # p90 - elapsed, then the rest
+    assert _compute_eta("building", _steps(1000), med) >= 30 + 194   # past the p90: the floor again
+
+
 @ASYNC
 async def test_step_medians_ignore_sub_second_steps(db_pool):
     jid = new_job_id()
@@ -56,3 +66,4 @@ async def test_step_medians_ignore_sub_second_steps(db_pool):
         async with db_pool.connection() as conn:
             await conn.execute("delete from jobs where job_id = %s", (jid,))
     assert 419 <= medians["build"] <= 421
+    assert 419 <= medians["build.p90"] <= 421

@@ -14,6 +14,11 @@ The check is an allowlist. Each asm body is tokenized; every token must be one o
   - a cell or slice literal (`B{..}`, `x{..}`, `b{..}`) of at most 32 bytes, at most 8 per candidate.
 A whole body may instead equal one of `_KNOWN_BODIES`: fixed standard-library idioms that build
 a constant of at most 2 bits (`address_none`, `empty_cell`), which cannot carry code.
+A body may also be the library reference idiom `<b 2 8 u, 0x<64 hex> 256 u, b>spec PUSHREF`
+(an exotic cell of type 2 that names a masterchain library by its hash; TVM whitepaper 3.1.7,
+multisig v2 `auto/order_code.func`). It carries no code, only a hash: it is trusted when the
+caller passes that hash in `resolved_libraries` (the supervisor read the library from the chain
+and its body hashes to it, fetch.resolve_library_refs), else it is untrusted ("not resolved").
 Any other token marks the candidate untrusted. The scan does not stop the build or the analysis;
 it sets `Candidate.untrusted_inputs`, which `provenance.resolve_provenance` reads at the decision
 point (tier A blocked).
@@ -32,7 +37,8 @@ non-source files); only files that parse as JSON are skipped, since no compiler 
 
 Code carried as data (both views): a data literal over the 32-byte budget (FunC `"<hex>"s`, Tolk
 `stringHexToSlice(` / `stringToBase256(`, Tact `cell(` / `slice(` / `rawSlice(`) or an integer
-outside strings over 20 decimal, 16 hex or 64 binary digits; any asm body using BLESS / EXECUTE /
+outside strings over 20 decimal, 16 hex or 64 binary digits, unless it is 2**n or 2**n - 1 (a
+mask carries no data); any asm body using BLESS / EXECUTE /
 CALLX / JMPX or their ARGS forms; any mention of the wrapper names in `_EXEC_WRAPPER_NAMES`. The
 single exception is the exact standard stdlib.fc declaration `cont bless(slice s) impure asm
 "BLESS";`, which every FunC project ships; any other mention of `bless` is still untrusted.
@@ -50,6 +56,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +102,9 @@ _MNEMONICS: frozenset[str] = _LEGACY_MNEMONICS | frozenset(
     for line in (Path(__file__).parent / "data" / "tvm_mnemonics.txt").read_text().splitlines()
     if line.strip() and not line.startswith("#")
 )
+
+# Library reference cell builder (exotic type 2, 8-bit tag then the 256-bit representation hash).
+_LIBRARY_REF_BODY = re.compile(r"^<b 2 8 u, (0x[0-9a-fA-F]{64}) 256 u, b>spec PUSHREF$")
 
 _ASM_STRINGS = re.compile(r'\basm\b\s*(?:\([^)]*\)\s*)?((?:"[^"]*"\s*)+)')
 _STRING = re.compile(r'"([^"]*)"')
@@ -262,9 +272,36 @@ def _non_source_reads(files: dict[str, str]) -> list[str]:
     return reasons
 
 
-def _check_body(path: str, body: str, reasons: list[str]) -> tuple[int, int]:
+def library_ref_hash(body: str) -> str | None:
+    """The 64-hex library hash when an asm body is exactly the library reference idiom."""
+    m = _LIBRARY_REF_BODY.match(" ".join(body.split()))
+    return m.group(1)[2:].lower().rjust(64, "0") if m else None
+
+
+def library_refs(files: dict[str, str]) -> list[str]:
+    """Library hashes named by library reference asm bodies in source files (lexer view)."""
+    found: list[str] = []
+    for path, raw in sorted(files.items()):
+        lower = path.lower()
+        if not lower.endswith(_SOURCE_EXTS):
+            continue
+        text = strip_comments(raw, "func" if lower.endswith(_FUNC_EXTS) else "c")
+        for m in _ASM_STRINGS.finditer(text):
+            h = library_ref_hash(" ".join(_STRING.findall(m.group(1))))
+            if h and h not in found:
+                found.append(h)
+    return found
+
+
+def _check_body(path: str, body: str, reasons: list[str],
+                resolved: frozenset[str] = frozenset()) -> tuple[int, int]:
     """Allowlist one asm body. Returns (literal count, mnemonic count)."""
     if " ".join(body.split()) in _KNOWN_BODIES:
+        return 0, 1
+    lib = library_ref_hash(body)
+    if lib is not None:
+        if lib not in resolved:
+            reasons.append(f"{path}: library reference {lib[:16]}... is not resolved on chain")
         return 0, 1
     literals = 0
     for lit in _LITERAL.finditer(body):
@@ -296,11 +333,24 @@ def _data_literals(path: str, text: str, reasons: list[str]) -> None:
         tok = m.group(1).lower()
         kind = tok[1] if len(tok) > 1 and tok[0] == "0" and tok[1] in "xbo" else "d"
         digits = len((tok[2:] if kind != "d" else tok).replace("_", ""))
-        if digits > _INT_CAP.get(kind, MAX_INT_DIGITS):
+        if digits > _INT_CAP.get(kind, MAX_INT_DIGITS) and not _is_mask(tok, kind):
             reasons.append(f"{path}: integer constant {m.group(0)[:24]} over the digit cap")
 
 
-def _scan_text(path: str, text: str, reasons: list[str]) -> int:
+def _is_mask(tok: str, kind: str) -> bool:
+    """A big constant that carries no data: 2**n - 1 (a bit mask such as MAX_ORDER_SEQNO in
+    multisig v2, all hex `f`) or 2**n, for n at most 257 (the TVM integer width)."""
+    body = (tok[2:] if kind != "d" else tok).replace("_", "")
+    try:
+        value = int(body, {"x": 16, "b": 2, "o": 8}.get(kind, 10))
+    except ValueError:
+        return False
+    if value <= 0 or value.bit_length() > 257:
+        return False
+    return value & (value + 1) == 0 or value & (value - 1) == 0
+
+
+def _scan_text(path: str, text: str, reasons: list[str], resolved: frozenset[str] = frozenset()) -> int:
     """Independent checks on one view of a file; returns the literal count of this view."""
     _data_literals(path, text, reasons)
     literals = 0
@@ -308,7 +358,7 @@ def _scan_text(path: str, text: str, reasons: list[str]) -> int:
     std_spans = [m.span() for m in _STD_BLESS.finditer(text)]
     for m in _ASM_STRINGS.finditer(text):
         body = " ".join(_STRING.findall(m.group(1)))
-        n, _ = _check_body(path, body, reasons)
+        n, _ = _check_body(path, body, reasons, resolved)
         literals += n
         bodies += 1
         if _EXEC & set(body.split()) and not any(lo <= m.start() < hi for lo, hi in std_spans):
@@ -351,7 +401,7 @@ def _views(path: str, raw: str, reasons: list[str]) -> list[str]:
     return [*views, raw]
 
 
-def scan_files(files: dict[str, str]) -> list[str]:
+def scan_files(files: dict[str, str], resolved_libraries: Iterable[str] = ()) -> list[str]:
     """Return the reasons a candidate is untrusted (empty list = trusted).
 
     The reasons are the union of independent checks over (file x view): each lexer view and
@@ -359,7 +409,10 @@ def scan_files(files: dict[str, str]) -> list[str]:
     only add reasons (the literal total takes, per file, the largest count of any view). Every
     file is scanned, whatever its extension; only non-source files that parse as JSON are
     skipped (no compiler reads them, and a reference to one is an include violation).
+    `resolved_libraries`: library hashes the supervisor read from the chain (hash verified); a
+    library reference body naming one of them is trusted.
     """
+    resolved = frozenset(h.lower() for h in resolved_libraries)
     reasons: list[str] = []
     literals = 0
     for path, raw in sorted(files.items()):
@@ -369,7 +422,7 @@ def scan_files(files: dict[str, str]) -> list[str]:
             continue
         per_file = 0
         for text in _views(path, raw, reasons):
-            per_file = max(per_file, _scan_text(path, text, reasons))
+            per_file = max(per_file, _scan_text(path, text, reasons, resolved))
             for inc in _INCLUDE.findall(text):
                 if not is_source or not _include_ok(inc, lower):
                     reasons.append(f"{path}: includes {inc[:80]!r}, not a source file of the language")

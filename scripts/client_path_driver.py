@@ -157,6 +157,11 @@ class TargetSpec:
     address_in_cover: str | None = None
     chain_read: dict[str, Any] | None = None   # review_chain_read step: {items, cite}; the finding cites `cite`
     fork_test: dict[str, Any] | None = None    # review_verify_on_fork step: {content, test}; bound to the finding
+    # the start address is a proxy: one job reviews the implementation, reads state at the proxy,
+    # pins the proxy source as related `proxy`, and the cover names both (matrix run 2026-10-31, Venus)
+    expect_proxy: bool = False
+    expect_facts: tuple[str, ...] = ()        # fact keys the job must hold (read at the start address)
+    expect_library_ref: str | None = None      # TON: a library hash the report's verification table names
 
 
 @dataclass
@@ -632,6 +637,11 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
         meta = report.get("meta") or {}
         prov = meta.get("provenance") or {}
         (out_dir / f"{spec.name}-report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+        if spec.expect_library_ref:
+            # multisig v2: the order code is a masterchain library the code names by hash
+            text = json.dumps(report.get("verification") or [], ensure_ascii=False)
+            res.check("verification names the library reference", spec.expect_library_ref in text
+                      and "Library reference" in text, f"library {spec.expect_library_ref[:12]}")
         res.check("report.json cover matches review_report", meta.get("chain") == rep.get("chain")
                   and meta.get("network") == rep.get("network") and prov.get("tier") == tier,
                   f"meta chain {meta.get('chain')} network {meta.get('network')} tier {prov.get('tier')} label {prov.get('label')!r}")
@@ -639,6 +649,11 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
             addr = str(prov.get("address") or "")
             res.check("cover provenance line names the start address", addr.lower() == spec.address_in_cover.lower(),
                       f"provenance.address {addr!r}")
+        impl = getattr(spec, "_implementation", "")
+        if spec.expect_proxy:
+            res.check("cover names the implementation beside the proxy",
+                      bool(impl) and str(prov.get("implementation") or "").lower() == impl.lower(),
+                      f"provenance.implementation {prov.get('implementation')!r} pattern {prov.get('proxy_pattern')!r}")
         raw_facts = report.get("facts") or {}
         facts = set(raw_facts) if isinstance(raw_facts, dict) else {str(f.get("key")) for f in raw_facts}
         res.check("report.facts carries the fact set, not context.* only",
@@ -668,6 +683,36 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
                 res.check("printed finding carries its severity basis (rule, set by, reason)",
                           '"Set by"' in blob and '"Rule"' in blob, blob[:200])
                 break
+
+
+def check_proxy_job(sess: Session, spec: TargetSpec, status: dict[str, Any]) -> None:
+    """One job for a proxy: the implementation is the reviewed code, the state facts come from the
+    proxy (a job on the implementation read owner 0x0 there), the proxy source is pinned beside it."""
+    res = sess.res
+    start_addr = str(spec.start["source"]["address"]).lower()
+    proxy = status.get("proxy") or {}
+    impl = str(proxy.get("implementation") or "")
+    res.check("status names the proxy and its implementation",
+              str(proxy.get("proxy") or "").lower() == start_addr and impl.startswith("0x") and impl.lower() != start_addr,
+              json.dumps(proxy)[:300])
+    spec._implementation = impl  # type: ignore[attr-defined]  # read by check_report
+    res.check("proxy runtime verified (its own Sourcify match on this chain)", proxy.get("verified") is True,
+              str(proxy.get("note") or proxy.get("verified")))
+    related = status.get("related") or []
+    res.check("proxy source pinned as related `proxy`",
+              any(r.get("role") == "proxy" and r.get("status") == "pinned" for r in related), json.dumps(related)[:300])
+    facts = dict(sess.facts())
+    res.check("deploy.address is the proxy", facts.get("deploy.address", "").lower() == start_addr,
+              f"deploy.address {facts.get('deploy.address')!r}")
+    res.check("deploy.proxy.implementation recorded", facts.get("deploy.proxy.implementation", "").lower() == impl.lower(),
+              f"deploy.proxy.implementation {facts.get('deploy.proxy.implementation')!r}")
+    for key in spec.expect_facts:
+        val = facts.get(key, "")
+        res.check(f"{key} read at the proxy (non-zero)", bool(val) and int(val, 16) != 0 if val.startswith("0x") else bool(val),
+                  f"{key} {val!r}")
+    if "onchain.eip1967.implementation" in facts:
+        res.check("the implementation slot read at the proxy is the reviewed implementation",
+                  facts["onchain.eip1967.implementation"].lower() == impl.lower(), facts["onchain.eip1967.implementation"])
 
 
 def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path) -> TargetResult:
@@ -702,6 +747,8 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
                       f"manager {deps.get('manager')} count {deps.get('count')} pinned_by {deps.get('pinned_by')} "
                       f"packages {[p.get('name') for p in deps.get('packages') or []][:5]}")
         sess = Session(client, res.job_id, res)
+        if spec.expect_proxy:
+            check_proxy_job(sess, spec, status)
         cmap = client.call("review_contract_map", job_id=res.job_id, page_size=30, response_format="detailed")
         units = parse_units(cmap["text"])
         head = cmap["text"].splitlines()[0]
@@ -762,8 +809,11 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
 # ── Fixture targets ────────────────────────────────────────────────────────
 
 WETH9 = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+EIGEN_STETH = "0x93c4b944D05dfe6df7645A86cd2206016c51564D"
 FORTON = "EQAvJuEln0lP8c2YMZ4sKGwQRt_kmxmC494v8Y4TTHgOasKJ"
 CRS = "TRegosVaS1o3DHG85nnW8xYzczPm3xL76K"
+TON_MULTISIG = "EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-"
+TON_ORDER_LIB = "6305a8061c856c2ccf05dcb0df5815c71475870567cab5f049e340bcf59251f3"
 APYEE_COMMIT = "ffc81631af65010c8afe66e1bee09f94d2d1ea79"
 LOCKER_COMMIT = "4f400beb3a7b912888fba214d8553f5368eab18c"
 LOCKER_PROGRAM = "Fvm8Z25vd1Yauj6GB4jsrW7jJyUdNYGeDCWYqcuTtDek"
@@ -819,6 +869,17 @@ TARGETS: dict[str, TargetSpec] = {
         chain_read={"cite": "chain.weth.total_supply",
                     "items": [{"alias": "weth", "address": WETH9, "kind": "call", "fn": "totalSupply()",
                                "returns": "uint256", "unit": "wei", "field": "total_supply"}]}),
+    "evm-proxy": TargetSpec(
+        # Venus blind run 2026-10-31: a proxy address gave a review of the proxy source only, and a
+        # second job on the implementation read owner 0x0. The EigenLayer stETH strategy is an
+        # EIP-1967 transparent proxy with a StrategyBase implementation, both Sourcify-verified with
+        # relative source paths: one job, one PDF, the EIP-1967 slots read at the proxy. (USDC is a
+        # ZeppelinOS-slot proxy and is followed too, but its implementation's Sourcify sources carry
+        # absolute paths that the fetch path filter drops, so it cannot build today.)
+        name="evm-proxy", start={"source": {"kind": "deployed", "chain": "evm", "chain_id": 1, "address": EIGEN_STETH}},
+        probe_url=f"https://sourcify.dev/server/v2/contract/1/{EIGEN_STETH}",
+        chain="evm", network="Ethereum Mainnet (1)", tiers=("A", "B"), address_in_cover=EIGEN_STETH, ready_timeout_s=900,
+        expect_proxy=True, expect_facts=("onchain.eip1967.implementation", "onchain.eip1967.admin")),
     "evm-repo": TargetSpec(
         name="evm-repo",
         start={"source": {"kind": "repo", "repo_url": "https://github.com/apyee-finance/apyee-protocol",
@@ -837,6 +898,16 @@ TARGETS: dict[str, TargetSpec] = {
         name="ton", start={"source": {"kind": "deployed", "chain": "ton", "address": FORTON}},
         probe_url="https://toncenter.com/api/v2/getAddressInformation?address=" + FORTON,
         chain="ton", network="TON mainnet", tiers=("A",), stale_walks=True, address_in_cover=FORTON, ready_timeout_s=900),
+    "ton-multisig": TargetSpec(
+        # Matrix r5 2026-10-31: multisig v2, verified as FunC 0.4.4. Its auto/order_code.func builds a
+        # library reference cell (the order code is a masterchain library), its types.func holds a
+        # 2**256 - 1 mask, the manifest names funcVersion and a command-line file order, and only the
+        # 0.4.4-newops.1 build assembles its stdlib. Each stopped the job in insufficient_source; now
+        # the library is read from the chain by hash and the rebuild matches: tier A.
+        name="ton-multisig", start={"source": {"kind": "deployed", "chain": "ton", "address": TON_MULTISIG}},
+        probe_url="https://toncenter.com/api/v2/getAddressInformation?address=" + TON_MULTISIG,
+        chain="ton", network="TON mainnet", tiers=("A",), address_in_cover=TON_MULTISIG,
+        expect_library_ref=TON_ORDER_LIB, ready_timeout_s=900),
     "ton-repo": TargetSpec(
         # Hipo blind run 2026-10-27: a public TON FunC Blueprint repository, started by a third party
         # with repo and commit only (no chain, no deployment), ended insufficient_source on every
