@@ -954,6 +954,120 @@ async def ton_roles(px: ChainProxy, out: Out, address: str, alias: str, extra: l
     return result
 
 
+# ── TON start-of-job snapshot (blind round 5b, 2026-10-31) ─────────────────
+# The deployment's state through the get methods of the standard TON interfaces, as EVM gets its
+# owner, proxy slots and paused flag at job start. Reference data (TEP-74 jetton, TEP-62 NFT,
+# multisig v2, wallets): method, interface, and the name of each stack entry (None = not recorded,
+# a code or content cell). A method the contract does not have fails with a TVM exit code and is
+# skipped. Round 5b: chain_state was "none / no values" for multisig v2 and the reviewer had to
+# read get_multisig_data by hand.
+TON_INTERFACES: tuple[tuple[str, str, tuple[str | None, ...]], ...] = (
+    ("get_multisig_data", "multisig_v2", ("next_order_seqno", "threshold", "signers", "proposers")),
+    ("get_jetton_data", "jetton_master", ("total_supply", "mintable", "admin", None, None)),
+    ("get_wallet_data", "jetton_wallet", ("jetton_balance", "owner", "jetton_master", None)),
+    ("get_nft_data", "nft_item", ("initialized", "index", "collection", "owner", None)),
+    ("get_collection_data", "nft_collection", ("next_item_index", None, "owner")),
+    ("seqno", "wallet", ("seqno",)),
+    ("get_public_key", "wallet", ("public_key",)),
+    ("get_subwallet_id", "wallet", ("subwallet_id",)),
+    ("get_owner", "ownable", ("owner",)),
+    ("owner", "ownable", ("owner",)),
+)
+# (method, stack index) -> key width of a `uint<n> -> MsgAddressInt` dictionary at that index
+TON_ADDRESS_DICTS = {("get_multisig_data", 2): 8, ("get_multisig_data", 3): 8}
+TON_AUTO_MAX_METHODS = 8
+TON_AUTO_MAX_DICT = 10
+_TON_KNOWN = {m: (iface, names) for m, iface, names in TON_INTERFACES}
+_FUNC_GETTER = re.compile(r"([A-Za-z_][\w?!']{0,63})\s*\(\s*\)\s*(?:impure\s+)?(?:inline(?:_ref)?\s+)?method_id\b")
+_TACT_TOLK_GETTER = re.compile(r"\bget\s+(?:fun\s+)?([A-Za-z_]\w{0,63})\s*\(\s*\)")
+
+
+def ton_declared_getters(files: dict[str, str]) -> list[str]:
+    """Zero-argument get methods a FunC (`name() method_id`), Tact or Tolk (`get fun name()`) source
+    declares, in file and line order. Tact names are camelCase in source and snake_case on chain."""
+    seen: dict[str, None] = {}
+    for path in sorted(files):
+        text = files[path]
+        for m in _FUNC_GETTER.finditer(text):
+            seen.setdefault(m.group(1), None)
+        for m in _TACT_TOLK_GETTER.finditer(text):
+            seen.setdefault(field_key(m.group(1)) if path.endswith(".tact") else m.group(1), None)
+    return [n for n in seen if re.fullmatch(r"[a-z_][a-z0-9_]{0,63}", n)]
+
+
+def ton_auto_methods(declared: list[str] | None) -> list[str]:
+    """The get methods the snapshot calls: with a known source, the standard-interface methods it
+    declares first, then its other zero-argument getters; without one, the standard list. At most
+    TON_AUTO_MAX_METHODS (toncenter without a key answers about one call per second). A source in
+    which no getter was recognised also gets the standard list (a missed declaration costs a read)."""
+    if not declared:
+        return [m for m, _i, _n in TON_INTERFACES][:TON_AUTO_MAX_METHODS]
+    known = [m for m, _i, _n in TON_INTERFACES if m in declared]
+    return [*known, *(m for m in declared if m not in _TON_KNOWN)][:TON_AUTO_MAX_METHODS]
+
+
+async def ton_auto_state(px: ChainProxy, out: Out, address: str, alias: str,
+                         declared: list[str] | None) -> dict[str, Any]:
+    """Read the deployment's standard get methods as `chain.<alias>.<field>` facts (signers and
+    proposers decoded to addresses). Per-method failures are skipped; never raises for one."""
+    from .ton_codec import decode_stack, dict_addresses
+    pre = f"chain.{alias}"
+    result: dict[str, Any] = {"address": address, "interfaces": [], "methods": []}
+    answered = 0
+    for m in ton_auto_methods(declared):
+        try:
+            r = await ton_get_method(px, out.at, address, m, [])
+        except ChainUnavailable:
+            if not answered:
+                raise                      # nothing read: the snapshot is retried later
+            break
+        except (RpcFailure, ValueError, TypeError):
+            continue
+        answered += 1
+        if int((r or {}).get("exit_code", -1)) not in (0, 1):
+            continue
+        raw = (r or {}).get("stack") if isinstance((r or {}).get("stack"), list) else []
+        entries = decode_stack(raw)
+        method = f"runGetMethod {m}"[:60]
+        known = _TON_KNOWN.get(m)
+        result["methods"].append(m)
+        if known is None:
+            _ton_values(out, f"{pre}.{field_key(m)}", entries, method, method)
+            continue
+        iface, names = known
+        if len(entries) < len(names):
+            continue                       # not this interface's shape: record nothing
+        if iface not in result["interfaces"]:
+            result["interfaces"].append(iface)
+        for j, name in enumerate(names):
+            if name is None:
+                continue
+            e, key = entries[j], f"{pre}.{name}"
+            width = TON_ADDRESS_DICTS.get((m, j))
+            if width is not None:
+                rows = [] if e.get("type") in ("list", "tuple") and not e.get("items") else None
+                b64 = ((raw[j].get("cell") or {}).get("bytes")) if isinstance(raw[j], dict) else None
+                if rows is None and isinstance(b64, str):
+                    rows = dict_addresses(b64, width)
+                if rows is None:
+                    continue
+                out.fact(f"{key}.count", str(len(rows)), method=method, source=f"{method} stack[{j}] dictionary")
+                for k, a in rows[:TON_AUTO_MAX_DICT]:
+                    out.fact(f"{key}.{k}", a, method=method, source=f"{method} stack[{j}] dictionary key {k}")
+            elif e.get("type") == "int":
+                out.fact(key, str(e["value"]), method=method, source=f"{method} stack[{j}]")
+            elif e.get("type") == "address":
+                out.fact(key, e["friendly"], method=method, source=f"{method} stack[{j}]")
+        if m == "get_multisig_data" and entries[0].get("type") == "int":
+            # multisig v2 returns -1 for next_order_seqno when allow_arbitrary_order_seqno is set
+            out.fact(f"{pre}.allow_arbitrary_order_seqno", "true" if entries[0]["value"] == -1 else "false",
+                     method=method, source=f"{method} stack[0] (-1 = arbitrary order seqno mode)")
+    if result["interfaces"]:
+        out.fact(f"{pre}.interface", ",".join(result["interfaces"]), method="runGetMethod",
+                 source="get methods of the standard TON interfaces that answered")
+    return result
+
+
 # ── balances (design 1.4) ──────────────────────────────────────────────────
 
 

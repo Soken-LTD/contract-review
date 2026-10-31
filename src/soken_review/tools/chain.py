@@ -405,16 +405,33 @@ async def _auto_body(job_id: str) -> None:
         elif family == "solana":
             await reads.solana_roles(px, out, address, AUTO_ALIAS)
         else:
-            await reads.ton_roles(px, out, address, AUTO_ALIAS, [])
+            await reads.ton_auto_state(px, out, address, AUTO_ALIAS, _ton_declared_getters(job_id))
         if family in ("evm", "tron"):
             await reads.READERS[family](px, out, [{"alias": AUTO_ALIAS, "kind": "call", "address": address,
                                                    "fn": "paused()", "returns": "bool"}])
-        await reads.BALANCES[family](px, out, "native", "native", [{"alias": AUTO_ALIAS, "address": address}])
+        # chain.target.balance.native: under the target alias, so chain_state shows it (round 5b: the
+        # balance was written as chain.native.balance.target and never reached chain_state)
+        await reads.BALANCES[family](px, out, "native", AUTO_ALIAS, [{"alias": "native", "address": address}])
         return {}
 
     res = await _run({"job_id": job_id}, 32, body, open_states=_AUTO_STATES)
     _auto_mark(job_id, bool(res.get("accepted")),
                "" if res.get("accepted") else str((res.get("errors") or [{}])[0].get("code") or ""))
+
+
+def _ton_declared_getters(job_id: str) -> list[str] | None:
+    """Zero-argument get methods the job's pinned TON source declares (reads.ton_declared_getters), or
+    None when the pin is not written yet (the snapshot then calls the standard-interface list).
+    Related and library sources (`_related/`) are other contracts and are left out."""
+    from ..pinning.store import PinnedSource
+
+    try:
+        pin = PinnedSource.load(_pin_root(), job_id)
+        files = {p: pin.read_text(p) for p, e in pin.entries.items()
+                 if not p.startswith("_related/") and e.role == "source"}
+    except (OSError, ValueError, KeyError, ReviewError):
+        return None
+    return reads.ton_declared_getters(files) if files else None
 
 
 def chain_state(job: dict[str, Any]) -> dict[str, Any] | None:
