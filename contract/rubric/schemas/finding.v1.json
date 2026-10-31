@@ -41,8 +41,8 @@
     "absence_claims": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/absence_claim"}},
     "distinct_from": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/draft_key"}},
     "documented_intent_ref": {"$ref": "#/$defs/quote"},
-    "claimed_severity": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]},
-    "severity_reason": {"type": "string", "minLength": 20, "maxLength": 200, "description": "Why claimed_severity differs from the matrix outcome (one step at most). Printed in the severity table."}
+    "claimed_severity": {"enum": ["Critical", "High", "Medium", "Low", "Informational"], "description": "Your severity. It is the printed severity, always; the matrix outcome prints beside it as a calibration note when the two differ. Without it the matrix outcome at submit prints."},
+    "severity_reason": {"type": "string", "minLength": 20, "maxLength": 200, "description": "Optional reason for claimed_severity, printed in the severity table. claimed_severity is final whether or not a reason is given."}
   },
   "allOf": [
     {"if": {"properties": {"draft_key": {"pattern": "^srv-"}}},

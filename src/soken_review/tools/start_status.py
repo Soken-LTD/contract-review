@@ -527,10 +527,24 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
     if context_items:
         result["context"] = {"requested": len(context_items), "done": 0, "failed": 0}
     else:
-        # No documents were supplied: surface a plain-language hint so the model
-        # knows to ask the user.  Describe what is possible; never command the model
-        # to call a tool (directory prompt-injection rule).
-        result["next_action"] = no_documents_hint(initial_state)
+        # No documents were supplied: one optional note, on this result only (thin server 2026-10-31:
+        # the hint on every review_status was noise in every round 5 arm). Data: rubric/guide.yaml.
+        result["documents_note"] = documents_note()
+
+    # The default guide rides on the result, so the default path needs no review_get_guide call.
+    from .guide import _family_for, start_text
+
+    result["guide"] = start_text(_family_for(chain))
+
+    # Live chain state of the deployment, read once in the background (chain.target.* facts);
+    # review_status returns it as chain_state. Advisory: never fails the start.
+    if source.get("address") or kind == "deployed":
+        try:
+            from .chain import auto_snapshot
+
+            await auto_snapshot(job_id, wait=False)
+        except Exception as exc:  # noqa: BLE001 - the read is a convenience, never a failure
+            logger.debug("chain auto snapshot at start: %s", type(exc).__name__)
 
     # Optional settle-wait (2026-10-26): the first review_status calls of every blind run only waited for
     # a pipeline of 10 to 70 s; with wait_seconds the status at the end of the wait comes back here.
@@ -545,41 +559,11 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-# The documents hint (review_start and review_status next_action). It names the exact call that
-# records "the user has none" because the 2026-10-27 arms saw it on every status until they
-# guessed the section shape. It stops once a context item exists or a context_notes section is
-# recorded (any content; the sections table is checked on every status).
-NO_DOCUMENTS_HINT = (
-    "No project documents were supplied (none in review_start.context, none via review_add_context). "
-    "Project documents (website, whitepaper, documentation, terms of use, privacy policy) are needed "
-    "to detect spec-vs-code mismatches, so ask the user for their URLs and pass them to "
-    "review_add_context as {kind, url}. This hint repeats on every status until documents are added "
-    "or the absence is recorded; to record it, review_set_section with section \"context_notes\" and "
-    "context_notes {\"notes\": [{\"p\": \"No project documents were supplied by the requester.\"}]} "
-    "(the stored text is report prose: no second person, no questions)."
-)
-# Before `ready` review_set_section answers E_JOB_NOT_READY (Hipo blind run 2026-10-27: the start
-# hint asked for it and the call failed), so the hint says when it is accepted. review_add_context
-# is accepted in every pipeline state.
-NO_DOCUMENTS_HINT_PENDING = (
-    "No project documents were supplied (none in review_start.context, none via review_add_context). "
-    "Project documents (website, whitepaper, documentation, terms of use, privacy policy) are needed "
-    "to detect spec-vs-code mismatches, so ask the user for their URLs and pass them to "
-    "review_add_context as {kind, url}; that is accepted now. This hint repeats on every status until "
-    "documents are added or the absence is recorded; the absence is recorded once the job is ready "
-    "(review_set_section is accepted only in the ready state), with section \"context_notes\" and "
-    "context_notes {\"notes\": [{\"p\": \"No project documents were supplied by the requester.\"}]} "
-    "(the stored text is report prose: no second person, no questions)."
-)
-_HINT_STATES = frozenset({"awaiting_upload", "queued", "fetching", "building", "analyzing", "ready"})
+def documents_note() -> str:
+    """The optional documents note of review_start (contract/rubric/guide.yaml documents_note)."""
+    from .guide import _texts
 
-
-def no_documents_hint(state: str) -> str | None:
-    """The documents hint for a job in `state`, naming only calls that state accepts; None where
-    neither review_add_context nor review_set_section is accepted (finalized, rendering, stopped)."""
-    if state not in _HINT_STATES:
-        return None
-    return NO_DOCUMENTS_HINT if state == "ready" else NO_DOCUMENTS_HINT_PENDING
+    return str(_texts()["documents_note"]).strip()
 
 
 def _context_status(job: dict[str, Any]) -> dict[str, int] | None:
@@ -721,20 +705,31 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
             "select 1 from sections where job_id = %s and section = 'context_notes' limit 1",
             (job_id,))).fetchone()) is not None
 
-    if job["state"] == "ready":
-        # Start the one-time chain snapshot (chain.target.* facts) as soon as the job is ready, so a
-        # client without the chain tools finds owner, roles, paused and balance in review_facts.
-        from .chain import auto_snapshot
+    from .chain import _AUTO_STATES, auto_snapshot, chain_state
 
-        await auto_snapshot(job_id, wait=False)
+    if job["state"] in _AUTO_STATES:
+        # The one-time chain snapshot (chain.target.* facts) starts at review_start; a status call
+        # restarts it when that read failed or the server restarted. Never fails the status.
+        try:
+            await auto_snapshot(job_id, wait=False)
+        except Exception as exc:  # noqa: BLE001 - advisory
+            logger.debug("chain auto snapshot from status: %s", type(exc).__name__)
 
     # Publish info (CEO 2026-10-24): show the public URL (or "publishing") for rendered jobs.
     from .report import _publish_info
     pub_status, pub_url = await _publish_info(job.get("report_id"))
 
-    return _build_status_response(job, args.get("response_format", "concise"), steps, drafts, medians,
-                                  finalize_checks=finalize_checks, pub_status=pub_status, pub_url=pub_url,
-                                  context_notes_recorded=context_notes_recorded)
+    out = _build_status_response(job, args.get("response_format", "concise"), steps, drafts, medians,
+                                 finalize_checks=finalize_checks, pub_status=pub_status, pub_url=pub_url,
+                                 context_notes_recorded=context_notes_recorded)
+    # Live deployment state, compact (thin server 2026-10-31): no chain tool call is needed for it.
+    try:
+        cs = chain_state(job)
+    except Exception:  # noqa: BLE001 - never fail status on it
+        cs = None
+    if cs is not None:
+        out["chain_state"] = cs
+    return out
 
 
 # States where long-poll should return immediately (03 §4.2)
@@ -1073,14 +1068,6 @@ def _build_status_response(
     ctx = _context_status(job)
     if ctx is not None:
         out["context"] = ctx
-    elif not context_notes_recorded:
-        # No context items: surface a next_action hint so the model asks the user
-        # for project documents.  This is server text, not model output; it describes
-        # what is available and why, without commanding the model to call anything
-        # (directory prompt-injection rule).
-        hint = no_documents_hint(state)
-        if hint:
-            out["next_action"] = hint
 
     # Detailed response: related contracts and server-discovered project URLs
     if response_format == "detailed":
@@ -1277,11 +1264,10 @@ def _render_failed_fix(job: dict[str, Any]) -> str:
 def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[dict[str, Any]], *,
                        finalize_reopens: bool = True) -> list[str]:
     """Tool names (schema `next_tools`, at most 3) that move the job forward from this state; names
-    only, no prose. Recommendations, never requirements (never-worse, gate_policy.yaml): the shortest
-    legal path is start, read, submit, finalize, report. A blocking finalize check names its tool
-    first; otherwise review_finalize comes first and the optional steps (a draft's text, its
-    challenge, the tools of advisory checks) follow. A render_failed job names review_finalize only
-    when finalize will reopen it (``finalize_reopens``), else a new review."""
+    only, no prose. Thin server (2026-10-31): only the default path (start, read code, submit,
+    finalize, report) and a blocking finalize check are ever named; optional steps (the challenge,
+    sections, invariant walks, advisory checks) are never steered into. A render_failed job names
+    review_finalize only when finalize will reopen it (``finalize_reopens``), else a new review."""
     if state in _PIPELINE_STATES:
         return ["review_status"]
     if state == "render_failed":
@@ -1300,15 +1286,8 @@ def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[di
             out.append(tool)
     if "review_finalize" not in out:
         out.append("review_finalize")
-    statuses = {d.get("status") for d in drafts}
-    if "needs_text" in statuses:
+    if "needs_text" in {d.get("status") for d in drafts} and "review_submit_finding" not in out:
         out.append("review_submit_finding")
-    if "needs_challenge" in statuses:
-        out.append("review_challenge")
-    for check in checks:
-        tool = check.get("tool")
-        if check.get("open") and tool and tool not in out:
-            out.append(tool)
     return out[:3]
 
 

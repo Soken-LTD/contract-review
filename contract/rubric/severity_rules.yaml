@@ -3,13 +3,12 @@
 # rules that moved the value, so a client can dispute a rule by id. Reference data: the ids and the
 # effect are what the engine does; `why` records the calibration decision behind the rule.
 #
-# Reviewer-first (2026-10-27): the severity the client reads is the reviewer's claimed_severity unless
-# a rule below applies; a rule that lowers it is named with its ceiling; a matrix outcome higher than
-# the reviewer's proposal is never applied silently at submit (E_SEVERITY_CONFIRM asks the reviewer to
-# confirm, keep theirs with a reason, or reclassify). Since 2026-10-27 that confirmation is a warning on
-# an accepted submit (gate_policy.yaml): further than one step, a proposal with a reason moves to the
-# nearest value within one step; without a reason the computed value prints.
-version: 2
+# Thin server (CEO decision 2026-10-31, blind rounds 1 to 5): the reviewer's claimed_severity is the printed
+# severity, always. The rules below compute the calibration: the matrix cell and every cap or step that
+# applies. The report prints "Calibration: <severity> (<rule>)" beside a finding whose calibration differs; no
+# rule raises, lowers or caps the printed value and the server never asks the reviewer to confirm. Without a
+# claim, the matrix outcome accepted at submit prints and later phases keep it.
+version: 3
 one_step: 1          # RV1 tolerance and DG1 floor, in severity steps
 reason_min_chars: 20 # severity_reason length RV1 needs
 rules:
@@ -20,7 +19,7 @@ rules:
   - {id: K4, phase: finalize, kind: cap, ceiling: Low,
      condition: "evidence reasoning_only at finalize: a draft that never took a challenge and quotes no deployed code",
      why: "Since 2026-10-27 (never-worse, gate_policy.yaml F3) the challenge is optional: a draft finalized without it keeps its severity and prints evidence reasoning_only with a coverage note, so K4 no longer caps it. K8 still caps an unchallenged Critical at High."}
-  - {id: K5, phase: "post_challenge, finalize", kind: step, effect: "minus one level",
+  - {id: K5, phase: "post_challenge, finalize", kind: step, effect: "minus one level on the calibration",
      condition: "a downgrade item of the checklist answered present",
      why: "One step since 2026-10-27 (was two): the second step needs a kill item (see DG1)."}
   - {id: K6, phase: all, kind: cap, ceiling: Low, condition: "precondition victim_unusual_action"}
@@ -39,9 +38,9 @@ rules:
   - {id: TR1, phase: all, kind: likelihood, effect: "trigger privileged_role is treated as privileged_role_unprotected and K1 is waived",
      condition: "retail-token profile (an ERC-20 unit whose owner can move, seize, block or dilute balances); impact theft_of_funds, permanent_freeze, insolvency_or_bad_debt, control_takeover or supply_inflation; trigger privileged_role; reversibility irreversible",
      why: "For a retail token the owner is the threat, so an owner path to a loss with no undo (mint to self, drain, brick) is as reachable as a public one. Since 2026-10-27 the waiver needs reversibility irreversible: an owner action the owner can undo is a centralization risk and keeps the K1 Medium cap. Decision on the owner pause (BNB ANTTIME F-01, blind run 2026-10-26): pause is admin_reversible by construction; the irreversible branch needs the owner to renounce while paused, which is self-sabotage, not an attack, and no funds move. Public practice agrees: Code4rena and Sherlock file admin pause or blocklist powers as centralization findings at Medium or below unless the role is unprotected. Under this rubric an owner pause prints Medium (I3xL3 = High, K1 cap). A pause with no unpause function, or a renounce that cannot be undone inside the pause path, is reversibility irreversible and prints High under TR1."}
-  - {id: RV1, phase: all, kind: reviewer, effect: "claimed_severity stands when it is within one step of the matrix outcome and severity_reason is recorded; a cap still binds it from above",
-     condition: "claimed_severity given with severity_reason of at least reason_min_chars",
-     why: "Blind run 2026-10-26: the matrix overrode the reviewer eight times and was wrong or no better all eight times (judgement section 6). At submit a proposal further than one step away, or one step away without a reason, returns E_SEVERITY_CONFIRM with the computed cell; nothing is raised or lowered silently. After a challenge the proposal follows the new outcome to the nearest value within one step."}
-  - {id: DG1, phase: "post_challenge, finalize", kind: floor, effect: "the severity never prints more than one step below the severity accepted at submit",
-     condition: "basis fallbacks, K5, K8, K10 or K4 together would lower the accepted severity by two or more steps",
-     why: "Stacked downgrades are a second step without a kill item. Apyee V2 F-03 (2026-10-26): L3 present plus the MB6 fallback took a Low to Informational; the judge read the finding as Medium. A second step needs a kill item (withdrawn) or a resubmitted matrix."}
+  - {id: RV1, phase: all, kind: reviewer, effect: "claimed_severity is the printed severity; the matrix outcome is printed beside it as a calibration when it differs",
+     condition: "claimed_severity given (severity_reason is optional and printed when given)",
+     why: "Blind rounds 2026-10-26 to 2026-10-31: where matrix and reviewer differed the reviewer was right more often (round 5: 7 to 3), and five of round 5's twelve severity errors were server overrides of a correct reviewer. CEO decision 2026-10-31: the reviewer's severity is final."}
+  - {id: DG1, phase: "post_challenge, finalize", kind: retired, effect: "none",
+     condition: "retired 2026-10-31",
+     why: "A challenge never moves the printed severity, so there is no downgrade to floor."}

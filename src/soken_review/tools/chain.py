@@ -22,7 +22,7 @@ from ..chain import reads
 from ..chain.endpoints import capability
 from ..chain.proxy import ChainProxy, ChainUnavailable, Meter, RpcFailure
 from ..chain.store import Budget, Cache, limits
-from ..chain.untrusted import GUIDE_NOTE
+from ..chain.untrusted import CHAIN_TEXT, GUIDE_NOTE
 from ..db.pool import get_pool
 from ..errors import ReviewError
 from ..server import handler
@@ -34,6 +34,9 @@ _pool: Any | None = None
 _ctx: JobContext | None = None
 WALL_S = 60.0
 _OPEN_STATES = frozenset({"ready"})
+# The automatic snapshot of the deployment runs from job start (thin server, 2026-10-31): live state does not
+# depend on the source, only on the pin directory that holds the facts.
+_AUTO_STATES = frozenset({"queued", "fetching", "building", "analyzing", "ready"})
 _FROZEN = frozenset({"finalized", "render_queued", "rendering", "rendered", "render_failed"})
 _EVM_ADDR = re.compile(r"^0x[0-9a-fA-F]{40}$")
 _TRON_ADDR = re.compile(r"^T[1-9A-HJ-NP-Za-km-z]{33}$")
@@ -69,7 +72,7 @@ def _pin_root() -> Path:
 # ── job ────────────────────────────────────────────────────────────────────
 
 
-async def _job_row(job_id: str) -> dict[str, Any]:
+async def _job_row(job_id: str, open_states: frozenset[str] = _OPEN_STATES) -> dict[str, Any]:
     pool = _get_pool()
     if pool is None:
         raise ReviewError("E_INTERNAL", incident="chain tools without a database")
@@ -84,7 +87,7 @@ async def _job_row(job_id: str) -> dict[str, Any]:
         raise ReviewError("E_JOB_EXPIRED", job=job_id, date=str(job.get("expires_at") or ""))
     if state in _FROZEN:
         raise _Reject(ReviewError("E_JOB_FROZEN"))
-    if state not in _OPEN_STATES:
+    if state not in open_states:
         raise _Reject(ReviewError("E_JOB_NOT_READY", state=state, eta_s=0))
     return job
 
@@ -170,7 +173,7 @@ def check_address(family: str, addr: str, field: str) -> str:
 
 def check_alias(alias: str, field: str) -> str:
     if not chain_facts.ALIAS_RE.match(alias) or alias in chain_facts.RESERVED_ALIASES:
-        raise ReviewError("E_INVALID_ARGUMENT", field=field, rule="alias [a-z][a-z0-9_]{0,23}, not block or chain_id",
+        raise ReviewError("E_INVALID_ARGUMENT", field=field, rule="alias [a-z][a-z0-9_]{0,23}, not block, chain_id or target",
                           value80=alias[:80], example="ve")
     return alias
 
@@ -178,11 +181,12 @@ def check_alias(alias: str, field: str) -> str:
 # ── shared call frame ──────────────────────────────────────────────────────
 
 
-async def _run(args: dict[str, Any], ru: int, body: Any, actual_ru: Any = None) -> dict[str, Any]:
+async def _run(args: dict[str, Any], ru: int, body: Any, actual_ru: Any = None,
+               open_states: frozenset[str] = _OPEN_STATES) -> dict[str, Any]:
     """Job checks, budget, proxy, block resolution, `body(px, out)`, facts and the result envelope."""
     job_id = args["job_id"]
     try:
-        job = await _job_row(job_id)
+        job = await _job_row(job_id, open_states)
         root = _pin_root()
         cj = chain_job(job, root, args.get("chain_id"))
     except _Reject as rj:
@@ -335,6 +339,12 @@ AUTO_ALIAS = "target"
 AUTO_FILE = "chain_auto.json"
 AUTO_RETRY_S = 600
 AUTO_WAIT_S = 25.0
+# review_start launches the snapshot before the source is pinned: the facts file lives in the job's pin
+# directory, which the fetch step creates, so the read waits for it (polling) up to AUTO_PIN_WAIT_S.
+AUTO_PIN_WAIT_S = 180.0
+AUTO_PIN_POLL_S = 2.0
+# chain_state on review_status: at most this many chain.target.* values, each value cut to 80 characters.
+STATE_MAX_VALUES = 24
 _auto_tasks: dict[str, asyncio.Task[Any]] = {}
 
 
@@ -366,13 +376,25 @@ def _auto_mark(job_id: str, ok: bool, detail: str = "") -> None:
         pass
 
 
+async def _await_pin_dir(job_id: str) -> None:
+    """Wait for the job's pin directory (created by the fetch step); E_JOB_NOT_READY after the wait,
+    which leaves the snapshot unmarked so review_status retries it."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + AUTO_PIN_WAIT_S
+    while not (_pin_root() / job_id).is_dir():
+        if loop.time() >= deadline:
+            raise ReviewError("E_JOB_NOT_READY", state="pin_not_found", eta_s=60)
+        await asyncio.sleep(AUTO_PIN_POLL_S)
+
+
 async def _auto_body(job_id: str) -> None:
-    job = await _job_row(job_id)
+    job = await _job_row(job_id, _AUTO_STATES)
     address = str(job.get("address") or "")
     family = chain_job(job, _pin_root(), None).family
     if not address:
         _auto_mark(job_id, True, "no deployment")
         return
+    await _await_pin_dir(job_id)
     check_address(family, address, "address")
 
     async def body(px: ChainProxy, out: reads.Out) -> dict[str, Any]:
@@ -390,9 +412,52 @@ async def _auto_body(job_id: str) -> None:
         await reads.BALANCES[family](px, out, "native", "native", [{"alias": AUTO_ALIAS, "address": address}])
         return {}
 
-    res = await _run({"job_id": job_id}, 32, body)
+    res = await _run({"job_id": job_id}, 32, body, open_states=_AUTO_STATES)
     _auto_mark(job_id, bool(res.get("accepted")),
                "" if res.get("accepted") else str((res.get("errors") or [{}])[0].get("code") or ""))
+
+
+def chain_state(job: dict[str, Any]) -> dict[str, Any] | None:
+    """`chain_state` of review_status: the deployment's chain.target.* facts, compact (thin server,
+    2026-10-31). None for a job without a deployment address; never raises."""
+    if not job.get("address"):
+        return None
+    job_id = str(job.get("job_id") or "")
+    try:
+        root = _pin_root()
+        rows = [f for f in chain_facts.load_chain_facts(root, job_id)
+                if str(f.get("key", "")).startswith(f"chain.{AUTO_ALIAS}.")]
+        rec = json.loads(_auto_marker(job_id).read_text()) if _auto_marker(job_id).exists() else None
+    except (ReviewError, OSError, ValueError):
+        return {"state": "pending"}
+    if rows:
+        values: dict[str, Any] = {}
+        has_text = False
+        for f in rows[:STATE_MAX_VALUES]:
+            name = str(f["key"])[len(f"chain.{AUTO_ALIAS}."):]
+            raw = f.get("value")
+            if f.get("class") == CHAIN_TEXT:
+                # chain-derived text (a token name, a revert string) keeps its untrusted marker; it was
+                # cleaned by untrusted_text when read and is only re-capped here
+                has_text = True
+                values[name] = {"untrusted_text": {"value": str(raw)[:80] if raw is not None else "",
+                                                   "class": CHAIN_TEXT,
+                                                   "origin": str(f.get("method") or f.get("key"))[:160]}}
+            else:
+                values[name] = str(raw)[:80] if raw is not None else None
+        blocks = [b for f in rows if isinstance(b := f.get("block"), int) and not isinstance(b, bool)]
+        out: dict[str, Any] = {"state": "done", "block": max(blocks) if blocks else None, "values": values,
+                               "note": f"cite as {{{{fact:chain.{AUTO_ALIAS}.<field>}}}}"}
+        if len(rows) > STATE_MAX_VALUES:
+            out["note"] += f"; {len(rows) - STATE_MAX_VALUES} more in review_facts"
+        if has_text:
+            out["untrusted_text_note"] = GUIDE_NOTE
+        return out
+    if rec and not rec.get("ok"):
+        return {"state": "failed", "note": f"read failed ({str(rec.get('detail') or 'upstream')[:60]}); retried later"}
+    if rec and rec.get("ok"):
+        return {"state": "none", "note": str(rec.get("detail") or "no values")[:120]}
+    return {"state": "pending"}
 
 
 async def auto_snapshot(job_id: str, wait: bool) -> None:

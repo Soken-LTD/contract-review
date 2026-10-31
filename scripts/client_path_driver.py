@@ -451,6 +451,7 @@ def submit_finding(sess: Session, spec: FindingSpec, units: list[dict[str, Any]]
     args = {
         "job_id": sess.job_id, "draft_key": "client-path-f01", "category": spec.category,
         "quotes": [quote], "matrix": spec.matrix, "lead_ids": [], "title": spec.title,
+        "claimed_severity": spec.expect_severity,
         "body": {"description": [{"p": description}], "impact": [{"p": spec.impact}],
                  "recommendation": [{"p": spec.recommendation}]},
     }
@@ -459,6 +460,10 @@ def submit_finding(sess: Session, spec: FindingSpec, units: list[dict[str, Any]]
         raise ClientPathError(f"review_submit_finding rejected: {json.dumps(out.get('errors'))[:800]}")
     sess.res.check("finding accepted", True, f"{out.get('finding_no')} computed {out.get('computed_severity')} "
                    f"rule {out.get('severity_rule')} set_by {out.get('severity_set_by')}")
+    sess.res.check("the reviewer's severity is the printed severity, the matrix a calibration",
+                   out.get("computed_severity") == spec.expect_severity and out.get("severity_set_by") == "reviewer"
+                   and "calibration" in out and "E_SEVERITY_CONFIRM" not in json.dumps(out.get("warnings") or []),
+                   json.dumps({k: out.get(k) for k in ("computed_severity", "severity_set_by", "calibration")})[:300])
     sess.res.check("severity payload carries severity_rule/severity_set_by/severity_reason",
                    all(k in out for k in ("severity_rule", "severity_set_by", "severity_reason")),
                    json.dumps({k: out.get(k) for k in ("severity_rule", "severity_set_by", "severity_reason",
@@ -724,6 +729,9 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
         start = client.call("review_start", **spec.start, wait_seconds=45)
         res.job_id = start.get("job_id")
         res.check("review_start returned job_id", bool(res.job_id), json.dumps(start)[:300])
+        # thin server (2026-10-31): the default guide rides on review_start, no guide call needed
+        res.check("review_start carries the default guide", "review_submit_finding" in str(start.get("guide") or ""),
+                  str(start.get("guide") or "")[:120])
         status = wait_ready(client, res.job_id, spec.ready_timeout_s)
         state = status.get("state")
         if state != "ready":
@@ -735,6 +743,9 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
                     raise UpstreamDown(f"job {state} {code}; upstream probe {spec.probe_url} failed: {why}")
                 raise ClientPathError(f"job {state} {code} while the upstream answers ({why}): {detail}")
             raise ClientPathError(f"job {state}: {detail}")
+        if spec.start["source"].get("kind") == "deployed":
+            res.check("review_status carries chain_state for the deployment", "chain_state" in status,
+                      json.dumps(status.get("chain_state"))[:300])
         prov = status.get("provenance") or {}
         res.check("job ready", True, f"tier {prov.get('tier')} map_status {status.get('map_status')} "
                   f"analyzer_degraded {status.get('analyzer_degraded')}")

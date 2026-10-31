@@ -668,30 +668,17 @@ async def _severity_jump(conn: psycopg.AsyncConnection, job_id: str, draft_key: 
 
 @handler("review_submit_finding")
 async def handle_review_submit_finding(args: dict[str, Any]) -> dict[str, Any]:
-    """Submit or revise a finding, then attach the disproof checklist when the draft needs it.
+    """Submit or revise a finding.
 
-    Every needs_challenge result was followed by a review_challenge call in the 2026-10-25 blind runs;
-    the checklist is computed, never stored, so returning it here is the same read review_challenge
-    does after the write committed (same revision, same checklist_sha256 that review_answer_challenge
-    checks). Any failure to compute it leaves the result as before: next_tools still names
-    review_challenge.
+    Thin server (2026-10-31): the result no longer carries the disproof checklist. The challenge is an
+    optional evidence upgrade, and returning its items on every Medium or higher submit invited the
+    ceremony the blind rounds measured as cost (round 5: 4.2 times the calls of the plain arm).
+    review_challenge still returns them on request.
     """
     args, lifted = lift_severity_line(args)
     result = await _submit_finding(args)
     if lifted:
         result["severity_from_body"] = lifted
-    if result.get("accepted") and result.get("status") == "needs_challenge":
-        from .challenge import handle_review_challenge
-
-        try:
-            challenge = await handle_review_challenge({"job_id": args["job_id"], "draft_key": args["draft_key"]})
-        except Exception:  # noqa: BLE001 - the inline checklist is a convenience, never a failure
-            challenge = None
-        if challenge and challenge.get("accepted"):
-            result["challenge"] = {k: v for k, v in challenge.items() if k != "accepted"}
-            result["next_tools"] = ["review_finalize", "review_answer_challenge"]
-            if challenge.get("checklist_notice"):
-                result["checklist_notice"] = challenge["checklist_notice"]
     return result
 
 
@@ -761,14 +748,12 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             current_revision = draft["current_revision"]
             rejected_count = draft.get("rejected_count", 0)
 
-        # ── Challenge-kill lock (03 §4.11 / 04 §8.6) ─────────────────
-        # A finding killed by challenge can NEVER be resubmitted under the same key.
-        # This check must precede content-hash replay, retry-budget, and all validation
-        # so that not even an idempotent replay can resurrect a killed finding.
-        if draft is not None and not is_server_draft and draft.get("withdrawn_by") == "challenge":
-            return {"accepted": False, "errors": [
-                ReviewError("E_DISPROVED_LOCKED", category=args.get("category", "")).envelope()
-            ]}
+        # ── Challenge-kill record (03 §4.11 / 04 §8.6) ───────────────
+        # Thin server (2026-10-31, gate_policy.yaml E_DISPROVED_LOCKED advisory): a draft the reviewer's
+        # own kill answer withdrew may be resubmitted; the new revision is accepted with a warning that
+        # names the earlier answer, and the challenge record of the old revision stays as it was.
+        reopened_after_kill = (draft is not None and not is_server_draft
+                               and draft.get("withdrawn_by") == "challenge")
 
         new_revision = current_revision + 1
 
@@ -904,7 +889,16 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                 try:
                     quote_match(pin, q["file"], q["start"], q["end"], qt, context=context_store)
                 except QuoteMatchError as e:
-                    violations.append(ReviewError(e.code, **e.detail).envelope())
+                    err = e
+                    if e.code == "E_QUOTE_TRIVIAL" and not gate_policy.is_blocking("E_QUOTE_TRIVIAL"):
+                        # A trivial quote (a doc comment, a brace) is a warning since 2026-10-31
+                        # (gate_policy.yaml), but only when it still matches the pinned lines.
+                        try:
+                            quote_match(pin, q["file"], q["start"], q["end"], qt, context=context_store,
+                                        check_trivial=False)
+                        except QuoteMatchError as e2:
+                            err = e2
+                    gate.add(ReviewError(err.code, **err.detail).envelope(), err.code, None, "quotes", q["file"])
 
             # V4: injection echo check (j1_flags from flags.json).
             # FileNotFoundError = no map worker run yet; no J1 spans to check (documented W0
@@ -1037,8 +1031,9 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                              and d.status = 'withdrawn'
                              and d.withdrawn_by = 'challenge'
                              and d.kill_item is not null
-                             and r.category = %s""",
-                        (job_id, category),
+                             and r.category = %s
+                             and d.draft_key <> %s""",
+                        (job_id, category, draft_key),
                     )
                     locked_ranges = await cur.fetchall()
 
@@ -1047,14 +1042,16 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                     (q["file"], q["start"], q["end"])
                     for q in location_quotes
                 ]
+                if reopened_after_kill:
+                    gate.add(ReviewError("E_DISPROVED_LOCKED", category=category).envelope(),
+                             "E_DISPROVED_LOCKED", None, "draft_key", draft_key)
                 for lr in locked_ranges:
                     for new_path, new_start, new_end in new_loc_ranges:
                         if (lr["path"] == new_path
                                 and lr["start_line"] <= new_end
                                 and lr["end_line"] >= new_start):
-                            violations.append(
-                                ReviewError("E_DISPROVED_LOCKED", category=category).envelope()
-                            )
+                            gate.add(ReviewError("E_DISPROVED_LOCKED", category=category).envelope(),
+                                     "E_DISPROVED_LOCKED", None, "quotes", new_path)
                             break
                     else:
                         continue
@@ -1083,16 +1080,6 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                                     value80=dk[:80],
                                 ).envelope()
                             )
-
-        # ── Reviewer-first (RV1): a claimed_severity the matrix cannot carry as given ─────
-        # Advisory since 2026-10-27 (never-worse): the reviewer's value stands within one step with a
-        # reason; further away it moves to the nearest value within one step (engine RV1), and the
-        # warning names the computed cell. The finding is accepted either way.
-        if not is_server_draft and sev_result is not None and sev_result.confirm_needed:
-            gate.add(ReviewError(
-                "E_SEVERITY_CONFIRM", computed=sev_result.computed,
-                rule=sev_result.severity_rule, why=sev_result.confirm_why,
-            ).envelope(), "E_SEVERITY_CONFIRM", None, "claimed_severity", args.get("claimed_severity"))
 
         # ── On validation errors: increment rejected_count, return ────
         if violations:
@@ -1195,7 +1182,7 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
 
         computed_severity = sev_result.severity
         evidence_level = sev_result.evidence_level
-        if draft is not None and current_revision >= 0:
+        if draft is not None and current_revision >= 0 and sev_result.set_by == "matrix":
             jump = await _severity_jump(conn, job_id, draft_key, current_revision, category, matrix,
                                         computed_severity)
             if jump is not None:
@@ -1211,11 +1198,13 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             await conn.execute(
                 """insert into finding_drafts
                    (job_id, draft_key, finding_no, origin, status, current_revision,
-                    severity, evidence_level, severity_rule, severity_set_by, severity_reason)
-                   values (%s, %s, %s, 'model', %s, %s, %s, %s, %s, %s, %s)""",
+                    severity, evidence_level, severity_rule, severity_set_by, severity_reason,
+                    calibration_severity, calibration_rule)
+                   values (%s, %s, %s, 'model', %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (job_id, draft_key, finding_no, new_status, new_revision,
                  computed_severity, evidence_level,
-                 sev_result.severity_rule, sev_result.set_by, sev_result.reason[:200]),
+                 sev_result.severity_rule, sev_result.set_by, sev_result.reason[:200],
+                 sev_result.calibration, sev_result.calibration_rule[:200]),
             )
             await conn.execute(
                 "update jobs set next_finding_no = %s where job_id = %s",
@@ -1229,10 +1218,13 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                 """update finding_drafts
                    set status = %s, current_revision = %s, severity = %s, evidence_level = %s,
                        matrix_effective = null, caps_applied = '{}',
-                       severity_rule = %s, severity_set_by = %s, severity_reason = %s
+                       withdrawn_by = null, kill_item = null, withdrawn_reason = null,
+                       severity_rule = %s, severity_set_by = %s, severity_reason = %s,
+                       calibration_severity = %s, calibration_rule = %s
                    where job_id = %s and draft_key = %s""",
                 (new_status, new_revision, computed_severity, evidence_level,
-                 sev_result.severity_rule, sev_result.set_by, sev_result.reason[:200], job_id, draft_key),
+                 sev_result.severity_rule, sev_result.set_by, sev_result.reason[:200],
+                 sev_result.calibration, sev_result.calibration_rule[:200], job_id, draft_key),
             )
 
         # Insert revision
@@ -1292,6 +1284,10 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
             "rules_applied": sev_result.caps_applied,
             "severity_set_by": sev_result.set_by,
             "severity_reason": sev_result.reason[:200],
+            # The matrix outcome, a calibration note printed beside the finding when it differs; it never
+            # changes the printed severity (thin server, 2026-10-31).
+            "calibration": {"severity": sev_result.calibration, "rule": sev_result.calibration_rule[:200],
+                            "differs": sev_result.calibration != computed_severity},
             "evidence_level": evidence_level,
             "leads_reopened": leads_reopened,
             "next_tools": _next_tools(new_status),
@@ -1302,11 +1298,9 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _next_tools(status: str) -> list[str]:
-    """Recommended next calls, never required (never-worse): the shortest legal path is
-    start, read, submit, finalize, report. A needs_challenge draft may take its optional challenge
-    (an evidence upgrade), so finalize comes first and the challenge second."""
-    if status == "needs_challenge":
-        return ["review_finalize", "review_challenge"]
+    """Recommended next calls on the default path only (thin server, 2026-10-31): read code, submit,
+    finalize. Optional steps (the challenge, sections, walks) are never named; the guide lists them
+    as opt-in topics."""
     if status == "needs_text":
         return ["review_submit_finding"]
     return ["review_finalize"]

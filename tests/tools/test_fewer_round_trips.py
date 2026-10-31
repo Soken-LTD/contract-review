@@ -163,12 +163,12 @@ async def test_guide_several_topics_in_one_call():
 
 
 @ASYNC
-async def test_guide_without_topic_names_both_options():
+async def test_guide_without_topic_is_the_default_guide():
     async with Client(SokenServer()) as c:
         r = await c.call_tool("review_get_guide", {"chain": "evm"})
-    body = json.loads(r.content[0].text)
-    assert r.is_error and body["errors"][0]["field"] == "topic"
-    assert "topics" in body["errors"][0]["fix"]
+        start = await c.call_tool("review_get_guide", {"topic": "start", "chain": "evm"})
+    assert not r.is_error and r.content[0].text == start.content[0].text
+    assert r.content[0].text.splitlines()[0] == "guide_version v0 topic start chain evm"
 
 
 # ── review_read_code ranges ─────────────────────────────────────────────────
@@ -240,13 +240,15 @@ async def test_read_single_range_unchanged_and_missing_fields_named(read_ctx):
 
 @pytest.mark.parametrize(("state", "drafts", "checks", "expected"), [
     ("fetching", [], [], ["review_status"]),
-    # never-worse: recommendations only; the shortest path is read, submit, finalize
+    # thin server: the default path only; optional steps are never named
     ("ready", [], [], ["review_read_code", "review_submit_finding", "review_finalize"]),
     ("ready", [{"status": "needs_challenge"}], [{"id": "F3", "open": 1, "tool": "review_answer_challenge"}],
-     ["review_finalize", "review_challenge", "review_answer_challenge"]),
+     ["review_finalize"]),
     ("ready", [{"status": "accepted"}], [{"id": "F2", "open": 0}], ["review_finalize"]),
     ("ready", [{"status": "accepted"}], [{"id": "F5", "open": 1, "tool": "review_set_section"}],
-     ["review_finalize", "review_set_section"]),
+     ["review_finalize"]),
+    ("ready", [{"status": "needs_text"}], [{"id": "F8", "open": 1, "tool": "review_submit_finding"}],
+     ["review_finalize", "review_submit_finding"]),
     # a blocking check (F6 unresolved placeholder) names its tool first
     ("ready", [{"status": "accepted"}], [{"id": "F6", "open": 1, "tool": "review_submit_finding"}],
      ["review_submit_finding", "review_finalize"]),
@@ -392,11 +394,13 @@ async def test_set_section_single_shape_has_no_sections_list(db_pool):
     assert r == {"accepted": True, "section": "roles_notes", "revision": 1, "idempotent": False}
 
 
-# ── DB: checklist inline in review_submit_finding ───────────────────────────
+# ── DB: no checklist inline in review_submit_finding (thin server) ─────────
 
 
 @ASYNC
-async def test_submit_returns_challenge_inline_matching_review_challenge(db_pool):
+async def test_submit_never_steers_into_the_challenge(db_pool):
+    """Thin server (2026-10-31): the submit result carries no checklist and next_tools names only the
+    default path; review_challenge still answers on request."""
     from soken_review.tools import challenge as challenge_mod
 
     from .test_write_tools import _create_ready_job_with_pin, _submit_finding
@@ -405,27 +409,10 @@ async def test_submit_returns_challenge_inline_matching_review_challenge(db_pool
     challenge_mod.set_pool(db_pool)
     challenge_mod.set_context(MemoryJobContext(pin_root))
     r = await _submit_finding(db_pool, job_id, pin_root, draft_key="draft-inline-001")
-    if r.get("status") != "needs_challenge":
-        pytest.skip(f"status {r.get('status')}")
-    assert r["next_tools"] == ["review_finalize", "review_answer_challenge"]
+    assert r["accepted"] is True, r
+    assert "challenge" not in r and r["next_tools"] == ["review_finalize"]
     separate = await challenge_mod.handle_review_challenge({"job_id": job_id, "draft_key": "draft-inline-001"})
-    assert r["challenge"] == {k: v for k, v in separate.items() if k != "accepted"}
-    assert r["challenge"]["revision"] == r["revision"]
+    assert separate["accepted"] is True and separate["revision"] == r["revision"]
     assert list(Draft202012Validator(TOOLS["review_submit_finding"]["outputSchema"]).iter_errors(r)) == []
 
 
-@ASYNC
-async def test_submit_without_challenge_context_still_names_review_challenge(db_pool, monkeypatch):
-    from soken_review.tools import challenge as challenge_mod
-
-    from .test_write_tools import _create_ready_job_with_pin, _submit_finding
-
-    async def boom(_args):
-        raise RuntimeError("challenge unavailable")
-
-    monkeypatch.setattr(challenge_mod, "handle_review_challenge", boom)
-    job_id, pin_root = await _create_ready_job_with_pin(db_pool)
-    r = await _submit_finding(db_pool, job_id, pin_root, draft_key="draft-inline-002")
-    if r.get("status") != "needs_challenge":
-        pytest.skip(f"status {r.get('status')}")
-    assert "challenge" not in r and r["next_tools"] == ["review_finalize", "review_challenge"]

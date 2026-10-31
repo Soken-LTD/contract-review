@@ -123,7 +123,7 @@ def test_a_scope_the_map_cannot_supply_applies_no_cap():
     r = compute_severity(MATRIX, "post_challenge", SeverityContext(**base, scope_not_covered=True))
     assert r.severity == "Critical" and r.caps_applied == [] and "K10" not in r.severity_rule
     r = compute_severity(MATRIX, "post_challenge", SeverityContext(**base, map_unavailable=True))
-    assert r.severity == "High" and r.caps_applied == ["K10"]
+    assert r.severity == "Critical" and r.caps_applied == ["K10"] and r.calibration == "High"
     rules = yaml.safe_load((RUBRIC / "severity_rules.yaml").read_text())
     k10 = next(r for r in rules["rules"] if r["id"] == "K10")
     assert "no contract map" in k10["condition"] and "not covered" not in k10["condition"].split("applies no cap")[0]

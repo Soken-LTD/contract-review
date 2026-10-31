@@ -2,8 +2,8 @@
 
 One test class per rule change: supply_inflation and residual (new matrix values), IRR1
 (irreversibility outweighs state rarity), TR1 (retail-token waiver needs an irreversible owner
-path), RV1 (the reviewer's severity within one step stands, never above a cap, never silently),
-DG1 (a challenge lowers at most one step), the verdict payload (set_by, reason, computed) and the
+path), RV1 (thin server 2026-10-31: the reviewer's severity is final, the matrix is a calibration),
+challenges never move the severity, the verdict payload (set_by, reason, calibration) and the
 rule registry the client can dispute (contract/rubric/severity_rules.yaml).
 """
 
@@ -139,12 +139,15 @@ class TestTR1:
 
 
 class TestRV1Submit:
+    """Thin server (CEO decision 2026-10-31): the reviewer's claim is the printed severity, always.
+    The matrix outcome after every cap is the calibration; the server never confirms or clamps."""
     REASON = "The lender forfeits its own repayment and gains nothing; the block is reversible by the lender."
     HIGH: ClassVar[dict[str, str]] = _m(impact_class="permanent_freeze", trigger="permissionless_role", reversibility="admin_reversible")
 
     def test_no_claim_prints_the_matrix(self):
         r = compute_severity(self.HIGH, "submit", SeverityContext())
         assert r.severity == "High" and r.set_by == "matrix" and r.reason == "matrix cell, no reviewer proposal"
+        assert r.calibration == "High"
 
     def test_claim_equal_to_the_matrix_is_set_by_reviewer(self):
         r = compute_severity(self.HIGH, "submit", SeverityContext(claimed_severity="High"))
@@ -154,35 +157,38 @@ class TestRV1Submit:
         # Solana Lock & Loan F-02: lender self-harm, reviewer Medium, matrix High
         r = compute_severity(self.HIGH, "submit", SeverityContext(claimed_severity="Medium", claimed_reason=self.REASON))
         assert r.severity == "Medium" and r.set_by == "reviewer" and r.reason == self.REASON
-        assert r.caps_applied == ["RV1:reviewer=Medium"] and r.computed == "High" and not r.confirm_needed
+        assert r.calibration == "High" and r.computed == "High" and not r.confirm_needed
 
     def test_one_step_up_with_reason_stands_when_no_cap_binds(self):
         m = _m(magnitude="bounded")   # I2xL3 = Medium
         r = compute_severity(m, "submit", SeverityContext(claimed_severity="High", claimed_reason=self.REASON))
-        assert r.severity == "High" and r.set_by == "reviewer"
+        assert r.severity == "High" and r.set_by == "reviewer" and r.calibration == "Medium"
 
-    def test_one_step_up_never_passes_a_named_cap(self):
+    def test_a_cap_is_a_calibration_note_never_a_ceiling(self):
         m = _m(magnitude="dust")      # Low, K3
         r = compute_severity(m, "submit", SeverityContext(claimed_severity="Medium", claimed_reason=self.REASON))
-        assert r.severity == "Low" and r.set_by == "cap" and not r.confirm_needed
-        assert "RV1:reviewer=Medium" in r.caps_applied and r.reason.startswith("K3:")
+        assert r.severity == "Medium" and r.set_by == "reviewer" and not r.confirm_needed
+        assert r.calibration == "Low" and "K3: magnitude dust caps at Low" in r.calibration_rule
 
-    def test_one_step_without_reason_asks_for_confirmation(self):
+    def test_a_claim_without_a_reason_stands(self):
         r = compute_severity(self.HIGH, "submit", SeverityContext(claimed_severity="Medium"))
-        assert r.confirm_needed and r.severity == "High" and "severity_reason" in r.confirm_why
+        assert r.severity == "Medium" and r.set_by == "reviewer" and not r.confirm_needed
+        assert r.reason == "reviewer's severity"
 
-    def test_short_reason_counts_as_none(self):
-        r = compute_severity(self.HIGH, "submit", SeverityContext(claimed_severity="Medium", claimed_reason="griefing"))
-        assert r.confirm_needed
-
-    def test_two_steps_away_asks_for_reclassification(self):
+    def test_two_steps_away_stands_with_the_matrix_as_calibration(self):
         r = compute_severity(self.HIGH, "submit", SeverityContext(claimed_severity="Low", claimed_reason=self.REASON))
-        assert r.confirm_needed and "2 steps" in r.confirm_why and r.computed == "High"
+        assert r.severity == "Low" and not r.confirm_needed and r.calibration == "High"
 
-    def test_upward_two_steps_is_not_raised_silently_either(self):
+    def test_upward_two_steps_stands_too(self):
         r = compute_severity(_m(magnitude="dust"), "submit",
                              SeverityContext(claimed_severity="High", claimed_reason=self.REASON))
-        assert r.confirm_needed and r.severity == "Low"
+        assert r.severity == "High" and r.calibration == "Low" and not r.confirm_needed
+
+    def test_k7_cap_on_an_eoa_owner_is_only_a_calibration(self):
+        # Magnum r5 L-001: centralization_risk, reviewer Medium, K7 printed Low (the reviewer was right)
+        m = _m(impact_class="centralization_risk", trigger="privileged_role", precondition="none")
+        r = compute_severity(m, "submit", SeverityContext(claimed_severity="Medium"))
+        assert r.severity == "Medium" and r.calibration == "Low" and "K7" in r.calibration_rule
 
 
 class TestRV1AfterChallenge:
@@ -194,50 +200,36 @@ class TestRV1AfterChallenge:
         r = compute_severity(m, "post_challenge", ctx)
         assert r.severity == "Low" and r.set_by == "reviewer"
 
-    def test_reviewer_choice_follows_a_moved_matrix_within_one_step(self):
-        # submitted High, reviewer Medium; basis fallbacks moved the cell to Low: Medium is still one step
-        m = _m(magnitude="bounded")   # Medium after an MB1 fallback
-        ctx = SeverityContext(**_POST, claimed_severity="High", claimed_reason=self.REASON, severity_before="High")
-        r = compute_severity(m, "post_challenge", ctx)
-        assert r.severity == "High" and r.set_by == "reviewer" and "RV1:reviewer=High" in r.caps_applied
-
-    def test_reviewer_choice_is_clamped_to_one_step_when_the_matrix_moved_two(self):
-        m = _m(magnitude="dust")      # Low (K3) after a fallback; reviewer had Critical
+    def test_a_moved_matrix_moves_only_the_calibration(self):
+        m = _m(magnitude="dust")      # Low (K3) after a basis fallback; reviewer had Critical
         ctx = SeverityContext(**_POST, claimed_severity="Critical", claimed_reason=self.REASON,
                               severity_before="Critical")
         r = compute_severity(m, "post_challenge", ctx)
-        # DG1 floor from Critical is High; the K3 ceiling is Low; the reviewer's value cannot pass a cap
-        assert r.severity == "High" and "DG1" in r.caps_applied
+        assert r.severity == "Critical" and r.calibration == "Low" and "DG1" not in r.caps_applied
 
 
-class TestDG1:
-    def test_stacked_downgrades_stop_one_step_below_the_accepted_severity(self):
-        # Apyee F-03: Medium at submit; L3 present (K5) plus MB6 (magnitude dust) would print Informational
+class TestChallengeNeverMovesSeverity:
+    def test_downgrade_items_lower_the_calibration_only(self):
+        # Apyee F-03: Medium at submit; L3 present (K5) plus MB6 (magnitude dust)
         after_mb6 = _m(impact_class="yield_or_fee_loss", magnitude="dust")
         ctx = SeverityContext(**_POST, downgrade_items_present=1, severity_before="Medium")
         r = compute_severity(after_mb6, "post_challenge", ctx)
-        assert r.severity == "Low" and "DG1" in r.caps_applied and r.set_by == "cap"
-        assert r.reason.startswith("K3:") or "DG1:" in r.reason
+        assert r.severity == "Medium" and r.set_by == "matrix"
+        assert r.calibration == "Informational" and "K5" in r.caps_applied
 
-    def test_a_single_step_needs_no_floor(self):
-        ctx = SeverityContext(**_POST, downgrade_items_present=1, severity_before="Critical")
-        r = compute_severity(_m(), "post_challenge", ctx)
-        assert r.severity == "High" and "DG1" not in r.caps_applied
+    def test_k8_is_a_note_on_an_unchallenged_critical(self):
+        ctx = SeverityContext(phase="finalize", evidence_level="reasoning_only", has_attack_steps=False,
+                              challenge_skipped=True, severity_before="Critical", claimed_severity="Critical")
+        r = compute_severity(_m(), "finalize", ctx)
+        assert r.severity == "Critical" and r.calibration == "High" and "K8" in r.caps_applied
 
-    def test_k8_and_a_downgrade_item_together_are_one_step(self):
-        ctx = SeverityContext(phase="post_challenge", evidence_level="reasoning_challenged", has_attack_steps=False,
-                              downgrade_items_present=1, severity_before="Critical")
-        r = compute_severity(_m(), "post_challenge", ctx)
-        assert r.severity == "High" and {"K8", "K5", "DG1"} <= set(r.caps_applied)
-
-    def test_finalize_measures_from_the_submit_severity(self):
-        # post_challenge printed High from Critical; finalize must not floor from High to Medium
+    def test_finalize_without_a_claim_keeps_the_submit_outcome(self):
         ctx = SeverityContext(phase="finalize", evidence_level="reasoning_challenged", has_attack_steps=True,
                               downgrade_items_present=1, severity_before="Critical")
         r = compute_severity(_m(), "finalize", ctx)
-        assert r.severity == "High"
+        assert r.severity == "Critical" and r.calibration == "High"
 
-    def test_no_floor_at_submit(self):
+    def test_submit_ignores_severity_before(self):
         r = compute_severity(_m(magnitude="dust"), "submit", SeverityContext(severity_before="Critical"))
         assert r.severity == "Low" and "DG1" not in r.caps_applied
 

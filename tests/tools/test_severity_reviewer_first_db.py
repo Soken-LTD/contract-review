@@ -38,46 +38,48 @@ async def _modules(db_pool, pin_root):
 async def _draft_row(db_pool, job_id: str, key: str) -> dict[str, Any] | None:
     async with db_pool.connection() as conn:
         row = await (await conn.execute(
-            """select rejected_count, severity, status, severity_rule, severity_set_by, severity_reason, caps_applied
+            """select rejected_count, severity, status, severity_rule, severity_set_by, severity_reason, caps_applied,
+                      calibration_severity, calibration_rule
                from finding_drafts where job_id = %s and draft_key = %s""", (job_id, key))).fetchone()
     if row is None:
         return None
     return dict(zip(("rejected_count", "severity", "status", "severity_rule", "severity_set_by",
-                     "severity_reason", "caps_applied"), row, strict=True))
+                     "severity_reason", "caps_applied", "calibration_severity", "calibration_rule"), row, strict=True))
 
 
 @ASYNC
-async def test_claim_two_steps_from_the_cell_is_accepted_with_a_warning(db_pool):
-    """never-worse: the confirmation is a warning on an accepted submit; with a reason the claim moves
-    to the nearest value within one step of the computed cell (Critical cell, Medium claim: High)."""
+async def test_claim_two_steps_from_the_cell_prints_as_claimed(db_pool):
+    """Thin server (2026-10-31): the claim is final however far from the cell; no confirm warning, the
+    cell is returned and stored as the calibration."""
     job_id, pin_root = await _create_ready_job_with_pin(db_pool)
     submit_mod, _ = await _modules(db_pool, pin_root)
     args = {**_VALID_SUBMISSION, "job_id": job_id, "draft_key": "draft-rv1-far",
             "claimed_severity": "Medium", "severity_reason": REASON}     # cell Critical
     res = await submit_mod.handle_review_submit_finding(args)
     assert res["accepted"] is True, res
-    assert [w["code"] for w in res["warnings"]] == ["E_SEVERITY_CONFIRM"]
-    assert "2 steps" in res["warnings"][0]["what"] and res["warnings"][0]["class"] == "advisory"
-    assert res["computed_severity"] == "High" and res["matrix_cell"] == "Critical"
+    assert "E_SEVERITY_CONFIRM" not in [w["code"] for w in res.get("warnings", [])]
+    assert res["computed_severity"] == "Medium" and res["matrix_cell"] == "Critical"
+    assert res["calibration"] == {"severity": "Critical", "rule": res["calibration"]["rule"], "differs": True}
     row = await _draft_row(db_pool, job_id, "draft-rv1-far")
     assert row and row["rejected_count"] == 0
+    assert row["severity"] == "Medium" and row["calibration_severity"] == "Critical"
 
 
 @ASYNC
-async def test_one_step_without_a_reason_asks_for_one_then_stands_with_it(db_pool):
+async def test_one_step_without_a_reason_stands(db_pool):
     job_id, pin_root = await _create_ready_job_with_pin(db_pool)
     submit_mod, _ = await _modules(db_pool, pin_root)
     args = {**_VALID_SUBMISSION, "job_id": job_id, "draft_key": "draft-rv1-one", "claimed_severity": "High"}
     res = await submit_mod.handle_review_submit_finding(args)
-    # accepted at the computed value, the warning asks for a reason
-    assert res["accepted"] is True and res["warnings"][0]["code"] == "E_SEVERITY_CONFIRM", res
-    assert "severity_reason" in res["warnings"][0]["what"] and res["computed_severity"] == "Critical"
+    assert res["accepted"] is True and not res.get("warnings"), res
+    assert res["computed_severity"] == "High" and res["severity_set_by"] == "reviewer"
+    assert "challenge" not in res and res["next_tools"] == ["review_finalize"]
 
     res2 = await submit_mod.handle_review_submit_finding({**args, "severity_reason": REASON})
     assert res2["accepted"] is True, res2
     assert res2["computed_severity"] == "High" and res2["matrix_cell"] == "Critical"
     assert res2["severity_set_by"] == "reviewer" and res2["severity_reason"] == REASON
-    assert res2["rules_applied"] == ["RV1:reviewer=High"] and res2["caps_applied"] == []
+    assert res2["caps_applied"] == []
     assert res2["status"] == "needs_challenge"
     row = await _draft_row(db_pool, job_id, "draft-rv1-one")
     assert row and row["severity"] == "High" and row["severity_set_by"] == "reviewer"

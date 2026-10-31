@@ -14,8 +14,9 @@ Live connector: `https://mcp.soken.dev/mcp` (Streamable HTTP). Product site: [so
 3. **Analyze** with the chain's static tooling plus our own rule sets; every tool reports
    `ok`, `degraded` or `not_run` with a reason. Nothing is ever silently dropped.
 4. **Map** the codebase (units, call graph, trust boundaries) so the reviewer reads what matters.
-5. **Review**: the assistant works the leads, writes findings, and the server challenges them
-   against the code before they are accepted.
+5. **Review**: the assistant reads the code and writes findings with its own severity; the server
+   checks every quote and number against the pinned code and prints its severity matrix beside the
+   finding as a calibration note, never in place of the reviewer's severity.
 6. **Report**: a finalized review renders to a PDF with severity KPIs, architecture figure and
    per-finding cards; the owner can publish it to the public showcase with explicit consent.
 
@@ -31,8 +32,8 @@ Live connector: `https://mcp.soken.dev/mcp` (Streamable HTTP). Product site: [so
 | Starknet | Cairo | scarb lint, Caracal, soken-cairo-rules |
 | TON | FunC, Tact, Tolk | Misti (Tact), soken-ton-rules |
 
-Severity is normalized through one rubric (`contract/rubric/`) so a finding means the same thing
-on every chain.
+The reviewer's severity is the printed severity. One rubric (`contract/rubric/`) computes the
+calibration beside it, so the calibration means the same thing on every chain.
 
 ## Tools
 

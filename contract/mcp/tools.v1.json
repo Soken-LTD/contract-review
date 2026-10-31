@@ -691,6 +691,16 @@
       "type": "string",
       "maxLength": 80
      },
+     "guide": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "The default guide (review_get_guide topic start): the five-step path and the category ids of the job's family. No guide call is needed."
+     },
+     "documents_note": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "Present when no project documents were supplied; optional, shown once."
+     },
      "related": {
       "type": "array",
       "description": "Related contracts this job pins beside the main one (name and address).",
@@ -1308,6 +1318,7 @@
        }
       }
      },
+     "chain_state": {"type": "object"},
      "scope_excluded": {
       "type": "object",
       "additionalProperties": false,
@@ -1350,7 +1361,7 @@
   {
    "name": "review_get_guide",
    "title": "Review method guide",
-   "description": "Returns reference topics of the review method for a chain and review stage, such as checklists, severity rules or category lists. Pass topic for one topic or topics for several in one call. Topic invariants lists the lifecycle and invariant walks of a job and the code each answer must cover.",
+   "description": "Returns the review method as text. With no topic it returns the short default path (topic start): start, read code, submit findings with quotes and your severity, finalize, report. Every other topic is optional reference: categories, severity_inputs, checklist, challenge_rules, invariants, context, chain. Pass topic for one topic or topics for several in one call.",
    "annotations": {
     "title": "Review method guide",
     "readOnlyHint": true,
@@ -1365,6 +1376,7 @@
      "topic": {
       "type": "string",
       "enum": [
+       "start",
        "checklist",
        "categories",
        "severity_inputs",
@@ -1385,6 +1397,7 @@
       "items": {
        "type": "string",
        "enum": [
+        "start",
         "checklist",
         "categories",
         "severity_inputs",
@@ -1395,7 +1408,7 @@
        ]
       },
       "minItems": 1,
-      "maxItems": 7,
+      "maxItems": 8,
       "uniqueItems": true,
       "description": "Several topics in one call, returned in this order. Use instead of topic."
      }
@@ -1801,7 +1814,7 @@
   {
    "name": "review_submit_finding",
    "title": "Submit or revise finding",
-   "description": "Submits a new finding or a revision of an existing one, keyed by a draft key. The server validates quotes against the pinned code, computes severity from the impact and likelihood matrix, and links the named leads. Each revision is kept. Wording and checklist rules return warnings on an accepted finding. Returns the computed severity and the draft status. When the draft needs a challenge, the result also carries the disproof checklist in challenge (the same object review_challenge returns), so it can be answered with review_answer_challenge right away.",
+   "description": "Submits a new finding or a revision of an existing one, keyed by a draft key. The server validates quotes against the pinned code and links the named leads. claimed_severity is the printed severity, always; the server computes the impact and likelihood matrix as a calibration note (calibration), printed beside the finding when it differs. Each revision is kept. Evidence problems refuse the call; wording and other rules return warnings on an accepted finding.",
    "annotations": {
     "title": "Submit or revise finding",
     "readOnlyHint": false,
@@ -1887,6 +1900,15 @@
      },
      "matrix_cell": {
       "$ref": "#/$defs/severity"
+     },
+     "calibration": {
+      "type": "object",
+      "description": "The matrix outcome (IxL cell and named rules) as a calibration note. It never changes the printed severity, which is claimed_severity when given; the report prints it beside the finding when differs is true.",
+      "properties": {
+       "severity": {"$ref": "#/$defs/severity"},
+       "rule": {"type": "string", "maxLength": 200},
+       "differs": {"type": "boolean"}
+      }
      },
      "evidence_level": {
       "$ref": "#/$defs/evidence_level"
@@ -2011,7 +2033,7 @@
   {
    "name": "review_challenge",
    "title": "Get disproof checklist",
-   "description": "Returns the disproof checklist for the current revision of a finding: questions to answer from the code. Optional: answering it upgrades the evidence level (and lets a Critical stand); an unanswered checklist never blocks finalize. Computed on each call, not stored.",
+   "description": "Returns the disproof checklist for the current revision of a finding: questions to answer from the code. Optional: answering it upgrades the evidence level and never changes the severity; an unanswered checklist never blocks finalize. Computed on each call, not stored.",
    "annotations": {
     "title": "Get disproof checklist",
     "readOnlyHint": true,
@@ -2164,7 +2186,7 @@
   {
    "name": "review_answer_challenge",
    "title": "Answer disproof checklist",
-   "description": "Records answers to the disproof checklist of a finding, with quotes or read ranges as evidence. The server checks the answers and sets the verdict: passed, downgraded or withdrawn. A quote that does not match the pinned source is refused; an item the server cannot verify is recorded, named in warnings and has no effect. Changes the finding's effective severity.",
+   "description": "Records answers to the disproof checklist of a finding, with quotes or read ranges as evidence. The server checks the answers and sets the verdict: passed, or withdrawn when a kill item is answered present. A quote that does not match the pinned source is refused; an item the server cannot verify is recorded, named in warnings and has no effect. Answers are evidence: they never change the finding's severity.",
    "annotations": {
     "title": "Answer disproof checklist",
     "readOnlyHint": false,
@@ -2351,6 +2373,15 @@
       "type": "string",
       "maxLength": 600,
       "description": "Which checklist the finding category uses and what it fits, or after a kill item the category whose checklist fits a near-miss issue"
+     },
+     "calibration": {
+      "type": "object",
+      "description": "The matrix outcome (IxL cell and named rules) as a calibration note. It never changes the printed severity, which is claimed_severity when given; the report prints it beside the finding when differs is true.",
+      "properties": {
+       "severity": {"$ref": "#/$defs/severity"},
+       "rule": {"type": "string", "maxLength": 200},
+       "differs": {"type": "boolean"}
+      }
      },
      "matrix_cell": {
       "type": [
