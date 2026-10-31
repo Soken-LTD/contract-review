@@ -324,6 +324,29 @@
           "type": "string",
           "minLength": 3,
           "maxLength": 128
+         },
+         "related": {
+          "type": "array",
+          "maxItems": 5,
+          "description": "EVM only: up to five other deployed contracts on the same chain that this one calls (price feed, NFT, vault). Their verified source is pinned in the same job, readable and quotable. Older tool lists can send the same as scope.include entries related:0xADDR or related:Name=0xADDR.",
+          "items": {
+           "type": "object",
+           "additionalProperties": false,
+           "properties": {
+            "address": {
+             "type": "string",
+             "pattern": "^0x[0-9a-fA-F]{40}$"
+            },
+            "name": {
+             "type": "string",
+             "pattern": "^[A-Za-z0-9_-]{1,40}$",
+             "description": "short name, used as the folder _related/<name>/ of its files"
+            }
+           },
+           "required": [
+            "address"
+           ]
+          }
          }
         },
         "required": [
@@ -667,6 +690,13 @@
       "type": "string",
       "maxLength": 80
      },
+     "related": {
+      "type": "array",
+      "description": "Related contracts this job pins beside the main one (name and address).",
+      "items": {
+       "type": "object"
+      }
+     },
      "limits": {
       "type": "object",
       "additionalProperties": false,
@@ -863,6 +893,12 @@
         "$ref": "#/$defs/profile"
        }
       }
+     },
+     "proxy": {
+      "type": "object"
+     },
+     "related": {
+      "type": "array"
      },
      "map_status": {
       "type": "string",

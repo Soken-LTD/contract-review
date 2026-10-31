@@ -357,3 +357,58 @@ def test_scope_excluded_status_from_fetch_provenance():
     assert [f["reason"] for f in detailed["files"]] == ["test_or_mock_dir", "mock_name", "other"]
     assert _scope_excluded_status([{"step": "fetch", "status": "done", "provenance": {"provider": "repo"}}],
                                   detailed=True) is None
+
+
+# ---------------------------------------------------------------------------
+# Related contracts in one job (matrix run 2026-10-31, Magnum)
+# ---------------------------------------------------------------------------
+
+_MAIN = "0x48a2728Db6854f2844c2F77423Ad75876d7c60F7"
+_PF = "0x7366388273111e035bbc555cd0f44a5bb3067c32"
+_NFT = "0xe063710f0de555894342325d42b921f9fc225590"
+
+
+class TestRelatedContracts:
+    @ASYNC
+    async def test_related_field_and_old_scope_include_are_stored(self, client_with_db, db_pool):
+        result = await client_with_db.call_tool("review_start", {
+            "source": {"kind": "deployed", "chain": "evm", "chain_id": 56, "address": _MAIN,
+                       "related": [{"address": _PF, "name": "PriceFeed"}]},
+            "scope": {"include": [f"related:NFT={_NFT}"]},
+        })
+        body = json.loads(result.content[0].text)
+        assert body["accepted"] is True, body
+        assert body["related"] == [{"address": _PF, "name": "PriceFeed"}, {"address": _NFT, "name": "NFT"}]
+        async with db_pool.connection() as conn:
+            row = await (await conn.execute("select source_args from jobs where job_id = %s",
+                                            (body["job_id"],))).fetchone()
+        args = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        assert args["related"] == body["related"]
+
+    @ASYNC
+    async def test_old_schema_scope_include_alone_works(self, client_with_db):
+        result = await client_with_db.call_tool("review_start", {
+            "source": {"kind": "deployed", "chain": "evm", "chain_id": 56, "address": _MAIN},
+            "scope": {"include": [f"related:{_PF}"]},
+        })
+        body = json.loads(result.content[0].text)
+        assert body["accepted"] is True and body["related"] == [{"address": _PF, "name": "c_" + _PF[2:12]}]
+
+    @ASYNC
+    async def test_bad_related_entry_names_the_field(self, client_with_db):
+        result = await client_with_db.call_tool("review_start", {
+            "source": {"kind": "deployed", "chain": "evm", "chain_id": 56, "address": _MAIN},
+            "scope": {"include": ["related:PriceFeed=0x1234"]},
+        })
+        env = json.loads(result.content[0].text)["errors"][0]
+        assert env["code"] == "E_INVALID_ARGUMENT" and env["field"] == "scope.include[0]"
+
+    @ASYNC
+    async def test_related_needs_a_deployed_evm_source(self, client_with_db):
+        result = await client_with_db.call_tool("review_start", {
+            "source": {"kind": "files", "language": "solidity",
+                       "files": [{"path": "A.sol", "content": "contract A {}\n"}]},
+            "scope": {"include": [f"related:{_PF}"]},
+        })
+        env = json.loads(result.content[0].text)["errors"][0]
+        assert env["code"] == "E_INVALID_ARGUMENT" and env["field"] == "scope.include"

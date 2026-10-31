@@ -602,6 +602,30 @@
         },
         "upgradeable": {
           "type": "boolean"
+        },
+        "implementation": {
+          "$ref": "#/$defs/address",
+          "description": "The deployed address is a proxy (address); this is the implementation whose source was reviewed"
+        },
+        "proxy_pattern": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,40}$",
+          "x-text-class": "server"
+        },
+        "related": {
+          "type": "array",
+          "maxItems": 6,
+          "description": "Related deployed contracts pinned in the same job (source.related), one provenance line each",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "address", "status"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$", "x-text-class": "src"},
+              "address": {"$ref": "#/$defs/address"},
+              "status": {"enum": ["pinned", "no_code", "no_verified_source", "fetch_failed"], "x-text-class": "kit"}
+            }
+          }
         }
       },
       "allOf": [

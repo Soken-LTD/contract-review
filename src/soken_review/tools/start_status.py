@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 import psycopg_pool
 
 from .. import quota
+from ..adapters.evm import related_sources as _related_sources
 from ..context.items import check_cap, status_counts, validate_items
 from ..context.store import ContextStore
 from ..contract import schema_version
@@ -232,6 +233,35 @@ _LIMITS_PLUGIN = {"max_nsloc": 10000, "ready_ttl_hours": 24}
 _MCP_TERMS_URL = "https://soken.dev/mcp/terms.html"
 
 
+def _related_args(source: dict[str, Any], scope: dict[str, Any] | None, address: str | None,
+                  chain: str | None) -> tuple[list[dict[str, str]], list[str]]:
+    """Related deployed contracts of a deployed job (adapters/evm/related_sources): `source.related`
+    or `scope.include` entries `related:0xADDR` / `related:Name=0xADDR` (the shape an older tool
+    list can send). EVM chains only."""
+    wanted = bool(source.get("related")) or any(
+        isinstance(i, str) and i.strip().startswith("related:") for i in ((scope or {}).get("include") or []))
+    if not wanted:
+        return [], list((scope or {}).get("include") or [])
+    if FAMILY_OF_CHAIN.get(chain or "") != "evm" or chain == "tron":
+        raise ReviewError("E_INVALID_ARGUMENT", field="source.related",
+                          rule="related contracts are supported on EVM chains", value80=str(chain)[:80],
+                          example="start one job per contract on this chain")
+    try:
+        return _related_sources.parse_related(source, scope, address)
+    except _related_sources.RelatedError as exc:
+        raise ReviewError("E_INVALID_ARGUMENT", field=exc.field, rule=exc.rule, value80=exc.value[:80],
+                          example='{"address": "0x7366388273111e035bbc555cd0f44a5bb3067c32", "name": "PriceFeed"}'
+                          ) from exc
+
+
+def _no_related(scope: dict[str, Any] | None) -> None:
+    if any(isinstance(i, str) and i.strip().startswith("related:") for i in ((scope or {}).get("include") or [])):
+        raise ReviewError("E_INVALID_ARGUMENT", field="scope.include",
+                          rule="related contracts need a deployed source (source.kind deployed)",
+                          value80="related:", example='{"kind": "deployed", "chain": "evm", "chain_id": 56, '
+                                                       '"address": "0x...", "related": [{"address": "0x..."}]}')
+
+
 @handler("review_start")
 async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
     """Create a job (03 §4.1). Returns accepted output or rejection envelope.
@@ -270,6 +300,11 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             _validate_address(address, chain)
             _require_rpc_chain(chain, chain_id)
             has_deployment = True
+            related, include_rest = _related_args(source, args.get("scope"), address, chain)
+            if related:
+                # stored with the source (source_args); the fetch step pins their verified source
+                source = {**source, "related": related}
+                args = {**args, "scope": {**(args.get("scope") or {}), "include": include_rest}}
 
         elif kind in ("repo", "upload"):
             # Repo mode `source.chain` (Hipo blind run 2026-10-27): the chain the code is written
@@ -299,7 +334,10 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
             elif hint:
                 detected_chain = hint
 
+            _no_related(args.get("scope"))
+
         elif kind == "files":
+            _no_related(args.get("scope"))
             detected_lang = source["language"]
             require_enabled(language=detected_lang)
             # Inline size checks (03 §4.1, limits.yaml inline.*)
@@ -466,6 +504,9 @@ async def handle_review_start(args: dict[str, Any]) -> dict[str, Any]:
         "resume_phrase": f"Resume Soken review {job_id}",
         "limits": limits,
     }
+    if source.get("related"):
+        # the related contracts this job pins beside the main one (status `related` has the outcome)
+        result["related"] = source["related"]
 
     if kind == "files":
         # files_received: sha256 and line count per file (03 §4.1)
@@ -958,6 +999,13 @@ def _build_status_response(
         }
 
     # Build status (03 §4.2)
+    # A followed proxy and the related contracts (adapters/evm/related_sources): which address
+    # holds the state and which source is reviewed, one line per related contract.
+    proxy, related = _proxy_related_status(_steps)
+    if proxy:
+        out["proxy"] = proxy
+    if related:
+        out["related"] = related
     out["map_status"] = job.get("map_status", "none")
     out["analyzer_degraded"] = job.get("analyzer_degraded", False)
     # A failed build in one sentence (compiler, error class, consequence): the same sentence the
@@ -1045,6 +1093,19 @@ _PIN_NOTES = {
 
 
 _SCOPE_REASONS = frozenset({"test_or_mock_dir", "mock_name", "test_harness"})
+
+
+def _proxy_related_status(steps: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    def last(name: str, key: str) -> Any:
+        done = [s for s in steps if s.get("step") == name and s.get("status") == "done"
+                and isinstance(s.get("provenance"), dict) and s["provenance"].get(key)]
+        return done[-1]["provenance"][key] if done else None
+
+    proxy = last("chain_state", "proxy")
+    related = last("fetch", "related")
+    keep = ("name", "address", "role", "status", "provider", "match", "path", "files", "note")
+    rows = [{k: r[k] for k in keep if r.get(k) is not None} for r in (related or []) if isinstance(r, dict)]
+    return (proxy if isinstance(proxy, dict) else None), rows
 
 
 def _scope_excluded_status(steps: list[dict[str, Any]], *, detailed: bool) -> dict[str, Any] | None:

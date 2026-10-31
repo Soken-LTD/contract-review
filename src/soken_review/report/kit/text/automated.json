@@ -151,6 +151,12 @@
   "disclaimer": "Disclaimer"
  },
  "upgrade_authority_not_checked": "Not checked in this review",
+ "related_status": {
+  "pinned": "reviewed in this job",
+  "no_code": "no contract code, not reviewed",
+  "no_verified_source": "no verified source, not reviewed",
+  "fetch_failed": "source not fetched, not reviewed"
+ },
  "dismissed_leads_reason_header": "Reason",
  "lower_priority_header": "Lower priority",
  "rule_tiers_note": "Lower priority: {n} leads came from rules that earlier reviews rarely confirmed, so rule tier policy {version} listed them after the others. Every one was run and is counted in the table.",
