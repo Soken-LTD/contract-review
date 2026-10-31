@@ -51,6 +51,7 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
         _materialize_sources,
         _run_aderyn,
         _run_slither,
+        reviewer_cause,
     )
 
     if result.status != "ok" or not result.work_dir:
@@ -92,8 +93,9 @@ def analyze(result: BuildResult) -> tuple[list[Lead], dict[str, Any], dict[str, 
             return [], {"status": "not_run", "reason": "sandbox_unavailable"}, {}
         failed: dict[str, Any] = {"status": "not_run", "tool": "slither",
                                   "reason": diag.get("reason") or "analyzer_failed"}
-        if diag.get("detail"):
-            failed["detail"] = diag["detail"]
+        cause = reviewer_cause(diag.get("cause"), set(result.candidate.files or ()))
+        if cause:
+            failed["cause"] = cause
         return [], failed, {}
 
     # Aderyn resolves solc by bare semver: only an upstream release can be seeded offline.

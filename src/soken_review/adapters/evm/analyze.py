@@ -186,9 +186,10 @@ def analyze(result: BuildResult, *, scope_files: set[str] | None = None,
         # nothing (review_status analyzer_note, report method table).
         failed: dict[str, Any] = {"status": "not_run", "tool": "slither",
                                   "reason": diag.get("reason") or "analyzer_failed"}
-        if diag.get("detail"):
-            failed["detail"] = diag["detail"]
-        logger.warning("slither not run: %s (%s)", failed["reason"], failed.get("detail", ""))
+        cause = reviewer_cause(diag.get("cause"), set(scope_files or ()) | ({aggregate} if aggregate else set()))
+        if cause:
+            failed["cause"] = cause
+        logger.warning("slither not run: %s %s", failed["reason"], cause or "")
         return [], failed, {}
     all_raw.extend(slither_raw)
 
@@ -572,22 +573,38 @@ def _record_diag(diag: dict[str, Any] | None, proc: subprocess.CompletedProcess)
 _SOLC_ERROR = re.compile(r"^((?:[A-Z][A-Za-z]*)?Error): (.{1,200})$")
 _SOLC_LOCATION = re.compile(r"^\s*-->\s*(\S+?):(\d+):\d+:?\s*$")
 _PY_EXCEPTION = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Compilation)): ?(.*)$")
-_DETAIL_SAFE = re.compile(r"[^A-Za-z0-9 _.,:;()'\"=<>^+@/\-]")
+# Reviewer-facing cause classes (closed set; texts in contract/rubric/analyzer_reasons.yaml). solc
+# messages quote identifiers and literals of the client's code, so the message itself is never
+# relayed: it is only matched against these fixed patterns (first match wins).
+_SOLC_CLASS_BY_MESSAGE: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("identifier_already_declared", re.compile(r"^Identifier already declared\b")),
+    ("version_mismatch", re.compile(r"^Source file requires different compiler version\b")),
+    ("source_not_found", re.compile(r"^(Source \S.* not found|File not found|File outside of allowed directories)")),
+)
+_SOLC_CLASS_BY_KIND = {"ParserError": "parser_error", "SyntaxError": "parser_error", "TypeError": "type_error",
+                       "DeclarationError": "declaration_error"}
+_INTERNAL_CLASSES = {"JSONDecodeError": "json_decode_error", "InvalidCompilation": "invalid_compilation",
+                     "SlitherError": "slither_error"}
+CAUSE_CLASSES = frozenset({*(c for c, _ in _SOLC_CLASS_BY_MESSAGE), *_SOLC_CLASS_BY_KIND.values(),
+                           *_INTERNAL_CLASSES.values(), "other"})
 
 
-def _clean_detail(text: str) -> str:
-    """Printable, host-path-free, capped detail text (repo-relative file names are kept)."""
-    words = [w for w in text.split() if not w.lstrip("\"'(").startswith(("/", "~"))]
-    return _DETAIL_SAFE.sub("", " ".join(words)).strip()[:180]
+def _solc_class(kind: str, message: str) -> str:
+    for cls, pat in _SOLC_CLASS_BY_MESSAGE:
+        if pat.match(message):
+            return cls
+    return _SOLC_CLASS_BY_KIND.get(kind, "other")
 
 
 def slither_failure(stderr: str | None, returncode: int | None, timed_out: bool = False,
-                    produced_json: bool = False) -> tuple[str, str | None]:
-    """(reason code, detail) of a Slither run that gave no result, from its stderr.
+                    produced_json: bool = False) -> tuple[str, dict[str, Any] | None]:
+    """(reason code, cause) of a Slither run that gave no result, from its stderr.
 
-    compile_failed: solc rejected the compilation Slither drove (the first solc error and where);
-    internal_error: Slither or crytic-compile raised (the exception class); timeout; no_output:
-    it exited without writing its JSON; analyzer_failed: nothing recognisable."""
+    compile_failed: solc rejected the compilation Slither drove; internal_error: Slither or
+    crytic-compile raised; timeout; no_output: it exited without writing its JSON; analyzer_failed:
+    nothing recognisable. `cause` is {"class": one of CAUSE_CLASSES, "file": raw location path,
+    "line": int} for a solc error, {"class": ...} for an internal error; no message text ever (the
+    caller validates `file` against the reviewed files, reviewer_cause)."""
     if timed_out:
         return "timeout", None
     lines = (stderr or "").splitlines()
@@ -600,17 +617,30 @@ def slither_failure(stderr: str | None, returncode: int | None, timed_out: bool 
         loc = next((lm for lm in map(_SOLC_LOCATION.match, lines[i + 1:i + 3]) if lm), None)
         if loc is None:
             continue
-        where = f" at {loc.group(1).removeprefix('./')}:{loc.group(2)}"
-        return "compile_failed", _clean_detail(f"{m.group(1)}: {m.group(2)}{where}") or None
+        return "compile_failed", {"class": _solc_class(m.group(1), m.group(2)),
+                                  "file": loc.group(1), "line": int(loc.group(2))}
     for line in reversed(lines):
         m = _PY_EXCEPTION.match(line.strip())
         if m:
-            return "internal_error", _clean_detail(m.group(1).rsplit(".", 1)[-1]) or None
+            return "internal_error", {"class": _INTERNAL_CLASSES.get(m.group(1).rsplit(".", 1)[-1], "other")}
     if returncode not in (None, 0):
-        return "analyzer_failed", f"exit code {returncode}"
+        return "analyzer_failed", None
     if not produced_json:
         return "no_output", None
     return "analyzer_failed", None
+
+
+def reviewer_cause(cause: dict[str, Any] | None, reviewed: set[str]) -> dict[str, Any] | None:
+    """The reviewer-facing cause: the class (closed set), and the file and line only when the file
+    is one of `reviewed` (the reviewed sources and the host-written entry)."""
+    if not isinstance(cause, dict) or cause.get("class") not in CAUSE_CLASSES:
+        return None
+    out: dict[str, Any] = {"class": cause["class"]}
+    path = str(cause.get("file") or "").removeprefix("./")
+    line = cause.get("line")
+    if path and path in reviewed and isinstance(line, int) and 0 < line < 10_000_000:
+        out["file"], out["line"] = path, line
+    return out
 
 
 def _run_slither(
@@ -626,19 +656,21 @@ def _run_slither(
 
     Returns raw detector rows, or None when Slither did not produce a result: an analyzer that
     did not run is never reported as "no leads" (03 3.1 analyzer_degraded). `diag`, when given,
-    receives `reason` and `detail` of a failed run (slither_failure).
+    receives `reason` and the unvalidated `cause` of a failed run (slither_failure); stderr stays in
+    the internal log only.
     """
     run: dict[str, Any] = {}
 
-    def failed(reason: str | None = None, detail: str | None = None) -> None:
+    def failed(reason: str | None = None) -> None:
         if diag is None:
             return
+        cause = None
         if reason is None:
-            reason, detail = slither_failure(run.get("stderr"), run.get("returncode"),
-                                             bool(run.get("timeout")), produced_json)
+            reason, cause = slither_failure(run.get("stderr"), run.get("returncode"),
+                                            bool(run.get("timeout")), produced_json)
         diag["reason"] = reason
-        if detail:
-            diag["detail"] = detail
+        if cause:
+            diag["cause"] = cause
 
     produced_json = False
     out_json = out_dir / "sbx" / "slither_out.json"
