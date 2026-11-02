@@ -9,7 +9,8 @@ drives one fixture job end to end through the public tools only (review_start, r
 review_contract_map, review_leads, review_facts, review_read_code, review_get_guide,
 review_submit_finding, review_challenge, review_answer_challenge, review_dismiss_lead,
 review_set_section, review_finalize, review_report) and checks the outcome a client would see,
-plus the PDF bytes the report store holds for the signed link.
+plus the PDF bytes the report store holds and the three links review_report returns (page, PDF,
+manage page, a tampered signature, and on one target a delete through the manage endpoint).
 
 Every target states its expectations (`TargetSpec`); `run_target` returns a `TargetResult` with
 one row per check. Upstream outages (explorer, verifier, RPC, GitHub) turn a target into
@@ -169,6 +170,7 @@ class TargetSpec:
     expect_proxy: bool = False
     expect_facts: tuple[str, ...] = ()        # fact keys the job must hold (read at the start address)
     expect_library_ref: str | None = None      # TON: a library hash the report's verification table names
+    delete_via_manage: bool = False            # after the link checks, delete through the manage endpoint
 
 
 @dataclass
@@ -697,6 +699,52 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
                 break
 
 
+_SITE_RE = re.compile(r"^https://(mcp\.)?soken\.dev(?=/)")
+
+
+def local_link(url: str, base: str) -> str:
+    """A review_report link fetched against the local stack: the public origin becomes `base`
+    (fetching only; the link itself is checked against the contract as returned)."""
+    return _SITE_RE.sub(base.rstrip("/"), url, count=1)
+
+
+def tamper(url: str) -> str:
+    """The same link with one character of the signature changed."""
+    m = re.search(r"([?&]s=)([a-z2-7]+)", url)
+    if not m:
+        return url + ("&" if "?" in url else "?") + "s=" + "a" * 26
+    sig = m.group(2)
+    flipped = sig[:-1] + ("b" if sig[-1] != "b" else "c")
+    return url[:m.start(2)] + flipped + url[m.end(2):]
+
+
+def check_links(sess: Session, spec: TargetSpec, rep: dict[str, Any]) -> None:
+    """The three links review_report returns, fetched the way the user's browser fetches them."""
+    res, base = sess.res, sess.c.base
+    url, pdf_url, manage_url = rep.get("url") or "", rep.get("pdf_url") or "", rep.get("manage_url") or ""
+    with httpx.Client(timeout=60.0, follow_redirects=False) as http:
+        r = http.get(local_link(url, base))
+        res.check("report url answers 200 HTML", r.status_code == 200 and r.headers.get("content-type", "").startswith("text/html"),
+                  f"{r.status_code} {r.headers.get('content-type')}")
+        r = http.get(local_link(pdf_url, base))
+        res.check("pdf_url answers 200 application/pdf %PDF-", r.status_code == 200
+                  and r.headers.get("content-type", "").startswith("application/pdf") and r.content.startswith(b"%PDF-"),
+                  f"{r.status_code} {r.headers.get('content-type')} {len(r.content)} bytes")
+        r = http.get(local_link(tamper(pdf_url), base))
+        res.check("pdf_url with a tampered signature answers 403", r.status_code == 403, f"{r.status_code}")
+        page, _, frag = manage_url.partition("#")
+        r = http.get(local_link(page, base))
+        res.check("manage page answers 200 HTML", r.status_code == 200 and r.headers.get("content-type", "").startswith("text/html"),
+                  f"{r.status_code} {r.headers.get('content-type')}")
+        if not spec.delete_via_manage:
+            return
+        key = frag.removeprefix("k=")
+        r = http.post(local_link(page, base), json={"key": key, "action": "delete"})
+        res.check("delete through the manage endpoint answers 200", r.status_code == 200, f"{r.status_code} {r.text[:200]}")
+        r = http.get(local_link(pdf_url, base))
+        res.check("pdf_url answers 404 after the delete", r.status_code == 404, f"{r.status_code}")
+
+
 def check_proxy_job(sess: Session, spec: TargetSpec, status: dict[str, Any]) -> None:
     """One job for a proxy: the implementation is the reviewed code, the state facts come from the
     proxy (a job on the implementation read owner 0x0 there), the proxy source is pinned beside it."""
@@ -805,6 +853,7 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
         set_sections(sess, spec, draft_key)
         rep = finalize_and_render(sess, spec)
         check_report(sess, spec, rep, store_root, out_dir)
+        check_links(sess, spec, rep)
         res.status = "pass" if not res.failed else "fail"
     except UpstreamDown as exc:
         res.status = "skipped: upstream"
@@ -915,7 +964,8 @@ TARGETS: dict[str, TargetSpec] = {
     "ton": TargetSpec(
         name="ton", start={"source": {"kind": "deployed", "chain": "ton", "address": FORTON}},
         probe_url="https://toncenter.com/api/v2/getAddressInformation?address=" + FORTON,
-        chain="ton", network="TON mainnet", tiers=("A",), stale_walks=True, address_in_cover=FORTON, ready_timeout_s=900),
+        chain="ton", network="TON mainnet", tiers=("A",), stale_walks=True, address_in_cover=FORTON, ready_timeout_s=900,
+        delete_via_manage=True),
     "ton-multisig": TargetSpec(
         # Matrix r5 2026-10-31: multisig v2, verified as FunC 0.4.4. Its auto/order_code.func builds a
         # library reference cell (the order code is a masterchain library), its types.func holds a

@@ -88,6 +88,12 @@ class _LifespanWrapper:
             await self._lifespan(receive, send)
         elif scope["type"] == "http" and scope.get("path", "").rstrip("/") == "/healthz":
             await self._healthz(scope, send)
+        elif scope["type"] == "http" and scope.get("path", "").startswith("/r/"):
+            # the signed report links (tools/report_pages); ahead of the MCP app, so its host
+            # allowlist (SOKEN_ALLOWED_HOSTS, DNS-rebinding guard for /mcp) does not apply here
+            from . import report_pages
+
+            await report_pages.app(scope, receive, send)
         else:
             await self._inner(scope, receive, send)
 

@@ -197,7 +197,11 @@ def _remove_files(pin_root: Path | None, job_id: str, report_prefix: str | None)
 @handler("review_delete_job")
 async def handle_review_delete_job(args: dict[str, Any]) -> dict[str, Any]:
     """Delete a job: rows in one transaction, files after it (best effort, logged)."""
-    job_id: str = args["job_id"]
+    return await delete_job(args["job_id"])
+
+
+async def delete_job(job_id: str) -> dict[str, Any]:
+    """The one deletion path: review_delete_job and the report manage page (tools/report_pages)."""
     pool = _get_pool()
     async with pool.connection() as conn:
         repo = JobRepo(conn)
