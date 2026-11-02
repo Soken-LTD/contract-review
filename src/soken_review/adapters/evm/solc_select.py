@@ -3,8 +3,9 @@
 Order (05 6.1 config row first, then the pragma rule):
   1. an exact version pinned by the project config: foundry.toml `solc`/`solc_version`,
      hardhat.config.{js,cjs,mjs,ts} `solidity: "x.y.z"`, `solidity.version`, `solidity.compilers[].version`
-     (the newest that satisfies every pragma, else the newest), truffle-config.js / truffle.js
-     `compilers.solc.version`           -> version_pinned_by "config"
+     (the newest that satisfies every pragma, else the one satisfying the most pragmas; a pin
+     no pragma accepts is not used), truffle-config.js / truffle.js `compilers.solc.version`
+                                       -> version_pinned_by "config"
   2. the newest release that satisfies every `pragma solidity` of the reviewed files AND of the
      files they import (the import closure over the repo tree with its remappings)
                                        -> version_pinned_by "pragma"
@@ -31,7 +32,8 @@ _HARDHAT_NAMES = ("hardhat.config.js", "hardhat.config.cjs", "hardhat.config.mjs
 _TRUFFLE_NAMES = ("truffle-config.js", "truffle.js")
 # solidity: "0.8.17"  |  solidity: { version: "0.8.17", ... }  |  compilers: [{ version: "0.8.17" }, ...]
 _HH_STRING = re.compile(r"\bsolidity\s*:\s*['\"]v?(\d+\.\d+\.\d+)['\"]")
-_HH_BLOCK = re.compile(r"\bsolidity\s*:\s*\{(.{0,4000}?)\}\s*,?\s*\n", re.DOTALL)
+_HH_BLOCK_OPEN = re.compile(r"\bsolidity\s*:\s*\{")
+_HH_BLOCK_MAX = 20_000
 _HH_VERSION = re.compile(r"\bversion\s*:\s*['\"]v?(\d+\.\d+\.\d+)['\"]")
 _TRUFFLE_SOLC = re.compile(r"\bsolc\s*:\s*\{(.{0,2000}?)\bversion\s*:\s*['\"]v?(\d+\.\d+\.\d+)['\"]", re.DOTALL)
 _PINNED_BY_TEXT = {
@@ -57,6 +59,46 @@ def _basename(path: str) -> str:
     return path.rsplit("/", 1)[-1]
 
 
+def _hardhat_block(text: str) -> str | None:
+    """The body of the `solidity: { ... }` object, braces balanced (strings and comments skipped).
+
+    BakerFi 2026-10-31: the old lazy regex stopped at the first `},` + newline, which is the end of
+    the first compiler's `optimizer` object, so only `compilers[0]` (0.4.21) was seen and pinned for
+    a ^0.8.24 codebase whose hardhat.config.ts also lists 0.8.24."""
+    m = _HH_BLOCK_OPEN.search(text)
+    if not m:
+        return None
+    start = m.end()
+    depth, i, quote = 1, start, ""
+    end = min(len(text), start + _HH_BLOCK_MAX)
+    while i < end:
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif text.startswith("//", i):
+            nl = text.find("\n", i)
+            i = end if nl < 0 else nl
+            continue
+        elif text.startswith("/*", i):
+            close = text.find("*/", i + 2)
+            i = end if close < 0 else close + 2
+            continue
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+        i += 1
+    return text[start:end]  # unbalanced or over the cap: what was read
+
+
 def config_versions(files: dict[str, str]) -> list[tuple[str, str]]:
     """Exact versions a project config pins, as (version, config file). Ranges are ignored.
 
@@ -73,9 +115,9 @@ def config_versions(files: dict[str, str]) -> list[tuple[str, str]]:
             if m:
                 out.append((m.group(1), name))
                 continue
-            block = _HH_BLOCK.search(head)
+            block = _hardhat_block(head)
             if block:
-                for v in _HH_VERSION.findall(block.group(1)):
+                for v in _HH_VERSION.findall(block):
                     out.append((v, name))
         elif name in _TRUFFLE_NAMES:
             m = _TRUFFLE_SOLC.search(head)
@@ -160,8 +202,21 @@ def load_builds() -> list[dict[str, Any]] | None:
         return None
 
 
+def _satisfied_count(version: str, exprs: list[str]) -> int:
+    m = _EXACT.match(version.split("+", 1)[0])
+    if not m:
+        return 0
+    v = tuple(int(x) for x in m.group(1).split("."))
+    return sum(1 for e in exprs if satisfies(e, v))  # type: ignore[arg-type]
+
+
 def pick_config_version(config: list[tuple[str, str]], exprs: list[str]) -> tuple[str, str] | None:
-    """Among the config-pinned versions, the newest that satisfies every pragma; else the newest."""
+    """Among the config-pinned versions, the newest that satisfies every pragma; else the one
+    satisfying the most pragmas (newest on a tie); None when no pin satisfies any pragma.
+
+    Hardhat compiles each file with a listed compiler its pragma accepts, so a listed version
+    that no reviewed pragma accepts (BakerFi: 0.4.21 for legacy WETH next to 0.8.24) is never the
+    compiler of the reviewed files; the pragma rule then chooses. Without pragmas the newest pin."""
     if not config:
         return None
     exact = [(v, src) for v, src in config if _EXACT.match(v)]
@@ -171,8 +226,13 @@ def pick_config_version(config: list[tuple[str, str]], exprs: list[str]) -> tupl
     def key(item: tuple[str, str]) -> Version:
         return tuple(int(x) for x in item[0].split("."))  # type: ignore[return-value]
 
+    if not exprs:
+        return max(exact, key=key)
     fitting = [c for c in exact if version_satisfies_all(c[0], exprs)]
-    return max(fitting or exact, key=key)
+    if fitting:
+        return max(fitting, key=key)
+    best = max(exact, key=lambda c: (_satisfied_count(c[0], exprs), key(c)))
+    return best if _satisfied_count(best[0], exprs) else None
 
 
 def newest_satisfying_most(exprs: list[str], builds: list[dict[str, Any]]) -> str | None:
