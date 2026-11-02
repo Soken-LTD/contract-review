@@ -149,6 +149,10 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "live: mark a test as requiring live network access (skipped by default; run with -m live)",
     )
+    config.addinivalue_line(
+        "markers",
+        "output_schema_violation_expected: the test builds a non-conforming structured result on purpose",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -167,3 +171,97 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 def _sandbox_dev_perms(monkeypatch):
     """Tests run as a non-root user: allow the dev-only 0o777 fallback of sandbox_writable_dir."""
     monkeypatch.setenv("SOKEN_SANDBOX_DEV_PERMS", "1")
+
+
+# ---------------------------------------------------------------------------
+# Output-schema guard: every structured result the suite produces must match the tool's outputSchema
+# ---------------------------------------------------------------------------
+#
+# Claude Code 2.1.309 drops a tool result whose structuredContent breaks the declared outputSchema.
+# Two live failures (review_report links on mcp.soken.dev, review_dismiss_lead rejected[] items) had
+# no test because nothing compared handler output to the contract. This guard wraps every registered
+# control-tool handler (HANDLERS and the module attributes tests import) and SokenServer.call_tool,
+# records every violation, and fails the test that produced it.
+
+_OUTPUT_VIOLATIONS: list[str] = []
+
+
+def _install_output_schema_guard() -> None:
+    import functools
+    import sys
+
+    from soken_review import server as srv
+
+    def check(name: str, body, where: str) -> None:
+        bad = srv.output_violations(name, body)
+        if bad:
+            _OUTPUT_VIOLATIONS.append(f"{name} ({where}): " + "; ".join(bad[:10]))
+
+    def guard(name: str, fn):
+        if name not in srv._output_validators() or getattr(fn, "_schema_guarded", False):
+            return fn
+
+        @functools.wraps(fn)
+        async def guarded(*args, **kwargs):
+            result = await fn(*args, **kwargs)
+            check(name, result, "handler")
+            return result
+
+        guarded._schema_guarded = True
+        return guarded
+
+    class GuardedHandlers(dict):
+        """Wraps every handler stored in it, including late registrations and monkeypatched fakes."""
+
+        def __setitem__(self, name, fn):
+            super().__setitem__(name, guard(name, fn))
+
+    def handler(name: str):
+        def register(fn):
+            wrapped = guard(name, fn)
+            srv.HANDLERS[name] = wrapped
+            return wrapped   # the module attribute a test imports is the guarded one too
+
+        return register
+
+    already = dict(srv.HANDLERS)
+    srv.HANDLERS = GuardedHandlers()
+    srv.handler = handler
+    for name, fn in already.items():
+        srv.HANDLERS[name] = fn
+    import soken_review.tools  # noqa: F401  (registers every handler through the guarded decorator)
+
+    for name, wrapped in list(srv.HANDLERS.items()):   # handlers registered before the guard existed
+        fn = getattr(wrapped, "__wrapped__", None)
+        if fn is None:
+            continue
+        for mod in list(sys.modules.values()):
+            if getattr(mod, "__name__", "").startswith("soken_review") and getattr(mod, fn.__name__, None) is fn:
+                setattr(mod, fn.__name__, wrapped)
+
+    original = srv.SokenServer.call_tool
+    if getattr(original, "_schema_guarded", False):
+        return
+
+    @functools.wraps(original)
+    async def call_tool(self, name, arguments, context=None):
+        res = await original(self, name, arguments, context)
+        if res.structured_content is not None:
+            check(name, res.structured_content, "call_tool")
+        return res
+
+    call_tool._schema_guarded = True
+    srv.SokenServer.call_tool = call_tool
+
+
+_install_output_schema_guard()
+
+
+@pytest.fixture(autouse=True)
+def _structured_results_match_output_schema(request):
+    _OUTPUT_VIOLATIONS.clear()
+    yield
+    found, _OUTPUT_VIOLATIONS[:] = list(_OUTPUT_VIOLATIONS), []
+    if found and request.node.get_closest_marker("output_schema_violation_expected") is None:
+        pytest.fail("structured result breaks the tool's outputSchema:\n" + "\n".join(dict.fromkeys(found)),
+                    pytrace=False)

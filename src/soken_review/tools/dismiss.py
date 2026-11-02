@@ -673,7 +673,8 @@ async def handle_review_dismiss_lead(args: dict[str, Any]) -> dict[str, Any]:
                     ).envelope())
 
                 if item_errors:
-                    rejected.append({"lead_id": lead_id, "errors": item_errors})
+                    # outputSchema: a rejected item is {lead_id, errors[1..20]}
+                    rejected.append({"lead_id": lead_id, "errors": item_errors[:20]})
                     continue
 
                 # ── Commit the dismissal ─────────────────────────────────────────────

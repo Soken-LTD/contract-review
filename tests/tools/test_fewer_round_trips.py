@@ -51,6 +51,14 @@ def _main_contract() -> dict | None:
 
 
 _CLASS_RE = re.compile(r"\[[^\]]*\]")
+_OPTIONAL_GROUP_RE = re.compile(r"\((?:[^()\\]|\\.)*\)\?")
+
+# Output properties whose old schema never matched what the server sends, corrected to the real shape
+# (a client that enforces outputSchema dropped every such result, so no client relied on the old one).
+_OUTPUT_CORRECTIONS = {
+    # 2026-10-31: rejected[] items are {lead_id, errors[]} (per item), the schema said a bare error.
+    ("review_dismiss_lead", "rejected"),
+}
 
 
 def _pattern_widens(old: str, new: str) -> bool:
@@ -58,6 +66,8 @@ def _pattern_widens(old: str, new: str) -> bool:
     (2026-10-27: `@` added to path patterns for npm-scoped paths)."""
     if old == new:
         return True
+    if any(new[:m.start()] + new[m.end():] == old for m in _OPTIONAL_GROUP_RE.finditer(new)):
+        return True   # one inserted optional group, e.g. `(mcp\.)?` before a host
     if _CLASS_RE.sub("[]", old) != _CLASS_RE.sub("[]", new):
         return False
     return all(set(o[1:-1]) <= set(n[1:-1]) for o, n in zip(_CLASS_RE.findall(old), _CLASS_RE.findall(new), strict=True))
@@ -106,6 +116,8 @@ def test_widens_rules():
     assert not _widens({"type": "string"}, {"type": "integer"})
     assert not _widens({"maxItems": 5}, {"maxItems": 4})
     assert not _widens({"type": "string"}, {"type": "string", "maxLength": 3})
+    assert _pattern_widens("^https://soken\\.dev/r/$", "^https://(mcp\\.)?soken\\.dev/r/$")
+    assert not _pattern_widens("^https://soken\\.dev/r/$", "^https://(mcp\\.)soken\\.dev/r/$")
 
 
 def test_schema_changes_are_additive():
@@ -121,6 +133,9 @@ def test_schema_changes_are_additive():
                 continue
             old_props, new_props = tool[key].get("properties", {}), cur[key].get("properties", {})
             for name, spec in old_props.items():
+                if key == "outputSchema" and (tool["name"], name) in _OUTPUT_CORRECTIONS:
+                    assert name in new_props, f"{tool['name']}.{key}.{name} removed"
+                    continue
                 assert name in new_props and _widens(spec, new_props[name]), f"{tool['name']}.{key}.{name} narrowed"
             if key == "inputSchema":  # required may only shrink: every old call stays valid
                 assert set(cur[key].get("required", [])) <= set(tool[key].get("required", [])), tool["name"]

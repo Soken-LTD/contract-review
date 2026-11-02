@@ -114,7 +114,9 @@ def stack_env(root: Path, dsn: str, port: int, *, render_direct: bool = False) -
         "SOKEN_SOLC_CACHE_DIR": str(root / "solc"),
         "SOKEN_SANDBOX_RUNTIME": env.get("SOKEN_SANDBOX_RUNTIME", "runc"),
         "SOKEN_SANDBOX_DEV_PERMS": "1",
-        "SOKEN_REPORT_SITE": f"http://127.0.0.1:{port}",
+        # A host the review_report outputSchema lists (the API refuses any other at boot). The driver
+        # reads the PDF from the report store, so the links are never fetched.
+        "SOKEN_REPORT_SITE": "https://soken.dev",
         "SOKEN_ALLOWED_HOSTS": f"127.0.0.1:{port},localhost:{port},127.0.0.1:*,localhost:*",
         "SOKEN_AUTOPUBLISH": "off",
         "SOKEN_DISABLED_FAMILIES": env.get("SOKEN_DISABLED_FAMILIES", "starknet,sui"),

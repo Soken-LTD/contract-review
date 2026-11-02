@@ -1800,7 +1800,25 @@
      "rejected": {
       "type": "array",
       "items": {
-       "$ref": "#/$defs/error"
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "lead_id",
+        "errors"
+       ],
+       "properties": {
+        "lead_id": {
+         "$ref": "#/$defs/lead_id"
+        },
+        "errors": {
+         "type": "array",
+         "items": {
+          "$ref": "#/$defs/error"
+         },
+         "minItems": 1,
+         "maxItems": 20
+        }
+       }
       },
       "maxItems": 50
      },
@@ -2130,6 +2148,15 @@
           },
           "not_covered": {
            "type": "boolean"
+          },
+          "source": {
+           "type": "string",
+           "enum": [
+            "semantic",
+            "lexical",
+            "not_covered"
+           ],
+           "description": "provenance of the ranges: semantic (semantic map), lexical (location quotes), not_covered"
           }
          },
          "required": [
@@ -3007,21 +3034,21 @@
        "string",
        "null"
       ],
-      "pattern": "^https://soken\\.dev/r/[a-z2-7]{26}(\\?e=[0-9]{10}&s=[a-z2-7]{26})?$"
+      "pattern": "^https://(mcp\\.)?soken\\.dev/r/[a-z2-7]{26}(\\?e=[0-9]{10}&s=[a-z2-7]{26})?$"
      },
      "pdf_url": {
       "type": [
        "string",
        "null"
       ],
-      "pattern": "^https://soken\\.dev/r/[a-z2-7]{26}\\.pdf(\\?e=[0-9]{10}&s=[a-z2-7]{26})?$"
+      "pattern": "^https://(mcp\\.)?soken\\.dev/r/[a-z2-7]{26}\\.pdf(\\?e=[0-9]{10}&s=[a-z2-7]{26})?$"
      },
      "manage_url": {
       "type": [
        "string",
        "null"
       ],
-      "pattern": "^https://soken\\.dev/r/[a-z2-7]{26}/manage#k=[a-z2-7]{26}$"
+      "pattern": "^https://(mcp\\.)?soken\\.dev/r/[a-z2-7]{26}/manage#k=[a-z2-7]{26}$"
      },
      "expires": {
       "type": [
@@ -3384,6 +3411,7 @@
       ],
       "enum": [
        "offer",
+       "not_queued",
        "queued",
        "publishing",
        "published",
