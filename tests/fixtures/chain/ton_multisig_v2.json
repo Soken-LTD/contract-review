@@ -1,0 +1,219 @@
+{
+ "[\"GET\", \"/api/v2/getAddressInformation?address=EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-&seqno=102481952\", null]": {
+  "@extra": "1793445050:7:10.714",
+  "ok": true,
+  "result": {
+   "@type": "raw.fullAccountState",
+   "balance": "75975802681",
+   "block_id": {
+    "@type": "ton.blockIdExt",
+    "file_hash": "rw52eBN0ulipBwLOPl+14lH10fAXUPjC0imkYzS0xH4=",
+    "root_hash": "SWRtCPU703zJpXe0HsSs7kigWBaH6ExS3DjgJMo1ZQo=",
+    "seqno": 102481952,
+    "shard": "-9223372036854775808",
+    "workchain": -1
+   },
+   "code": "te6cckECEgEABJUAART/APSkE/S88sgLAQIBYgIDAsrQM9DTAwFxsJJfA+D6QDAi10nAAJJfA+AC0x8BIMAAkl8E4AHTPwHtRNDT/wEB0wcBAdTTBwEB9ATSAAEB0SiCEPcYUQ+64w8FREPIUAYBy/9QBAHLBxLMAQHLB/QAAQHKAMntVAQFAgEgDA0BnjgG0/8BKLOOEiCE/7qSMCSWUwW68uPw4gWkBd4B0gABAdMHAQHTLwEB1NEjkSaRKuJSMHj0Dm+h8uPvHscF8uPvIPgjvvLgbyD4I6FUbXAGApo2OCaCEHUJf126jroGghCjLFm/uo6p+CgYxwXy4GUD1NEQNBA2RlD4AH+OjSF49HxvpSCRMuMNAbPmWxA1UDSSNDbiUFQT4w1AFVAzBAoJAdT4BwODDPlBMAODCPlBMPgHUAahgSf4AaBw+DaBEgZw+DaggSvscPg2oIEdmHD4NqAipgYioIEFOSagJ6Bw+DgjpIECmCegcPg4oAOmBliggQbgUAWgUAWgQwNw+DdZoAGgHL7y4GT4KFADBwK4AXACyFjPFgEBy//JiCLIywH0APQAywDJcCH5AHTIywISygfL/8nQyIIQnHP7olgKAssfyz8mAcsHUlDMUAsByy8bzCoBygAKlRkBywcIkTDiECRwQImAGIBQ2zwRCACSjkXIWAHLBVAFzxZQA/oCVHEjI+1E7UXtR59byFADzxfJE3dQA8trzMztZ+1l7WR0f+0RmHYBy2vMAc8X7UHt8QHy/8kB+wDbBgLiNgTT/wEB0y8BAdMHAQHT/wEB1NH4KFAFAXACyFjPFgEBy//JiCLIywH0APQAywDJcAH5AHTIywISygfL/8nQG8cF8uBlJvkAGrpRk74ZsPLgZgf4I77y4G9EFFBW+AB/jo0hePR8b6UgkTLjDQGz5lsRCgH6AtdM0NMfASCCEPE4Hlu6jmqCEB0M+9O6jl5sRNMHAQHUIX9wjhdREnj0fG+lMiGZUwK68uBnAqQC3gGzEuZsISDCAPLgbiPCAPLgbVMwu/LgbQH0BCF/cI4XURJ49HxvpTIhmVMCuvLgZwKkAt4BsxLmbCEw0VUjkTDi4w0LABAw0wfUAvsA0QFDv3T/aiaGn/gIDpg4CA6mmDgID6AmkAAIDoiBqvgoD8EdDA4CAWYPEADC+AcDgwz5QTADgwj5QTD4B1AGoYEn+AGgcPg2gRIGcPg2oIEr7HD4NqCBHZhw+DagIqYGIqCBBTkmoCegcPg4I6SBApgnoHD4OKADpgZYoIEG4FAFoFAFoEMDcPg3WaABoADxsMr7UTQ0/8BAdMHAQHU0wcBAfQE0gABAdEjf3COF1ESePR8b6UyIZlTArry4GcCpALeAbMS5mwhUjC68uBsIX9wjhdREnj0fG+lMiGZUwK68uBnAqQC3gGzEuZsITAiwgDy4G4kwgDy4G1SQ7vy4G0BkjN/kQPiA4AFZsMn+CgBAXACyFjPFgEBy//JiCLIywH0APQAywDJcAH5AHTIywISygfL/8nQgEQhCAmMFqAYchWwszwXcsN9YFccUdYcFZ8q18EnjQLz1klHzYNH/nQ==",
+   "data": "te6cckECDgEAAUAAAUUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIHYAECAcsCAwIBIAQFAgEgCgsCASAGBwIBIAgJAEMgA1gJ2FMmWqlP4HYVjlGz1Tl+QMuMpeWkrpd9sg96dbWsAEMgB0TZVw2R5WA4BZjTq1Bp5K2IOA7gKGMJ70/ix/l4jGicAEMgAofpPJ3RRLrEVzVjV9+8V/Q2Ujj0D7rRKZyX9qF1Uwn8AEMgBnCqmVLv8YaHdKvuBrSccuFWZxCp35SoA2z2NqV34N8EAgEgDA0AQ0gAGliXkRXU+pZcCq7Lu//Qm6IMYv3UviGjImVtmVL8Se8AQyABPMuByPh9tgrb5bRN7c9Zb/ziGnBIjJf9VdePOOJu//QAQyADDrP9maT6MOoy8WY0pMSQ2idEcluI0ilcX9KqHn91VlSwpun6",
+   "extra_currencies": [],
+   "frozen_hash": "",
+   "last_transaction_id": {
+    "@type": "internal.transactionId",
+    "hash": "BSJOo3b7XXjxMntZrCPRtg4no97upm8k8mG0CxvefZU=",
+    "lt": "113396412000034"
+   },
+   "state": "active",
+   "suspended": false,
+   "sync_utime": 1793445047
+  }
+ },
+ "[\"GET\", \"/api/v2/getMasterchainInfo?\", null]": {
+  "@extra": "1793445048:_:0.002:c",
+  "ok": true,
+  "result": {
+   "@type": "blocks.masterchainInfo",
+   "init": {
+    "@type": "ton.blockIdExt",
+    "file_hash": "XplPz01CXAps5qeSWUtxcyBfdAo5zVb1N979KLSKD24=",
+    "root_hash": "F6OpKZKqvqeFp6CQmFomXNMfMj2EnaUSOXN+Mh+wVWk=",
+    "seqno": 0,
+    "shard": "0",
+    "workchain": -1
+   },
+   "last": {
+    "@type": "ton.blockIdExt",
+    "file_hash": "rw52eBN0ulipBwLOPl+14lH10fAXUPjC0imkYzS0xH4=",
+    "root_hash": "SWRtCPU703zJpXe0HsSs7kigWBaH6ExS3DjgJMo1ZQo=",
+    "seqno": 102481952,
+    "shard": "-9223372036854775808",
+    "workchain": -1
+   },
+   "state_root_hash": "j/lJQgUoW5/Ch5JX5fbbzZ3/CQAalYWh0J9ocXuJleQ="
+  }
+ },
+ "[\"POST\", \"/api/v2/runGetMethodStd\", {\"address\": \"EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-\", \"method\": \"get_collection_data\", \"seqno\": 102481952, \"stack\": []}]": {
+  "@extra": "1793445056:4:25",
+  "ok": true,
+  "result": {
+   "@type": "smc.runResult",
+   "exit_code": 11,
+   "gas_used": 470,
+   "stack": [
+    {
+     "@type": "tvm.stackEntryNumber",
+     "number": {
+      "@type": "tvm.numberDecimal",
+      "number": "102491"
+     }
+    }
+   ]
+  }
+ },
+ "[\"POST\", \"/api/v2/runGetMethodStd\", {\"address\": \"EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-\", \"method\": \"get_jetton_data\", \"seqno\": 102481952, \"stack\": []}]": {
+  "@extra": "1793445053:17:41.773",
+  "ok": true,
+  "result": {
+   "@type": "smc.runResult",
+   "exit_code": 11,
+   "gas_used": 470,
+   "stack": [
+    {
+     "@type": "tvm.stackEntryNumber",
+     "number": {
+      "@type": "tvm.numberDecimal",
+      "number": "106029"
+     }
+    }
+   ]
+  }
+ },
+ "[\"POST\", \"/api/v2/runGetMethodStd\", {\"address\": \"EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-\", \"method\": \"get_multisig_data\", \"seqno\": 102481952, \"stack\": []}]": {
+  "@extra": "1793445052:1:26.057",
+  "ok": true,
+  "result": {
+   "@type": "smc.runResult",
+   "exit_code": 0,
+   "gas_used": 6631,
+   "stack": [
+    {
+     "@type": "tvm.stackEntryNumber",
+     "number": {
+      "@type": "tvm.numberDecimal",
+      "number": "-1"
+     }
+    },
+    {
+     "@type": "tvm.stackEntryNumber",
+     "number": {
+      "@type": "tvm.numberDecimal",
+      "number": "2"
+     }
+    },
+    {
+     "@type": "tvm.stackEntryCell",
+     "cell": {
+      "@type": "tvm.cell",
+      "bytes": "te6cckECDQEAARoAAgHLAQICASADBAIBIAkKAgEgBQYCASAHCABDIANYCdhTJlqpT+B2FY5Rs9U5fkDLjKXlpK6XfbIPenW1rABDIAdE2VcNkeVgOAWY06tQaeStiDgO4ChjCe9P4sf5eIxonABDIAKH6Tyd0US6xFc1Y1ffvFf0NlI49A+60Smcl/ahdVMJ/ABDIAZwqplS7/GGh3Sr7ga0nHLhVmcQqd+UqANs9jald+DfBAIBIAsMAENIABpYl5EV1PqWXAquy7v/0JuiDGL91L4hoyJlbZlS/EnvAEMgATzLgcj4fbYK2+W0Te3PWW/84hpwSIyX/VXXjzjibv/0AEMgAw6z/Zmk+jDqMvFmNKTEkNonRHJbiNIpXF/Sqh5/dVZU2K4pnQ=="
+     }
+    },
+    {
+     "@type": "tvm.stackEntryList",
+     "list": {
+      "@type": "tvm.list",
+      "elements": []
+     }
+    }
+   ]
+  }
+ },
+ "[\"POST\", \"/api/v2/runGetMethodStd\", {\"address\": \"EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-\", \"method\": \"get_nft_data\", \"seqno\": 102481952, \"stack\": []}]": {
+  "@extra": "1793445055:10:32.765",
+  "ok": true,
+  "result": {
+   "@type": "smc.runResult",
+   "exit_code": 11,
+   "gas_used": 470,
+   "stack": [
+    {
+     "@type": "tvm.stackEntryNumber",
+     "number": {
+      "@type": "tvm.numberDecimal",
+      "number": "102351"
+     }
+    }
+   ]
+  }
+ },
+ "[\"POST\", \"/api/v2/runGetMethodStd\", {\"address\": \"EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-\", \"method\": \"get_public_key\", \"seqno\": 102481952, \"stack\": []}]": {
+  "@extra": "1793445058:9:25.606",
+  "ok": true,
+  "result": {
+   "@type": "smc.runResult",
+   "exit_code": 11,
+   "gas_used": 470,
+   "stack": [
+    {
+     "@type": "tvm.stackEntryNumber",
+     "number": {
+      "@type": "tvm.numberDecimal",
+      "number": "78748"
+     }
+    }
+   ]
+  }
+ },
+ "[\"POST\", \"/api/v2/runGetMethodStd\", {\"address\": \"EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-\", \"method\": \"get_subwallet_id\", \"seqno\": 102481952, \"stack\": []}]": {
+  "@extra": "1793445059:13:27.289",
+  "ok": true,
+  "result": {
+   "@type": "smc.runResult",
+   "exit_code": 11,
+   "gas_used": 470,
+   "stack": [
+    {
+     "@type": "tvm.stackEntryNumber",
+     "number": {
+      "@type": "tvm.numberDecimal",
+      "number": "81467"
+     }
+    }
+   ]
+  }
+ },
+ "[\"POST\", \"/api/v2/runGetMethodStd\", {\"address\": \"EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-\", \"method\": \"get_wallet_data\", \"seqno\": 102481952, \"stack\": []}]": {
+  "@extra": "1793445054:1:24.465",
+  "ok": true,
+  "result": {
+   "@type": "smc.runResult",
+   "exit_code": 11,
+   "gas_used": 470,
+   "stack": [
+    {
+     "@type": "tvm.stackEntryNumber",
+     "number": {
+      "@type": "tvm.numberDecimal",
+      "number": "97026"
+     }
+    }
+   ]
+  }
+ },
+ "[\"POST\", \"/api/v2/runGetMethodStd\", {\"address\": \"EQBabkaz2T0_ZoRDzaMqZheJIDeRCJgwxMlsQ1GigwsjQlP-\", \"method\": \"seqno\", \"seqno\": 102481952, \"stack\": []}]": {
+  "@extra": "1793445057:13:27.42",
+  "ok": true,
+  "result": {
+   "@type": "smc.runResult",
+   "exit_code": 11,
+   "gas_used": 470,
+   "stack": [
+    {
+     "@type": "tvm.stackEntryNumber",
+     "number": {
+      "@type": "tvm.numberDecimal",
+      "number": "85143"
+     }
+    }
+   ]
+  }
+ }
+}

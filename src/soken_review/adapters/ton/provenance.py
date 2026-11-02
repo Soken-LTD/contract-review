@@ -249,7 +249,11 @@ def deployment_doc(prov: dict[str, Any], candidate: dict[str, Any] | None, addre
     libs = [r for r in (prov.get("library_refs") or []) if isinstance(r, dict) and r.get("hash")]
     if libs:
         out_doc["library_refs"] = [{"hash": str(r["hash"])[:64], "status": r.get("status"),
-                                    "verified_source": r.get("verified_source")} for r in libs[:8]]
+                                    "verified_source": r.get("verified_source"),
+                                    # the library's own source match (pipeline _resolve_libraries)
+                                    **({"source_tier": r["source_tier"]} if r.get("source_tier") in ("A", "B", "D") else {}),
+                                    **({"source_path": str(r["source_path"])[:120]} if r.get("source_path") else {})}
+                                   for r in libs[:8]]
     if reason == SOURCE_UNLINKED and prov.get("address"):
         # the report method row says why the deployment could not be matched (assemble.py)
         out_doc["unlinked_reason"] = unlinked_reason(prov.get("why"))

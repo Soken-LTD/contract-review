@@ -99,7 +99,14 @@ _IPFS_GATEWAYS: tuple[str, ...] = (
     "https://gateway.pinata.cloud/ipfs/",
     "https://ipfs.ton.live/ipfs/",
     "https://ipfs.filebase.io/ipfs/",
+    # public IPFS gateways (Protocol Labs), throttled but free; client-path run 2026-11-02:
+    # auto/order_code.func got 429 from orbs, 403 from pinata, and no answer from filebase,
+    # so the multisig v2 bundle lost a file and its rebuild failed.
+    "https://ipfs.io/ipfs/",
+    "https://dweb.link/ipfs/",
 )
+_IPFS_PASSES = 2                          # a second pass over every gateway after a short pause
+_IPFS_PASS_PAUSE_S = 3.0
 
 _MAX_MANIFEST_BYTES = 1 * 1024 * 1024    # 1 MiB for the sources JSON manifest
 _IPFS_PER_S = 2.0                         # matches outbound.ipfs in limits.yaml
@@ -141,6 +148,8 @@ _VERIFIER_DOWNLOAD_ALLOWLIST: frozenset[str] = frozenset([
     # anchor. files.orbs.network throttles with Retry-After 900 and pinata refuses some text
     # files as HTML (matrix r5 2026-10-31: multisig v2 auto/order_code.func came from neither).
     "ipfs.filebase.io",
+    "ipfs.io",
+    "dweb.link",
 ])
 
 # Reserved / internal IP ranges that must never be contacted (SSRF)
@@ -564,10 +573,39 @@ async def fetch_library_body(
     return None
 
 
+MAX_LIBRARY_SOURCES = 4
+
+
+def library_candidate_to_json(c: Candidate) -> dict[str, Any]:
+    """The JSON form of a library's verified-source candidate kept in the referencing candidate's
+    settings (`library_sources`); `library_candidate_from_json` reads it back."""
+    return {
+        "provider": c.provider, "files": dict(c.files), "sha256": c.sha256, "language": c.language,
+        "compiler_version": c.compiler.version if c.compiler else None,
+        "compiler_pinned_by": c.compiler.version_pinned_by if c.compiler else None,
+        "entry_contract": c.entry_contract, "source_url": c.source_url, "settings": dict(c.settings or {}),
+        "fetched_at": c.fetched_at,
+    }
+
+
+def library_candidate_from_json(d: dict[str, Any]) -> Candidate:
+    files = {str(k): str(v) for k, v in (d.get("files") or {}).items()}
+    return Candidate(
+        provider=str(d.get("provider") or "ton_verifier"), files=files, sha256=str(d.get("sha256") or ""),
+        language=str(d.get("language") or "func"),
+        compiler=Compiler(version=str(d["compiler_version"]), version_pinned_by=str(d.get("compiler_pinned_by") or "ton_verifier"))
+        if d.get("compiler_version") else None,
+        settings=dict(d.get("settings") or {}), std_json_input=None, entry_contract=d.get("entry_contract"),
+        source_url=d.get("source_url"), fetched_at=d.get("fetched_at"),
+    )
+
+
 async def resolve_library_refs(
     client: httpx.AsyncClient,
     candidate: Candidate,
     api_key: str | None = None,
+    *,
+    sources: dict[str, Candidate | None] | None = None,
 ) -> list[dict[str, Any]]:
     """Resolve the masterchain libraries a candidate's source references by hash.
 
@@ -580,6 +618,13 @@ async def resolve_library_refs(
 
     Writes `candidate.settings["library_refs"]` and returns it: one row per hash with `status`
     ok | not_found | unavailable and `verified_source` (a verifier URL) or None.
+
+    A library with a registry source item also gets that verified source (blind round 5b,
+    2026-10-31: the multisig v2 order contract, `order.func`, is a library whose source is verified
+    on its own and was outside the review). It goes to `candidate.settings["library_sources"]`
+    ({hash: candidate JSON}); the build step rebuilds it, compares the hash with the library body and
+    pins it under `_related/` with its own match tier. `sources` caches the fetch per hash across
+    the candidates of one job.
     """
     rows: list[dict[str, Any]] = []
     for lib_hash in trust_scan.library_refs(candidate.files):
@@ -603,7 +648,27 @@ async def resolve_library_refs(
                     row["verified_source"] = f"https://verifier.ton.org/{lib_hash}"
                     break
         rows.append(row)
+    lib_sources: dict[str, Any] = {}
+    for row in rows:
+        if not row.get("verified_source") or len(lib_sources) >= MAX_LIBRARY_SOURCES:
+            continue
+        lib_hash = row["hash"]
+        if sources is not None and lib_hash in sources:
+            lib_cand = sources[lib_hash]
+        else:
+            try:
+                lib_cand = await fetch_source_from_registry(client, lib_hash)
+            except (RuntimeError, httpx.HTTPError, ValueError) as exc:
+                logger.warning("ton library %s source unavailable: %s", lib_hash[:12], exc)
+                lib_cand = None
+            if sources is not None:
+                sources[lib_hash] = lib_cand
+        row["source_fetched"] = lib_cand is not None
+        if lib_cand is not None:
+            lib_sources[lib_hash] = library_candidate_to_json(lib_cand)
     candidate.settings = {**(candidate.settings or {}), "library_refs": rows}
+    if lib_sources:
+        candidate.settings["library_sources"] = lib_sources
     return rows
 
 
@@ -790,7 +855,28 @@ async def _ipfs_fetch_bytes(
     Uses the "ipfs" rate-limiter bucket (limits.yaml outbound.ipfs 2/s).
     Only hostnames in _VERIFIER_DOWNLOAD_ALLOWLIST are contacted (SSRF protection).
     """
-    for gateway in gateways or _IPFS_GATEWAYS:
+    order = tuple(gateways or _IPFS_GATEWAYS)
+    for n_pass in range(_IPFS_PASSES):
+        if n_pass:
+            # every gateway refused or failed: one more pass after a pause (a transient connect
+            # failure or a short throttle must not cost a source file, and with it the match)
+            logger.info("_ipfs_fetch_bytes: %s not served by any gateway; second pass", cid[:20])
+            await asyncio.sleep(_IPFS_PASS_PAUSE_S)
+        body = await _ipfs_fetch_pass(client, cid, max_bytes, order)
+        if body is not None:
+            return body
+    logger.warning("_ipfs_fetch_bytes: %s not served by any gateway", cid[:20])
+    return None
+
+
+async def _ipfs_fetch_pass(
+    client: httpx.AsyncClient,
+    cid: str,
+    max_bytes: int,
+    gateways: tuple[str, ...],
+) -> bytes | None:
+    """One pass over `gateways` for `cid`; the CID-checked body, or None."""
+    for gateway in gateways:
         url = gateway + cid
         if _validate_download_url(url) is None:
             continue
@@ -817,7 +903,8 @@ async def _ipfs_fetch_bytes(
                     continue
                 return r.content
         except Exception as exc:  # noqa: BLE001
-            logger.debug("_ipfs_fetch_bytes gateway %s cid %s: %s", gateway, cid[:20], exc)
+            # visible in the worker log: a silent connect failure hid the 2026-11-02 cause
+            logger.warning("_ipfs_fetch_bytes gateway %s cid %s: %s", gateway, cid[:20], type(exc).__name__)
     return None
 
 
@@ -1053,6 +1140,10 @@ async def fetch_source_from_registry(
         settings: dict[str, Any] = {
             "entry": entry,
             "func_targets": _registry_func_targets(manifest, raw_files) if language == "func" else [],
+            # files the manifest marks as the standard library (units.stdlib_paths still checks them)
+            "stdlib_files": sorted(str(src.get("filename")) for src in (manifest.get("sources") or [])
+                                   if isinstance(src, dict) and src.get("isStdLib") is True
+                                   and str(src.get("filename")) in raw_files)[:8],
             "verifier": {
                 "verifier_id": verifier_id,
                 "code_hash": code_hash,
@@ -1572,6 +1663,7 @@ async def fetch_ton_sources(
                     read_status["ton_verifier"] = "ok" if vc is not None else "not_found"
             if vc is not None:
                 candidates.append(vc)
+        lib_cache: dict[str, Candidate | None] = {}
         for cand in candidates:
-            await resolve_library_refs(client, cand, api_key)
+            await resolve_library_refs(client, cand, api_key, sources=lib_cache)
     return candidates
