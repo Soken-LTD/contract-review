@@ -105,3 +105,13 @@ def test_target_fixtures_are_well_formed():
         if spec.finding:
             assert 10 <= len(spec.finding.title) <= 110 and not spec.finding.title.endswith(".")
             assert "{fact}" in spec.finding.description
+
+
+def test_report_links_map_to_the_local_stack_and_tamper_the_signature() -> None:
+    rid, sig = "a" * 26, "b" * 26
+    pdf = f"https://soken.dev/r/{rid}.pdf?e=2000000000&s={sig}"
+    assert d.local_link(pdf, "http://127.0.0.1:8765/") == f"http://127.0.0.1:8765/r/{rid}.pdf?e=2000000000&s={sig}"
+    assert d.local_link(f"https://mcp.soken.dev/r/{rid}/manage", "http://x:1") == f"http://x:1/r/{rid}/manage"
+    bad = d.tamper(pdf)
+    assert bad != pdf and bad.startswith(pdf[:-1]) and len(bad) == len(pdf)
+    assert d.TARGETS["ton"].delete_via_manage and not d.TARGETS["evm"].delete_via_manage
