@@ -30,7 +30,7 @@ import yaml
 from soken_review.adapters.base import BuildResult, Lead
 from soken_review.adapters.ton.rules import _TOOL_NAME as _TON_RULES_TOOL_NAME
 from soken_review.adapters.ton.rules import run_all_rules
-from soken_review.adapters.ton.units import safe_store_path
+from soken_review.adapters.ton.units import safe_store_path, stdlib_paths
 from soken_review.sandbox.output import UnsafeOutput, read_output_files
 from soken_review.sandbox.profile import StepLimits, docker_argv, locked_image, sandbox_writable_dir
 
@@ -114,9 +114,16 @@ def analyze(result: BuildResult, source_dir: Path | None = None) -> tuple[list[L
         else:
             logger.debug("Misti did not run; analyzer_degraded for Tact")
 
+    # The FunC standard library (asm prototypes, send-mode constants) yields no leads: blind round 5b,
+    # 26 of 27 multisig v2 leads sat on imports/stdlib.fc. The pipeline pins it out of scope.
+    std = stdlib_paths(files, (result.candidate.settings or {}).get("stdlib_files") or [])
+    if std:
+        all_raw = [r for r in all_raw if r.get("file") not in std]
     leads = _build_leads(all_raw)
     static_map = _build_static_map(language, misti_ran)
     static_map["build"] = "ok" if result.status == "ok" else "failed"
+    if std:
+        static_map["stdlib_excluded"] = sorted(std)[:8]
     if language == "tact" and not misti_ran:
         static_map["status"] = "degraded"
         static_map["not_run"] = [f"misti@{_MISTI_VERSION}"]

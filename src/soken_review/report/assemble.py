@@ -401,8 +401,16 @@ def _build_verification_blocks(
         if not isinstance(lib, dict) or not lib.get("hash"):
             continue
         state = "read from the chain" if lib.get("status") == "ok" else "not found on the chain"
-        src = ("source verified on verifier.ton.org" if lib.get("verified_source")
-               else "its source is not part of this review")
+        tier = lib.get("source_tier")
+        if tier == "A" and lib.get("source_path"):
+            src = f"verified source rebuilt to this hash, reviewed under {str(lib['source_path'])[:120]}"
+        elif tier == "B" and lib.get("source_path"):
+            src = f"verified source attested by the verifier, not rebuilt, reviewed under {str(lib['source_path'])[:120]}"
+        elif tier == "D":
+            src = "its verified source does not rebuild to this hash and is not part of this review"
+        else:
+            src = ("source verified on verifier.ton.org" if lib.get("verified_source")
+                   else "its source is not part of this review")
         dep_rows.append(["Library reference", f"{str(lib['hash'])[:64]} ({state}; {src})"])
     if dep_rows:
         blocks.append({"table": {"head": ["Field", "Value"], "rows": dep_rows}})

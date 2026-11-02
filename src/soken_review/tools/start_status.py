@@ -1123,8 +1123,9 @@ def _proxy_related_status(steps: list[dict[str, Any]]) -> tuple[dict[str, Any] |
         # verified or not, and why not, in the client's words (security review 2026-10-31)
         proxy = {**proxy, "verified": bool(check.get("verified")),
                  **({"note": check["note"]} if check.get("note") else {})}
-    related = last("fetch", "related")
-    keep = ("name", "address", "role", "status", "provider", "match", "path", "files", "note")
+    # EVM related contracts are fetched in the fetch step; TON library sources are matched in the build
+    related = last("fetch", "related") or last("build", "related")
+    keep = ("name", "address", "role", "status", "provider", "match", "tier", "hash", "path", "files", "note")
     rows = [{k: r[k] for k in keep if r.get(k) is not None} for r in (related or []) if isinstance(r, dict)]
     return (proxy if isinstance(proxy, dict) else None), rows
 
