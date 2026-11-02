@@ -278,3 +278,100 @@ def test_analyze_drops_stdlib_leads_only(tmp_path):
     # without the filter the rule pack fires on the stdlib (the round 5b noise)
     raw = analyze_mod._run_ton_rules(cand.files)
     assert sum(r["file"] == "imports/stdlib.fc" for r in raw) >= 10
+
+
+# ── client-path run 2026-11-02: the main build with the library resolved, and IPFS mirrors ──
+
+
+@pytest.mark.asyncio
+async def test_main_build_compiles_the_bundle_only_and_matches_with_the_library_resolved(tmp_path, monkeypatch):
+    """The multisig v2 main build gets the 8 bundle files in manifest order, nothing from the library
+    source or its stdlib, and its rebuild (recorded BoC) matches the deployed code at tier A."""
+    from tests.adapters.ton.test_multisig_v2_library import TARGETS
+
+    repo = _FakeRepo()
+    sup = _fake_sup(tmp_path, repo, monkeypatch, ton_pipeline)
+    sup._after_build = AsyncMock()
+    job = {"job_id": "job_TONMSIG3", "chain": "ton", "address": FRIENDLY,
+           "source_args": {"kind": "deployed", "chain": "ton", "address": FRIENDLY}}
+    out_dir = sup._job_dir(job["job_id"])
+    _write(out_dir / "chain_state.json", {"mc_seqno": 102476117, "accounts": {
+        RAW: {"status": "active", "code_hash": DEPLOYED_HASH, "dep_hash": DEPLOYED_HASH}}})
+    cand = _with_library()
+    cand.settings["func_targets"] = TARGETS
+    _write(out_dir / "candidates.json", [{"provider": "ton_verifier", "sha256": cand.sha256, "language": "func",
+                                          "compiler": {"version": "0.4.4", "version_pinned_by": "ton_verifier"},
+                                          "entry_contract": None, "files": sorted(cand.files)}])
+    _write(out_dir / "cands" / "0.json", ton_pipeline._cand_to_json(cand))
+    deployed_boc = root_info((MSIG / "rebuilt_0.4.4-newops.1.boc").read_bytes()).hash
+    seen: list[tuple[str, set[str], list[str]]] = []
+
+    def build(c, work_dir):
+        seen.append((Path(work_dir).name, set(c.files), list((c.settings or {}).get("func_targets") or [])))
+        h = ORDER_LIB if "library_" in Path(work_dir).name else deployed_boc
+        target = "contracts/order.func" if h == ORDER_LIB else "multisig.func"
+        art = Artifact(contract=target, creation="", runtime=h, immutable_refs={}, link_refs={}, source_map="",
+                       storage_layout=None)
+        return BuildResult(candidate=c, status="ok", artifacts=[art], work_dir=str(work_dir))
+
+    monkeypatch.setattr(ton_pipeline._build_mod, "build", build)
+    await ton_pipeline._build(sup, {"id": 9, "job_id": job["job_id"], "step": "build", "seq": 0}, job)
+    main = next(s for s in seen if s[0] == "0")
+    assert main[1] == set(_tree(MSIG / "src")) and main[2] == TARGETS          # the bundle, unchanged
+    assert not any(p.startswith(("_related/", "contracts/")) for p in main[1])
+    prov = json.loads((out_dir / "provenance.json").read_text())
+    assert (prov["reason"], prov["tier"], prov["build_hash"]) == ("MATCH_REBUILD", "A", DEPLOYED_HASH)
+    assert repo.fields["tier"] == "A"
+
+
+def _resp(status: int, content: bytes = b"", retry_after: str | None = None):
+    r = MagicMock()
+    r.status_code = status
+    r.content = content
+    r.headers = {"retry-after": retry_after} if retry_after is not None else {}
+    return r
+
+
+@pytest.mark.asyncio
+async def test_ipfs_connect_failure_everywhere_gets_a_second_pass(monkeypatch):
+    """2026-11-02: orbs 429 (Retry-After 900), pinata 403, filebase no answer: the file was lost."""
+    cid = "QmbFA7qr8uU2wveZB2xyoWBQkusAUBeFfNaDH2Ne8acLQ7"
+    body = (MSIG / "src" / "auto" / "order_code.func").read_bytes()
+    calls: list[str] = []
+    first_pass = len(fetch_mod._IPFS_GATEWAYS)
+
+    async def get(url, **kw):
+        calls.append(url)
+        if "files.orbs.network" in url:
+            return _resp(429, b"slow", "900")
+        if "pinata" in url:
+            return _resp(403, b"HTML content cannot be served")
+        if len(calls) <= first_pass:
+            raise OSError("connect timeout")
+        return _resp(200, body) if "filebase" in url else _resp(429, b"", "900")
+
+    client = MagicMock()
+    client.get = get
+    monkeypatch.setattr(fetch_mod, "_IPFS_PASS_PAUSE_S", 0)
+    with patch.object(fetch_mod, "_limiter") as lim:
+        lim.return_value.wait = AsyncMock()
+        out = await fetch_mod._ipfs_fetch_bytes(client, cid, 1 << 20)
+    assert out == body
+    assert calls[-1].startswith("https://ipfs.filebase.io/ipfs/")
+    assert any(u.startswith("https://ipfs.io/ipfs/") for u in calls[:first_pass])     # the new mirrors are tried
+    assert all(fetch_mod._validate_download_url(u) is not None for u in calls)
+
+
+@pytest.mark.asyncio
+async def test_ipfs_mirror_body_must_match_its_cid(monkeypatch):
+    cid = "QmbFA7qr8uU2wveZB2xyoWBQkusAUBeFfNaDH2Ne8acLQ7"
+
+    async def get(url, **kw):
+        return _resp(200, b"forged") if "ipfs.io" in url or "dweb.link" in url else _resp(404)
+
+    client = MagicMock()
+    client.get = get
+    monkeypatch.setattr(fetch_mod, "_IPFS_PASS_PAUSE_S", 0)
+    with patch.object(fetch_mod, "_limiter") as lim:
+        lim.return_value.wait = AsyncMock()
+        assert await fetch_mod._ipfs_fetch_bytes(client, cid, 1 << 20) is None

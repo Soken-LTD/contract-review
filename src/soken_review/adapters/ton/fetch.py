@@ -99,7 +99,14 @@ _IPFS_GATEWAYS: tuple[str, ...] = (
     "https://gateway.pinata.cloud/ipfs/",
     "https://ipfs.ton.live/ipfs/",
     "https://ipfs.filebase.io/ipfs/",
+    # public IPFS gateways (Protocol Labs), throttled but free; client-path run 2026-11-02:
+    # auto/order_code.func got 429 from orbs, 403 from pinata, and no answer from filebase,
+    # so the multisig v2 bundle lost a file and its rebuild failed.
+    "https://ipfs.io/ipfs/",
+    "https://dweb.link/ipfs/",
 )
+_IPFS_PASSES = 2                          # a second pass over every gateway after a short pause
+_IPFS_PASS_PAUSE_S = 3.0
 
 _MAX_MANIFEST_BYTES = 1 * 1024 * 1024    # 1 MiB for the sources JSON manifest
 _IPFS_PER_S = 2.0                         # matches outbound.ipfs in limits.yaml
@@ -141,6 +148,8 @@ _VERIFIER_DOWNLOAD_ALLOWLIST: frozenset[str] = frozenset([
     # anchor. files.orbs.network throttles with Retry-After 900 and pinata refuses some text
     # files as HTML (matrix r5 2026-10-31: multisig v2 auto/order_code.func came from neither).
     "ipfs.filebase.io",
+    "ipfs.io",
+    "dweb.link",
 ])
 
 # Reserved / internal IP ranges that must never be contacted (SSRF)
@@ -846,7 +855,28 @@ async def _ipfs_fetch_bytes(
     Uses the "ipfs" rate-limiter bucket (limits.yaml outbound.ipfs 2/s).
     Only hostnames in _VERIFIER_DOWNLOAD_ALLOWLIST are contacted (SSRF protection).
     """
-    for gateway in gateways or _IPFS_GATEWAYS:
+    order = tuple(gateways or _IPFS_GATEWAYS)
+    for n_pass in range(_IPFS_PASSES):
+        if n_pass:
+            # every gateway refused or failed: one more pass after a pause (a transient connect
+            # failure or a short throttle must not cost a source file, and with it the match)
+            logger.info("_ipfs_fetch_bytes: %s not served by any gateway; second pass", cid[:20])
+            await asyncio.sleep(_IPFS_PASS_PAUSE_S)
+        body = await _ipfs_fetch_pass(client, cid, max_bytes, order)
+        if body is not None:
+            return body
+    logger.warning("_ipfs_fetch_bytes: %s not served by any gateway", cid[:20])
+    return None
+
+
+async def _ipfs_fetch_pass(
+    client: httpx.AsyncClient,
+    cid: str,
+    max_bytes: int,
+    gateways: tuple[str, ...],
+) -> bytes | None:
+    """One pass over `gateways` for `cid`; the CID-checked body, or None."""
+    for gateway in gateways:
         url = gateway + cid
         if _validate_download_url(url) is None:
             continue
@@ -873,7 +903,8 @@ async def _ipfs_fetch_bytes(
                     continue
                 return r.content
         except Exception as exc:  # noqa: BLE001
-            logger.debug("_ipfs_fetch_bytes gateway %s cid %s: %s", gateway, cid[:20], exc)
+            # visible in the worker log: a silent connect failure hid the 2026-11-02 cause
+            logger.warning("_ipfs_fetch_bytes gateway %s cid %s: %s", gateway, cid[:20], type(exc).__name__)
     return None
 
 
