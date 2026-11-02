@@ -187,10 +187,12 @@ class ChainProxy:
             return 599, None
 
     async def _failover(self, family: str, chain: int | None, path: str, http: str, body: Any,
-                        classify: Callable[[Any], tuple[str, Any]], depth: int | None = None) -> tuple[Any, Endpoint]:
+                        classify: Callable[[Any], tuple[str, Any]], depth: int | None = None,
+                        logs_span: int | None = None) -> tuple[Any, Endpoint]:
         """Try the pool in `ordered` order; `classify(json)` returns ("ok", result) |
-        ("fail", RpcFailure) | ("no_state", detail) | ("retry", detail). Host health is updated."""
-        eps = ordered(self._endpoints(family, chain), depth)
+        ("fail", RpcFailure) | ("no_state", detail) | ("retry", detail) | ("skip", detail) (this host
+        refused this request only, for example a log range over its cap: next host, health untouched)."""
+        eps = ordered(self._endpoints(family, chain), depth, logs_span)
         if not eps:
             raise ChainUnavailable("upstream", [], "no endpoint configured")
         reasons: list[str] = []
@@ -230,6 +232,9 @@ class ChainProxy:
                 Health.no_state(ep.host, depth)
                 reasons.append("archive")
                 continue
+            if kind == "skip":
+                reasons.append("upstream")
+                continue
             self.meter.failed_upstream += 1
             why = "rate_limited" if any(h in str(val).lower() for h in _RATE_HINTS) else "upstream"
             reasons.append(why)
@@ -259,6 +264,8 @@ class ChainProxy:
                     return "no_state", msg
                 if any(h in msg.lower() for h in _RATE_HINTS) or err.get("code") in (-32005, 429, 15):
                     return "retry", msg
+                if method == "eth_getLogs":   # a range or result cap of this host; another host may serve it
+                    return "skip", msg
                 if method in ("eth_call", "eth_estimateGas") and (err.get("code") == 3 or "revert" in msg.lower()):
                     return "fail", RpcFailure(int(err.get("code") or 3), msg, err.get("data"))
                 if err.get("code") in (-32602, -32600):
@@ -267,8 +274,12 @@ class ChainProxy:
             return "ok", data.get("result")
 
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        span = None
+        if method == "eth_getLogs" and params and isinstance(params[0], dict) and "fromBlock" in params[0]:
+            lo, hi = policy._block_value(params[0]["fromBlock"]), policy._block_value(params[0].get("toBlock"))
+            span = hi - lo + 1 if isinstance(lo, int) and isinstance(hi, int) else None
         result, ep = await self._failover("evm", chain_id, "", "POST", payload, classify,
-                                          depth if depth is not None else self.depth_hint)
+                                          depth if depth is not None else self.depth_hint, span)
         if result is not None:
             await self._store(key, {"r": result}, durable, ep)
         return result

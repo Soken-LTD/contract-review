@@ -49,6 +49,7 @@ class Endpoint:
     depth: str = "unknown"      # head | recent | archive | unknown (measured, see free_rpc.json)
     headers: tuple[tuple[str, str], ...] = ()
     per_s: float = 5.0
+    logs_max_range: int | None = None   # measured eth_getLogs block range (0: refused), None: not measured
 
     @property
     def host(self) -> str:
@@ -98,21 +99,27 @@ class Health:
         cls.fails.clear()
 
 
-def ordered(eps: list[Endpoint], depth: int | None = None) -> list[Endpoint]:
+def ordered(eps: list[Endpoint], depth: int | None = None, logs_span: int | None = None) -> list[Endpoint]:
     """The pool in the order to try for a read `depth` blocks behind the head (None: unknown or
     latest). Hosts that cannot serve the depth or are cooling down go last, never away: a stale
-    measurement must not hide the only host that would have answered."""
+    measurement must not hide the only host that would have answered. For eth_getLogs over
+    `logs_span` blocks, hosts measured to serve that range go first and hosts measured smaller last."""
     now = time.monotonic()
     rot = next(Health._rot)
 
-    def rank(ix_ep: tuple[int, Endpoint]) -> tuple[int, int, int, int, int]:
+    def logs_rank(ep: Endpoint) -> int:
+        if logs_span is None or ep.logs_max_range is None:
+            return 1 if logs_span is not None else 0
+        return 0 if ep.logs_max_range >= logs_span else 2
+
+    def rank(ix_ep: tuple[int, Endpoint]) -> tuple[int, int, int, int, int, int]:
         i, ep = ix_ep
         d = depth or 0
         fits = d <= DEPTH_BLOCKS.get(ep.depth, 100)
         ns = Health.no_state_depth.get(ep.host)
         failed_here = bool(ns and now < ns[1] and d >= ns[0])   # this host already said it has no such state
         cooling = Health.cool_until.get(ep.host, 0.0) > now
-        return (1 if failed_here else 0, 0 if fits else 1, 1 if cooling else 0, 0 if ep.keyed else 1,
+        return (logs_rank(ep), 1 if failed_here else 0, 0 if fits else 1, 1 if cooling else 0, 0 if ep.keyed else 1,
                 (i - rot) % max(len(eps), 1))
 
     return [ep for _i, ep in sorted(enumerate(eps), key=rank)]
@@ -165,7 +172,9 @@ def evm_endpoints(chain_id: int) -> list[Endpoint]:
     down = set((free.get("down") or {}).get(str(chain_id)) or [])
     for row in (free.get("chains") or {}).get(str(chain_id)) or []:
         if all(e.url != row["url"] for e in out):
-            out.append(Endpoint(row["url"], keyed=False, depth=row.get("depth", "unknown"), per_s=4.0))
+            lmr = row.get("logs_max_range")
+            out.append(Endpoint(row["url"], keyed=False, depth=row.get("depth", "unknown"), per_s=4.0,
+                                logs_max_range=int(lmr) if isinstance(lmr, int) and not isinstance(lmr, bool) else None))
     from ..adapters.evm.registry import get_chain
 
     rec = get_chain(chain_id)
@@ -239,3 +248,10 @@ def capability(family: str, chain_id: int | None = None) -> Capability:
     if not keyed:
         cap.notes.append("toncenter without a key allows about 1 call per second.")
     return cap
+
+
+def logs_chunk(chain_id: int, cap: int) -> int:
+    """The eth_getLogs block range to request on one EVM chain: the widest range a host of the pool
+    was measured to serve (at least 1,000, at most `cap`), else 10,000 (a common free-tier range)."""
+    best = max((e.logs_max_range or 0 for e in evm_endpoints(chain_id) if (e.logs_max_range or 0) >= 1000), default=0)
+    return min(cap, best) if best else min(cap, 10_000)
