@@ -115,3 +115,9 @@ def test_report_links_map_to_the_local_stack_and_tamper_the_signature() -> None:
     bad = d.tamper(pdf)
     assert bad != pdf and bad.startswith(pdf[:-1]) and len(bad) == len(pdf)
     assert d.TARGETS["ton"].delete_via_manage and not d.TARGETS["evm"].delete_via_manage
+
+
+def test_retired_tool_list_matches_the_contract() -> None:
+    from soken_review.contract import retired_tool_names
+
+    assert set(d.RETIRED_TOOLS) == retired_tool_names()
