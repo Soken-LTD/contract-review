@@ -418,6 +418,13 @@ codes:
     tools: "submit"
     what: "Category {value} is not in the {family} list."
     fix: "Use one of: {list}."
+  - code: E_FACT_UNKNOWN
+    owner: "04"
+    channel: "rejection"
+    class: "input"
+    tools: "submit"
+    what: "Fact key {key} is not a fact of this job; it prints as plain text."
+    fix: "Use a key review_facts lists, or write the value with its source. Advisory in the thin flow: never refuses."
   - code: E_CATEGORY_MISMATCH
     owner: "04"
     channel: "rejection"

@@ -50,7 +50,7 @@ def test_notice_is_plain_and_actionable():
         assert "—" not in text and "–" not in text
         assert "remove this connector" in text and "add it again" in text
         assert "/mcp" in text and "reload the tool list" in text
-        assert "review_chain_read" in text and "severity_reason" in text
+        assert "review_chain_read" in text and "claimed_severity" in text
         assert schema_version() in text
         assert len(text) < 1300
     assert client_refresh.notice(True).startswith("Your tool list predates the current schema")
@@ -70,7 +70,10 @@ def test_next_state_notices_until_a_new_tool_is_called():
     assert new is None and not send                                       # status once
     new, send = client_refresh._next_state("review_read_code", st, set())
     assert new is None and not send
-    st, send = client_refresh._next_state("review_submit_finding", st, {"E_SEVERITY_CONFIRM"})
+    # thin server 2026-11-03: no rejection code is a stale-list signal any more (notice_codes is empty)
+    new, send = client_refresh._next_state("review_submit_finding", st, {"E_SEVERITY_CONFIRM"})
+    assert new is None and not send
+    st, send = client_refresh._next_state("review_finalize", st, set())
     assert send and st["notices"] == 3
     st, send = client_refresh._next_state("review_chain_read", st, set())
     assert st["fresh"] is True and not send

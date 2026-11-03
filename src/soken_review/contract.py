@@ -123,11 +123,29 @@ def _drop_empty_enum_arrays(node: Any) -> Any:
 
 
 def bundle_tools(release: Release | None = None) -> list[dict[str, Any]]:
-    """Return the 22 tool definitions with self-contained input and output schemas."""
+    """Return the served tool definitions with self-contained input and output schemas: `tools`, plus
+    the `retired` ones under SOKEN_FLOW=legacy (which serves them as before, for one release)."""
+    from .flow import thin_tools
+
+    served = _bundle("tools", release)
+    return served if thin_tools() else [*served, *_bundle("retired", release)]
+
+
+def bundle_retired_tools(release: Release | None = None) -> list[dict[str, Any]]:
+    """The retired tool definitions (`retired`, thin server 2026-11-03) with their last schemas: no longer
+    listed, still answered (tools/retired.py), and still the schemas an old cached client validates against."""
+    return _bundle("retired", release)
+
+
+def retired_tool_names() -> frozenset[str]:
+    return frozenset(t["name"] for t in _load_json(TOOLS_FILE).get("retired") or [])
+
+
+def _bundle(key_name: str, release: Release | None) -> list[dict[str, Any]]:
     release = release or load_release()
     source = _load_json(TOOLS_FILE)
     tools = []
-    for tool in source["tools"]:
+    for tool in source.get(key_name) or []:
         bundled = copy.deepcopy(tool)
         for key in ("inputSchema", "outputSchema"):
             if key not in bundled:

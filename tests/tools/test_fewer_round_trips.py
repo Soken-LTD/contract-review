@@ -125,8 +125,9 @@ def test_schema_changes_are_additive():
     if old is None:
         pytest.skip("origin/main not available")
     new = json.loads(TOOLS_FILE.read_text())
-    new_tools = {t["name"]: t for t in new["tools"]}
-    for tool in old["tools"]:
+    # A tool moved to `retired` (thin server 2026-11-03) keeps its last schemas there: still additive.
+    new_tools = {t["name"]: t for t in [*new["tools"], *new.get("retired", [])]}
+    for tool in [*old["tools"], *old.get("retired", [])]:
         cur = new_tools[tool["name"]]
         for key in ("inputSchema", "outputSchema"):
             if key not in tool:

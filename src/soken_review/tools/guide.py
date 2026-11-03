@@ -57,9 +57,19 @@ def _texts() -> dict[str, Any]:
     return yaml.safe_load((_RUBRIC / "guide.yaml").read_text(encoding="utf-8")) or {}
 
 
+def thin_text() -> str:
+    """The thin-flow how-to (contract/rubric/guide.yaml `thin.text`), one block."""
+    return str(_texts()["thin"]["text"]).strip()
+
+
 def start_text(family: str = "evm") -> str:
     """The default guide body: the five-step path, the optional list and the family's category ids.
-    Also carried by the review_start result (`guide`), so a review needs no guide call."""
+    Also carried by the review_start result (`guide`), so a review needs no guide call. Thin flow: the
+    short how-to only (no category list: category is optional there)."""
+    from ..flow import thin_tools
+
+    if thin_tools():
+        return thin_text()
     t = _texts()["start"]
     ids = [c["id"] for c in _enums().get("categories", [])
            if c.get("family") == family and not c.get("server_only")
@@ -224,6 +234,14 @@ async def _get_guide(args: dict[str, Any]) -> str:
     # No topic: the default guide (topic start, thin server 2026-10-31); every other topic is opt-in.
     topics: list[str] = list(args.get("topics") or ([args["topic"]] if args.get("topic") else ["start"]))
     chain: str | None = args.get("chain")
+    from ..flow import thin_tools
+
+    if thin_tools():
+        # Thin flow: one answer for every topic, the how-to; a former reference topic says it is retired.
+        retired_line = str(_texts()["thin"]["retired_topic"])
+        lines = [f"guide_version {GUIDE_VERSION} topic start chain {chain or 'evm'}", thin_text()]
+        lines += [retired_line.format(topic=t) for t in dict.fromkeys(topics) if t != "start"]
+        return "\n".join(lines)
     if chain is None and args.get("job_id"):
         chain = _job_chain(args["job_id"])
     if "checklist" in topics and "invariants" not in topics and args.get("job_id") and _job_has_walks(args["job_id"]):

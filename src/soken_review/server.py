@@ -25,7 +25,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from mcp.types import Tool as MCPTool
 
 from . import client_refresh
-from .contract import Release, bundle_tools, load_release, schema_version
+from .contract import Release, bundle_retired_tools, bundle_tools, load_release, schema_version
 from .errors import ReviewError
 from .http import ProtocolRules
 
@@ -46,8 +46,11 @@ def handler(name: str) -> Callable[[Handler], Handler]:
 
 @cache
 def _output_validators() -> dict[str, Draft202012Validator]:
+    """Served and retired tools: a retired tool's answer must still match the schema its last listing
+    declared, which is what a client holding that listing validates against."""
     return {tool["name"]: Draft202012Validator(tool["outputSchema"])
-            for tool in bundle_tools() if "outputSchema" in tool}
+            for tool in {t["name"]: t for t in [*bundle_retired_tools(), *bundle_tools()]}.values()
+            if "outputSchema" in tool}
 
 
 def output_violations(name: str, body: Any, validators: dict[str, Draft202012Validator] | None = None) -> list[str]:
@@ -86,7 +89,13 @@ class SokenServer(MCPServer):
         super().__init__(name="soken-contract-review", title="Soken Contract Review",
                          version=server_version(), instructions=client_refresh.instructions(),
                          cache_hints={"tools/list": CacheHint(ttl_ms=0, scope="public")})
-        self.contract = {tool["name"]: tool for tool in bundle_tools(release or load_release())}
+        from .flow import thin_tools
+
+        release = release or load_release()
+        # Thin flow (default): the retired tools are not listed and are answered by tools/retired.py.
+        # SOKEN_FLOW=legacy lists and runs them as before (bundle_tools includes them), for one release.
+        self.contract = {tool["name"]: tool for tool in bundle_tools(release)}
+        self.retired = ({tool["name"]: tool for tool in bundle_retired_tools(release)} if thin_tools() else {})
         self.validators = {
             name: Draft202012Validator(tool["inputSchema"]) for name, tool in self.contract.items()
         }
@@ -126,6 +135,8 @@ class SokenServer(MCPServer):
         return res
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
+        if name in self.retired:
+            return _retired_result(name, arguments, self.retired[name])
         tool = self.contract.get(name)
         if tool is None:
             return _error_result(ReviewError("E_INVALID_ARGUMENT", field="name", rule="known tool", value80=name[:80]))
@@ -161,6 +172,19 @@ class SokenServer(MCPServer):
         else:
             res = CallToolResult(content=[TextContent(type="text", text=str(result))])
         return await _finish(name, arguments, res, stale_client)
+
+
+def _retired_result(name: str, arguments: dict[str, Any], tool: dict[str, Any]) -> CallToolResult:
+    """A retired tool (thin server design section 1): answered before any input check, so an old argument
+    shape never fails, and never through client_refresh (a retired call is no fresh-list signal)."""
+    from .tools import retired
+
+    body = retired.answer(name, arguments)
+    if isinstance(body, str) or "outputSchema" not in tool:
+        return CallToolResult(content=[TextContent(type="text", text=str(body if isinstance(body, str) else
+                                                                           body.get("client_notice", "")))])
+    text = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
+    return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=body)
 
 
 async def _finish(name: str, arguments: dict[str, Any], res: CallToolResult, stale_client: bool) -> CallToolResult:

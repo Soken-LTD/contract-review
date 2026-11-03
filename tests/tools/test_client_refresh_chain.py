@@ -118,8 +118,10 @@ async def test_no_state_for_made_up_ids_or_failed_calls(db_pool, tmp_path):
         rejected = {"accepted": False, "errors": [{"code": "E_JOB_NOT_READY"}]}
         assert await client_refresh.decide("review_finalize", {"job_id": jid}, rejected, False) is None
         assert await _shape(db_pool, jid) == {}
+        # thin server 2026-11-03: a rejection code no longer carries the notice (notice_codes is empty)
         sev = {"accepted": False, "errors": [{"code": "E_SEVERITY_CONFIRM"}]}
-        assert await client_refresh.decide("review_submit_finding", {"job_id": jid}, sev, False)
+        assert await client_refresh.decide("review_submit_finding", {"job_id": jid}, sev, False) is None
+        assert await client_refresh.decide("review_start", {"job_id": jid}, {"accepted": True}, False)
     finally:
         client_refresh.set_pool(None)
 

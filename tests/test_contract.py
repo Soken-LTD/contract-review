@@ -9,13 +9,15 @@ from jsonschema import Draft202012Validator
 
 from soken_review.contract import CONTRACT_DIR, bundle_tools, load_errors
 
+# Served tools, then (under SOKEN_FLOW=legacy, which this module runs in) the retired ones, in their old order.
 TOOL_ORDER = [
     "review_start", "review_status", "review_get_guide", "review_read_code", "review_search_code",
-    "review_contract_map", "review_leads", "review_facts", "review_dismiss_lead",
-    "review_submit_finding", "review_withdraw_finding", "review_challenge",
-    "review_answer_challenge", "review_set_section", "review_add_context", "review_finalize", "review_report",
+    "review_contract_map", "review_facts",
+    "review_submit_finding", "review_withdraw_finding",
+    "review_add_context", "review_finalize", "review_report",
     "review_delete_job", "review_publish", "review_chain_read", "review_chain_roles", "review_chain_balances",
     "review_verify_on_fork",
+    "review_leads", "review_dismiss_lead", "review_challenge", "review_answer_challenge", "review_set_section",
 ]
 TOOL_COUNT = 23
 

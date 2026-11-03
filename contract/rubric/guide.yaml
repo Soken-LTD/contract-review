@@ -8,6 +8,22 @@
 # `start.budget_total_chars`.
 version: 2
 
+# Thin flow (SOKEN_FLOW=thin, the default since the thin server design 2026-11-03): the whole how-to. It rides
+# on the review_start result (`guide`) and is the answer to every review_get_guide topic; a former reference
+# topic adds the retired_topic line. The legacy blocks below stay for SOKEN_FLOW=legacy until PR 2 deletes them.
+# tests/thin/test_thin_guide.py holds `thin.text` to `thin.budget_chars`.
+thin:
+  budget_chars: 900
+  text: |-
+    1. review_start with the deployed address and chain, a repository at a commit, or files. Keep job_id.
+    2. review_status wait_for=settled. Code is readable once source_pinned is true; the deployment match and tier arrive when the build ends.
+    3. Read with review_read_code (8 ranges per call) and review_search_code; review_contract_map is optional.
+    4. Live state: review_chain_read, _roles, _balances. Test EVM claims with review_verify_on_fork. Project documents: review_add_context.
+    5. Per issue, review_submit_finding: title, body, claimed_severity, quotes copied from the lines review_read_code returned (the only server check). Your severity is printed. Withdraw what you disprove.
+    6. review_finalize, then review_report for the link; review_publish, review_delete_job as needed.
+    7. The server does not judge findings: re-read each quoted range and chain value you rely on before submitting.
+  retired_topic: "Topic {topic} is retired; the steps above are the whole method."
+
 start:
   budget_chars: 1200
   budget_total_chars: 2600
