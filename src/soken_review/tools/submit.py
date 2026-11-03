@@ -49,6 +49,7 @@ from ..engine.numbers import NumberContext, lex_numbers
 from ..engine.severity import SeverityContext, compute_severity, k_caps_only
 from ..engine.text_gate import check_model_field, rule_help
 from ..errors import ReviewError
+from ..flow import thin_tools
 from ..learning import ledger
 from ..mapping.build import load_map
 from ..mapping.facts import load_facts
@@ -796,6 +797,12 @@ async def _submit_finding(args: dict[str, Any]) -> dict[str, Any]:
                 ReviewError("E_RETRY_BUDGET", draft=draft_key).envelope()
             ], "retries_left": 0}
 
+        # ── Thin flow (SOKEN_FLOW=thin): the quote check is the only check ──
+        if thin_tools():
+            return await _submit_thin(conn, job, args, draft, family=family, is_server_draft=is_server_draft,
+                                      content_hash=content_hash, current_revision=current_revision,
+                                      rejected_count=rejected_count, max_rejections=max_rejections)
+
         # ── Collect all validation errors (V2-V10) ────────────────────
         # Gate policy (contract/rubric/gate_policy.yaml): evidence integrity and publication safety
         # block; wording, link and checklist rules become warnings on an accepted result. Text the
@@ -1310,3 +1317,199 @@ def _next_tools(status: str) -> list[str]:
 _SEV_RANK: dict[str, int] = {
     "Informational": 0, "Low": 1, "Medium": 2, "High": 3, "Critical": 4
 }
+
+
+# ── Thin flow (thin server design 2026-11-03, section 3) ─────────────────────
+
+# Accepted and ignored in the thin flow: stored nowhere, so nothing unchecked reaches the report.
+_THIN_IGNORED = ("matrix", "lead_ids", "absence_claims", "distinct_from", "documented_intent_ref")
+# Quote refusals that stay blocking: the quoted code must exist in the pinned source. A quote longer than
+# 40 lines is printed truncated instead, a trivial quote (a brace, a comment) is accepted, and a pinned
+# dependency may be cited (the report labels it), so E_QUOTE_TOO_LONG, E_QUOTE_TRIVIAL and
+# E_FILE_OUT_OF_SCOPE no longer refuse.
+_QUOTE_BLOCKING = frozenset({"E_QUOTE_MISMATCH", "E_QUOTE_ELISION", "E_FILE_UNKNOWN", "E_RANGE_INVALID"})
+_THIN_QUOTE_LINES = 40
+_FACT_KEY_RE = re.compile(r"\{\{fact:([^{}]*)\}\}")
+
+
+def _thin_category(category: str | None, family: str) -> tuple[str, dict[str, Any] | None]:
+    """The stored category: the given id when the family knows it, else the family's generic id with a
+    warning (the category is optional and never refuses a finding)."""
+    fallback = f"{family}.other" if _category_info(f"{family}.other") else f"{family}.business_logic"
+    if not category:
+        return fallback, None
+    if not _validate_category(category, family):
+        return category, None
+    return fallback, {"code": "E_CATEGORY_UNKNOWN", "class": "advisory", "field": "category",
+                      "match": str(category)[:120],
+                      "what": f"category {str(category)[:60]} is not a {family} category id; stored as {fallback}",
+                      "suggest": "Leave category out or use an id of the family; the finding is accepted either way."}
+
+
+def _thin_quote(pin: PinnedSource, context_store: Any, q: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """(stored quote, refusal envelope). A quote over 40 lines is matched in full, then stored with its
+    range and text cut to the first 40 lines (the printed length)."""
+    qt = q.get("text")
+    if qt is None:
+        return None, ReviewError("E_INVALID_ARGUMENT", field="quotes.text", rule="required", value80="").envelope()
+    role = q.get("role", "location")
+    if is_context_path(q["file"]) and role != "context":
+        return None, ReviewError(
+            "E_INVALID_ARGUMENT", field="quotes.role", rule="a context/ path takes role context",
+            value80=q["file"][:80], example='{"file": "context/whitepaper-1.md", "role": "context", ...}').envelope()
+    start, end = int(q["start"]), int(q["end"])
+    out = dict(q)
+    if end - start + 1 > _THIN_QUOTE_LINES:
+        lines = str(qt).split("\n")
+        if len(lines) == end - start + 1:   # the text is the whole range: cut both to the printed length
+            end = start + _THIN_QUOTE_LINES - 1
+            qt = "\n".join(lines[:_THIN_QUOTE_LINES])
+            out.update(end=end, text=qt)
+    try:
+        quote_match(pin, q["file"], start, end, qt, context=context_store, check_trivial=False)
+    except QuoteMatchError as err:
+        if err.code in _QUOTE_BLOCKING or err.code == "E_QUOTE_TOO_LONG":
+            return None, ReviewError(err.code, **err.detail).envelope()
+    return out, None
+
+
+def _thin_placeholder_warnings(args: dict[str, Any], fact_keys: set[str] | None) -> list[dict[str, Any]]:
+    """An unknown {{fact:}} key prints as plain text; say so at submit (never a refusal)."""
+    if fact_keys is None:
+        return []
+    out = []
+    for field_name, text in _iter_text_fields(args):
+        for key in _FACT_KEY_RE.findall(text):
+            if key not in fact_keys:
+                out.append({"code": "E_FACT_UNKNOWN", "class": "advisory", "field": field_name[:80],
+                            "match": f"{{{{fact:{key[:100]}}}}}",
+                            "what": f"fact key {key[:80]} is not a fact of this job; it prints as plain text",
+                            "suggest": "Use a key review_facts lists, or write the value with its source."})
+    return out[:20]
+
+
+async def _submit_thin(conn: psycopg.AsyncConnection, job: dict[str, Any], args: dict[str, Any],
+                       draft: dict[str, Any] | None, *, family: str, is_server_draft: bool, content_hash: str,
+                       current_revision: int, rejected_count: int, max_rejections: int) -> dict[str, Any]:
+    """Store the finding as the reviewer wrote it. Refuses only on argument shape and on a quote that is
+    not in the pinned source; claimed_severity is the printed severity; nothing is rewritten."""
+    job_id, draft_key = job["job_id"], args["draft_key"]
+    new_revision = current_revision + 1
+    warnings: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+
+    if is_server_draft:   # a legacy job's server draft: title and body onto revision 0, no gate
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("select * from finding_revisions where job_id = %s and draft_key = %s and revision = 0",
+                              (job_id, draft_key))
+            rev0 = await cur.fetchone()
+        if rev0 is None:
+            raise ReviewError("E_INTERNAL", incident="srv_draft_no_rev0")
+        content = {**dict(rev0["content"]), "title": args["title"], "body": args["body"]}
+        await conn.execute("update finding_revisions set content = %s, content_hash = %s "
+                           "where job_id = %s and draft_key = %s and revision = 0",
+                           (psycopg.types.json.Jsonb(content), content_hash, job_id, draft_key))
+        await conn.execute("update finding_drafts set status = 'accepted', current_revision = 0 "
+                           "where job_id = %s and draft_key = %s", (job_id, draft_key))
+        await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
+        return {"accepted": True, "finding_no": f"F-{draft['finding_no']:02d}" if draft and draft.get("finding_no")
+                else "F-00", "draft_key": draft_key, "revision": 0, "status": "accepted",
+                "evidence_level": "reasoning_only", "next_tools": ["review_finalize"]}
+
+    severity = args.get("claimed_severity")
+    if severity not in _SEV_RANK:
+        errors.append(ReviewError(
+            "E_INVALID_ARGUMENT", field="claimed_severity", rule="required", value80="",
+            example='"claimed_severity": "Medium" (or a body paragraph "Severity: Medium")').envelope())
+    quotes_in: list[dict[str, Any]] = list(args.get("quotes") or [])
+    if not quotes_in:
+        errors.append(ReviewError("E_INVALID_ARGUMENT", field="quotes", rule="required", value80="",
+                                  example='[{"file": "src/A.sol", "start": 10, "end": 12, "text": "...", '
+                                          '"role": "location"}]').envelope())
+    elif not any(q.get("role", "location") == "location" for q in quotes_in):
+        errors.append(ReviewError("E_INVALID_ARGUMENT", field="quotes.role", rule="one quote with role location",
+                                  value80="", example='"role": "location"').envelope())
+    quotes: list[dict[str, Any]] = []
+    if quotes_in:
+        try:
+            pin = PinnedSource.load(_get_ctx().get_pin_root(), job_id)
+        except (FileNotFoundError, OSError, ValueError):
+            raise ReviewError("E_JOB_NOT_READY", state="pin_not_found", eta_s=60) from None
+        context_store = ContextStore.load(_get_ctx().get_pin_root(), job_id)
+        for q in quotes_in:
+            stored, err = _thin_quote(pin, context_store, q)
+            if err is not None:
+                errors.append(err)
+            elif stored is not None:
+                quotes.append(stored)
+
+    if errors:
+        retries_left = max(0, max_rejections - rejected_count - 1)
+        if draft is None:
+            next_no = int(job["next_finding_no"])
+            await conn.execute(
+                """insert into finding_drafts
+                   (job_id, draft_key, finding_no, origin, status, current_revision, rejected_count, severity)
+                   values (%s, %s, %s, 'model', 'needs_text', -1, 1, null)
+                   on conflict (job_id, draft_key) do update set rejected_count = finding_drafts.rejected_count + 1""",
+                (job_id, draft_key, next_no))
+            await conn.execute("update jobs set next_finding_no = %s where job_id = %s", (next_no + 1, job_id))
+        else:
+            await conn.execute("update finding_drafts set rejected_count = rejected_count + 1 "
+                               "where job_id = %s and draft_key = %s", (job_id, draft_key))
+            await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
+        await ledger.record_rejection(conn, job, draft_key, "review_submit_finding", errors, rejected_count + 1)
+        out: dict[str, Any] = {"accepted": False, "errors": errors[:20], "retries_left": retries_left}
+        if len(errors) > 20:
+            out["errors_more"] = len(errors) - 20
+        return out
+
+    category, cat_warning = _thin_category(args.get("category"), family)
+    if cat_warning:
+        warnings.append(cat_warning)
+    try:
+        facts = load_facts(_get_ctx().get_pin_root(), job_id)
+        fact_keys = {str(f["key"]) for f in facts or [] if "key" in f} if facts is not None else set()
+    except (OSError, ValueError):
+        fact_keys = None
+    warnings.extend(_thin_placeholder_warnings(args, fact_keys))
+    reason = str(args.get("severity_reason") or "")[:200]
+    content = {k: v for k, v in args.items()
+               if k not in ("job_id", "draft_key", "expected_revision", *_THIN_IGNORED)}
+    content["quotes"] = quotes
+    content["category"] = category
+
+    if draft is None:
+        finding_no = int(job["next_finding_no"])
+        await conn.execute(
+            """insert into finding_drafts
+               (job_id, draft_key, finding_no, origin, status, current_revision,
+                severity, evidence_level, severity_rule, severity_set_by, severity_reason)
+               values (%s, %s, %s, 'model', 'accepted', %s, %s, 'reasoning_only', 'reviewer', 'reviewer', %s)""",
+            (job_id, draft_key, finding_no, new_revision, severity, reason))
+        await conn.execute("update jobs set next_finding_no = %s where job_id = %s", (finding_no + 1, job_id))
+    else:
+        finding_no = draft["finding_no"]
+        await conn.execute(
+            """update finding_drafts
+               set status = 'accepted', current_revision = %s, severity = %s, evidence_level = 'reasoning_only',
+                   matrix_effective = null, caps_applied = '{}', withdrawn_by = null, kill_item = null,
+                   withdrawn_reason = null, severity_rule = 'reviewer', severity_set_by = 'reviewer',
+                   severity_reason = %s, calibration_severity = null, calibration_rule = null
+               where job_id = %s and draft_key = %s""",
+            (new_revision, severity, reason, job_id, draft_key))
+    await _insert_revision(conn, job_id, draft_key, new_revision, content, content_hash, category, family,
+                           "unclassified", severity, "reviewer", [], False)
+    await _insert_quote_ranges(conn, job_id, draft_key, new_revision, quotes)
+    await conn.execute("update jobs set last_call_at = now() where job_id = %s", (job_id,))
+    await store_warnings(conn, job_id, "review_submit_finding", draft_key, new_revision, warnings)
+    result: dict[str, Any] = {
+        "accepted": True, "finding_no": f"F-{finding_no:02d}", "draft_key": draft_key, "revision": new_revision,
+        "status": "accepted", "severity_set_by": "reviewer", "severity_reason": reason,
+        "evidence_level": "reasoning_only", "next_tools": ["review_finalize"],
+    }
+    if warnings:
+        result["warnings"] = warnings[:20]
+        if len(warnings) > 20:
+            result["warnings_more"] = len(warnings) - 20
+    return result

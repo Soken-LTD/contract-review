@@ -38,6 +38,7 @@ from ..db.pool import get_pool
 from ..engine import gate_policy
 from ..errors import ReviewError
 from ..families import FAMILY_OF_CHAIN, require_enabled
+from ..flow import thin_tools
 from ..mapping.project_url import load_suggested_context
 from ..mapping.related import load_related_contracts
 from ..networks import publication_outcome
@@ -675,6 +676,8 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
                     raise ReviewError("E_JOB_NOT_FOUND")
                 if job["state"] in _TERMINAL_OR_READY or (not settled and job["state"] != initial_state):
                     break
+                if settled and _settled_at_pin(job):
+                    break
                 remaining = deadline - loop.time()
                 if remaining <= 0:
                     break
@@ -694,7 +697,7 @@ async def handle_review_status(args: dict[str, Any]) -> dict[str, Any]:
         medians = await repo.step_medians(job.get("chain")) if job["state"] in _ETA_STATES else {}
         # Compute finalize_checks for interactive states (03 §4.2, §4.14)
         finalize_checks: list[dict[str, Any]] = []
-        if job["state"] in ("ready", "finalized"):
+        if job["state"] in ("ready", "finalized") and not thin_tools():
             try:
                 from .finalize import compute_finalize_checks
                 finalize_checks = await compute_finalize_checks(conn, job_id)
@@ -1028,9 +1031,12 @@ def _build_status_response(
     if related:
         out["related"] = related
     out["map_status"] = job.get("map_status", "none")
-    out["analyzer_degraded"] = job.get("analyzer_degraded", False)
-    if out["analyzer_degraded"]:
-        out["analyzer_note"] = _analyzer_note(job)
+    out["source_pinned"] = _source_pinned(job)
+    if not thin_tools():
+        # Thin flow: no analyzers run, so neither the flag nor its note is emitted (both optional fields).
+        out["analyzer_degraded"] = job.get("analyzer_degraded", False)
+        if out["analyzer_degraded"]:
+            out["analyzer_note"] = _analyzer_note(job)
     # A failed build in one sentence (compiler, error class, consequence): the same sentence the
     # report prints on its cover and in its summary, so the reviewer reads it before submitting.
     build_failure = _build_failure_note(job)
@@ -1260,6 +1266,23 @@ def _render_failed_fix(job: dict[str, Any]) -> str:
                 "be revised, and the job finalizes and renders again in the same call.")
     return ("Call review_finalize once: the failure was in server-built content, so the job reopens "
             "and renders again in that one call. No text change is needed.")
+
+
+def _source_pinned(job: dict[str, Any]) -> bool:
+    """The pin manifest exists; reads and chain reads answer from then on (thin server design section 4)."""
+    if job.get("state") in _PIPELINE_STATES - {"fetching", "building", "analyzing"}:
+        return False
+    try:
+        from .read import _get_ctx, source_pinned
+
+        return source_pinned(_get_ctx().get_pin_root(), job["job_id"])
+    except Exception:  # noqa: BLE001 - status never fails on the pin check
+        return False
+
+
+def _settled_at_pin(job: dict[str, Any]) -> bool:
+    """Thin flow: wait_for settled ends once the code is readable (pinned during the build)."""
+    return thin_tools() and job.get("state") in ("building", "analyzing") and _source_pinned(job)
 
 
 def _status_next_tools(state: str, drafts: list[dict[str, Any]], checks: list[dict[str, Any]], *,
