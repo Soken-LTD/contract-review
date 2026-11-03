@@ -184,6 +184,11 @@
   "trongrid.io": "trongrid",
   "solana.com": "solana_foundation",
   "toncenter.com": "toncenter",
-  "sourcify.dev": "sourcify"
+  "sourcify.dev": "sourcify",
+  "nodereal.io": "nodereal",
+  "drpc.live": "drpc",
+  "infura.io": "infura",
+  "alchemy.com": "alchemy",
+  "helius-rpc.com": "helius"
  }
 }

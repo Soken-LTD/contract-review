@@ -2,7 +2,12 @@
 
 Only free sources: the endpoints of `chains.json` (EVM) plus the measured free pool of
 `chain/data/free_rpc.json`, TronGrid keyless, the public Solana RPC and toncenter v2 keyless.
-Optional free-tier keys (no cost) are environment variables named in `.env.example`, never in code:
+Free-tier keyed hosts (thin server design 2026-11-03, section 6) come first: `data/keyed_providers.json`
+names, per provider, the `SOKEN_KEY_*` variable, how the key is sent and the chains. A keyed host that
+answers 401 or 403 (a revoked, exhausted or geo-blocked key) cools down for an hour, so the call drops to
+the free pool silently. Keys live only in this process: never in a container, a result, a fact, a log
+line or a repr (`Endpoint.__repr__` and `redact`); `install_key_filter` masks any key value a log record
+might still carry. The older names stay as aliases:
 
     SOKEN_CHAIN_RPC_<chain_id>    comma-separated extra RPC URLs for one EVM chain, for example a
                                   free-tier key endpoint; tried first
@@ -42,18 +47,31 @@ _FREE_RPC = Path(__file__).resolve().parent / "data" / "free_rpc.json"
 DEPTH_BLOCKS = {"head": 100, "recent": 5_000, "archive": 1 << 62, "unknown": 100}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class Endpoint:
-    url: str
-    keyed: bool                 # an optional free-tier key is configured for it
+    url: str = field(repr=False)   # may carry a key in its path or query: never printed
+    keyed: bool = False            # an optional free-tier key is configured for it
     depth: str = "unknown"      # head | recent | archive | unknown (measured, see free_rpc.json)
-    headers: tuple[tuple[str, str], ...] = ()
+    headers: tuple[tuple[str, str], ...] = field(default=(), repr=False)   # may carry a key
     per_s: float = 5.0
     logs_max_range: int | None = None   # measured eth_getLogs block range (0: refused), None: not measured
+    provider: str = ""             # keyed_providers.json id ("" for the free pool)
+
+    def __repr__(self) -> str:
+        return (f"Endpoint(host={self.host!r}, keyed={self.keyed}, depth={self.depth!r}"
+                + (f", provider={self.provider!r}" if self.provider else "") + ")")
+
+    __str__ = __repr__
 
     @property
     def host(self) -> str:
         return redact(self.url)
+
+    @property
+    def health_key(self) -> str:
+        """Run-time health is per host and per key: a refused key must not cool down the keyless row
+        of the same host (TronGrid, toncenter)."""
+        return f"{self.host}#key:{self.provider or 'env'}" if self.keyed else self.host
 
     @property
     def archive(self) -> bool:
@@ -83,6 +101,8 @@ class Health:
         cls.fails[host] = n
         if reason in ("rate_limited", "upstream"):
             cls.cool_until[host] = time.monotonic() + min(300.0, 15.0 * n)
+        elif reason == "auth":   # 401/403: a revoked, exhausted or geo-blocked key; the free pool serves
+            cls.cool_until[host] = time.monotonic() + AUTH_COOLDOWN_S
 
     @classmethod
     def no_state(cls, host: str, depth: int | None) -> None:
@@ -116,9 +136,9 @@ def ordered(eps: list[Endpoint], depth: int | None = None, logs_span: int | None
         i, ep = ix_ep
         d = depth or 0
         fits = d <= DEPTH_BLOCKS.get(ep.depth, 100)
-        ns = Health.no_state_depth.get(ep.host)
+        ns = Health.no_state_depth.get(ep.health_key)
         failed_here = bool(ns and now < ns[1] and d >= ns[0])   # this host already said it has no such state
-        cooling = Health.cool_until.get(ep.host, 0.0) > now
+        cooling = Health.cool_until.get(ep.health_key, 0.0) > now
         return (logs_rank(ep), 1 if failed_here else 0, 0 if fits else 1, 1 if cooling else 0, 0 if ep.keyed else 1,
                 (i - rot) % max(len(eps), 1))
 
@@ -161,10 +181,99 @@ def _split(v: str | None) -> list[str]:
     return [u.strip() for u in (v or "").split(",") if u.strip()]
 
 
+_KEYED = Path(__file__).resolve().parent / "data" / "keyed_providers.json"
+AUTH_COOLDOWN_S = 3600.0
+
+
+@lru_cache(maxsize=1)
+def _keyed_table() -> list[dict[str, Any]]:
+    return [r for r in json.loads(_KEYED.read_text(encoding="utf-8")).get("providers") or []
+            if r.get("enabled") and r.get("url")]
+
+
+def keyed(family: str, chain_id: int | None = None) -> list[Endpoint]:
+    """Keyed endpoints of `family` (and `chain_id` for EVM) whose SOKEN_KEY_* variable is set, in table
+    order. The key goes into the URL (auth path or query) or a header; it never leaves the Endpoint."""
+    out = []
+    for row in _keyed_table():
+        if row["family"] != family:
+            continue
+        key = os.environ.get(row["env"], "").strip()
+        if not key:
+            continue
+        net = ""
+        if family == "evm":
+            nets = row.get("nets") or {}
+            if str(chain_id) in nets:
+                net = nets[str(chain_id)]
+            elif chain_id not in (row.get("chains") or []):
+                continue
+        headers: tuple[tuple[str, str], ...] = ()
+        if row["auth"] == "header":
+            url = row["url"]
+            headers = ((row["header"], f"{row.get('prefix', '')}{key}"),)
+        else:
+            url = row["url"].replace("{net}", net).replace("{key}", key)
+        depth = "archive" if family == "ton" else "head" if family in ("tron", "solana") else "unknown"
+        out.append(Endpoint(url, keyed=True, depth=depth, headers=headers, per_s=10.0, provider=row["id"]))
+    return out
+
+
+@lru_cache(maxsize=1)
+def _key_env_names() -> tuple[str, ...]:
+    names = {r["env"] for r in json.loads(_KEYED.read_text(encoding="utf-8")).get("providers") or []}
+    return tuple(sorted(names | {"TRON_GRID_API_KEY", "SOKEN_TONCENTER_API_KEY"}))
+
+
+def key_values() -> list[str]:
+    """Every chain key value loaded in this process (keyed table variables and the old aliases), for
+    the log filter and the leak test. Never logged or returned."""
+    vals = [os.environ.get(n, "").strip() for n in _key_env_names()]
+    return sorted({v for v in vals if len(v) >= 8}, key=len, reverse=True)
+
+
+def mask_keys(text: str) -> str:
+    """`text` with every loaded chain key value replaced by ***."""
+    for v in key_values():
+        text = text.replace(v, "***")
+    return text
+
+
+_FACTORY_INSTALLED = False
+
+
+def install_key_filter() -> None:
+    """Second line behind redact(): a log record factory that masks any loaded key value in the
+    formatted message, so it holds for every logger and handler (uvicorn's included). Idempotent."""
+    import logging
+
+    global _FACTORY_INSTALLED
+    if _FACTORY_INSTALLED:
+        return
+    base = logging.getLogRecordFactory()
+
+    def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        record = base(*args, **kwargs)
+        if key_values():
+            try:
+                msg = record.getMessage()
+            except Exception:  # noqa: BLE001 - a bad format string is the logging module's to report
+                return record
+            masked = mask_keys(msg)
+            if masked != msg:
+                record.msg, record.args = masked, ()
+        return record
+
+    logging.setLogRecordFactory(factory)
+    _FACTORY_INSTALLED = True
+
+
 def evm_endpoints(chain_id: int) -> list[Endpoint]:
-    """Optional free-tier URLs, the pipeline override, the measured pool (best first), then the
-    registry rows the probe did not rank, and last the rows the probe found down."""
-    out = [Endpoint(u, keyed=True, depth="unknown", per_s=10.0) for u in _split(os.environ.get(f"SOKEN_CHAIN_RPC_{chain_id}"))]
+    """Keyed free-tier hosts first (keyed_providers.json), then optional free-tier URLs, the pipeline
+    override, the measured pool (best first), the registry rows the probe did not rank, and last the
+    rows the probe found down."""
+    out = keyed("evm", chain_id)
+    out += [Endpoint(u, keyed=True, depth="unknown", per_s=10.0) for u in _split(os.environ.get(f"SOKEN_CHAIN_RPC_{chain_id}"))]
     override = os.environ.get(f"SOKEN_RPC_{chain_id}")
     if override:
         out.append(Endpoint(override, keyed=True, depth="unknown", per_s=10.0))
@@ -187,24 +296,41 @@ def evm_endpoints(chain_id: int) -> list[Endpoint]:
 
 
 def tron_endpoints() -> list[Endpoint]:
-    key = os.environ.get("TRON_GRID_API_KEY", "")
-    out = [Endpoint(TRONGRID, keyed=True, depth="head", headers=(("TRON-PRO-API-KEY", key),), per_s=10.0)] if key else []
+    out = keyed("tron")
+    key = os.environ.get("TRON_GRID_API_KEY", "")   # alias of SOKEN_KEY_TRONGRID
+    if key and not out:
+        out.append(Endpoint(TRONGRID, keyed=True, depth="head", headers=(("TRON-PRO-API-KEY", key),), per_s=10.0))
     out.append(Endpoint(TRONGRID, keyed=False, depth="head", per_s=2.0))
     return out
 
 
 def solana_endpoints() -> list[Endpoint]:
-    url = os.environ.get("SOKEN_SOLANA_RPC", "")
-    out = [Endpoint(url, keyed=True, depth="head", per_s=10.0)] if url and url != SOLANA_PUBLIC else []
+    out = keyed("solana")
+    url = os.environ.get("SOKEN_SOLANA_RPC", "")   # alias: any Solana RPC URL
+    if url and url != SOLANA_PUBLIC:
+        out.append(Endpoint(url, keyed=True, depth="head", per_s=10.0))
     out.append(Endpoint(SOLANA_PUBLIC, keyed=False, depth="head", per_s=3.0))
     return out
 
 
 def ton_endpoints() -> list[Endpoint]:
-    key = os.environ.get("SOKEN_TONCENTER_API_KEY", "")
-    if key:
-        return [Endpoint(TONCENTER_V2, keyed=True, depth="archive", headers=(("X-API-Key", key),), per_s=10.0)]
-    return [Endpoint(TONCENTER_V2, keyed=False, depth="archive", per_s=0.9)]
+    """Keyed toncenter first, keyless toncenter after it (a refused key falls back, never fails)."""
+    out = keyed("ton")
+    key = os.environ.get("SOKEN_TONCENTER_API_KEY", "")   # alias of SOKEN_KEY_TONCENTER
+    if key and not out:
+        out.append(Endpoint(TONCENTER_V2, keyed=True, depth="archive", headers=(("X-API-Key", key),), per_s=10.0))
+    out.append(Endpoint(TONCENTER_V2, keyed=False, depth="archive", per_s=0.9))
+    return out
+
+
+def tron_api_key() -> str:
+    """The TronGrid key for the pipeline's own TRON client (adapters/tron/rpc.py): new name first."""
+    return os.environ.get("SOKEN_KEY_TRONGRID", "") or os.environ.get("TRON_GRID_API_KEY", "")
+
+
+def toncenter_api_key() -> str:
+    """The toncenter key for the TON fetch (adapters/ton/fetch.py): new name first."""
+    return os.environ.get("SOKEN_KEY_TONCENTER", "") or os.environ.get("SOKEN_TONCENTER_API_KEY", "")
 
 
 def endpoints(family: str, chain_id: int | None = None) -> list[Endpoint]:

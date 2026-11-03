@@ -39,7 +39,7 @@ _RETRY_BACKOFF = (1.0, 2.0, 4.0)
 _RATE_PER_S = 2.0  # outbound.trongrid (R4, limits.yaml)
 
 # Optional API key — production uses TRON_GRID_API_KEY env var
-_TRONGRID_API_KEY = os.environ.get("TRON_GRID_API_KEY", "")
+_TRONGRID_API_KEY = os.environ.get("SOKEN_KEY_TRONGRID", "") or os.environ.get("TRON_GRID_API_KEY", "")
 
 
 class TronGridError(Exception):

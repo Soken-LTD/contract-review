@@ -80,7 +80,7 @@ _VERIFIER_HOST = "verifier.ton.org"
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_BUNDLE_BYTES = 8 * 1024 * 1024
 _TONCENTER_RETRIES = 5
-_TONCENTER_PER_S = 10.0 if os.environ.get("SOKEN_TONCENTER_API_KEY") else 1.0
+_TONCENTER_PER_S = 10.0 if (os.environ.get("SOKEN_KEY_TONCENTER") or os.environ.get("SOKEN_TONCENTER_API_KEY")) else 1.0
 
 # ── on-chain registry (primary verified-source path) ─────────────────────
 
@@ -498,7 +498,7 @@ class TonReadError(RuntimeError):
 
 
 def _toncenter_headers(api_key: str | None) -> dict[str, str]:
-    key = api_key or os.environ.get("SOKEN_TONCENTER_API_KEY")
+    key = api_key or os.environ.get("SOKEN_KEY_TONCENTER") or os.environ.get("SOKEN_TONCENTER_API_KEY")
     return {"X-API-Key": key} if key else {}
 
 

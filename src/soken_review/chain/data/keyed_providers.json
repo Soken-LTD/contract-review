@@ -1,0 +1,31 @@
+{
+ "_schema": "keyed_providers.v1",
+ "_note": "Free-tier keyed chain hosts (thin server design 2026-11-03 section 6). Reference data, no secrets: each row names the environment variable that holds the key, how the key is sent (path or query: substituted into url for {key}; header: sent as the named header, with prefix), the URL template ({net} from nets) and the chains. chain/endpoints.py builds keyed endpoints from the rows whose variable is set and puts them first; the free pool follows unchanged. A 401 or 403 cools a keyed host down for an hour. stand_only: the host refuses calls from outside the stand's region (Alchemy geo 403), still listed, the cooldown handles it. depth is unknown until scripts/chain_free_probe.py measures it. enabled false: listed for completeness, never used.",
+ "providers": [
+  {"id": "nodereal", "env": "SOKEN_KEY_NODEREAL", "family": "evm", "auth": "path",
+   "url": "https://bsc-mainnet.nodereal.io/v1/{key}", "chains": [56], "enabled": true},
+  {"id": "drpc", "env": "SOKEN_KEY_DRPC", "family": "evm", "auth": "path",
+   "url": "https://lb.drpc.live/{net}/{key}",
+   "nets": {"1": "ethereum", "56": "bsc", "10": "optimism", "137": "polygon", "8453": "base", "42161": "arbitrum"},
+   "enabled": true},
+  {"id": "infura", "env": "SOKEN_KEY_INFURA", "family": "evm", "auth": "path",
+   "url": "https://mainnet.infura.io/v3/{key}", "chains": [1], "enabled": true},
+  {"id": "alchemy", "env": "SOKEN_KEY_ALCHEMY", "family": "evm", "auth": "path",
+   "url": "https://{net}-mainnet.g.alchemy.com/v2/{key}",
+   "nets": {"1": "eth", "8453": "base", "42161": "arb", "10": "opt", "137": "polygon"},
+   "stand_only": true, "enabled": true},
+  {"id": "helius", "env": "SOKEN_KEY_HELIUS", "family": "solana", "auth": "query",
+   "url": "https://mainnet.helius-rpc.com/?api-key={key}", "enabled": true},
+  {"id": "trongrid", "env": "SOKEN_KEY_TRONGRID", "family": "tron", "auth": "header",
+   "url": "https://api.trongrid.io", "header": "TRON-PRO-API-KEY", "enabled": true},
+  {"id": "toncenter", "env": "SOKEN_KEY_TONCENTER", "family": "ton", "auth": "header",
+   "url": "https://toncenter.com/api/v2", "header": "X-API-Key", "enabled": true},
+  {"id": "tonapi", "env": "SOKEN_KEY_TONAPI", "family": "ton", "auth": "header",
+   "url": "https://tonapi.io/v2", "header": "Authorization", "prefix": "Bearer ",
+   "enabled": false, "why": "different API from toncenter v2, no adapter yet"},
+  {"id": "quicknode", "env": "SOKEN_KEY_QUICKNODE", "family": "evm", "auth": "path", "url": "",
+   "enabled": false, "why": "key refused (403) on 2026-11-01; needs an endpoint URL"},
+  {"id": "chainstack", "env": "SOKEN_KEY_CHAINSTACK", "family": "evm", "auth": "path", "url": "",
+   "enabled": false, "why": "every chain 401 on 2026-11-01; no node attached yet"}
+ ]
+}

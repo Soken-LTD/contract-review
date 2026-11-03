@@ -101,6 +101,9 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("python -m soken_review.worker takes no arguments; configure it through the environment")
     logging.basicConfig(level=os.environ.get("SOKEN_LOG_LEVEL", "INFO"),
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    from ..chain.endpoints import install_key_filter
+
+    install_key_filter()   # chain keys never reach a log line (thin server design section 6)
     try:
         asyncio.run(run(settings_from_env(os.environ)))
     except KeyboardInterrupt:
