@@ -86,6 +86,7 @@
   "company_line": "SOKEN LTD, 86-90 Paul Street, London EC2A 4NE, Companies House 15253906",
   "page": "Page {n} of {total}"
  },
+ "coverage_thin": "No static analyzer or checklist ran for this review. The findings above are the reviewer's own, each quoted from the pinned source; the code ranges the session read are counted in the summary.",
  "kpi_labels": {
   "files": "Files in scope",
   "nsloc": "Source lines in scope",
@@ -93,7 +94,10 @@
   "promoted": "Leads promoted to findings",
   "areas_returned": "Areas with code returned",
   "deployed_code": "Deployed code",
-  "documents": "Project documents"
+  "documents": "Project documents",
+  "findings": "Findings",
+  "withdrawn": "Withdrawn candidates",
+  "ranges_read": "Code ranges read"
  },
  "context": {
   "documents_title": "Documents",

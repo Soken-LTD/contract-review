@@ -24,6 +24,7 @@ from ..adapters.evm.build_scope import subject_unit
 from ..adapters.evm.registry import get_chain
 from ..adapters.evm.units import count_nsloc
 from ..engine.severity import explain_rules
+from ..flow import thin_job
 from ..learning import tiers as rule_tiers
 from ..mapping.build import load_map
 from ..mapping.build_note import job_build_failure
@@ -1112,6 +1113,9 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     # chain (a TON or Solana job printed as an EVM review listed the EVM checklist areas).
     chain = _report_chain(job)
     family = _CHAIN_FAMILY.get(chain, "evm")
+    # Thin flow (jobs.flow, migration 022): no analyzer table, challenge evidence, calibration line,
+    # checklist coverage or invariant walks; legacy rows print exactly what they printed before.
+    thin = thin_job(job)
 
     # Findings (03 4.14 final ids, 08 2.3 card)
     drafts = await _rows(conn, """
@@ -1175,7 +1179,9 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         rule = d.get("severity_rule") or d.get("submit_severity_rule") or ""
         set_by = d.get("severity_set_by") or ("reviewer" if c.get("claimed_severity") == sev else "matrix")
         reason = d.get("severity_reason") or explain_rules(list(d.get("caps_applied") or d.get("submit_caps_applied") or []))
-        basis = {"head": ["Impact class", "Magnitude", "Trigger", "Precondition", "Reversibility", "Rule",
+        basis = {"head": ["Severity", "Rule", "Set by", "Reason"],
+                 "rows": [[sev, "claimed_severity", "reviewer", str(d.get("severity_reason") or "")[:200]]]} if thin else {
+                 "head": ["Impact class", "Magnitude", "Trigger", "Precondition", "Reversibility", "Rule",
                           "Set by", "Reason"],
                  "rows": [[matrix.get("impact_class", d["impact_class"]), matrix.get("magnitude", ""),
                            matrix.get("trigger", ""), matrix.get("precondition", ""), matrix.get("reversibility", ""),
@@ -1189,10 +1195,10 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
             challenge = {"head": ["Item", "Condition", "Answer"],
                          "rows": [[a.get("item_id", a.get("id", "")), items.get(a.get("item_id", a.get("id")), {})
                                    .get("condition", "")[:600], str(a.get("answer", ""))[:600]] for a in answers][:60]}
-        if level != "reasoning_only" and challenge is None:
+        if level != "reasoning_only" and challenge is None and not thin:
             challenge = {"head": ["Item", "Condition", "Answer"], "rows": []}
         lead = None
-        if level == "analyzer_and_reasoning":
+        if level == "analyzer_and_reasoning" and not thin:
             lid = lead_of.get(d["draft_key"])
             ld = lead_by_id.get(lid) if lid else None
             if ld is None:
@@ -1214,7 +1220,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         if further:
             f["evidence"]["further"] = further
         cal = d.get("calibration_severity")
-        if cal in SEV_RANK and cal != sev:
+        if cal in SEV_RANK and cal != sev and not thin:
             f["calibration"] = {"severity": cal, "rule": str(d.get("calibration_rule") or "")[:200]}
         figs = chain_figures(c, facts, printable_facts)
         if figs:
@@ -1228,7 +1234,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
             f["attack_steps"] = [{"text": _sub_findings(s["text"], keymap), "ref": _parse_ref(s["ref"])}
                                  for s in c["attack_steps"]][:10]
         di = c.get("documented_intent_ref")
-        if di:
+        if di and not thin:
             f["documented_intent"] = _ref(di["file"], di["start"], di["end"])
         if job["tier"] == "C":
             f["tier_c_line"] = True
@@ -1307,7 +1313,7 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
 
     areas = []
     na_rows = {r["area_id"]: r for r in section_rows(sections.get("coverage")) if "area_id" in r}
-    for cat in coverage_categories(family, chain if chain != "evm" else None):
+    for cat in ([] if thin else coverage_categories(family, chain if chain != "evm" else None)):
         ids = [f["id"] for f in findings if f["category_key"] == cat["id"]][:20]
         a: dict[str, Any] = {"area_id": cat["id"][:40], "area": category_label(cat["id"])}
         if cat["id"] in na_rows:
@@ -1349,9 +1355,16 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
         {"key": "promoted", "value": len(promoted_ids), "label": texts["kpi_labels"]["promoted"]},
         {"key": "areas_returned", "value": f"{n_returned} of {len(areas)}", "label": texts["kpi_labels"]["areas_returned"]},
         {"key": "deployed_code", "value": _deployed_code_kpi(job, deployment), "label": texts["kpi_labels"]["deployed_code"]}]}
+    if thin:
+        n_withdrawn = sum(1 for d in drafts if d["status"] == "withdrawn")
+        summary["kpis"] = [summary["kpis"][0], summary["kpis"][1],
+                           {"key": "findings", "value": len(accepted), "label": texts["kpi_labels"]["findings"]},
+                           {"key": "withdrawn", "value": n_withdrawn, "label": texts["kpi_labels"]["withdrawn"]},
+                           {"key": "ranges_read", "value": len(reads), "label": texts["kpi_labels"]["ranges_read"]},
+                           summary["kpis"][5]]
     if n_documents > 0:
         summary["kpis"].append({"key": "documents", "value": n_documents, "label": texts["kpi_labels"]["documents"]})
-    if c["Critical"] == 0 and c["High"] == 0 and dismissed:
+    if c["Critical"] == 0 and c["High"] == 0 and dismissed and not thin:
         rows = sorted(dismissed, key=lambda x: (SEV_RANK[LEAD_SEV[x["severity_norm"]]], x["file"], x["start"]))
         summary["dismissed_leads"] = {"rows": [{"detector": x["rule_id"][:80], "severity_class": LEAD_SEV[x["severity_norm"]],
                                                 "location": _ref(x["file"], x["start"], x["end"]),
@@ -1370,10 +1383,14 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     build_failure = job_build_failure(pin_root, job_id, map_status=job.get("map_status"), family=family)
     method = [
         {"step": m["pin"], "detail": f"{len(pin.entries):,} file{"s" if len(pin.entries) != 1 else ""} pinned by sha256; source pin {job['source_pin'][:16]}"},
-        {"step": m["analyzer"], "detail": (build_failure or tools_line + "." + degraded)[:400]},
+        {"step": m["analyzer"], "detail": (build_failure or ("No static analyzer ran; every finding comes from the "
+                                                             "reviewer's reading of the pinned code" if thin else
+                                                             tools_line + "." + degraded))[:400]},
         {"step": m["selection"], "detail": f"{len(accepted):,} findings accepted, "
                                            f"{sum(1 for d in drafts if d['status'] == 'withdrawn'):,} withdrawn"},
-        {"step": m["checks"], "detail": "Every code quote matched to the pinned source; text and number rules on every "
+        {"step": m["checks"], "detail": "Every code quote matched to the pinned source; each severity is the reviewer's "
+                                        "own, printed as submitted" if thin else
+                                        "Every code quote matched to the pinned source; text and number rules on every "
                                         "finding; severity mapped from the classifications through the fixed matrix"},
         {"step": m["deployment"], "detail": _deployment_method_detail(job, deployment)},
     ]
@@ -1399,6 +1416,8 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
     }
     if build_failure:
         meta["build_failure"] = build_failure[:400]
+    if thin:
+        meta["flow"] = "thin"
     if job.get("previous_report_id"):
         meta["previous_report_id"] = job["previous_report_id"]
     meta["out_name"] = out_name({**meta, "date_iso": today.isoformat()}, profile, subj["value"])
@@ -1420,15 +1439,16 @@ async def assemble_report(conn: Any, job_id: str, pin_root: Path, *, today: date
                             "leads": [{"analyzer": n[:40], "version": v[:40], **r} for (n, v), r in sorted(per_tool.items())],
                             "withdrawn": withdrawn[:60], "injection_flags": []},
     }
-    if lower:
+    if lower and not thin:
         report["review_coverage"]["rule_tiers"] = {"version": tier_summary["version"][:40], "lower_priority": len(lower)}
     # Coverage note (never-worse, gate_policy.yaml finalize_checks): the advisory steps the requester's
     # session did not take, as finalize recorded them. Server data, printed from kit text.
     not_taken = [{"kind": str(g["kind"]), "count": max(1, int(g.get("count") or 1))}
                  for g in (job.get("coverage_gaps") or []) if isinstance(g, dict) and g.get("kind") in _NOT_TAKEN_KINDS]
-    if not_taken:
+    if not_taken and not thin:
         report["review_coverage"]["not_taken"] = not_taken[:9]
-    walk_rows = invariant_walk_rows(load_lifecycle(pin_root, job_id), sections.get("invariant_walks"), keymap)
+    walk_rows = [] if thin else invariant_walk_rows(load_lifecycle(pin_root, job_id), sections.get("invariant_walks"),
+                                                     keymap)
     if walk_rows:
         report["review_coverage"]["invariant_walks"] = walk_rows
     # Verification blocks: present only for tier A and C (schema: "present for tier A and C only")

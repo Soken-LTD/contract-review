@@ -282,8 +282,101 @@ def apply_publication_rewrites(report: dict[str, Any]) -> list[str]:
     return changed
 
 
+# ------------------------------------------------------------------ thin flow render transforms
+# Thin server design 2026-11-03 section 3: publication safety is a set of mechanical transforms on the
+# reviewer's text, never a refusal and never a call back to the agent. Wording is printed as written.
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+_CODESPAN_RE = re.compile(r"`[^`]*`")
+_LINKISH_RE = re.compile(
+    r"(?:https?|ftp)://[^\s`<>]+"                                   # URLs
+    r"|www\.[^\s`<>]+"
+    r"|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"           # e-mail addresses
+    r"|\b(?:[A-Za-z0-9-]+\.)+(?:com|org|net|io|xyz|dev|app|finance|fi|exchange|network|money|ai|co|gg|so|me|"
+    r"info|biz|ru|cn|top|site|online|live|pro|tech|link|click|cc|tv|us|uk|eu|de|fr)\b(?:/[^\s`<>]*)?",  # domains
+    re.IGNORECASE)
+_TRAILING = ".,;:!?)]}'\""
+
+
+def _plain_links(text: str) -> str:
+    """URLs, e-mail addresses and bare domains as code text (a mono span, never a link); text already
+    inside a backtick code span is left as it is."""
+    def wrap(seg: str) -> str:
+        def one(m: re.Match) -> str:
+            tok = m.group()
+            tail = ""
+            while tok and tok[-1] in _TRAILING:
+                tok, tail = tok[:-1], tok[-1] + tail
+            return f"`{tok}`{tail}" if tok else m.group()
+        return _LINKISH_RE.sub(one, seg)
+
+    out, last = [], 0
+    for m in _CODESPAN_RE.finditer(text):
+        out.append(wrap(text[last:m.start()]))
+        out.append(m.group())
+        last = m.end()
+    out.append(wrap(text[last:]))
+    return "".join(out)
+
+
+def _plain_placeholders(text: str, facts: dict[str, Any]) -> str:
+    """A placeholder the projection cannot expand (unknown fact key, unresolved calc, malformed form) prints
+    as plain text without its braces instead of failing the render."""
+    def ok(m: re.Match) -> bool:
+        kind, body = m.group(1), m.group(2)
+        try:
+            if kind == "fact":
+                return body in facts
+            if kind == "calc":
+                eval_calc(body, facts)
+                return True
+        except BuildError:
+            return False
+        return False
+
+    def sub(m: re.Match) -> str:
+        tok = m.group()
+        well = PLACEHOLDER_RE.fullmatch(tok)
+        if well and ok(well):
+            return tok
+        return tok.strip("{}")
+
+    return PLACEHOLDER_ANY_RE.sub(sub, text)
+
+
+def thin_transform(text: str, facts: dict[str, Any]) -> str:
+    """Every mechanical transform of a model string in the thin flow, in order."""
+    text = _CONTROL_RE.sub("", HIDDEN_RE.sub("", text))
+    return _plain_links(_plain_placeholders(text, facts))
+
+
+def _set_path(report: dict[str, Any], path: str, value: str) -> None:
+    toks = [m.group(1) if m.group(1) is not None else int(m.group(2)) for m in _PATH_TOKEN_RE.finditer(path[1:])]
+    node: Any = report
+    for t in toks[:-1]:
+        node = node[t]
+    node[toks[-1]] = value
+
+
+def apply_thin_transforms(report: dict[str, Any]) -> list[str]:
+    """Thin flow: rewrite every model-class string in place (thin_transform); returns the changed paths."""
+    facts = report.get("facts") or {}
+    changed = []
+    for path, cls, text in list(iter_strings(report)):
+        if cls != "model" or not text:
+            continue
+        new = thin_transform(text, facts)
+        if new != text:
+            _set_path(report, path, new)
+            changed.append(path)
+    return changed
+
+
 def check_strings(report: dict[str, Any]) -> None:
     """08 1.5: 04 gate by field class on data, never on HTML. A hit is `late_gate`.
+
+    Thin flow (``meta.flow == "thin"``): model-class text is never refused. It goes through the
+    mechanical transforms (``apply_thin_transforms``) and is printed as the reviewer wrote it otherwise;
+    server and kit text keep their checks (a hit there is the server's fault, never the reviewer's).
 
     Model-class text: calls ``check_model_field`` (full model scope) then filters
     ``LATE_GATE_SKIP`` (T24, T29, T31).  Those three rules need submit-time context
@@ -294,10 +387,16 @@ def check_strings(report: dict[str, Any]) -> None:
     """
     from soken_review.engine.text_gate import check_model_field, check_text
 
-    apply_publication_rewrites(report)
+    thin = report["meta"].get("flow") == "thin"
+    if thin:
+        apply_thin_transforms(report)
+    else:
+        apply_publication_rewrites(report)
     profile = report["meta"]["profile"]
     for path, cls, text in iter_strings(report):
         if cls == "src" or not text:
+            continue
+        if cls == "model" and thin:
             continue
         if cls == "model":
             bad = malformed_placeholder(text)
@@ -1129,10 +1228,16 @@ def render_body(r: dict[str, Any], ctx: BuildContext) -> str:
                     for x in cov["leads"])
     tiers_note = (f'<p class="nofind">{esc(t["rule_tiers_note"].format(n=f"{tiers_cov["lower_priority"]:,}", version=tiers_cov["version"]))}</p>'
                   if tiers_cov else "")
-    cov_html = (tbl('<th style="width:40%">Area</th><th style="width:22%">Code returned</th><th>Result</th>', arows, name="coverage_areas")
-                + nohigh + titled("<h3>Analyzer leads</h3>",
-                                  tbl('<th>Analyzer</th><th>Version</th><th class="num">Leads</th><th class="num">Promoted</th>'
-                                      '<th class="num">Dismissed</th>' + lp_head, lrows, name="analyzer_leads")) + tiers_note)
+    if m.get("flow") == "thin":
+        # Thin flow: no checklist areas and no analyzers ran; the section lists what the session withdrew.
+        cov_html = nohigh + f'<p class="nofind">{esc(t["coverage_thin"])}</p>'
+    else:
+        cov_html = (tbl('<th style="width:40%">Area</th><th style="width:22%">Code returned</th><th>Result</th>', arows,
+                        name="coverage_areas")
+                    + nohigh + titled("<h3>Analyzer leads</h3>",
+                                      tbl('<th>Analyzer</th><th>Version</th><th class="num">Leads</th>'
+                                          '<th class="num">Promoted</th><th class="num">Dismissed</th>' + lp_head, lrows,
+                                          name="analyzer_leads")) + tiers_note)
     if cov["withdrawn"]:
         wrows = "".join(
             f'<tr><td>{esc(w["candidate"])}</td><td>{esc(w["category"])}</td>'

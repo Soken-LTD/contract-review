@@ -119,8 +119,11 @@ def run_map_step(
     # leads.json and the job's invariant walks in map/lifecycle.json. Additive: a fault here is
     # logged and never fails the map step.
     lifecycle: dict[str, Any] = {}
+    from ..flow import thin_job
+
     try:
-        lifecycle = apply_lifecycle(pin_root, job_id, family, files, art.doc, output, compiled_texts)
+        if not thin_job(job):   # thin flow: no lifecycle leads and no invariant walks (design section 4)
+            lifecycle = apply_lifecycle(pin_root, job_id, family, files, art.doc, output, compiled_texts)
     except Exception:
         import logging as _logging
         _logging.getLogger(__name__).exception("lifecycle pass failed for job %s", job_id[-8:])

@@ -55,6 +55,7 @@ from ..db.leads_repo import persist_leads_from_pin
 from ..engine.injection import server_draft_flags
 from ..engine.provenance import DepResult, evm_deployment_check, resolve_provenance
 from ..errors import ReviewError
+from ..flow import thin_job
 from ..mapping import facts as _facts_mod
 from ..mapping import step as _map_step
 from ..pinning.store import PinnedSource
@@ -187,17 +188,17 @@ def _rpc_urls(chain_id: int) -> list[str]:
     """Return the ordered list of usable RPC URLs for *chain_id* (05 4.1, failover).
 
     A single ``SOKEN_RPC_<chain_id>`` env override always wins and is returned alone.
-    Otherwise all non-disabled endpoints from chains.json are returned in registry order.
+    Otherwise the chain-tool pool: keyed hosts, the measured free pool, then the registry rows.
     """
     override = os.environ.get(f"SOKEN_RPC_{chain_id}")
     if override:
         return [override]
-    from ..adapters.evm.registry import get_chain
+    # One pool everywhere (thin server design section 6): keyed hosts first, then the measured free pool
+    # and the registry rows, the same order the chain tools use. The URLs stay in this process: the
+    # RPC client logs and records only redact(url).
+    from ..chain.endpoints import evm_endpoints
 
-    chain = get_chain(chain_id)
-    if not chain or not chain.rpc:
-        return []
-    return [r.url for r in chain.rpc if not r.disabled]
+    return [e.url for e in evm_endpoints(chain_id)]
 
 
 def _rpc_url(chain_id: int) -> str | None:
@@ -394,6 +395,10 @@ class Supervisor:
                 # branches, so TON / Solana / Move / Starknet jobs logged "no handler for step
                 # render; marking done" and stayed in render_queued forever.
                 await _render_mod.run_render_step(self._pool, step, self._pin_root)
+            elif step_name == "analyze" and job is not None and thin_job(job) and job.get("chain") != "starknet":
+                # Thin flow (design section 4): no analyzer in any family; the step row stays, so the
+                # state machine is unchanged, and the family's map step follows as before.
+                await self._run_analyze_thin(step)
             elif job is not None and ton_pipeline.is_ton_job(job):
                 await ton_pipeline.run_step(self, step, job)
             elif job is not None and job.get("chain") == "starknet" and (
@@ -1631,6 +1636,20 @@ class Supervisor:
     # analyze: run Slither/Aderyn, write leads.json (09 3.1, 3.6)
     # ------------------------------------------------------------------
 
+    async def _run_analyze_thin(self, step: dict[str, Any]) -> None:
+        """Thin flow: leads.json is empty, static_map says skipped, analyzer_degraded is never set."""
+        job_id = step["job_id"]
+        leads_out = self._pin_root / job_id / "leads.json"
+        if not leads_out.exists():
+            leads_out.parent.mkdir(parents=True, exist_ok=True)
+            leads_out.write_text("[]", encoding="utf-8")
+        out_dir = self._job_dir(job_id)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "static_map.json").write_text(json.dumps({"status": "skipped", "reason": "thin_flow"}),
+                                                 encoding="utf-8")
+        await self._mark_step(step["id"], "done")
+        await self._after_analyze(step, degraded=False)
+
     async def _run_analyze(self, step: dict[str, Any]) -> None:
         """Run static analyzers, write leads.json (09 3.1)."""
         job_id = step["job_id"]
@@ -1897,7 +1916,9 @@ class Supervisor:
                 await repo.complete_step(step_id, "done", provenance={"onchain_facts": added})
                 n_leads = await persist_leads_from_pin(conn, self._pin_root, job_id)
                 await repo.transition(job_id, "ready")
-                drafts = await repo.create_server_drafts(job_id, "evm", server_draft_flags(flags))
+                # Thin flow: no server drafts (a server-written finding is judgement, design section 1)
+                drafts = 0 if thin_job(job) else await repo.create_server_drafts(
+                    job_id, "evm", server_draft_flags(flags))
         logger.info("job %s ready (onchain facts %d, server drafts %d, leads persisted %d)",
                     job_id[-8:], added, drafts, n_leads)
 
