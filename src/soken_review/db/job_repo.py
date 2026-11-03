@@ -145,11 +145,17 @@ class JobRepo:
         guide_version: str = "v0",
         rubric_version: str = "v0",
         expires_at: datetime | None = None,
+        flow: str | None = None,
     ) -> dict[str, Any]:
         """Insert a new job row and return it.
 
-        ``state`` must be ``queued`` or ``awaiting_upload`` (the two legal start states).
+        ``state`` must be ``queued`` or ``awaiting_upload`` (the two legal start states). ``flow``
+        defaults to the server flag (SOKEN_FLOW, soken_review.flow): written explicitly, so a legacy
+        server keeps creating legacy jobs although the column default is thin (migration 022).
         """
+        from ..flow import FLOWS, server_flow
+
+        flow = flow if flow in FLOWS else server_flow()
         async with self._conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
@@ -158,13 +164,13 @@ class JobRepo:
                   requester_role, source_kind, source_args, has_deployment,
                   chain, chain_id, address,
                   previous_report_id, previous_snapshot, upload_id,
-                  guide_version, rubric_version, expires_at
+                  guide_version, rubric_version, expires_at, flow
                 ) values (
                   %(job_id)s, %(principal_key)s, %(surface)s, %(state)s,
                   %(requester_role)s, %(source_kind)s, %(source_args)s, %(has_deployment)s,
                   %(chain)s, %(chain_id)s, %(address)s,
                   %(previous_report_id)s, %(previous_snapshot)s, %(upload_id)s,
-                  %(guide_version)s, %(rubric_version)s, %(expires_at)s
+                  %(guide_version)s, %(rubric_version)s, %(expires_at)s, %(flow)s
                 )
                 returning *
                 """,
@@ -186,6 +192,7 @@ class JobRepo:
                     "guide_version": guide_version,
                     "rubric_version": rubric_version,
                     "expires_at": expires_at,
+                    "flow": flow,
                 },
             )
             row = await cur.fetchone()

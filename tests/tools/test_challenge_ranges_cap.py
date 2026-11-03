@@ -17,7 +17,7 @@ from soken_review.tools.challenge import (
 )
 
 SCHEMA = json.loads((Path(__file__).resolve().parents[2] / "contract" / "mcp" / "tools.v1.json").read_text())
-TOOLS = {t["name"]: t for t in SCHEMA["tools"]}
+TOOLS = {t["name"]: t for t in [*SCHEMA["tools"], *SCHEMA.get("retired", [])]}
 
 
 def _covers(merged: list[str], original: list[str]) -> bool:

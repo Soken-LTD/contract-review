@@ -21,6 +21,7 @@ from typing import Any
 from ..adapters.base import BuildResult, Candidate, Compiler
 from ..db.job_repo import JobRepo
 from ..db.leads_repo import persist_leads_from_pin
+from ..flow import thin_job
 from ..mapping import step as _map_step
 from ..pinning.store import PinnedSource
 
@@ -343,9 +344,13 @@ async def _analyze(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
         art = out / "build" / "host" / "artifacts" / f"{prov['artifact']}.contract_class.json"
         facts = class_facts(json.loads(art.read_text())) if art.exists() else None
     cairo = cand.compiler.version if cand.compiler else None
+    # Thin flow: no lint and no caracal; the step still writes the Sierra facts and map_status below.
+    thin = thin_job(job)
     leads, static_map, _plan = await asyncio.get_running_loop().run_in_executor(
-        None, lambda: analyze(br, facts, cairo, run_stock_lint=br.status == "ok",
-                              with_caracal=br.status == "ok"))
+        None, lambda: analyze(br, facts, cairo, run_stock_lint=br.status == "ok" and not thin,
+                              with_caracal=br.status == "ok" and not thin))
+    if thin:
+        leads = []
     cs = json.loads((out / "chain_state.json").read_text()) if (out / "chain_state.json").exists() else None
     extras = chain_extras(cs, facts, static_map, prov)
     (out / "map.json").write_text(json.dumps({"chain_extras": {"starknet": extras}, "static": static_map}, indent=1),
@@ -353,7 +358,7 @@ async def _analyze(sup: Any, step: dict[str, Any], job: dict[str, Any]) -> None:
     leads_out = sup._pin_root / job_id / "leads.json"
     leads_out.parent.mkdir(parents=True, exist_ok=True)
     leads_out.write_text(json.dumps(leads, indent=2), encoding="utf-8")
-    degraded = static_map.get("status") != "ok" or br.status != "ok"
+    degraded = not thin and (static_map.get("status") != "ok" or br.status != "ok")
     fields: dict[str, Any] = {"map_status": "full" if br.status == "ok" and extras["facts"] == "complete" else "partial"}
     if degraded:
         fields["analyzer_degraded"] = True

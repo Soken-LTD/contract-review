@@ -87,9 +87,19 @@ async def _job_row(job_id: str, open_states: frozenset[str] = _OPEN_STATES) -> d
         raise ReviewError("E_JOB_EXPIRED", job=job_id, date=str(job.get("expires_at") or ""))
     if state in _FROZEN:
         raise _Reject(ReviewError("E_JOB_FROZEN"))
-    if state not in open_states:
+    if state not in open_states and not _pinned_early(job_id, state):
         raise _Reject(ReviewError("E_JOB_NOT_READY", state=state, eta_s=0))
     return job
+
+
+def _pinned_early(job_id: str, state: str) -> bool:
+    """Chain reads open once the source is pinned, not only at `ready` (thin server design section 4)."""
+    from ..flow import thin_tools
+    from .read import _PINNED_STATES, source_pinned
+
+    if state not in _PINNED_STATES or _ctx is None or not thin_tools():
+        return False
+    return source_pinned(_ctx.get_pin_root(), job_id)
 
 
 class _Reject(Exception):

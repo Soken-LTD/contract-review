@@ -206,30 +206,31 @@ class ChainProxy:
                 if exc.reason == "budget":
                     raise
                 reasons.append(exc.reason)
-                Health.fail(ep.host, exc.reason)
+                Health.fail(ep.health_key, exc.reason)
                 continue
             except (httpx.HTTPError, OSError) as exc:
                 logger.info("chain %s %s: %s", family, ep.host, type(exc).__name__)
                 self.meter.failed_upstream += 1
                 reasons.append("upstream")
-                Health.fail(ep.host, "upstream")
+                Health.fail(ep.health_key, "upstream")
                 continue
             if status >= 400 or data is None:
                 self.meter.failed_upstream += 1
-                why = "rate_limited" if status == 429 else "upstream"
-                reasons.append(why)
-                Health.fail(ep.host, why)
+                # 401/403 (also an empty-body 403): the key is refused; the host cools down an hour
+                why = "rate_limited" if status == 429 else "auth" if status in (401, 403) else "upstream"
+                reasons.append("upstream" if why == "auth" else why)
+                Health.fail(ep.health_key, why)
                 continue
             kind, val = classify(data)
             if kind == "ok":
                 self.meter.answered_by.add(ep.host)
-                Health.ok(ep.host)
+                Health.ok(ep.health_key)
                 return val, ep
             if kind == "fail":
-                Health.ok(ep.host)
+                Health.ok(ep.health_key)
                 raise val
             if kind == "no_state":
-                Health.no_state(ep.host, depth)
+                Health.no_state(ep.health_key, depth)
                 reasons.append("archive")
                 continue
             if kind == "skip":
@@ -238,7 +239,7 @@ class ChainProxy:
             self.meter.failed_upstream += 1
             why = "rate_limited" if any(h in str(val).lower() for h in _RATE_HINTS) else "upstream"
             reasons.append(why)
-            Health.fail(ep.host, why)
+            Health.fail(ep.health_key, why)
         reason = "archive" if "archive" in reasons else "rate_limited" if "rate_limited" in reasons else "upstream"
         raise ChainUnavailable(reason, hosts, ", ".join(sorted(set(reasons))))
 

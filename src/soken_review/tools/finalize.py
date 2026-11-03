@@ -41,6 +41,7 @@ from ..engine.numbers import lex_numbers as _lex_numbers_all
 from ..engine.severity import SeverityContext, compute_severity
 from ..engine.text_gate import check_model_field as _check_model_field_all
 from ..errors import ReviewError
+from ..flow import thin_tools
 from ..learning import ledger
 from ..mapping.build import load_map
 from ..mapping.lifecycle import load_lifecycle
@@ -158,6 +159,19 @@ async def compute_finalize_checks(
     else:
         f1_reason = "tier is D; supply a verified source match or a repo URL so the build can assign a higher tier"
     checks.append({"id": "F1", "open": int(f1_open), **({"reason": f1_reason} if f1_open else {})})
+    if thin_tools():
+        # Thin flow (design section 1): no lead, challenge, coverage, roles, walk, placeholder or text
+        # check; the source check above and the F4 invariant below are server facts, never judgement.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """select count(*) from leads l
+                   join finding_drafts d on d.job_id = l.job_id and d.draft_key = l.state_ref
+                   where l.job_id = %s and l.state = 'promoted' and d.status = 'withdrawn'""", (job_id,))
+            f4 = (await cur.fetchone())[0]
+        checks.append({"id": "F4", "open": int(f4 > 0)})
+        for c in checks:
+            c["blocking"] = True
+        return checks
 
     # F2: open High/Medium analyzer leads + broken duplicate chains
     async with conn.cursor() as cur:
@@ -522,7 +536,7 @@ async def _assign_final_ids(
             severity_before=d.get("submit_severity"),
         )
 
-        if matrix:
+        if matrix and not thin_tools():   # thin flow: the stored (claimed) severity stands, no matrix
             # A KeyError/ValueError here means the stored matrix enum is invalid.
             # This is an internal consistency error — block finalize rather than accept
             # with uncapped severity (fail-closed: broken stored data must be investigated).
@@ -1032,7 +1046,7 @@ async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], jo
     # time (e.g. a T27 phrase added to the rule list after the finding was submitted).
     # Blocking rules only (gate_policy.yaml); advisory rules were warnings at write time.
     job_profile = "owner" if job.get("ownership_proven") else "public_review"
-    gate_errors = await _check_gate_violations(conn, job_id, job_profile)
+    gate_errors = [] if thin_tools() else await _check_gate_violations(conn, job_id, job_profile)
     if gate_errors:
         return {
             "accepted": False,
@@ -1059,6 +1073,7 @@ async def _finalize_ready(conn: psycopg.AsyncConnection, job: dict[str, Any], jo
 
     # Advisory gaps the freeze resolves: an unanswered optional challenge is accepted as filed, a
     # not-applicable coverage row the map no longer confirms is dropped (it prints as not covered).
+    # Thin flow: no draft is needs_challenge; a job in flight at deploy still freezes what it filed.
     await _accept_unchallenged(conn, job_id)
     if any(g["check"] == "F5" for g in gaps):
         await _drop_unconfirmed_na_rows(conn, job_id, job.get("chain"))

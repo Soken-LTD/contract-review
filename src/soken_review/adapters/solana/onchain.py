@@ -19,7 +19,10 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-_RPC_URL = os.environ.get("SOKEN_SOLANA_RPC", "https://api.mainnet-beta.solana.com")
+_RPC_URL = (os.environ.get("SOKEN_SOLANA_RPC")
+            or (f"https://mainnet.helius-rpc.com/?api-key={os.environ['SOKEN_KEY_HELIUS']}"
+                if os.environ.get("SOKEN_KEY_HELIUS") else "")
+            or "https://api.mainnet-beta.solana.com")   # keyed Helius first (keyed_providers.json); never logged
 _RPC_TIMEOUT = 60
 
 BPF_LOADER_UPGRADEABLE = "BPFLoaderUpgradeab1e11111111111111111111111"

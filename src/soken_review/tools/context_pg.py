@@ -222,7 +222,10 @@ def create_app() -> Any:
     If ``SOKEN_DATABASE_URL`` is not set, returns the bare server app (useful in
     unit tests that mock the DB at the tool level).
     """
+    from ..chain.endpoints import install_key_filter
     from ..server import create_app as _create_server_app
+
+    install_key_filter()   # chain keys never reach a log line (thin server design section 6)
 
     dsn = os.environ.get("SOKEN_DATABASE_URL", "")
     pin_root = Path(os.environ.get("SOKEN_PIN_ROOT", "/srv/sbx"))

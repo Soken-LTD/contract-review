@@ -32,7 +32,7 @@ from soken_review.tools.challenge import (
 ROOT = Path(__file__).resolve().parents[2]
 RUBRIC = ROOT / "contract" / "rubric"
 SCHEMA = json.loads((ROOT / "contract" / "mcp" / "tools.v1.json").read_text())
-TOOLS = {t["name"]: t for t in SCHEMA["tools"]}
+TOOLS = {t["name"]: t for t in [*SCHEMA["tools"], *SCHEMA.get("retired", [])]}
 ENUMS = yaml.safe_load((RUBRIC / "enums.yaml").read_text())
 FAMILIES = ("evm", "solana", "ton", "move", "cairo")
 FILE_OF = {"evm": "src/Vault.sol", "solana": "src/lib.rs", "ton": "contracts/master.tact",

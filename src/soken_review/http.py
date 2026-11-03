@@ -92,9 +92,9 @@ _METHODS = frozenset({"initialize", "notifications/initialized", "ping", "tools/
 
 @cache
 def _tool_names() -> frozenset[str]:
-    from .contract import bundle_tools
+    from .contract import bundle_tools, retired_tool_names
 
-    return frozenset(t["name"] for t in bundle_tools())
+    return frozenset(t["name"] for t in bundle_tools()) | retired_tool_names()
 
 
 def _safe(value: Any) -> str:

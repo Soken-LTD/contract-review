@@ -32,6 +32,7 @@ from ..db.leads_repo import clamp_lead_severity, lead_states
 from ..db.pool import get_pool
 from ..engine.injection import escape_invisible
 from ..errors import ReviewError
+from ..flow import thin_tools
 from ..learning import tiers as _tiers
 from ..mapping.build import load_map, load_map_status
 from ..mapping.facts import load_facts
@@ -88,11 +89,24 @@ _READABLE_STATES = frozenset({
     "render_failed",
 })
 _TERMINAL_STATES = frozenset({"failed", "insufficient_source"})
+# Pipeline states in which the pin may already exist (thin server design 2026-11-03, section 4): the code is
+# data as soon as it is pinned, so reads open then instead of after the build and the analysis.
+_PINNED_STATES = frozenset({"fetching", "building", "analyzing"})
+
+
+def source_pinned(root: Any, job_id: str) -> bool:
+    """The pin manifest exists (PinnedSource.persist writes it after every blob)."""
+    try:
+        return (root / job_id / "pin" / "manifest.json").is_file()
+    except (OSError, TypeError):
+        return False
 
 
 def _check_job_readable(job_id: str) -> None:
     """Raise the correct ReviewError when the job is not in a readable state."""
     state = _get_ctx().get_job_state(job_id)
+    if state in _PINNED_STATES and thin_tools() and source_pinned(_get_ctx().get_pin_root(), job_id):
+        return
     if state is None or state == "deleted":
         raise ReviewError("E_JOB_NOT_FOUND")
     if state in _TERMINAL_STATES:
@@ -253,15 +267,21 @@ def _read_range(job_id: str, path: str, start: int, end: int, detailed_fmt: bool
         meta += f" (end clamped from {end_original} to {total}: file has {total} lines)"
     root = _get_ctx().get_pin_root()
     job_flags = load_flags(root, job_id)
+    flags_pending = False
     if job_flags is None:
-        # Flags are written at pin time with the map (04 12); a readable job without them is a fault.
-        raise ReviewError("E_INTERNAL", incident=f"flags-missing-{job_id[-8:]}")
+        # Flags are written with the map (04 12). A read before the map step (thin flow: the code is readable
+        # from the pin) says they are pending; a ready job without them is a fault.
+        if thin_tools() and _get_ctx().get_job_state(job_id) in _PINNED_STATES:
+            job_flags, flags_pending = [], True
+        else:
+            raise ReviewError("E_INTERNAL", incident=f"flags-missing-{job_id[-8:]}")
     detailed = detailed_fmt and not is_context_path(path)
     doc = load_map(root, job_id)[0] if detailed else None
 
     def _tail(a: int, b: int) -> str:
         hits = [f for f in job_flags if f["file"] == path and a <= f["line"] <= b]
-        flag_text = "flags\n" + "\n".join(f"{path}:{f['line']} {f['rule']}" for f in hits) if hits else "flags none"
+        flag_text = "flags\n" + "\n".join(f"{path}:{f['line']} {f['rule']}" for f in hits) if hits else (
+            "flags pending (the map step runs after the build; read again for them)" if flags_pending else "flags none")
         if doc is not None and doc.get("semantic"):
             markers = map_view.render_markers(doc, path, a, b)
             flag_text += "\nmap markers\n" + ("\n".join(markers) if markers else "none")

@@ -20,6 +20,11 @@ import pytest_asyncio
 
 from soken_review.db.migrate import run_migrations
 
+# The suite written before the thin server (migration 022) tests the legacy flow, which stays for one release
+# behind SOKEN_FLOW=legacy. Set at import, before collection: several modules bundle the contract at import
+# time. Thin-flow tests switch to SOKEN_FLOW=thin themselves (tests/thin/conftest.py).
+os.environ.setdefault("SOKEN_FLOW", "legacy")
+
 # ---------------------------------------------------------------------------
 # Docker availability check
 # ---------------------------------------------------------------------------

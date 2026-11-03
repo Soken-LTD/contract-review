@@ -27,6 +27,7 @@ from psycopg.rows import dict_row
 from ..db.pool import get_pool
 from ..engine.text_gate import CheckContext, check_text
 from ..errors import ReviewError
+from ..flow import thin_tools
 from ..pinning.quote_match import QuoteMatchError, normalize_lines, quote_match
 from ..pinning.store import PinnedSource
 from ..server import handler
@@ -150,7 +151,8 @@ async def handle_review_withdraw_finding(args: dict[str, Any]) -> dict[str, Any]
 
         # Note gate (`note` scope): the withdrawal note is an audit-log string, never report
         # text, so only step0 applies (see engine/text_gate._NOTE_RULES).
-        for v in check_text(note, "note", CheckContext(field="withdraw.note")):
+        thin = thin_tools()   # thin flow: reason and note stored, nothing checked (design section 1)
+        for v in ([] if thin else check_text(note, "note", CheckContext(field="withdraw.note"))):
             violations.append(ReviewError(
                 v.code, rule=v.rule_id,
                 match=v.match[:80] if v.match else "",
@@ -164,7 +166,10 @@ async def handle_review_withdraw_finding(args: dict[str, Any]) -> dict[str, Any]
 
         evidence: dict[str, Any] = {"reason": reason, "note": note}
 
-        if reason == "disproved":
+        if reason == "disproved" and thin:
+            if quotes:
+                evidence["quotes"] = quotes[:3]
+        elif reason == "disproved":
             # Need 1-3 quoted code lines
             if not quotes or len(quotes) < 1:
                 return {"accepted": False, "errors": [

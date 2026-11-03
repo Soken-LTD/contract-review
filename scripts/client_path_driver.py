@@ -12,6 +12,12 @@ review_set_section, review_finalize, review_report) and checks the outcome a cli
 plus the PDF bytes the report store holds and the three links review_report returns (page, PDF,
 manage page, a tampered signature, and on one target a delete through the manage endpoint).
 
+Thin server (SOKEN_FLOW=thin, 2026-11-03): the driver reads tools/list; when review_leads is not listed it
+runs the thin path. The leads, challenge and section steps are gone from it; instead the retired tools are
+called once each in their old shapes (review_leads, review_dismiss_lead, review_challenge, review_set_section)
+and must answer the retirement notice without an error or a schema break. Submit keeps the old matrix payload
+and must come back accepted as filed. PDF, links and outputSchema conformance stay as strict as before.
+
 Every target states its expectations (`TargetSpec`); `run_target` returns a `TargetResult` with
 one row per check. Upstream outages (explorer, verifier, RPC, GitHub) turn a target into
 `skipped: upstream` only when the named upstream probe fails at that moment; a server error never
@@ -117,6 +123,31 @@ class McpClient:
         if text.startswith("{"):
             return json.loads(text)
         return {"text": text}
+
+
+def list_tool_names(client: McpClient) -> set[str]:
+    """tools/list as the client sees it (thin server 2026-11-03: the retired tools are not listed)."""
+    payload = {"jsonrpc": "2.0", "id": 0, "method": "tools/list", "params": {}}
+    r = client.http.post("/mcp", json=payload, headers=_HEADERS)
+    r.raise_for_status()
+    return {t["name"] for t in (r.json().get("result") or {}).get("tools") or []}
+
+
+# The five tools the thin server retired: unlisted, still answered with accepted true and a client_notice.
+RETIRED_TOOLS = ("review_leads", "review_dismiss_lead", "review_challenge", "review_answer_challenge",
+                 "review_set_section")
+
+
+def check_retired_calls(sess: Session) -> None:
+    """Thin flow: a client holding an old tool list calls the retired tools in their old shapes; every call
+    is answered (no error, no schema break) and changes nothing."""
+    out = sess.c.call("review_dismiss_lead", job_id=sess.job_id,
+                      items=[{"lead_id": "LEAD-0001", "reason": "not_a_vulnerability", "note": _NAV_NOTE}])
+    sess.res.check("retired review_dismiss_lead answers accepted with a client_notice",
+                   out.get("accepted") is True and bool(out.get("client_notice")), json.dumps(out)[:300])
+    out = sess.c.call("review_challenge", job_id=sess.job_id, draft_key="client-path-f01")
+    sess.res.check("retired review_challenge answers accepted with a client_notice",
+                   out.get("accepted") is True and bool(out.get("client_notice")), json.dumps(out)[:300])
 
 
 class ToolError(ClientPathError):
@@ -302,6 +333,7 @@ class Session:
         self.c, self.job_id, self.res = client, job_id, res
         self.reads: dict[str, dict[int, str]] = {}
         self.totals: dict[str, int] = {}
+        self.thin = False   # thin server flow: no leads, challenge or sections (set by run_target)
 
     def read(self, refs: list[str]) -> None:
         """Read every ref in full (400-line windows, 8 per call) and keep the numbered lines."""
@@ -469,6 +501,14 @@ def submit_finding(sess: Session, spec: FindingSpec, units: list[dict[str, Any]]
         raise ClientPathError(f"review_submit_finding rejected: {json.dumps(out.get('errors'))[:800]}")
     sess.res.check("finding accepted", True, f"{out.get('finding_no')} computed {out.get('computed_severity')} "
                    f"rule {out.get('severity_rule')} set_by {out.get('severity_set_by')}")
+    if sess.thin:
+        # The old payload (matrix, lead_ids) is accepted and ignored; the claimed severity is printed as is.
+        sess.res.check("thin submit: accepted as filed, set by the reviewer, no matrix outcome",
+                       out.get("status") == "accepted" and out.get("severity_set_by") == "reviewer"
+                       and not {"computed_severity", "calibration", "matrix_cell"} & out.keys(),
+                       json.dumps({k: out.get(k) for k in ("status", "severity_set_by", "computed_severity")})[:300])
+        out["_quote"] = quote
+        return out
     sess.res.check("the reviewer's severity is the printed severity, the matrix a calibration",
                    out.get("computed_severity") == spec.expect_severity and out.get("severity_set_by") == "reviewer"
                    and "calibration" in out and "E_SEVERITY_CONFIRM" not in json.dumps(out.get("warnings") or []),
@@ -549,6 +589,13 @@ def close_leads(sess: Session, leads: list[dict[str, Any]]) -> None:
 
 def set_sections(sess: Session, spec: TargetSpec, draft_key: str | None) -> None:
     jid = sess.job_id
+    if sess.thin:
+        # sections are retired: one old-shape call (a JSON-string object, as a stale list sends it) is answered
+        out = sess.c.call("review_set_section", job_id=jid, section="invariant_walks",
+                          invariant_walks=json.dumps({"rows": []}))
+        sess.res.check("retired review_set_section answers accepted with a client_notice",
+                       out.get("accepted") is True and bool(out.get("client_notice")), json.dumps(out)[:300])
+        return
     out = sess.c.call("review_set_section", job_id=jid, section="roles_notes", roles_notes={"rows": [
         {"role": "privileged key", "risk_note": "Privileged setters are held by a single key that acts at once."}]})
     sess.res.check("section roles_notes accepted", bool(out.get("accepted")), json.dumps(out.get("errors"))[:300])
@@ -688,6 +735,11 @@ def check_report(sess: Session, spec: TargetSpec, rep: dict[str, Any], store_roo
             res.check("report.json prints the finding as verified on the fork at its block",
                       bool(verified) and ft.get("block") == spec.fork_test["_block"] and bool(ft.get("tests")),
                       json.dumps(ft)[:300] if ft else f"levels {[f.get('evidence_level') for f in report.get('findings') or []]}")
+        if sess.thin:
+            cov = report.get("review_coverage") or {}
+            res.check("thin report: meta.flow thin, no analyzer table, no checklist areas",
+                      meta.get("flow") == "thin" and not cov.get("leads") and not cov.get("areas"),
+                      f"flow {meta.get('flow')!r} leads {len(cov.get('leads') or [])} areas {len(cov.get('areas') or [])}")
         if spec.finding:
             sevs = [f.get("severity") for f in report.get("findings") or []]
             res.check(f"a {spec.finding.expect_severity} finding is printed", spec.finding.expect_severity in sevs,
@@ -832,10 +884,18 @@ def run_target(spec: TargetSpec, base_url: str, store_root: Path, out_dir: Path)
                           block, re.MULTILINE)
             guards = m.group(1) if m else "(entry not listed)"
             res.check(f"{entry} credited with a caller_check guard", "caller_check" in guards, guards[:200])
+        sess.thin = "review_leads" not in list_tool_names(client)
         leads_out = client.call("review_leads", job_id=res.job_id, status="all", page_size=100)
-        leads = parse_leads(leads_out["text"])
-        res.check("leads > 0", len(leads) > 0, leads_out["text"].splitlines()[0][:200])
-        if spec.expect_lead_tool:
+        if sess.thin:
+            # retired tool, called the way an old cached list calls it: a plain notice, no leads
+            leads = []
+            res.check("retired review_leads answers the retirement notice", "retired" in leads_out["text"]
+                      and not parse_leads(leads_out["text"]), leads_out["text"][:200])
+            check_retired_calls(sess)
+        else:
+            leads = parse_leads(leads_out["text"])
+            res.check("leads > 0", len(leads) > 0, leads_out["text"].splitlines()[0][:200])
+        if spec.expect_lead_tool and not sess.thin:
             tools = {t for l in leads for t in l["tools"]}
             res.check(f"{spec.expect_lead_tool} leads > 0", spec.expect_lead_tool in tools, f"tools {sorted(tools)}")
         draft_key = None

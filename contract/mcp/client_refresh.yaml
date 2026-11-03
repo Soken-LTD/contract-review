@@ -21,10 +21,9 @@ refresh: >-
   in Settings, Connectors and add it again (a new chat alone kept the old list on 2026-10-31). A server added
   to Claude Code directly: run /mcp and reconnect it. Other clients reload the tool list on reconnect.
 works_now: >-
-  Until then: claimed_severity is the printed severity on any tool list (no reason needed); answer an invariant
-  walk as a coverage row (area_id the walk id, reason nr_holds, nr_violated or nr_not_applicable, refs
-  path:start-end in the note); topic checklist with job_id lists the walks; review_status chain_state and
-  review_facts have the deployment's owner, roles, paused and balance under chain.target.
+  Until then: matrix, challenge, leads and sections are retired; submit each finding with title, body,
+  claimed_severity and quotes copied from the lines review_read_code returned. Calls to a retired tool
+  are answered with accepted true and change nothing.
 
 # Server instructions (initialize result and server/discover): read by the client when it connects, so a
 # client that reconnects sees them even when its tool list is cached elsewhere.
@@ -36,8 +35,7 @@ instructions: >-
   client_notice when the server sees an old tool list; follow it.
 
 # Arguments and values named first in the notice (the rest are counted): the ones a review depends on.
-priority: [review_submit_finding.severity_reason, review_set_section.invariant_walks,
-           review_get_guide.topic invariants, review_get_guide.topic chain]
+priority: []
 max_listed: 4
 
 # Which tools are worth naming as the probe: the newest tools a model can check for by name.
@@ -48,4 +46,22 @@ max_notices_per_job: 4
 notice_tools: [review_start, review_status, review_finalize, review_contract_map]
 # Rejection or warning codes caused by a missing schema element: the notice rides on them while the job is
 # not proven fresh, within the same cap.
-notice_codes: [E_SEVERITY_CONFIRM, E_SECTION_INVALID]
+notice_codes: []
+
+# Answers of the retired tools (tools/retired.py, thin server design 2026-11-03 section 1). A client whose
+# tool list predates the change still calls them: each call is answered, writes nothing, and says what to do
+# instead. review_leads is a text tool; the others return {"accepted": true, "client_notice": <text>}.
+retired_notices:
+  review_leads: >-
+    Analyzer leads are retired. Nothing to triage; read the code with review_read_code and
+    review_search_code.
+  review_dismiss_lead: >-
+    review_dismiss_lead is retired: there are no analyzer leads, so nothing to dismiss. Continue the review.
+  review_challenge: >-
+    review_challenge is retired; re-read your quoted lines yourself, then continue.
+  review_answer_challenge: >-
+    review_answer_challenge is retired; re-read your quoted lines yourself, then continue.
+  review_set_section: >-
+    Sections are retired; put anything the reader needs into a finding (Informational if minor).
+  default: >-
+    This tool is retired; continue with review_read_code, review_submit_finding and review_finalize.
